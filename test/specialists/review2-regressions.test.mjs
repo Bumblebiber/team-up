@@ -442,9 +442,9 @@ test("actual systemd-run --user smoke with /usr/bin/true", () => {
   execFileSync(argv[0], argv.slice(1), { stdio: "ignore", timeout: 15_000 });
 });
 
-// --- 8. token budget unenforceable ---
+// --- 8. token budget advisory ---
 
-test("max_tokens without token_budget_adapter → TOKEN_BUDGET_UNENFORCEABLE", async () => {
+test("max_tokens is advisory and does not block launch", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-tok-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-tp-"));
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-tk-"));
@@ -481,18 +481,19 @@ test("max_tokens without token_budget_adapter → TOKEN_BUDGET_UNENFORCEABLE", a
     assert.equal((await installPackage(pkg, env)).ok, true);
     assert.equal((await approveSpecialist({ idAtVersion: "testing.tokens@0.1.0", project, env })).ok, true);
 
-    await assert.rejects(
-      () => launch({
-        specialistId: "testing.tokens",
-        callType: "consult",
-        objective: "budget check",
-        project,
-        env,
-        dryRun: true,
-        sandbox: { available: true, probe: () => true },
-      }),
-      (e) => e.code === "TOKEN_BUDGET_UNENFORCEABLE" || /TOKEN_BUDGET_UNENFORCEABLE/.test(e.message)
-    );
+    const result = await launch({
+      specialistId: "testing.tokens",
+      callType: "consult",
+      objective: "budget check",
+      project,
+      env,
+      dryRun: true,
+      sandbox: { available: true, probe: () => true },
+    });
+    assert.equal(result.budget.tokens.target, 80000);
+    assert.equal(result.budget.tokens.enforcement, "advisory");
+    assert.match(result.budget.warnings[0], /max_tokens.*advisory/);
+    assert.equal(loadState(result.runId).budget.tokens.enforcement, "advisory");
   } finally {
     for (const k of Object.keys(process.env)) {
       if (!(k in prev)) delete process.env[k];

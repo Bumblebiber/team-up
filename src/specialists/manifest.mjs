@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { assertSafeSpecialistSegment, assertSafeRelPath, assertPathInsideRoot } from "./safe-id.mjs";
+import { normalizeBudget } from "./budget.mjs";
 
 export const REQUIRED = [
   "schema_version",
@@ -174,15 +175,23 @@ export function validateManifest(manifest, { packageDir } = {}) {
     }
   }
 
+  const schemaVersion = Number(manifest.schema_version);
+  if (schemaVersion !== 1 && schemaVersion !== 2) {
+    errors.push(`unsupported schema_version: ${manifest.schema_version}`);
+  }
+
   const budget = manifest.budget;
   if (budget && typeof budget === "object") {
-    if (budget.timeout_seconds != null &&
-      (typeof budget.timeout_seconds !== "number" || budget.timeout_seconds <= 0)) {
-      errors.push("budget.timeout_seconds must be a positive number");
+    if (schemaVersion === 2 && budget.max_tokens != null) {
+      errors.push("budget.max_tokens is not allowed in schema_version 2; use budget.tokens");
     }
-    if (budget.max_tokens != null &&
-      (typeof budget.max_tokens !== "number" || budget.max_tokens <= 0)) {
-      errors.push("budget.max_tokens must be a positive number");
+    if (schemaVersion === 1 && budget.tokens != null) {
+      errors.push("budget.tokens requires schema_version 2");
+    }
+    try {
+      normalizeBudget(budget);
+    } catch (e) {
+      errors.push(e.message);
     }
   }
 
@@ -196,10 +205,6 @@ export function validateManifest(manifest, { packageDir } = {}) {
 
   if (manifest.output_contract && manifest.output_contract !== "team-up.result/v1") {
     errors.push(`unsupported output_contract: ${manifest.output_contract}`);
-  }
-
-  if (manifest.schema_version !== 1 && manifest.schema_version !== "1") {
-    errors.push(`unsupported schema_version: ${manifest.schema_version}`);
   }
 
   if (packageDir) {

@@ -11,7 +11,8 @@ import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { createRun, runDir, wrapPromptWithMailboxProtocol, atomicWriteText, linkDispatchToRun, saveState, loadState } from "../runs/runs.mjs";
 import { materialize } from "../sandbox/materialize.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
-import { resolveCommandMediation, resolveTokenBudgetAdapter } from "./adapters.mjs";
+import { resolveCommandMediation } from "./adapters.mjs";
+import { normalizeBudget } from "./budget.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 
 function argValue(args, flag) {
@@ -42,19 +43,17 @@ export function resolveCliPath(argv0) {
 }
 
 /**
- * CLI sandbox config. Legacy booleans mediated_commands / token_budget_adapter
- * never enable enforcement — only code-registered adapters do (none in MVP).
+ * CLI sandbox config. Legacy mediated_commands boolean never enables
+ * enforcement — only code-registered adapters do (none until harness task).
+ * Token targets are always advisory; no token_budget_adapter gate.
  */
 export function cliSandboxConfig(roster, cli) {
   const entry = roster?.clis?.[cli] || {};
   const sandbox = entry.sandbox && typeof entry.sandbox === "object" ? entry.sandbox : {};
   const cmd = resolveCommandMediation(sandbox, entry);
-  const tok = resolveTokenBudgetAdapter(sandbox, entry);
   return {
     mediated_commands: cmd.enabled,
-    token_budget_adapter: tok.enabled,
     command_adapter: cmd.adapter,
-    token_adapter: tok.adapter,
     sandbox_runtime_paths:
       sandbox.runtime_paths ??
       entry.sandbox_runtime_paths ??
@@ -169,13 +168,7 @@ export async function launch({
     throw err;
   }
 
-  if (manifest.budget?.max_tokens != null && !cliCfg.token_budget_adapter) {
-    const err = new Error(
-      "TOKEN_BUDGET_UNENFORCEABLE: budget.max_tokens set but selected CLI has no code-registered token budget adapter (legacy token_budget_adapter boolean is ignored)"
-    );
-    err.code = "TOKEN_BUDGET_UNENFORCEABLE";
-    throw err;
-  }
+  const budgetNorm = normalizeBudget(manifest.budget ?? {});
 
   const fsMode = effectivePerms.filesystem;
   const runCwd = fsMode === "none" ? null : project;
@@ -188,11 +181,11 @@ export async function launch({
     "Read REQUEST.json and instructions.md in the context directory. Follow remit/anti-remit.",
     "Write mailbox/RESULT.json conforming to schema team-up.result/v1 when done.",
     "RESULT.md is optional human-readable detail and does not count as success by itself.",
-    manifest.budget?.max_tokens && cliCfg.token_budget_adapter
-      ? `Token budget: ${manifest.budget.max_tokens}. Stay within budget.`
+    budgetNorm.tokens
+      ? `Advisory token target: ${budgetNorm.tokens.target} (not hard-enforced).`
       : null,
-    manifest.budget?.timeout_seconds
-      ? `Timeout budget: ${manifest.budget.timeout_seconds}s (enforced by sandbox runtime).`
+    budgetNorm.timeout_seconds
+      ? `Timeout budget: ${budgetNorm.timeout_seconds}s (enforced by sandbox runtime).`
       : null,
   ].filter(Boolean).join("\n");
 
@@ -212,14 +205,18 @@ export async function launch({
     objective,
     inputs,
     permissions: effectivePerms,
-    budget: manifest.budget,
+    budget: {
+      timeout_seconds: budgetNorm.timeout_seconds,
+      tokens: budgetNorm.tokens,
+    },
   });
   request.run_id = state.runId;
 
   const st = loadState(state.runId);
   st.budget = {
-    timeout_seconds: manifest.budget?.timeout_seconds ?? null,
-    max_tokens: cliCfg.token_budget_adapter ? (manifest.budget?.max_tokens ?? null) : null,
+    timeout_seconds: budgetNorm.timeout_seconds,
+    tokens: budgetNorm.tokens,
+    warnings: budgetNorm.warnings,
   };
   st.output_contract = "team-up.result/v1";
   st.result_protocol = "RESULT.json";
@@ -255,7 +252,7 @@ export async function launch({
 
   const cliPath = resolveCliPath(cliArgv[0]);
   const runPath = runDir(state.runId);
-  const timeoutSec = manifest.budget?.timeout_seconds;
+  const timeoutSec = budgetNorm.timeout_seconds;
 
   const probe = sandbox?.probe
     ? sandbox.probe

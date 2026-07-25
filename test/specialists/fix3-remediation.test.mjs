@@ -6,11 +6,9 @@ import path from "node:path";
 import { installPackage, pinSpecialist } from "../../src/specialists/store.mjs";
 import { approveSpecialist, isApproved } from "../../src/specialists/approvals.mjs";
 import { launch, cliSandboxConfig } from "../../src/specialists/launcher.mjs";
-import {
-  resolveCommandMediation,
-  resolveTokenBudgetAdapter,
-} from "../../src/specialists/adapters.mjs";
-
+import { resolveCommandMediation } from "../../src/specialists/adapters.mjs";
+import { normalizeBudget } from "../../src/specialists/budget.mjs";
+import { loadState } from "../../src/runs/runs.mjs";
 function validManifest(overrides = {}) {
   return {
     schema_version: 1,
@@ -48,17 +46,14 @@ test("legacy mediated_commands:true cannot enable mediation (no concrete adapter
   assert.equal(cfg.mediated_commands, false);
 });
 
-test("legacy token_budget_adapter:true cannot enable token enforcement", () => {
-  const r = resolveTokenBudgetAdapter(
-    { token_budget_adapter: true },
-    { token_budget_adapter: true }
-  );
-  assert.equal(r.enabled, false);
+test("legacy token_budget_adapter boolean is ignored; tokens stay advisory", () => {
+  const normalized = normalizeBudget({ timeout_seconds: 60, max_tokens: 80000 });
+  assert.equal(normalized.tokens.enforcement, "advisory");
   const cfg = cliSandboxConfig(
     { clis: { cursor: { sandbox: { token_budget_adapter: true } } } },
     "cursor"
   );
-  assert.equal(cfg.token_budget_adapter, false);
+  assert.equal(cfg.token_budget_adapter, undefined);
 });
 
 test("setting mediated_commands true cannot bypass ALLOWLIST_UNENFORCEABLE", async () => {
@@ -140,7 +135,7 @@ test("setting mediated_commands true cannot bypass ALLOWLIST_UNENFORCEABLE", asy
   }
 });
 
-test("setting token_budget_adapter true cannot bypass TOKEN_BUDGET_UNENFORCEABLE", async () => {
+test("max_tokens is advisory and does not block launch", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-tok-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-tp-"));
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-tk-"));
@@ -189,20 +184,18 @@ test("setting token_budget_adapter true cannot bypass TOKEN_BUDGET_UNENFORCEABLE
       true
     );
 
-    await assert.rejects(
-      () =>
-        launch({
-          specialistId: "testing.tokbypass",
-          callType: "consult",
-          objective: "budget check",
-          project,
-          env,
-          dryRun: true,
-          sandbox: { available: true, probe: () => true },
-        }),
-      (e) =>
-        e.code === "TOKEN_BUDGET_UNENFORCEABLE" || /TOKEN_BUDGET_UNENFORCEABLE/.test(e.message)
-    );
+    const result = await launch({
+      specialistId: "testing.tokbypass",
+      callType: "consult",
+      objective: "budget check",
+      project,
+      env,
+      dryRun: true,
+      sandbox: { available: true, probe: () => true },
+    });
+    assert.equal(result.budget.tokens.target, 80000);
+    assert.equal(result.budget.tokens.enforcement, "advisory");
+    assert.equal(loadState(result.runId).budget.tokens.enforcement, "advisory");
   } finally {
     for (const k of Object.keys(process.env)) {
       if (!(k in prev)) delete process.env[k];
