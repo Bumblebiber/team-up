@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { claudeAdapter } from "../../src/harness/claude.mjs";
+import { prepareHarnessLaunch } from "../../src/harness/registry.mjs";
 
 test("claude prepareLaunch denies shell bypass and writes mcp config", () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-"));
@@ -63,4 +64,35 @@ test("claude injectControl uses tmux argv not a shell", () => {
   });
   assert.deepEqual(calls[0], ["tmux", "send-keys", "-t", "s1", "-l", "please checkpoint"]);
   assert.deepEqual(calls[1], ["tmux", "send-keys", "-t", "s1", "Enter"]);
+});
+
+test("brokered Claude launch strips legacy roster bypass before enforcing policy", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-legacy-"));
+  const prepared = prepareHarnessLaunch({
+    cli: "claude",
+    argv: [
+      "claude",
+      "--dangerously-skip-permissions",
+      "--model",
+      "opus",
+      "--effort",
+      "max",
+      "do work",
+    ],
+    runDir,
+    broker: {
+      policySnapshot: "/abs/policy/commands.json",
+      policyChecksum: "sha256:test",
+      project: "/abs/project",
+      runDir: "/abs/run",
+      actionIds: ["project-test"],
+    },
+    verification: { status: "verified", cli_version: "test" },
+    brokerBin: "/abs/bin/team-up-command-broker.mjs",
+    nodePath: "/abs/node",
+  });
+
+  assert.equal(prepared.argv.includes("--dangerously-skip-permissions"), false);
+  assert.equal(prepared.argv.includes("--effort"), true);
+  assert.equal(prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1], "Bash");
 });

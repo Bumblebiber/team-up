@@ -30,11 +30,20 @@ function defaultReasoningForModel(model) {
   return { ...(DEFAULT_REASONING[cli0] || DEFAULT_REASONING.cursor) };
 }
 
+function ensureClaudeEffortSlot(roster) {
+  const cmd = roster.clis?.claude?.cmd;
+  if (!Array.isArray(cmd) || cmd.some((arg) => arg.includes("{effort}"))) return;
+  const promptIndex = cmd.indexOf("{prompt}");
+  if (promptIndex === -1) return;
+  cmd.splice(promptIndex, 0, "--effort", "{effort}");
+}
+
 /**
  * Deterministic migration of legacy o9k/team-up roster shapes:
  * - mid → medium
  * - ensure accounts exist for subscriptions/providers
  * - ensure every tiered (specialist-eligible) model has account + reasoning map
+ * - add Claude's native effort slot to legacy command templates
  */
 export function migrateRoster(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -86,5 +95,6 @@ export function migrateRoster(input) {
   }
 
   roster.schema_version = roster.schema_version || 2;
+  ensureClaudeEffortSlot(roster);
   return roster;
 }

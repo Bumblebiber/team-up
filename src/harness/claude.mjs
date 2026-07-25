@@ -4,6 +4,24 @@ export const claudeAdapter = {
   id: "claude",
   capabilities: CLAUDE_DECLARED_CAPABILITIES,
 
+  sanitizeBrokeredArgv(argv) {
+    const next = [];
+    for (let i = 0; i < argv.length; i++) {
+      if (
+        argv[i] === "--dangerously-skip-permissions" ||
+        argv[i] === "--allow-dangerously-skip-permissions"
+      ) {
+        continue;
+      }
+      if (argv[i] === "--permission-mode" && argv[i + 1] === "bypassPermissions") {
+        i++;
+        continue;
+      }
+      next.push(argv[i]);
+    }
+    return next;
+  },
+
   version({ execFileSync }) {
     const out = execFileSync("claude", ["--version"], {
       encoding: "utf8",

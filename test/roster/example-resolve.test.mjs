@@ -55,6 +55,34 @@ test("shipped example roster migrates and resolves Hannes + Hugo exact tiers", (
   assert.ok(!hugo.chain.some((c) => ["frontier", "high", "low"].includes(migrated.models[c.model].tier)));
 });
 
+test("legacy Claude command gains an effort slot without losing tmux auto-approval", () => {
+  const migrated = migrateRoster({
+    clis: {
+      claude: {
+        cmd: [
+          "claude",
+          "--dangerously-skip-permissions",
+          "--model",
+          "{model}",
+          "{prompt}",
+        ],
+      },
+    },
+    models: {},
+    roles: {},
+  });
+
+  assert.deepEqual(migrated.clis.claude.cmd, [
+    "claude",
+    "--dangerously-skip-permissions",
+    "--model",
+    "{model}",
+    "--effort",
+    "{effort}",
+    "{prompt}",
+  ]);
+});
+
 test("hot provider without limit_windows is gated like pick()", () => {
   const roster = {
     accounts: { cursor: { kind: "subscription", enabled: true } },

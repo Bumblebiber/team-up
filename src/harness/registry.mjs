@@ -88,9 +88,13 @@ export function prepareHarnessLaunch({
   if (!broker) {
     return { argv, env: {}, files: [], adapter: adapter.id, capabilities: caps };
   }
+  const brokeredArgv =
+    typeof adapter.sanitizeBrokeredArgv === "function"
+      ? adapter.sanitizeBrokeredArgv(argv)
+      : argv;
   return {
     ...adapter.prepareLaunch({
-      argv,
+      argv: brokeredArgv,
       runDir,
       broker,
       allowedBuiltins,
