@@ -5,8 +5,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+const FLOCK_BIN = "/usr/bin/flock";
 
 export function runsRoot() {
   return process.env.TEAM_UP_RUNS || process.env.O9K_RUNS || path.join(os.homedir(), ".team-up/runs");
@@ -137,71 +139,70 @@ export function stateLockPath(runId) {
   return path.join(runDir(runId), ".STATE.lock");
 }
 
-function acquireStateLock(runId, { maxAgeMs = 120_000 } = {}) {
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function releaseStateLock({ child, lockPath, signalPath }) {
+  child.stdin.destroy();
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    const probe = spawnSync(FLOCK_BIN, ["-n", lockPath, "/bin/true"], { stdio: "ignore" });
+    if (probe.status === 0) break;
+    sleepSync(5);
+  }
+  if (child.exitCode === null) child.kill("SIGKILL");
+  try {
+    fs.unlinkSync(signalPath);
+  } catch {
+    // Acquisition signal may already be absent after a failed attempt.
+  }
+}
+
+function abandonStateLock({ child, signalPath }) {
+  child.stdin.destroy();
+  if (child.exitCode === null) child.kill("SIGTERM");
+  try {
+    fs.unlinkSync(signalPath);
+  } catch {
+    // The helper timed out before publishing its acquisition signal.
+  }
+}
+
+function acquireStateLock(runId, { timeoutMs = 2000 } = {}) {
   const lockPath = stateLockPath(runId);
-  const started = Date.now();
-  const token = `${process.pid}:${started}:${Math.random().toString(36).slice(2)}`;
-  const contents = `${process.pid}\n${started}\n${token}\n`;
-  const tryCreate = () => fs.writeFileSync(lockPath, contents, { flag: "wx" });
-
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  try {
-    tryCreate();
-    return { lockPath, token };
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
+  const nonce = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+  const signalPath = `${lockPath}.${nonce}.acquired`;
+  const waitSeconds = Math.max(0, timeoutMs) / 1000;
+  const child = spawn(
+    FLOCK_BIN,
+    [
+      "-w",
+      String(waitSeconds),
+      lockPath,
+      "/bin/sh",
+      "-c",
+      ': > "$1"; IFS= read -r _ || true; /bin/rm -f -- "$1"',
+      "state-lock",
+      signalPath,
+    ],
+    { stdio: ["pipe", "ignore", "ignore"] },
+  );
+  const lock = { child, lockPath, signalPath };
+  const deadline = Date.now() + Math.max(0, timeoutMs) + 50;
+  while (Date.now() <= deadline) {
+    if (fs.existsSync(signalPath)) return lock;
+    sleepSync(5);
   }
-
-  let steal = false;
-  try {
-    const [pidRaw, startedRaw] = fs.readFileSync(lockPath, "utf8").trim().split(/\n/);
-    const pid = Number.parseInt(pidRaw, 10);
-    const lockStarted = Number.parseInt(startedRaw, 10);
-    const ownerDead = Number.isInteger(pid) && pid > 0 && !isPidAlive(pid);
-    const agedOut =
-      Number.isFinite(lockStarted) && Date.now() - lockStarted > maxAgeMs;
-    steal = ownerDead || agedOut || !Number.isInteger(pid);
-  } catch {
-    steal = true;
-  }
-  if (!steal) {
-    const error = new Error(`STATE_LOCK_BUSY: ${lockPath}`);
-    error.code = "STATE_LOCK_BUSY";
-    throw error;
-  }
-
-  try {
-    fs.unlinkSync(lockPath);
-  } catch {
-    const error = new Error(`STATE_LOCK_BUSY: ${lockPath}`);
-    error.code = "STATE_LOCK_BUSY";
-    throw error;
-  }
-  try {
-    tryCreate();
-    return { lockPath, token };
-  } catch (error) {
-    if (error.code === "EEXIST") {
-      const busy = new Error(`STATE_LOCK_BUSY: ${lockPath}`);
-      busy.code = "STATE_LOCK_BUSY";
-      throw busy;
-    }
-    throw error;
-  }
+  abandonStateLock(lock);
+  const error = new Error(`STATE_LOCK_BUSY: ${lockPath}`);
+  error.code = "STATE_LOCK_BUSY";
+  throw error;
 }
 
-function releaseStateLock({ lockPath, token }) {
-  try {
-    const currentToken = fs.readFileSync(lockPath, "utf8").trim().split(/\n/)[2];
-    if (currentToken !== token) return;
-    fs.unlinkSync(lockPath);
-  } catch {
-    // Already released or replaced by a successor.
-  }
-}
-
-function withStateLock(runId, fn) {
-  const lock = acquireStateLock(runId);
+function withStateLock(runId, fn, { timeoutMs } = {}) {
+  const lock = acquireStateLock(runId, { timeoutMs });
   try {
     return fn();
   } finally {
@@ -229,7 +230,7 @@ function writeStateUnderLock(state, expectedRevision) {
   return state;
 }
 
-export function saveState(state) {
+export function saveState(state, { lockTimeoutMs = 2000 } = {}) {
   return withStateLock(state.runId, () => {
     const current = loadState(state.runId);
     const currentRevision = current?._stateRevision ?? 0;
@@ -238,10 +239,10 @@ export function saveState(state) {
       throw stateWriteConflict(incomingRevision, currentRevision);
     }
     return writeStateUnderLock(state, currentRevision);
-  });
+  }, { timeoutMs: lockTimeoutMs });
 }
 
-export function updateState(runId, updater, { maxRetries = 8 } = {}) {
+export function updateState(runId, updater, { maxRetries = 8, lockTimeoutMs = 2000 } = {}) {
   if (typeof updater !== "function") throw new TypeError("state updater must be a function");
   return withStateLock(runId, () => {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -262,7 +263,7 @@ export function updateState(runId, updater, { maxRetries = 8 } = {}) {
       }
     }
     throw new Error(`STATE_WRITE_CONFLICT: retries exhausted for ${runId}`);
-  });
+  }, { timeoutMs: lockTimeoutMs });
 }
 
 export function mailboxDir(runId) {

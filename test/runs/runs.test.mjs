@@ -89,24 +89,6 @@ test("saveState rejects a stale snapshot without clobbering newer fields", withT
   assert.equal(persisted.status, "starting");
 }));
 
-test("saveState recovers a state lock left by a dead writer", withTempRuns(async () => {
-  const state = createRun({
-    cwd: "/tmp/p",
-    role: "implementer",
-    parent: { cli: "claude", attach: "manual" },
-    worker: { cli: "codex", tmux: "worker" },
-    prompt: "x",
-  });
-  const lockPath = path.join(runDir(state.runId), ".STATE.lock");
-  fs.writeFileSync(lockPath, `2147483646\n${Date.now()}\nstale-owner\n`);
-
-  state.status = "watching";
-  saveState(state);
-
-  assert.equal(loadState(state.runId).status, "watching");
-  assert.equal(fs.existsSync(lockPath), false);
-}));
-
 test("updateState applies a narrow mutation to the latest state", withTempRuns(async () => {
   const state = createRun({
     cwd: "/tmp/p",
