@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "commands": {
+    "project-test": {
+      "argv": ["node", "-e", "process.stdout.write('ok')"],
+      "cwd": ".",
+      "timeout_seconds": 30,
+      "environment": {}
+    }
+  }
+}

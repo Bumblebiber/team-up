@@ -9,7 +9,10 @@ export const claudeAdapter = {
       encoding: "utf8",
       timeout: 10_000,
     });
-    return String(out).trim().split(/\s+/).pop() || String(out).trim();
+    const text = String(out).trim();
+    // Prefer leading semver: "2.1.220 (Claude Code)"
+    const m = text.match(/\b(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.]+)?)\b/);
+    return m ? m[1] : text.split(/\s+/)[0] || text;
   },
 
   injectControl({ tmuxSession, message, execFileSync }) {

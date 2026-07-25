@@ -1,5 +1,12 @@
 <!-- o9k-provenance
 who: cursor-agent:grok
+when: 2026-07-25T15:26:34.448Z
+why: Point README at runtime supervision docs
+trigger: runtime-supervision plan Task 12
+host: cursor
+-->
+<!-- o9k-provenance
+who: cursor-agent:grok
 when: 2026-07-25T13:19:45.773Z
 why: Document standalone team-up MVP engine
 trigger: plan Task 10 handoff docs
@@ -34,6 +41,8 @@ back to `~/.o9k` during migration; writes never touch `~/.o9k`.
 
 - [configuration.md](docs/configuration.md)
 - [specialists.md](docs/specialists.md)
+- [command-broker.md](docs/command-broker.md)
+- Runtime supervision design: `docs/specs/2026-07-25-runtime-supervision-design.md`
 
 ## Tests
 

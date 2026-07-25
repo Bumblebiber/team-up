@@ -1,4 +1,11 @@
 <!-- o9k-provenance
+who: cursor-agent:grok
+when: 2026-07-25T15:26:40.820Z
+why: Update config docs for advisory tokens and harness verify
+trigger: runtime-supervision plan Task 12
+host: cursor
+-->
+<!-- o9k-provenance
 who: cursor:grok-4.5
 when: 2026-07-25T13:53:00.842Z
 why: unspecified
@@ -76,15 +83,17 @@ Per-CLI optional fields under `sandbox` (or top-level legacy aliases):
 
 | Field | Meaning |
 |-------|---------|
-| `command_adapter` | Id of a **code-registered** command/tool mediation adapter. Legacy boolean `mediated_commands` is ignored. |
-| `token_adapter` | Id of a **code-registered** hard token-budget adapter. Legacy boolean `token_budget_adapter` is ignored. |
-| `runtime_paths` / `sandbox_runtime_paths` | Non-empty list of extra read-only binds for home-installed CLIs under `ProtectHome=tmpfs`. Empty `[]` = not configured. |
+| `runtime_paths` / `sandbox_runtime_paths` | Non-empty list of extra read-only binds for home-installed CLIs under `ProtectHome=tmpfs` when OS isolation is applied. Empty `[]` = not configured. |
 
-The MVP registers **no** command or token adapters. Setting legacy booleans to
-`true` cannot bypass `ALLOWLIST_UNENFORCEABLE` /
-`TOKEN_BUDGET_UNENFORCEABLE`.
+Command-broker support comes from installed harness adapters plus
+`~/.team-up/harness-verification` records — **never** from roster booleans
+like `mediated_commands`. Token targets are advisory (see
+`docs/specialists.md`); there is no hard `token_adapter` gate.
 
-Home-installed CLIs must list runtime/auth paths explicitly (non-empty).
-Missing, empty, or invalid paths fail spawn with
-`SANDBOX_RUNTIME_UNAVAILABLE`. Sandbox launch also requires a successful
-**semantic** systemd probe; otherwise `SANDBOX_UNAVAILABLE`.
+Specialists that declare `permissions.commands` resolve only CLI cells whose
+verified harness advertises `team-up.command-broker/v1`. Otherwise the
+profile fails with `PROFILE_UNAVAILABLE` before a run is created.
+
+Trusted specialist launches use **best-effort** OS isolation. Missing home
+CLI runtime paths still fail with `SANDBOX_RUNTIME_UNAVAILABLE` when
+isolation is applied. See `docs/command-broker.md`.

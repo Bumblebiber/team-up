@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "team_up_command_broker": {
+      "type": "stdio",
+      "command": "/home/bbbee/.local/share/cursor-agent/versions/2026.07.23-e383d2b/node",
+      "args": [
+        "/home/bbbee/projects/tasks/task-team-up-mvp/repos/team-up/.worktrees/runtime-supervision/bin/team-up-command-broker.mjs"
+      ],
+      "env": {
+        "TEAM_UP_COMMAND_POLICY_SNAPSHOT": "test/fixtures/harness-project/.team-up-verify-run-u73D6k/policy/commands.json",
+        "TEAM_UP_PROJECT": "/home/bbbee/projects/tasks/task-team-up-mvp/repos/team-up/.worktrees/runtime-supervision/test/fixtures/harness-project",
+        "TEAM_UP_RUN_DIR": "test/fixtures/harness-project/.team-up-verify-run-u73D6k"
+      }
+    }
+  }
+}
