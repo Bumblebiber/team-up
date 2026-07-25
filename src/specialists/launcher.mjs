@@ -28,6 +28,7 @@ import {
   startFromLaunchDescriptor,
   prepareArgvFromDescriptor,
   resolveLimitWindowsForCell,
+  loadAuthoritativeLaunchDescriptor,
 } from "../supervisor/start.mjs";
 
 function argValue(args, flag) {
@@ -457,7 +458,9 @@ export async function launch({
     sandbox_warning: live?.sandbox?.warning ?? wrapped.warning ?? null,
     argv: dryRun
       ? wrapped.argv
-      : prepareArgvFromDescriptor(descriptor, { probe }).argv,
+      : prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(state.runId), {
+          probe,
+        }).argv,
     permissions: effectivePerms,
     budget: st.budget,
   };

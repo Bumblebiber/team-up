@@ -243,6 +243,30 @@ export function releaseAttemptLease({
 /**
  * Atomically transfer lease ownership (startup reservation → live TMUX worker).
  */
+export function readLease(runId) {
+  try {
+    return JSON.parse(fs.readFileSync(leasePath(runId), "utf8"));
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+/**
+ * Require an active, unreleased lease matching attemptId.
+ */
+export function requireActiveLease({ runId, attemptId }) {
+  const lease = readLease(runId);
+  if (!lease) return { ok: false, reason: "no_lease" };
+  if (lease.attempt_id !== attemptId) {
+    return { ok: false, reason: "not_holder", current: lease.attempt_id };
+  }
+  if (lease.released_at != null) {
+    return { ok: false, reason: "already_released" };
+  }
+  return { ok: true, lease };
+}
+
 export function transferLeaseOwner({
   runId,
   attemptId,
@@ -365,4 +389,15 @@ export function listAttempts(runId) {
 
 export function loadAttemptState(runId, attemptId) {
   return JSON.parse(fs.readFileSync(attemptStatePath(runId, attemptId), "utf8"));
+}
+
+export function touchAttemptHeartbeat(runId, attemptId, now = new Date().toISOString()) {
+  try {
+    const attemptState = loadAttemptState(runId, attemptId);
+    attemptState.heartbeat_at = now;
+    atomicWriteJson(attemptStatePath(runId, attemptId), attemptState);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: String(e.message || e) };
+  }
 }

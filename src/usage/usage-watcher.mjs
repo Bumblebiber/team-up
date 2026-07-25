@@ -17,6 +17,15 @@ export function watcherConfig(roster) {
   return { ...DEFAULT_CONFIG, ...(roster?.usage_watcher || {}) };
 }
 
+/**
+ * Sleep between watcher ticks. Cap at 60s while supervised runs exist.
+ */
+export function watcherSleepSec(cfg, { supervisedCount = 0 } = {}) {
+  const tick = Number(cfg?.tick_sec) > 0 ? Number(cfg.tick_sec) : DEFAULT_CONFIG.tick_sec;
+  if (supervisedCount > 0) return Math.min(tick, 60);
+  return tick;
+}
+
 export function computeState(counts) {
   const sum = counts.claude + counts.codex + counts.cursor;
   if (sum === 0) return "idle";
@@ -234,6 +243,7 @@ async function main() {
 
   console.log(`o9k usage-watcher tick=${cfg.tick_sec}s`);
   for (;;) {
+    let supervisedCount = 0;
     try {
       const r = tickOnce({ roster });
       if (r.collect.length) console.log(`collected: ${r.successful.join(", ") || "(none ok)"}`);
@@ -241,16 +251,28 @@ async function main() {
         const results = await afterUsageCollectSupervise({
           now: new Date().toISOString(),
         });
+        supervisedCount = Array.isArray(results) ? results.length : 0;
         if (results?.length) {
           console.log(`supervised: ${results.map((x) => `${x.runId}:${x.decision.action}`).join(",")}`);
         }
       } catch (e) {
         console.error("supervise error:", e.message || e);
       }
+      // Prefer live supervised-run count from production listing when available.
+      try {
+        const { listSupervisedRuns } = await import("../supervisor/production.mjs");
+        supervisedCount = Math.max(
+          supervisedCount,
+          listSupervisedRuns({ now: new Date().toISOString() }).length
+        );
+      } catch {
+        // ignore
+      }
     } catch (e) {
       console.error("watcher tick error:", e.message || e);
     }
-    await new Promise((res) => setTimeout(res, cfg.tick_sec * 1000));
+    const sleepSec = watcherSleepSec(cfg, { supervisedCount });
+    await new Promise((res) => setTimeout(res, sleepSec * 1000));
   }
 }
 

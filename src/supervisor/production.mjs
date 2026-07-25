@@ -7,6 +7,7 @@ import {
   acquireAttemptLease,
   releaseAttemptLease,
   reclaimStaleLease,
+  touchAttemptHeartbeat,
 } from "./attempts.mjs";
 import { materializePartialCheckpoint, validateCheckpoint } from "./checkpoint.mjs";
 import { decideTransition, executeTransition, superviseActiveRuns } from "./controller.mjs";
@@ -20,6 +21,7 @@ import {
   resolveLimitWindowsForCell,
 } from "./start.mjs";
 import { resumeDueWaits } from "./waits.mjs";
+import { collectUsage, subscriptionsFromRoster } from "../usage/usage-collect.mjs";
 
 /**
  * Record the first supervised attempt + lease for a specialist launch.
@@ -70,8 +72,43 @@ function heartbeatFresh(state, nowMs, staleSec = 120) {
   const hb = state?.mailbox_heartbeat_at || state?.heartbeat_at;
   if (!hb) return true;
   const t = Date.parse(hb);
-  if (!Number.isFinite(t)) return true;
+  // Malformed timestamps must not be treated as eternally fresh.
+  if (!Number.isFinite(t)) return false;
   return nowMs - t <= staleSec * 1000;
+}
+
+/**
+ * Ingest mailbox/HEARTBEAT before freshness and stale-lease decisions.
+ * Accepts ISO text content; rejects malformed values without updating freshness.
+ */
+export function ingestMailboxHeartbeat(runId, { now = new Date().toISOString() } = {}) {
+  const hbPath = path.join(runDir(runId), "mailbox", "HEARTBEAT");
+  let raw;
+  try {
+    raw = fs.readFileSync(hbPath, "utf8").trim();
+  } catch (e) {
+    if (e.code === "ENOENT") return { ok: false, reason: "missing" };
+    return { ok: false, reason: "unreadable" };
+  }
+  if (!raw) return { ok: false, reason: "empty" };
+  const ts = Date.parse(raw);
+  if (!Number.isFinite(ts)) return { ok: false, reason: "malformed" };
+  // Reject absurd future skew (>1h ahead of supervisor now) as malformed.
+  const nowMs = Date.parse(now);
+  if (Number.isFinite(nowMs) && ts - nowMs > 3_600_000) {
+    return { ok: false, reason: "malformed_future" };
+  }
+  const iso = new Date(ts).toISOString();
+  const st = loadState(runId);
+  if (st) {
+    st.mailbox_heartbeat_at = iso;
+    st.heartbeat_at = iso;
+    saveState(st);
+    if (st.current_attempt_id) {
+      touchAttemptHeartbeat(runId, st.current_attempt_id, iso);
+    }
+  }
+  return { ok: true, at: iso };
 }
 
 function processAlive(state) {
@@ -170,7 +207,11 @@ function persistCapacityWaiting(runId, report, now) {
   );
 }
 
-export function listSupervisedRuns({ now = new Date().toISOString(), usage = null } = {}) {
+export function listSupervisedRuns({
+  now = new Date().toISOString(),
+  usage = null,
+  processAliveOverride = null,
+} = {}) {
   const nowMs = Date.parse(now);
   const usageDoc = usage || loadJson(usagePath()) || {};
   const out = [];
@@ -178,6 +219,10 @@ export function listSupervisedRuns({ now = new Date().toISOString(), usage = nul
     if (!state.supervision?.enabled) continue;
     if (state.status === "waiting_capacity" && state.capacity?.wait_cancelled) continue;
     if (state.status === "waiting_decision") continue;
+
+    // Mailbox HEARTBEAT first — freshness/reclaim must see live worker pulses.
+    ingestMailboxHeartbeat(state.runId, { now });
+
     reclaimStaleLease({
       runId: state.runId,
       now,
@@ -186,6 +231,7 @@ export function listSupervisedRuns({ now = new Date().toISOString(), usage = nul
 
     const { checkpoint: mailboxCp, handoffReady } = readMailboxCheckpoint(state.runId);
     let checkpoint = state.checkpoint || null;
+    let checkpointForTransition = null;
     if (mailboxCp) {
       const v = validateCheckpoint(mailboxCp, {
         runId: state.runId,
@@ -193,21 +239,27 @@ export function listSupervisedRuns({ now = new Date().toISOString(), usage = nul
       });
       if (v.ok) {
         checkpoint = mailboxCp;
-        if (handoffReady || mailboxCp.status === "complete" || mailboxCp.status === "partial") {
-          const live = loadState(state.runId);
-          if (live) {
-            live.checkpoint = mailboxCp;
-            if (handoffReady && live.status === "handoff_preparing") {
-              live.status = "handing_off";
-              setStatus(state.runId, "handing_off");
-            }
-            saveState(live);
+        // Persist drafts always; expose to transition planning only when ready.
+        const live = loadState(state.runId);
+        if (live) {
+          live.checkpoint = mailboxCp;
+          if (handoffReady && live.status === "handoff_preparing") {
+            live.status = "handing_off";
+            setStatus(state.runId, "handing_off");
           }
+          saveState(live);
+        }
+        if (handoffReady) {
+          checkpointForTransition = mailboxCp;
         }
       }
     }
 
     const refreshed = loadState(state.runId) || state;
+    const alive =
+      typeof processAliveOverride === "function"
+        ? processAliveOverride(refreshed)
+        : processAlive(refreshed);
     out.push({
       runId: refreshed.runId,
       state:
@@ -228,9 +280,11 @@ export function listSupervisedRuns({ now = new Date().toISOString(), usage = nul
         nowMs,
         refreshed.supervision?.heartbeat_stale_seconds ?? 120
       ),
-      processAlive: processAlive(refreshed),
+      processAlive: alive,
       capacityAvailable: refreshed.status !== "waiting_capacity",
       checkpoint,
+      checkpointForTransition,
+      handoffReady,
       release: refreshed.current_attempt_id
         ? { runId: refreshed.runId, attemptId: refreshed.current_attempt_id }
         : null,
@@ -291,6 +345,7 @@ export function buildProductionSuperviseDeps({
   injectControl,
   stopTmux,
   now = new Date().toISOString(),
+  refreshUsageImpl = null,
 } = {}) {
   return {
     listSupervisedRuns: async () => listSupervisedRuns({ now }),
@@ -338,14 +393,50 @@ export function buildProductionSuperviseDeps({
       }
       defaultStopTmux(session);
     },
-    refreshUsage: async () => {},
+    refreshUsage: async () => {
+      if (typeof refreshUsageImpl === "function") {
+        return refreshUsageImpl();
+      }
+      try {
+        const roster = requireRoster();
+        const clis = subscriptionsFromRoster(roster).filter((c) => c === "claude");
+        // Exact-tier Claude path only — other CLIs remain unsupported for live collect here.
+        const results = await collectUsage({
+          clis: clis.length ? clis : ["claude"],
+          roster,
+        });
+        const failures = results.filter((r) => !r.ok);
+        if (failures.length && !results.some((r) => r.ok)) {
+          return {
+            ok: false,
+            error: `USAGE_REFRESH_FAILED: ${failures.map((f) => `${f.cli}:${f.reason}`).join("; ")}`,
+            results,
+          };
+        }
+        return { ok: true, results };
+      } catch (e) {
+        return {
+          ok: false,
+          error: `USAGE_REFRESH_FAILED: ${e.message || e}`,
+        };
+      }
+    },
     resolveChain: async (ctx = {}) => {
       const roster = requireRoster();
       const usage = loadJson(usagePath()) || {};
       const st = ctx.runId ? loadState(ctx.runId) : null;
       const profile = st?.specialist_profile || st?.profile || { tier: "frontier", reasoning: "max" };
-      const requirements =
-        st?.harness_requirements || st?.launch_descriptor?.harness_requirements || {};
+      let requirements =
+        st?.harness_requirements || {};
+      if (!requirements?.command_broker) {
+        try {
+          const { loadAuthoritativeLaunchDescriptor } = await import("./start.mjs");
+          const desc = loadAuthoritativeLaunchDescriptor(ctx.runId);
+          requirements = desc.harness_requirements || requirements;
+        } catch {
+          // fall through
+        }
+      }
       const resolved = resolveProfile({
         roster,
         usage,
@@ -474,14 +565,22 @@ export async function superviseProductionRuns({
           tier: "frontier",
           reasoning: "max",
         };
+        let requirements = state.harness_requirements || {};
+        if (!requirements?.command_broker) {
+          try {
+            const { loadAuthoritativeLaunchDescriptor } = await import("./start.mjs");
+            requirements =
+              loadAuthoritativeLaunchDescriptor(runId).harness_requirements ||
+              requirements;
+          } catch {
+            // ignore
+          }
+        }
         return resolveProfile({
           roster,
           usage,
           profile,
-          requirements:
-            state.harness_requirements ||
-            state.launch_descriptor?.harness_requirements ||
-            {},
+          requirements,
         });
       },
       startWorker: async ({ attempt, runId }) => {

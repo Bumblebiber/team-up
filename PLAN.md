@@ -1,42 +1,47 @@
 <!-- o9k-provenance
 who: cursor:grok-4.5
-when: 2026-07-25T17:10:39.880Z
-why: Update remediation plan after production wiring implementation
-trigger: mailbox worker RUNTIME_FIX2 closeout
+when: 2026-07-25T17:26:03.303Z
+why: Document review3 remediation of launch descriptor, lease, heartbeat, conformance
+trigger: mailbox worker RUNTIME_FIX3 / third runtime review findings
 host: cursor
 -->
-# Plan: production runtime wiring remediation
+# Plan: third runtime review remediation
 
 ## Goal
-Close Critical/Important findings from second independent NOT READY review.
-Production entrypoints (launcher, usage-watcher `--once`, `runs resume` /
-`cancel-wait`) drive real TMUX ops via one unified start path — no injected
-start/stop/control substitutes for acceptance evidence.
+Close Critical/Important findings from the third independent runtime review.
+Trusted specialists + best-effort OS sandbox + enforced command broker remain.
 
 ## Architecture (implemented)
-1. **`src/supervisor/start.mjs`** — `startFromLaunchDescriptor` /
-   `prepareArgvFromDescriptor` / `startSuccessorFromDescriptor`. Descriptor
-   persists harness/MCP/Bash denial/sandbox/timeout/policy/profile/`limit_windows`.
-2. **`buildProductionSuperviseDeps`** — real `tmux send-keys` / `kill-session` /
-   start via descriptor; ingest mailbox `CHECKPOINT.json` + `CONTROL.json`
-   `handoff_ready`; resume due waits after supervise tick.
-3. **Lease** — `starting:pid:N` reservation → transfer to `tmux:<session>` after
-   spawn; lock files record owner PID + age steal; rollback on start failure.
-4. **Capacity** — exhausted chain persists report + reset decision (`auto_resume`
-   false until `wait-capacity`); cancel disables crash-recovery spawn.
-5. **cli-verify** — MCP stdio preflight cannot set `broker_tool=passed`; Claude
-   invocation must produce exact `ok` + fresh audit row; `--allowedTools` for
-   non-interactive MCP without permission bypass.
-6. **Sandbox** — bind policy snapshot RO under ProtectHome; enforce
-   `timeout_seconds` even when isolation not required.
+1. **Authoritative launch descriptor** — stored under
+   `~/.team-up/launch-descriptors/<runId>/` (checksum sidecar). `STATE.json`
+   keeps only `team-up.launch-ref/v1` `{path,checksum}`. Worker Write/Edit of
+   `STATE.json` cannot weaken successor argv. Missing/corrupt descriptor or
+   required broker data fails closed (no raw Claude argv). Descriptor path is
+   bound read-only under effective systemd isolation.
+2. **Lease gate** — controller-supplied attempts require an active unreleased
+   lease before spawn. `transferLeaseOwner` failure kills the just-started TMUX
+   session, releases the lease, and never persists `watching`. Controller
+   retries reacquire a reservation before the next start.
+3. **Mailbox HEARTBEAT** — ingested before freshness/stale-lease decisions;
+   persists `mailbox_heartbeat_at` and touches attempt heartbeat. Malformed
+   timestamps never become eternally fresh.
+4. **handoff_ready** — draft checkpoints persist, but transition planning only
+   sees a checkpoint after explicit readiness (95% force path still materializes
+   a partial checkpoint).
+5. **refreshUsage** — production deps collect configured Claude subscription
+   usage before successor resolution; failures are explicit and non-crashing.
+6. **Watcher sleep** — `min(configured_tick, 60s)` while supervised runs exist.
+7. **Due-wait alternate** — resume persists the selected model's `limit_windows`
+   onto the authoritative descriptor + runtime.
+8. **Native-shell conformance** — stream-json tool evidence required; prose
+   `NATIVE_SHELL_DENIED` alone remains `unverified`.
 
 ## Tests
-`test/integration/production-entrypoint.test.mjs` — fake `tmux` on PATH,
-exercises `launchSpecialist`, usage-watcher `--once`, `runs resume` /
-`cancel-wait` without injected start/stop/control callbacks.
+`test/supervisor/review3-remediation.test.mjs` — mandatory regressions.
+Existing production entrypoint + supervision suites updated for launch-ref schema.
 
 ## Verification matrix
-- `npm test` → 263/263
+- `npm test` → 276/276
 - `bash test/runs/wait-mailbox.test.sh` → OK
 - `node bin/team-up.mjs version` → `0.1.0`
 - `node bin/team-up.mjs harness verify claude --fixture-project test/fixtures/harness-project`

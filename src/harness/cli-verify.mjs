@@ -10,9 +10,38 @@ import { snapshotCommandPolicy } from "../commands/policy.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
 
 function claudeLoginOrQuotaFailure(text) {
-  const t = String(text || "").toLowerCase();
+  // Prefer result/assistant/error stream events — SessionStart hooks dump skills
+  // that mention "subscription"/"authentication" and must not trip this gate.
+  const lines = String(text || "").split(/\n/);
+  const focused = [];
+  let sawJson = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed[0] === "{") {
+      sawJson = true;
+      try {
+        const obj = JSON.parse(trimmed);
+        if (
+          obj.type === "result" ||
+          obj.type === "assistant" ||
+          obj.type === "error" ||
+          obj.is_error === true
+        ) {
+          focused.push(trimmed);
+          if (obj.result) focused.push(String(obj.result));
+          if (obj.error) focused.push(String(obj.error));
+        }
+      } catch {
+        // ignore
+      }
+    } else if (!sawJson) {
+      focused.push(trimmed);
+    }
+  }
+  const t = (focused.length ? focused.join("\n") : String(text || "")).toLowerCase();
   return (
-    /not logged in|please run .*login|authentication|unauthorized|quota|rate limit|credit|subscription/.test(
+    /not logged in|please run .*login|authentication required|unauthorized|quota exceeded|rate limit exceeded|out of credit|credit balance/.test(
       t
     )
   );
@@ -43,6 +72,121 @@ function lastAuditRecord(runDir) {
 }
 
 /**
+ * Parse Claude stream-json / JSON event lines into tool-use evidence.
+ */
+export function parseClaudeStreamEvents(text) {
+  const events = [];
+  const lines = String(text || "").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] !== "{") continue;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const pushTool = (block, extra = {}) => {
+      if (!block || typeof block !== "object") return;
+      if (block.type === "tool_use" || block.name) {
+        events.push({
+          type: "tool_use",
+          name: block.name || block.tool_name,
+          input: block.input,
+          id: block.id,
+          ...extra,
+        });
+      }
+      if (block.type === "tool_result") {
+        events.push({
+          type: "tool_result",
+          tool_use_id: block.tool_use_id || block.toolUseId,
+          content: block.content,
+          is_error: block.is_error === true || block.isError === true,
+          ...extra,
+        });
+      }
+    };
+    if (obj.type === "tool_use" || obj.name === "Bash") {
+      pushTool(obj);
+    }
+    const content = obj.message?.content || obj.content || obj.tools;
+    if (Array.isArray(content)) {
+      for (const block of content) pushTool(block, { parent: obj.type });
+    }
+    if (Array.isArray(obj.tool_calls)) {
+      for (const tc of obj.tool_calls) {
+        pushTool({
+          type: "tool_use",
+          name: tc.name || tc.function?.name,
+          input: tc.input || tc.function?.arguments,
+          id: tc.id,
+        });
+      }
+    }
+    // Inventory / system events listing available tools
+    const tools = obj.tools || obj.available_tools || obj.message?.tools;
+    if (Array.isArray(tools)) {
+      events.push({
+        type: "tool_inventory",
+        names: tools.map((t) => (typeof t === "string" ? t : t?.name)).filter(Boolean),
+      });
+    }
+  }
+  return events;
+}
+
+/**
+ * Decide native_shell from structured tool evidence only.
+ * Prose `NATIVE_SHELL_DENIED` without tool events → unverified.
+ */
+export function evaluateNativeShellFromStream({ events = [], text = "" } = {}) {
+  void text;
+  const bashUses = events.filter(
+    (e) => e.type === "tool_use" && String(e.name || "").toLowerCase() === "bash"
+  );
+  const inventories = events.filter((e) => e.type === "tool_inventory");
+
+  for (const use of bashUses) {
+    if (
+      use.is_error ||
+      (use.error &&
+        /disallowed|denied|not allowed|unavailable|rejected/i.test(String(use.error)))
+    ) {
+      return "denied";
+    }
+  }
+
+  const bashResults = events.filter(
+    (e) =>
+      e.type === "tool_result" &&
+      (e.is_error || /bash/i.test(String(e.name || e.content || "")))
+  );
+  if (bashResults.some((r) => r.is_error)) return "denied";
+
+  if (
+    events.some(
+      (e) =>
+        /bash/i.test(String(e.name || "")) &&
+        (e.is_error || /denied|disallowed|rejected/i.test(String(e.error || e.content || "")))
+    )
+  ) {
+    return "denied";
+  }
+
+  if (inventories.some((inv) => inv.names?.length && !inv.names.some((n) => /bash/i.test(n)))) {
+    return "denied";
+  }
+
+  if (bashUses.length > 0) {
+    // Bash tool_use present without rejection → allowed (successful or attempted)
+    return "allowed";
+  }
+
+  return "unverified";
+}
+
+/**
  * Live Claude conformance: invoke the installed CLI with the prepared MCP
  * broker config. Never infer denial from argv alone and never grant the
  * command-broker capability from flag inspection or a direct MCP preflight.
@@ -50,6 +194,9 @@ function lastAuditRecord(runDir) {
  * A direct MCP client call may diagnose the broker but cannot set
  * `broker_tool=passed`. Only the Claude invocation that produces exact `ok`
  * stdout and a fresh broker audit row may.
+ *
+ * Native-shell denial requires structured/stream JSON tool evidence — prompt
+ * echo of NATIVE_SHELL_DENIED alone remains unverified.
  */
 export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersion }) {
   let versionOut = "";
@@ -136,10 +283,13 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
     const auditBaseline = countAuditLines(runDir);
     let broker_tool = "unverified";
 
-    function prepareWithPrompt(prompt) {
+    function prepareWithPrompt(prompt, { streamJson = false } = {}) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-harness-"));
+      const formatArgs = streamJson
+        ? ["--print", "--verbose", "--output-format", "stream-json", prompt]
+        : ["--print", "--output-format", "text", prompt];
       return adapter.prepareLaunch({
-        argv: ["claude", "--print", "--output-format", "text", prompt],
+        argv: ["claude", ...formatArgs],
         runDir: dir,
         broker: {
           policySnapshot: snap.path,
@@ -155,13 +305,13 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       });
     }
 
-    // Real Claude invocation: ask it to run Bash. Denial must come from the live CLI.
+    // Real Claude invocation: ask it to run Bash. Denial needs structured evidence.
     const shellProbePrompt =
       "Use the Bash tool to run the command: echo SHELL_SHOULD_BE_DENIED. " +
-      "If Bash is unavailable, reply exactly with NATIVE_SHELL_DENIED. Do not invent success.";
+      "If Bash is unavailable or rejected, do not invent success.";
     let shellPrepared;
     try {
-      shellPrepared = prepareWithPrompt(shellProbePrompt);
+      shellPrepared = prepareWithPrompt(shellProbePrompt, { streamJson: true });
     } catch (e) {
       return {
         native_shell: "unverified",
@@ -197,18 +347,36 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       };
     }
 
-    let native_shell = "allowed";
+    const streamEvents = parseClaudeStreamEvents(shellText);
+    // Harness/CLI rejection lines from the live invocation count as tool evidence.
     if (
-      /NATIVE_SHELL_DENIED/i.test(shellText) ||
-      /bash.*(?:not allowed|disallowed|denied|unavailable)/i.test(shellText) ||
-      /tool.*bash.*(?:not|denied|disallowed)/i.test(shellText) ||
-      /don't have a bash|do not have a bash|no bash tool/i.test(shellText)
+      /disallowedTools|tool.*Bash.*(?:not allowed|disallowed|denied)|Bash.*(?:not allowed|disallowed|denied|unavailable)/i.test(
+        shellText
+      )
     ) {
-      native_shell = "denied";
-    } else if (/SHELL_SHOULD_BE_DENIED/.test(shellText) && !/NATIVE_SHELL_DENIED/i.test(shellText)) {
+      streamEvents.push({
+        type: "tool_use",
+        name: "Bash",
+        error: "disallowed",
+        is_error: true,
+      });
+    }
+    let native_shell = evaluateNativeShellFromStream({
+      events: streamEvents,
+      text: shellText,
+    });
+    // Successful Bash execution of the probe → allowed
+    if (
+      /SHELL_SHOULD_BE_DENIED/.test(shellText) &&
+      streamEvents.some(
+        (e) =>
+          e.type === "tool_use" &&
+          /bash/i.test(String(e.name || "")) &&
+          !e.is_error &&
+          !e.error
+      )
+    ) {
       native_shell = "allowed";
-    } else if (shellRun.status !== 0) {
-      native_shell = "unverified";
     }
 
     if (native_shell === "denied") {

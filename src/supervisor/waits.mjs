@@ -3,6 +3,11 @@ import path from "node:path";
 import { loadState, saveState, runDir, setStatus } from "../runs/runs.mjs";
 import { chainCapacityReport } from "./capacity.mjs";
 import { createAttempt, acquireAttemptLease, releaseAttemptLease } from "./attempts.mjs";
+import {
+  persistLaunchDescriptor,
+  loadAuthoritativeLaunchDescriptor,
+  resolveLimitWindowsForCell,
+} from "./start.mjs";
 
 function waitsIndexPath(env = process.env) {
   const root = env.TEAM_UP_RUNS || env.O9K_RUNS || path.join(process.env.HOME || "", ".team-up/runs");
@@ -120,9 +125,23 @@ export async function recheckCapacity({
   const report = chainCapacityReport({ profileResult, usage, roster, now });
   if (report.available_count > 0) {
     const candidate = report.reports.find((r) => r.available)?.candidate || {};
+    const limit_windows = resolveLimitWindowsForCell(candidate, roster);
+    const runtime = { ...candidate, limit_windows };
+    try {
+      const desc = loadAuthoritativeLaunchDescriptor(runId);
+      persistLaunchDescriptor(runId, {
+        ...desc,
+        cli: candidate.cli || desc.cli,
+        model: candidate.model || desc.model,
+        effort: candidate.effort ?? desc.effort,
+        limit_windows,
+      });
+    } catch {
+      // No authoritative descriptor yet — start path may create one later.
+    }
     const attempt = createAttempt({
       runId,
-      runtime: candidate,
+      runtime,
       specialist: state.specialist || null,
       now,
     });
@@ -141,7 +160,7 @@ export async function recheckCapacity({
 
     if (typeof startWorker === "function") {
       try {
-        await startWorker({ attempt, runId, candidate, report });
+        await startWorker({ attempt, runId, candidate: runtime, report });
       } catch (e) {
         releaseAttemptLease({ runId, attemptId: attempt.id, reason: "start_failed", now });
         const st = loadState(runId);
@@ -169,8 +188,17 @@ export async function recheckCapacity({
       last_resume_error: null,
     };
     state.current_attempt_id = attempt.id;
+    state.runtime = {
+      ...(state.runtime || {}),
+      ...runtime,
+    };
     if (candidate.cli) {
-      state.worker = { ...(state.worker || {}), cli: candidate.cli, model: candidate.model };
+      state.worker = {
+        ...(state.worker || {}),
+        cli: candidate.cli,
+        model: candidate.model,
+        limit_windows,
+      };
     }
     saveState(state);
     setStatus(runId, "watching");

@@ -248,8 +248,9 @@ test("production launchSpecialist persists descriptor and uses fake tmux new-ses
     });
     assert.ok(result.runId);
     const st = loadState(result.runId);
-    assert.equal(st.launch_descriptor?.schema, "team-up.launch/v1");
-    assert.ok(st.launch_descriptor.harness_requirements?.command_broker);
+    assert.equal(st.launch_descriptor?.schema, "team-up.launch-ref/v1");
+    assert.ok(st.harness_requirements?.command_broker);
+    assert.ok(st.launch_descriptor?.checksum);
     assert.deepEqual(st.runtime.limit_windows, ["claude:5h"]);
     assert.match(st.ACTIVE_LEASE?.owner || fs.readFileSync(path.join(runDir(result.runId), "ACTIVE_LEASE.json"), "utf8"), /tmux:/);
     const lines = tmuxLines(tmuxLog);
@@ -342,8 +343,7 @@ test("90 percent usage-watcher --once emits live send-keys; 95 kills and starts 
     assert.equal(news.length, 1, lines95.join(" | ") + "\n" + once95.stdout);
     const st3 = loadState(runId);
     assert.ok(st3.checkpoint?.status === "partial" || st3.current_attempt_id);
-    const desc = st3.launch_descriptor;
-    assert.ok(desc?.broker?.policySnapshot || desc?.harness_requirements?.command_broker);
+    assert.ok(st3.harness_requirements?.command_broker || st3.launch_descriptor?.checksum);
   });
 });
 

@@ -141,3 +141,15 @@ export function usageWatcherStatePath(env = process.env) {
 export function debugLogDir(env = process.env) {
   return path.join(teamUpHome(env), "logs");
 }
+
+/** Authoritative launch descriptors — outside worker-writable run dirs. */
+export function launchDescriptorsRoot(env = process.env) {
+  return (
+    env.TEAM_UP_LAUNCH_DESCRIPTORS ||
+    path.join(teamUpHome(env), "launch-descriptors")
+  );
+}
+
+export function launchDescriptorDir(runId, env = process.env) {
+  return path.join(launchDescriptorsRoot(env), runId);
+}

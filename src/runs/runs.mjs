@@ -688,7 +688,6 @@ function cmdResume(args) {
             profile,
             requirements:
               state.harness_requirements ||
-              state.launch_descriptor?.harness_requirements ||
               {},
           });
         },
@@ -772,7 +771,6 @@ async function cmdRecheckCapacity(args) {
     profile,
     requirements:
       state?.harness_requirements ||
-      state?.launch_descriptor?.harness_requirements ||
       {},
   });
   const result = await recheckCapacity({

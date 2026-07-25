@@ -11,6 +11,7 @@ export function decideTransition({
   heartbeatFresh = true,
   processAlive = true,
   checkpoint = null,
+  handoffReady = false,
   capacityAvailable = true,
 }) {
   if (!processAlive && state !== "waiting_capacity") {
@@ -22,7 +23,13 @@ export function decideTransition({
     return { action: "noop" };
   }
   if (state === "handoff_preparing") {
-    if (checkpoint && (checkpoint.status === "complete" || checkpoint.status === "partial")) {
+    // Draft checkpoints may be persisted, but transition planning requires
+    // explicit handoff_ready (95% force path still bypasses via force_handoff).
+    if (
+      handoffReady &&
+      checkpoint &&
+      (checkpoint.status === "complete" || checkpoint.status === "partial")
+    ) {
       return { action: "complete_handoff" };
     }
     if (used >= forceAt) return { action: "force_handoff" };
@@ -140,6 +147,14 @@ export async function executeTransition(plan, deps = {}) {
 
     let lastErr = null;
     for (let i = 0; i <= maxStartRetries; i++) {
+      if (i > 0) {
+        // Prior start may have released the reservation — reacquire before retry.
+        const again = await acquireLease?.(next, ctx);
+        if (!again?.ok) {
+          lastErr = new Error(`lease_reacquire_failed: ${again?.reason || "unknown"}`);
+          break;
+        }
+      }
       try {
         await startWorker?.(next, ctx);
         lastErr = null;
@@ -185,6 +200,7 @@ export async function superviseActiveRuns({ now = new Date().toISOString(), deps
   const runs = (await deps.listSupervisedRuns?.()) || [];
   const results = [];
   for (const run of runs) {
+    const handoffReady = run.handoffReady === true;
     const decision = decideTransition({
       state: run.state,
       used: run.used ?? 0,
@@ -192,10 +208,13 @@ export async function superviseActiveRuns({ now = new Date().toISOString(), deps
       forceAt: run.forceAt ?? 0.95,
       heartbeatFresh: run.heartbeatFresh !== false,
       processAlive: run.processAlive !== false,
-      checkpoint: run.checkpoint || null,
+      checkpoint: handoffReady
+        ? run.checkpoint || run.checkpointForTransition || null
+        : run.checkpointForTransition ?? null,
+      handoffReady,
       capacityAvailable: run.capacityAvailable !== false,
     });
-    const plan = { ...decision, now, ...run };
+    const plan = { ...decision, now, ...run, handoffReady };
     results.push({
       runId: run.runId,
       decision,
