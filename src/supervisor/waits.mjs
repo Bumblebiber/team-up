@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadState, saveState, runDir, setStatus } from "../runs/runs.mjs";
+import { loadState, saveState, updateState, runDir, setStatus } from "../runs/runs.mjs";
 import { chainCapacityReport } from "./capacity.mjs";
 import { createAttempt, acquireAttemptLease, releaseAttemptLease } from "./attempts.mjs";
 import {
@@ -180,34 +180,34 @@ export async function recheckCapacity({
       }
     }
 
-    // Reload after startWorker — never overwrite freshly persisted TMUX,
-    // sandbox, descriptor/runtime, or limit windows with the pre-start snapshot.
-    const live = loadState(runId) || state;
-    live.status = "watching";
-    live.capacity = {
-      ...(live.capacity || state.capacity || {}),
-      last_recheck_at: now,
-      next_reset_at: null,
-      last_resume_error: null,
-    };
-    live.current_attempt_id = attempt.id;
-    // Fill gaps only — startWorker-owned fields win.
-    live.runtime = {
-      ...runtime,
-      ...(live.runtime || {}),
-    };
-    if (!live.runtime.limit_windows && limit_windows) {
-      live.runtime.limit_windows = limit_windows;
-    }
-    if (candidate.cli || live.worker) {
-      live.worker = {
-        cli: candidate.cli || live.worker?.cli,
-        model: candidate.model || live.worker?.model,
-        limit_windows: limit_windows || live.worker?.limit_windows,
-        ...(live.worker || {}),
+    updateState(runId, (latest) => {
+      // Fill gaps only: startWorker-owned TMUX, sandbox, descriptor/runtime,
+      // worker, and limit-window fields from the latest state always win.
+      latest.status = "watching";
+      latest.capacity = {
+        ...(latest.capacity || state.capacity || {}),
+        last_recheck_at: now,
+        next_reset_at: null,
+        last_resume_error: null,
       };
-    }
-    saveState(live);
+      latest.current_attempt_id = attempt.id;
+      latest.runtime = {
+        ...runtime,
+        ...(latest.runtime || {}),
+      };
+      if (!latest.runtime.limit_windows && limit_windows) {
+        latest.runtime.limit_windows = limit_windows;
+      }
+      if (candidate.cli || latest.worker) {
+        latest.worker = {
+          cli: candidate.cli || latest.worker?.cli,
+          model: candidate.model || latest.worker?.model,
+          limit_windows: limit_windows || latest.worker?.limit_windows,
+          ...(latest.worker || {}),
+        };
+      }
+      return latest;
+    });
     setStatus(runId, "watching");
     const waits = loadWaits(env);
     delete waits.waits[runId];

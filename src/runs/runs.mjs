@@ -92,6 +92,7 @@ export function createRun({
     project: project || null,
     role,
     status: "starting",
+    _stateRevision: 0,
     parent: {
       cli: parent.cli,
       sessionId: parent.sessionId || null,
@@ -132,10 +133,136 @@ export function loadState(runId) {
   }
 }
 
-export function saveState(state) {
+export function stateLockPath(runId) {
+  return path.join(runDir(runId), ".STATE.lock");
+}
+
+function acquireStateLock(runId, { maxAgeMs = 120_000 } = {}) {
+  const lockPath = stateLockPath(runId);
+  const started = Date.now();
+  const token = `${process.pid}:${started}:${Math.random().toString(36).slice(2)}`;
+  const contents = `${process.pid}\n${started}\n${token}\n`;
+  const tryCreate = () => fs.writeFileSync(lockPath, contents, { flag: "wx" });
+
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  try {
+    tryCreate();
+    return { lockPath, token };
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+
+  let steal = false;
+  try {
+    const [pidRaw, startedRaw] = fs.readFileSync(lockPath, "utf8").trim().split(/\n/);
+    const pid = Number.parseInt(pidRaw, 10);
+    const lockStarted = Number.parseInt(startedRaw, 10);
+    const ownerDead = Number.isInteger(pid) && pid > 0 && !isPidAlive(pid);
+    const agedOut =
+      Number.isFinite(lockStarted) && Date.now() - lockStarted > maxAgeMs;
+    steal = ownerDead || agedOut || !Number.isInteger(pid);
+  } catch {
+    steal = true;
+  }
+  if (!steal) {
+    const error = new Error(`STATE_LOCK_BUSY: ${lockPath}`);
+    error.code = "STATE_LOCK_BUSY";
+    throw error;
+  }
+
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    const error = new Error(`STATE_LOCK_BUSY: ${lockPath}`);
+    error.code = "STATE_LOCK_BUSY";
+    throw error;
+  }
+  try {
+    tryCreate();
+    return { lockPath, token };
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      const busy = new Error(`STATE_LOCK_BUSY: ${lockPath}`);
+      busy.code = "STATE_LOCK_BUSY";
+      throw busy;
+    }
+    throw error;
+  }
+}
+
+function releaseStateLock({ lockPath, token }) {
+  try {
+    const currentToken = fs.readFileSync(lockPath, "utf8").trim().split(/\n/)[2];
+    if (currentToken !== token) return;
+    fs.unlinkSync(lockPath);
+  } catch {
+    // Already released or replaced by a successor.
+  }
+}
+
+function withStateLock(runId, fn) {
+  const lock = acquireStateLock(runId);
+  try {
+    return fn();
+  } finally {
+    releaseStateLock(lock);
+  }
+}
+
+function stateWriteConflict(incomingRevision, currentRevision) {
+  const error = new Error(
+    `STATE_WRITE_CONFLICT: stale revision ${incomingRevision}; current revision ${currentRevision}`,
+  );
+  error.code = "STATE_WRITE_CONFLICT";
+  return error;
+}
+
+function writeStateUnderLock(state, expectedRevision) {
+  const current = loadState(state.runId);
+  const currentRevision = current?._stateRevision ?? 0;
+  if (current && currentRevision !== expectedRevision) {
+    throw stateWriteConflict(expectedRevision, currentRevision);
+  }
   state.updatedAt = new Date().toISOString();
+  state._stateRevision = expectedRevision + 1;
   atomicWriteJson(path.join(runDir(state.runId), "STATE.json"), state);
   return state;
+}
+
+export function saveState(state) {
+  return withStateLock(state.runId, () => {
+    const current = loadState(state.runId);
+    const currentRevision = current?._stateRevision ?? 0;
+    const incomingRevision = state._stateRevision ?? 0;
+    if (current && incomingRevision !== currentRevision) {
+      throw stateWriteConflict(incomingRevision, currentRevision);
+    }
+    return writeStateUnderLock(state, currentRevision);
+  });
+}
+
+export function updateState(runId, updater, { maxRetries = 8 } = {}) {
+  if (typeof updater !== "function") throw new TypeError("state updater must be a function");
+  return withStateLock(runId, () => {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const current = loadState(runId);
+      if (!current) throw new Error(`unknown run ${runId}`);
+      const expectedRevision = current._stateRevision ?? 0;
+      const next = updater(current);
+      if (next === undefined) return current;
+      if (!next || next.runId !== runId) {
+        throw new Error(`state updater must return STATE for run ${runId}`);
+      }
+      try {
+        return writeStateUnderLock(next, expectedRevision);
+      } catch (error) {
+        if (error.code !== "STATE_WRITE_CONFLICT" || attempt === maxRetries - 1) {
+          throw error;
+        }
+      }
+    }
+    throw new Error(`STATE_WRITE_CONFLICT: retries exhausted for ${runId}`);
+  });
 }
 
 export function mailboxDir(runId) {
@@ -299,18 +426,15 @@ export function resolveRunState(state, classified = { status: "watching" }) {
 }
 
 function persistResolvedRunStatus(runId, classified) {
-  const latestState = loadState(runId);
-  if (!latestState) throw new Error(`unknown run ${runId}`);
-  const latestResolution = resolveRunState(latestState, classified);
-  if (latestResolution.changed) {
-    const nextState = {
-      ...latestState,
-      status: latestResolution.state.status,
-    };
-    saveState(nextState);
-    latestResolution.state = nextState;
-  }
-  return latestResolution;
+  const latestState = updateState(runId, (state) => {
+    const resolution = resolveRunState(state, classified);
+    if (!resolution.changed) return undefined;
+    state.status = resolution.state.status;
+    return state;
+  });
+  const resolution = resolveRunState(latestState, classified);
+  resolution.state = latestState;
+  return resolution;
 }
 
 export function setStatus(runId, status) {

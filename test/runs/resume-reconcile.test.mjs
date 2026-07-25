@@ -375,7 +375,7 @@ test("resumeAll persists terminal mailbox and emits no worker, parent, or watche
   assert.deepEqual(executed, []);
 }));
 
-test("resumeAll reconciliation preserves concurrent STATE updates", withTempRuns(async (dir) => {
+test("resumeAll reconciliation preserves a critical-window STATE update", withTempRuns(async (dir) => {
   const state = createFixture({
     stateStatus: "watching",
     mailboxStatus: "done",
@@ -383,15 +383,16 @@ test("resumeAll reconciliation preserves concurrent STATE updates", withTempRuns
   });
   runs.atomicWriteText(path.join(runs.mailboxDir(state.runId), "RESULT.md"), "complete");
   const statePath = path.join(runs.runDir(state.runId), "STATE.json");
-  const statusPath = path.join(runs.mailboxDir(state.runId), "STATUS");
   const originalReadFileSync = fs.readFileSync;
   let injected = false;
+  let stateReads = 0;
 
   fs.readFileSync = function readFileSyncWithConcurrentUpdate(filePath, ...args) {
     const result = originalReadFileSync.call(fs, filePath, ...args);
-    if (!injected && String(filePath) === statusPath) {
+    if (String(filePath) === statePath) stateReads++;
+    if (!injected && String(filePath) === statePath && stateReads === 3) {
       injected = true;
-      const concurrent = JSON.parse(originalReadFileSync.call(fs, statePath, "utf8"));
+      const concurrent = JSON.parse(result);
       concurrent.worker = {
         ...concurrent.worker,
         sessionId: "replacement-session",
@@ -405,7 +406,9 @@ test("resumeAll reconciliation preserves concurrent STATE updates", withTempRuns
         auto_resume: true,
         resume_not_before: "2026-07-25T19:00:00Z",
       };
-      runs.saveState(concurrent);
+      concurrent._stateRevision = (concurrent._stateRevision ?? 0) + 1;
+      concurrent.updatedAt = "2026-07-25T18:00:01.000Z";
+      runs.atomicWriteJson(statePath, concurrent);
     }
     return result;
   };

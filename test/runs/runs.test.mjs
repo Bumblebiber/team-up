@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  runsRoot, runDir, atomicWriteJson, atomicWriteText, createRun, loadState,
+  runsRoot, runDir, atomicWriteJson, atomicWriteText, createRun, loadState, saveState, updateState,
   classifyMailbox, writeAnswer, buildResumePlan, INJECT, buildCliArgv,
   setStatus, resumeAll, linkDispatchToRun, listActiveStates,
   buildColdStartArgv, acquireResumeLock, resumeLockPath, waitTmuxReady,
@@ -63,6 +63,72 @@ test("createRun writes STATE + mailbox skeleton", withTempRuns(async () => {
   assert.match(fs.readFileSync(path.join(rd, "mailbox", "PROMPT.md"), "utf8"), /HEARTBEAT/);
   assert.match(fs.readFileSync(path.join(rd, "mailbox", "PROMPT.md"), "utf8"), /STATUS.*done/i);
   assert.deepEqual(loadState(state.runId).runId, state.runId);
+}));
+
+test("saveState rejects a stale snapshot without clobbering newer fields", withTempRuns(async () => {
+  const state = createRun({
+    cwd: "/tmp/p",
+    role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex", tmux: "original-worker" },
+    prompt: "x",
+  });
+  const first = loadState(state.runId);
+  const stale = loadState(state.runId);
+
+  first.worker.tmux = "replacement-worker";
+  saveState(first);
+  stale.status = "done";
+
+  assert.throws(
+    () => saveState(stale),
+    (error) => error?.code === "STATE_WRITE_CONFLICT",
+  );
+  const persisted = loadState(state.runId);
+  assert.equal(persisted.worker.tmux, "replacement-worker");
+  assert.equal(persisted.status, "starting");
+}));
+
+test("saveState recovers a state lock left by a dead writer", withTempRuns(async () => {
+  const state = createRun({
+    cwd: "/tmp/p",
+    role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex", tmux: "worker" },
+    prompt: "x",
+  });
+  const lockPath = path.join(runDir(state.runId), ".STATE.lock");
+  fs.writeFileSync(lockPath, `2147483646\n${Date.now()}\nstale-owner\n`);
+
+  state.status = "watching";
+  saveState(state);
+
+  assert.equal(loadState(state.runId).status, "watching");
+  assert.equal(fs.existsSync(lockPath), false);
+}));
+
+test("updateState applies a narrow mutation to the latest state", withTempRuns(async () => {
+  const state = createRun({
+    cwd: "/tmp/p",
+    role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex", tmux: "original-worker" },
+    prompt: "x",
+  });
+  const concurrent = loadState(state.runId);
+  concurrent.worker.tmux = "replacement-worker";
+  concurrent.supervision = { generation: 9 };
+  saveState(concurrent);
+
+  const updated = updateState(state.runId, (draft) => {
+    draft.status = "done";
+    return draft;
+  });
+
+  assert.equal(updated.status, "done");
+  assert.equal(updated.worker.tmux, "replacement-worker");
+  assert.deepEqual(updated.supervision, { generation: 9 });
+  assert.deepEqual(loadState(state.runId), updated);
 }));
 
 test("classifyMailbox prefers question over watching", withTempRuns(async () => {
