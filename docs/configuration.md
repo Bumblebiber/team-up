@@ -1,5 +1,12 @@
 <!-- o9k-provenance
 who: cursor:grok-4.5
+when: 2026-07-25T13:53:00.842Z
+why: unspecified
+trigger: afterFileEdit
+host: cursor
+-->
+<!-- o9k-provenance
+who: cursor:grok-4.5
 when: 2026-07-25T13:44:12.175Z
 why: Document null reasoning map and CLI sandbox capabilities
 trigger: second review pushback + findings 7-8
@@ -65,13 +72,19 @@ resolving Hannes (`frontier:max`) / Hugo (`medium:low`).
 
 ## CLI sandbox capabilities
 
-Per-CLI optional fields (top-level or under `sandbox`):
+Per-CLI optional fields under `sandbox` (or top-level legacy aliases):
 
 | Field | Meaning |
 |-------|---------|
-| `mediated_commands` | CLI can enforce command/tool allowlists via a broker |
-| `token_budget_adapter` | CLI can enforce hard `budget.max_tokens` |
-| `sandbox_runtime_paths` / `sandbox.runtime_paths` | Extra read-only binds for home-installed CLIs under `ProtectHome=tmpfs` |
+| `command_adapter` | Id of a **code-registered** command/tool mediation adapter. Legacy boolean `mediated_commands` is ignored. |
+| `token_adapter` | Id of a **code-registered** hard token-budget adapter. Legacy boolean `token_budget_adapter` is ignored. |
+| `runtime_paths` / `sandbox_runtime_paths` | Non-empty list of extra read-only binds for home-installed CLIs under `ProtectHome=tmpfs`. Empty `[]` = not configured. |
 
-Home-installed CLIs must list runtime/auth paths explicitly. Missing or
-invalid paths fail spawn with `SANDBOX_RUNTIME_UNAVAILABLE`.
+The MVP registers **no** command or token adapters. Setting legacy booleans to
+`true` cannot bypass `ALLOWLIST_UNENFORCEABLE` /
+`TOKEN_BUDGET_UNENFORCEABLE`.
+
+Home-installed CLIs must list runtime/auth paths explicitly (non-empty).
+Missing, empty, or invalid paths fail spawn with
+`SANDBOX_RUNTIME_UNAVAILABLE`. Sandbox launch also requires a successful
+**semantic** systemd probe; otherwise `SANDBOX_UNAVAILABLE`.

@@ -11,6 +11,7 @@ import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { createRun, runDir, wrapPromptWithMailboxProtocol, atomicWriteText, linkDispatchToRun, saveState, loadState } from "../runs/runs.mjs";
 import { materialize } from "../sandbox/materialize.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
+import { resolveCommandMediation, resolveTokenBudgetAdapter } from "./adapters.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 
 function argValue(args, flag) {
@@ -40,16 +41,20 @@ export function resolveCliPath(argv0) {
   }
 }
 
-function cliSandboxConfig(roster, cli) {
+/**
+ * CLI sandbox config. Legacy booleans mediated_commands / token_budget_adapter
+ * never enable enforcement — only code-registered adapters do (none in MVP).
+ */
+export function cliSandboxConfig(roster, cli) {
   const entry = roster?.clis?.[cli] || {};
   const sandbox = entry.sandbox && typeof entry.sandbox === "object" ? entry.sandbox : {};
+  const cmd = resolveCommandMediation(sandbox, entry);
+  const tok = resolveTokenBudgetAdapter(sandbox, entry);
   return {
-    mediated_commands: Boolean(
-      sandbox.mediated_commands ?? entry.mediated_commands
-    ),
-    token_budget_adapter: Boolean(
-      sandbox.token_budget_adapter ?? entry.token_budget_adapter
-    ),
+    mediated_commands: cmd.enabled,
+    token_budget_adapter: tok.enabled,
+    command_adapter: cmd.adapter,
+    token_adapter: tok.adapter,
     sandbox_runtime_paths:
       sandbox.runtime_paths ??
       entry.sandbox_runtime_paths ??
@@ -158,7 +163,7 @@ export async function launch({
 
   if (needsCommandMediation(effectivePerms, manifest) && !cliCfg.mediated_commands) {
     const err = new Error(
-      "ALLOWLIST_UNENFORCEABLE: selected CLI/sandbox cannot mediate command/tool allowlists (mediated tool broker required)"
+      "ALLOWLIST_UNENFORCEABLE: selected CLI has no code-registered command mediation adapter (legacy mediated_commands boolean is ignored)"
     );
     err.code = "ALLOWLIST_UNENFORCEABLE";
     throw err;
@@ -166,7 +171,7 @@ export async function launch({
 
   if (manifest.budget?.max_tokens != null && !cliCfg.token_budget_adapter) {
     const err = new Error(
-      "TOKEN_BUDGET_UNENFORCEABLE: budget.max_tokens set but selected CLI has no token_budget_adapter"
+      "TOKEN_BUDGET_UNENFORCEABLE: budget.max_tokens set but selected CLI has no code-registered token budget adapter (legacy token_budget_adapter boolean is ignored)"
     );
     err.code = "TOKEN_BUDGET_UNENFORCEABLE";
     throw err;

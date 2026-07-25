@@ -1,5 +1,12 @@
 <!-- o9k-provenance
 who: cursor:grok-4.5
+when: 2026-07-25T13:52:56.781Z
+why: unspecified
+trigger: afterFileEdit
+host: cursor
+-->
+<!-- o9k-provenance
+who: cursor:grok-4.5
 when: 2026-07-25T13:44:03.449Z
 why: unspecified
 trigger: afterFileEdit
@@ -47,23 +54,33 @@ text mailbox for compatibility. Specialist runs set
 ## Permissions and fail-closed policy
 
 Sandbox isolation (systemd-run `--user`) enforces filesystem scope, network,
-and write mode. **Command/tool allowlists in JSON are not self-enforcing.**
+and write mode **only when a live semantic probe confirms the user manager
+actually applies ProtectHome / NoExecPaths**. If the probe fails, launch
+returns `SANDBOX_UNAVAILABLE` — never unsandboxed.
 
-Before executable specialist commands or `command.*` / `shell.*` / `exec.*`
-tools can be enabled, the selected CLI must declare
-`sandbox.mediated_commands: true` (or top-level `mediated_commands`) and a
-mediated tool/command broker must exist. Otherwise launch fails with
-`ALLOWLIST_UNENFORCEABLE`.
+**Command/tool allowlists and hard `max_tokens` in JSON are not
+self-enforcing.** Config booleans such as `mediated_commands: true` or
+`token_budget_adapter: true` are ignored. Enforcement requires a concrete
+adapter registered in team-up code (`command_adapter` / `token_adapter`).
+The MVP ships **no** such adapters, so:
 
-Hard `budget.max_tokens` is only advertised when the CLI declares
-`sandbox.token_budget_adapter: true`. Without an adapter, omit the hard cap
-and rely on the enforced `timeout_seconds` / `RuntimeMaxSec` — otherwise
-launch fails with `TOKEN_BUDGET_UNENFORCEABLE`.
+- non-empty `permissions.commands` or `command.*` / `shell.*` / `exec.*`
+  tools → `ALLOWLIST_UNENFORCEABLE`
+- `budget.max_tokens` set → `TOKEN_BUDGET_UNENFORCEABLE`
 
-Starter packages request only capabilities the MVP truly enforces (no
-arbitrary project command execution).
+Starter manifests declare the approved design capabilities (including Hannes
+`command.test` / `project-test` and both packages' `max_tokens: 80000`).
+Those capabilities remain declared so the package matches the design; launch
+still fails closed until a local adapter/backend can enforce them.
+
+Home-installed CLIs need a **non-empty** `sandbox.runtime_paths` list.
+`runtime_paths: []` is treated as not configured →
+`SANDBOX_RUNTIME_UNAVAILABLE`.
 
 ## Starters
 
-- `team-up-with-hannes` — testing (`frontier` / `max`); consult/review + delegated mailbox artifacts
-- `team-up-with-hugo` — research (`medium` / `low`); read-only project + optional network
+- `team-up-with-hannes` — testing (`frontier` / `max`); tools include
+  `filesystem.read` + `command.test`; commands include `project-test`;
+  `max_tokens: 80000` (unenforced until an adapter exists)
+- `team-up-with-hugo` — research (`medium` / `low`); read-only project +
+  optional network; `max_tokens: 80000` (unenforced until an adapter exists)

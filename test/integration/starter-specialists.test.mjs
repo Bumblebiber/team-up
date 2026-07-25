@@ -16,8 +16,12 @@ test("hannes and hugo packages validate without concrete models", () => {
   assert.equal(validateManifest(hugo).ok, true, validateManifest(hugo).errors.join("; "));
   assert.equal(hannes.id, "testing.hannes");
   assert.deepEqual(hannes.model_profile, { tier: "frontier", reasoning: "max" });
+  assert.deepEqual(hannes.capabilities.tools, ["filesystem.read", "command.test"]);
+  assert.deepEqual(hannes.permissions.commands, ["project-test"]);
+  assert.equal(hannes.budget.max_tokens, 80000);
   assert.equal(hugo.id, "research.hugo");
   assert.deepEqual(hugo.model_profile, { tier: "medium", reasoning: "low" });
+  assert.equal(hugo.budget.max_tokens, 80000);
   assert.equal(JSON.stringify(hannes).includes("grok"), false);
   assert.equal(JSON.stringify(hugo).includes("claude"), false);
 });

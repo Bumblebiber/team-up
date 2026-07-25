@@ -38,22 +38,20 @@ export async function approveSpecialist({ idAtVersion, project, env = process.en
   if (!id || !version) {
     return { ok: false, errors: ["expected <id>@<version>"] };
   }
-  // Prefer project pin; fall back to explicit version match
-  let entry = resolveInstalled(id, { version, project, env });
-  if (!entry) {
-    entry = resolveInstalled(id, { version, env });
-  }
+  // Resolve exact installed id@version. Project pin must not block approving
+  // a different installed version before repin (approve-before-repin).
+  const entry = resolveInstalled(id, { version, env });
   if (!entry || entry.version !== version) {
     return { ok: false, errors: [`not installed: ${id}@${version}`] };
   }
 
+  // Load that exact entry without project pin override.
   const loaded = loadInstalledManifest(id, {
-    project,
     version: entry.version,
     checksum: entry.checksum,
     env,
   });
-  if (!loaded) {
+  if (!loaded || loaded.version !== version) {
     return { ok: false, errors: [`not installed: ${id}@${version}`] };
   }
 
