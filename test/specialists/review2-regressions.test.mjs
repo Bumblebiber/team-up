@@ -512,7 +512,9 @@ test("max_tokens is advisory and does not block launch", async () => {
     assert.equal(result.budget.tokens.target, 80000);
     assert.equal(result.budget.tokens.enforcement, "advisory");
     assert.match(result.budget.warnings[0], /max_tokens.*advisory/);
-    assert.equal(loadState(result.runId).budget.tokens.enforcement, "advisory");
+    const state = loadState(result.runId);
+    assert.equal(state.budget.tokens.enforcement, "advisory");
+    assert.equal(state.status, "cancelled");
   } finally {
     for (const k of Object.keys(process.env)) {
       if (!(k in prev)) delete process.env[k];

@@ -8,7 +8,16 @@ import { intersectPermissions, assertCallTypeAllowed } from "./permissions.mjs";
 import { resolveProfile } from "../roster/profile.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
-import { createRun, runDir, wrapPromptWithMailboxProtocol, atomicWriteText, linkDispatchToRun, saveState, loadState } from "../runs/runs.mjs";
+import {
+  createRun,
+  runDir,
+  wrapPromptWithMailboxProtocol,
+  atomicWriteText,
+  linkDispatchToRun,
+  saveState,
+  loadState,
+  setStatus,
+} from "../runs/runs.mjs";
 import { materialize } from "../sandbox/materialize.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
 import { resolveCommandMediation } from "./adapters.mjs";
@@ -442,6 +451,11 @@ export async function launch({
       throw e;
     }
     linkDispatchToRun(state.runId, session);
+  } else {
+    const dryState = loadState(state.runId);
+    dryState.dry_run = true;
+    saveState(dryState);
+    setStatus(state.runId, "cancelled");
   }
 
   const live = loadState(state.runId);
@@ -493,7 +507,8 @@ export async function runSpecialist(args, io = { out: console.log, err: console.
     if (result.runtime.effort != null && result.runtime.effort !== "") {
       io.out(`effort: ${result.runtime.effort}`);
     }
-    io.out(`watcher: team-up runs wait ${result.runId}`);
+    if (dryRun) io.out("dry_run: true");
+    else io.out(`watcher: team-up runs wait ${result.runId}`);
     return { code: 0, result };
   } catch (e) {
     io.err(String(e.message || e));
