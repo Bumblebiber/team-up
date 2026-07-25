@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRun, loadState, saveState, runDir } from "../../src/runs/runs.mjs";
+import {
+  createRun,
+  loadState,
+  saveState,
+  updateState,
+  runDir,
+} from "../../src/runs/runs.mjs";
 import {
   createAttempt,
   acquireAttemptLease,
@@ -595,31 +601,33 @@ test("due-wait resume retains startWorker tmux/sandbox/descriptor/runtime/window
       },
       now: "2026-07-25T18:00:00Z",
       startWorker: async ({ attempt, runId }) => {
-        const live = loadState(runId);
-        live.worker = {
-          tmux: "new-live",
-          cli: "claude",
-          model: "m2",
-          limit_windows: ["claude:7d"],
-        };
-        live.sandbox = {
+        const sandbox = {
           mode: "systemd-run",
           enforced: true,
           unit: "team-up-new.scope",
-        };
-        live.runtime = {
-          cli: "claude",
-          model: "m2",
-          limit_windows: attempt.runtime.limit_windows,
         };
         persistLaunchDescriptor(runId, {
           ...loadAuthoritativeLaunchDescriptor(runId),
           model: "m2",
           limit_windows: attempt.runtime.limit_windows,
-          sandbox: live.sandbox,
+          sandbox,
         });
-        live.launch_descriptor = loadState(runId).launch_descriptor;
-        saveState(live);
+        updateState(runId, (live) => {
+          live.worker = {
+            tmux: "new-live",
+            cli: "claude",
+            model: "m2",
+            limit_windows: ["claude:7d"],
+          };
+          live.sandbox = sandbox;
+          live.runtime = {
+            cli: "claude",
+            model: "m2",
+            limit_windows: attempt.runtime.limit_windows,
+          };
+          live.launch_descriptor = loadState(runId).launch_descriptor;
+          return live;
+        });
       },
     });
 
