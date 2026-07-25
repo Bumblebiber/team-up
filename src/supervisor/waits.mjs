@@ -180,27 +180,34 @@ export async function recheckCapacity({
       }
     }
 
-    state.status = "watching";
-    state.capacity = {
-      ...state.capacity,
+    // Reload after startWorker — never overwrite freshly persisted TMUX,
+    // sandbox, descriptor/runtime, or limit windows with the pre-start snapshot.
+    const live = loadState(runId) || state;
+    live.status = "watching";
+    live.capacity = {
+      ...(live.capacity || state.capacity || {}),
       last_recheck_at: now,
       next_reset_at: null,
       last_resume_error: null,
     };
-    state.current_attempt_id = attempt.id;
-    state.runtime = {
-      ...(state.runtime || {}),
+    live.current_attempt_id = attempt.id;
+    // Fill gaps only — startWorker-owned fields win.
+    live.runtime = {
       ...runtime,
+      ...(live.runtime || {}),
     };
-    if (candidate.cli) {
-      state.worker = {
-        ...(state.worker || {}),
-        cli: candidate.cli,
-        model: candidate.model,
-        limit_windows,
+    if (!live.runtime.limit_windows && limit_windows) {
+      live.runtime.limit_windows = limit_windows;
+    }
+    if (candidate.cli || live.worker) {
+      live.worker = {
+        cli: candidate.cli || live.worker?.cli,
+        model: candidate.model || live.worker?.model,
+        limit_windows: limit_windows || live.worker?.limit_windows,
+        ...(live.worker || {}),
       };
     }
-    saveState(state);
+    saveState(live);
     setStatus(runId, "watching");
     const waits = loadWaits(env);
     delete waits.waits[runId];

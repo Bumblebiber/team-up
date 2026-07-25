@@ -156,20 +156,33 @@ function readMailboxCheckpoint(runId) {
   const controlPath = path.join(dir, "CONTROL.json");
   let checkpoint = null;
   let handoffReady = false;
+  let control = null;
   try {
     checkpoint = JSON.parse(fs.readFileSync(cpPath, "utf8"));
   } catch {
     checkpoint = null;
   }
   try {
-    const control = JSON.parse(fs.readFileSync(controlPath, "utf8"));
-    if (control?.handoff_ready === true || control?.type === "handoff_ready") {
-      handoffReady = true;
-    }
+    control = JSON.parse(fs.readFileSync(controlPath, "utf8"));
   } catch {
-    // ignore
+    control = null;
   }
-  return { checkpoint, handoffReady };
+  const st = loadState(runId);
+  const expectedEpoch = st?.handoff?.epoch || control?.handoff_epoch || null;
+  const readyFlag = control?.handoff_ready === true || control?.type === "handoff_ready";
+  // Ready only counts for the current request epoch — an earlier acknowledgement
+  // cannot satisfy a later request_handoff.
+  if (readyFlag) {
+    if (!expectedEpoch) {
+      handoffReady = true;
+    } else if (control?.handoff_epoch && control.handoff_epoch === expectedEpoch) {
+      handoffReady =
+        control.handoff_ready === true || control.type === "handoff_ready";
+    } else {
+      handoffReady = false;
+    }
+  }
+  return { checkpoint, handoffReady, control, handoffEpoch: expectedEpoch };
 }
 
 function persistCapacityWaiting(runId, report, now) {
@@ -360,16 +373,37 @@ export function buildProductionSuperviseDeps({
       } catch {
         prev = {};
       }
-      fs.writeFileSync(
-        p,
-        `${JSON.stringify({ ...prev, type, at, handoff_ready: prev.handoff_ready === true }, null, 2)}\n`
-      );
       const st = loadState(runId);
-      if (st && type === "request_handoff") {
-        st.status = "handoff_preparing";
-        saveState(st);
-        setStatus(runId, "handoff_preparing");
+      let next = { ...prev, type, at };
+      if (type === "request_handoff") {
+        // New request epoch: clear any prior ready so a later draft cannot
+        // inherit an earlier acknowledgement.
+        const epoch = `req-${at || new Date().toISOString()}-${st?.current_attempt_id || "unknown"}`;
+        next = {
+          ...next,
+          handoff_ready: false,
+          handoff_epoch: epoch,
+          request_attempt_id: st?.current_attempt_id || null,
+        };
+        if (st) {
+          st.status = "handoff_preparing";
+          st.handoff = {
+            ...(st.handoff || {}),
+            epoch,
+            requested_at: at || new Date().toISOString(),
+            request_attempt_id: st.current_attempt_id || null,
+            ready: false,
+          };
+          // Drop prior readiness-bound checkpoint exposure; drafts may remain
+          // on disk but must not satisfy the new epoch until re-acked.
+          saveState(st);
+          setStatus(runId, "handoff_preparing");
+        }
+      } else {
+        next.handoff_ready = prev.handoff_ready === true;
+        if (prev.handoff_epoch) next.handoff_epoch = prev.handoff_epoch;
       }
+      fs.writeFileSync(p, `${JSON.stringify(next, null, 2)}\n`);
     },
     injectControl: async (message, ctx) => {
       if (typeof injectControl === "function") {

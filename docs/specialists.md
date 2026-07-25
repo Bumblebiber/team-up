@@ -1,5 +1,12 @@
 <!-- o9k-provenance
 who: cursor:grok-4.5
+when: 2026-07-25T17:39:55.852Z
+why: Document accepted same-UID trust boundary for command broker / launch descriptor
+trigger: fourth runtime review — accepted trust boundary
+host: cursor
+-->
+<!-- o9k-provenance
+who: cursor:grok-4.5
 when: 2026-07-25T15:41:04.855Z
 why: Document delivered command allowlist / broker boundary
 trigger: runtime-supervision review remediation Minor 13
@@ -85,6 +92,28 @@ actions live in `.team-up/commands.json`, are checksum-bound on specialist
 approval, and are snapshotted under `~/.team-up/policy-snapshots/<runId>/`
 outside every worker-writable path. The MCP broker validates that approval
 checksum before each action and never re-reads a worker-modifiable copy.
+Authoritative launch descriptors live under
+`~/.team-up/launch-descriptors/<runId>/` (checksum sidecar); `STATE.json`
+holds only a `team-up.launch-ref/v1` pointer. Missing/corrupt descriptors or
+required broker data fail closed. Under effective systemd isolation the
+descriptor directory is bound read-only into the worker.
+
+### Accepted same-UID trust boundary
+
+Specialists are **trusted processes under the same Unix UID** as the
+controller. The human accepted that a worker may escape best-effort OS
+containment. A deliberately malicious same-UID process can replace any
+owner-writable file — including a launch descriptor and its checksum
+sidecar. Preventing that requires a separate OS identity, privileged
+immutable storage, or a signing secret inaccessible to that UID, and is
+**out of scope**.
+
+Team-up does **not** pretend otherwise. Canonical descriptors outside
+ordinary worker-visible paths, checksum validation, fail-closed adapter
+requirements, and read-only sandbox binds protect **normal harness tool
+use and accidental mutation**. They do **not** stop hostile same-UID
+filesystem tampering.
+
 Token targets are **advisory** only — see budget normalization.
 Legacy config booleans such as `mediated_commands: true` or
 `token_budget_adapter: true` are ignored. Until a command-broker adapter is

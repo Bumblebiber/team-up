@@ -187,6 +187,21 @@ export function evaluateNativeShellFromStream({ events = [], text = "" } = {}) {
 }
 
 /**
+ * Broker verification gate: only exact trimmed stdout `ok` plus a fresh audit
+ * row may pass. Surrounding prose (`explanation\\nok`, `ok\\nextra`) is
+ * unverified — never fabricate a pass from a substring match.
+ */
+export function decideBrokerToolFromEvidence({
+  stdout = "",
+  freshAudit = false,
+  auditOk = false,
+} = {}) {
+  const exactOk = String(stdout || "").trim() === "ok";
+  if (exactOk && freshAudit && auditOk) return "passed";
+  return "unverified";
+}
+
+/**
  * Live Claude conformance: invoke the installed CLI with the prepared MCP
  * broker config. Never infer denial from argv alone and never grant the
  * command-broker capability from flag inspection or a direct MCP preflight.
@@ -196,7 +211,9 @@ export function evaluateNativeShellFromStream({ events = [], text = "" } = {}) {
  * stdout and a fresh broker audit row may.
  *
  * Native-shell denial requires structured/stream JSON tool evidence — prompt
- * echo of NATIVE_SHELL_DENIED alone remains unverified.
+ * echo of NATIVE_SHELL_DENIED alone remains unverified. Arbitrary response
+ * prose saying Bash is unavailable/denied must not be converted into
+ * fabricated structured tool_use evidence.
  */
 export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersion }) {
   let versionOut = "";
@@ -348,19 +365,8 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
     }
 
     const streamEvents = parseClaudeStreamEvents(shellText);
-    // Harness/CLI rejection lines from the live invocation count as tool evidence.
-    if (
-      /disallowedTools|tool.*Bash.*(?:not allowed|disallowed|denied)|Bash.*(?:not allowed|disallowed|denied|unavailable)/i.test(
-        shellText
-      )
-    ) {
-      streamEvents.push({
-        type: "tool_use",
-        name: "Bash",
-        error: "disallowed",
-        is_error: true,
-      });
-    }
+    // Only parsed stream/tool inventory events prove Bash absent/rejected —
+    // never promote arbitrary denial prose into fabricated tool_use rows.
     let native_shell = evaluateNativeShellFromStream({
       events: streamEvents,
       text: shellText,
@@ -423,18 +429,12 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
         (audit.action_id === "project-test" || audit.actionId === "project-test") &&
         (audit.exit_code === 0 || audit.exitCode === 0);
 
-      // Exact expected tool output from the Claude response (stdout only).
-      const stdoutExact = String(brokerRun.stdout || "").trim() === "ok";
-      const textHasExactOk =
-        stdoutExact ||
-        /(^|\n)ok(\n|$)/.test(String(brokerRun.stdout || "").trim());
-
-      if (textHasExactOk && auditOk) {
-        broker_tool = "passed";
-      } else if (/ACTION_DENIED|COMMAND_POLICY/i.test(brokerText)) {
-        broker_tool = "failed";
-      } else {
-        // Claude skipped MCP, wrong output, or no fresh audit → not verified.
+      broker_tool = decideBrokerToolFromEvidence({
+        stdout: brokerRun.stdout || "",
+        freshAudit,
+        auditOk,
+      });
+      if (broker_tool !== "passed" && /ACTION_DENIED|COMMAND_POLICY/i.test(brokerText)) {
         broker_tool = "failed";
       }
     }

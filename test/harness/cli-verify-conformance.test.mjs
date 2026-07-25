@@ -6,41 +6,47 @@ import assert from "node:assert/strict";
  * Exercises the decision logic used by liveClaudeVerifyRunner without paid calls.
  */
 test("Claude response without MCP call cannot set broker_tool=passed", async () => {
-  // Simulate the gate: exact ok stdout + fresh audit required.
-  function decideBrokerTool({ stdout, freshAudit, auditOk, preflightPassed }) {
-    // Preflight must never promote.
-    void preflightPassed;
-    const textHasExactOk =
-      String(stdout || "").trim() === "ok" ||
-      /(^|\n)ok(\n|$)/.test(String(stdout || "").trim());
-    if (textHasExactOk && freshAudit && auditOk) return "passed";
-    return "failed";
-  }
+  const { decideBrokerToolFromEvidence } = await import(
+    "../../src/harness/cli-verify.mjs"
+  );
 
   assert.equal(
-    decideBrokerTool({
+    decideBrokerToolFromEvidence({
       stdout: "I cannot call that tool",
       freshAudit: false,
       auditOk: false,
-      preflightPassed: true,
     }),
-    "failed"
+    "unverified"
   );
   assert.equal(
-    decideBrokerTool({
+    decideBrokerToolFromEvidence({
       stdout: "ok",
       freshAudit: false,
       auditOk: false,
-      preflightPassed: true,
     }),
-    "failed"
+    "unverified"
   );
   assert.equal(
-    decideBrokerTool({
+    decideBrokerToolFromEvidence({
+      stdout: "explanation\nok",
+      freshAudit: true,
+      auditOk: true,
+    }),
+    "unverified"
+  );
+  assert.equal(
+    decideBrokerToolFromEvidence({
+      stdout: "ok\nextra",
+      freshAudit: true,
+      auditOk: true,
+    }),
+    "unverified"
+  );
+  assert.equal(
+    decideBrokerToolFromEvidence({
       stdout: "ok",
       freshAudit: true,
       auditOk: true,
-      preflightPassed: false,
     }),
     "passed"
   );

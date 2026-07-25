@@ -100,9 +100,47 @@ export async function executeTransition(plan, deps = {}) {
       await persistState?.({ runId: plan.runId, checkpoint, status: "handing_off" });
     }
 
+    // Refresh usage BEFORE releasing the lease or stopping the old worker.
+    // Stale usage must not drive successor selection; a failed refresh is
+    // retryable and must leave the incumbent lease/TMUX intact.
+    const refresh = await refreshUsage?.();
+    if (refresh && refresh.ok === false) {
+      const error =
+        refresh.error ||
+        refresh.reason ||
+        "USAGE_REFRESH_FAILED: refresh returned ok:false";
+      await persistState?.({
+        runId: plan.runId,
+        status: plan.state === "handoff_preparing" ? "handoff_preparing" : "handing_off",
+        failure: {
+          type: "usage_refresh_failed",
+          retryable: true,
+          error: String(error),
+          at: plan.now || new Date().toISOString(),
+        },
+        supervision_failure: {
+          type: "usage_refresh_failed",
+          retryable: true,
+          error: String(error),
+          at: plan.now || new Date().toISOString(),
+        },
+        last_error: String(error),
+      });
+      await appendEvent?.(
+        { action, error: String(error), reason: "usage_refresh_failed", retryable: true },
+        ctx
+      );
+      return {
+        ok: false,
+        action,
+        reason: "usage_refresh_failed",
+        error: String(error),
+        retryable: true,
+      };
+    }
+
     await releaseLease?.(plan.release);
     await stopTmux?.(plan.tmuxSession);
-    await refreshUsage?.();
     const chainResult = (await resolveChain?.(ctx)) || { chain: [] };
     let chain = [...(chainResult.chain || [])];
     if (plan.excludeCandidate) {
