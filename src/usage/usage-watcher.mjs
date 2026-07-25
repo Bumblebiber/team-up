@@ -195,6 +195,15 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
   return { counts, state, collect: toCollect, successful };
 }
 
+/**
+ * After a successful usage collection, supervise specialist runs.
+ * Caps collection interval at 60s while supervised runs exist (caller).
+ */
+export async function afterUsageCollectSupervise({ now = new Date().toISOString(), deps } = {}) {
+  const { superviseActiveRuns } = await import("../supervisor/controller.mjs");
+  return superviseActiveRuns({ now, deps });
+}
+
 async function main() {
   const once = process.argv.includes("--once");
   const dryRun = process.argv.includes("--dry-run");

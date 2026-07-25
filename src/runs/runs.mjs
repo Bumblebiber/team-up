@@ -648,7 +648,69 @@ function cmdResume(args) {
       console.log(parts.join(" "));
     }
   }
+  // Reattach due capacity waits without spawning workers for future waits.
+  import("../supervisor/waits.mjs").then(({ listDueWaits }) => {
+    const due = listDueWaits({ now: new Date().toISOString() });
+    for (const id of due) console.log(`due-wait: ${id}`);
+  }).catch(() => {});
   console.log(`log: ${report.logFile}`);
+}
+
+function cmdCapacity(args) {
+  const runId = args[0];
+  if (!runId) {
+    console.error("usage: runs.mjs capacity <runId>");
+    process.exit(1);
+  }
+  const state = loadState(runId);
+  console.log(JSON.stringify(state?.capacity || null, null, 2));
+}
+
+async function cmdWaitCapacity(args) {
+  const runId = args[0];
+  const reset = argValue(args, "--next-reset-at") || argValue(args, "--at");
+  if (!runId || !reset) {
+    console.error("usage: runs.mjs wait-capacity <runId> --next-reset-at <iso>");
+    process.exit(1);
+  }
+  const { approveCapacityWait } = await import("../supervisor/waits.mjs");
+  const cap = approveCapacityWait({ runId, nextResetAt: reset });
+  console.log(JSON.stringify(cap, null, 2));
+}
+
+async function cmdCancelWait(args) {
+  const runId = args[0];
+  const reason = argValue(args, "--reason") || "cancelled";
+  if (!runId) {
+    console.error("usage: runs.mjs cancel-wait <runId> --reason <text>");
+    process.exit(1);
+  }
+  const { cancelCapacityWait } = await import("../supervisor/waits.mjs");
+  const state = cancelCapacityWait({ runId, reason });
+  console.log(JSON.stringify({ status: state.status, capacity: state.capacity }, null, 2));
+}
+
+async function cmdRecheckCapacity(args) {
+  const runId = args[0];
+  if (!runId) {
+    console.error("usage: runs.mjs recheck-capacity <runId>");
+    process.exit(1);
+  }
+  const state = loadState(runId);
+  console.log(JSON.stringify(state?.capacity || null, null, 2));
+}
+
+function cmdCancel(args) {
+  const runId = args[0];
+  if (!runId) {
+    console.error("usage: runs.mjs cancel <runId>");
+    process.exit(1);
+  }
+  setStatus(runId, "cancelled");
+  const state = loadState(runId);
+  state.status = "cancelled";
+  saveState(state);
+  console.log(`cancelled ${runId}`);
 }
 
 const HANDLERS = {
@@ -658,6 +720,17 @@ const HANDLERS = {
   "set-status": cmdSetStatus,
   wait: cmdWait,
   resume: cmdResume,
+  capacity: cmdCapacity,
+  "wait-capacity": (args) => {
+    cmdWaitCapacity(args);
+  },
+  "cancel-wait": (args) => {
+    cmdCancelWait(args);
+  },
+  "recheck-capacity": (args) => {
+    cmdRecheckCapacity(args);
+  },
+  cancel: cmdCancel,
 };
 
 function main() {
