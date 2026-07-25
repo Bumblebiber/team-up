@@ -166,6 +166,10 @@ export function classifyMailbox(runId) {
   const state = loadState(runId);
   const typed = state?.result_protocol === "RESULT.json";
 
+  if (statusLine === "cancelled") {
+    return { status: "cancelled" };
+  }
+
   if (statusLine === "failed") {
     return {
       status: "failed",
@@ -249,6 +253,37 @@ export function classifyMailbox(runId) {
   return { status: "watching" };
 }
 
+const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
+
+/**
+ * Purely reconcile durable STATE with a mailbox observation.
+ * Terminal STATE is irreversible here; otherwise terminal mailbox outcomes
+ * and pending questions override stale active STATE. A watching mailbox does
+ * not erase richer controller states such as waiting_capacity.
+ */
+export function resolveRunState(state, classified = { status: "watching" }) {
+  if (!state) throw new Error("state required");
+  const currentStatus = state.status;
+  let nextStatus = currentStatus;
+  let effectiveClassified = classified;
+
+  if (TERMINAL_RUN_STATUSES.has(currentStatus)) {
+    if (classified?.status !== currentStatus) {
+      effectiveClassified = { status: currentStatus };
+    }
+  } else if (TERMINAL_RUN_STATUSES.has(classified?.status)) {
+    nextStatus = classified.status;
+  } else if (classified?.status === "question") {
+    nextStatus = "waiting_human";
+  }
+
+  return {
+    state: { ...state, status: nextStatus },
+    classified: effectiveClassified,
+    changed: nextStatus !== currentStatus,
+  };
+}
+
 export function setStatus(runId, status) {
   const state = loadState(runId);
   if (!state) throw new Error(`unknown run ${runId}`);
@@ -295,9 +330,30 @@ function defaultTmuxExists(name) {
 }
 
 /** Returns { actions: [...] } without spawning. */
-export function buildResumePlan(state, { tmuxExists = defaultTmuxExists } = {}) {
-  if (["done", "failed", "cancelled"].includes(state.status)) {
+export function buildResumePlan(state, {
+  tmuxExists = defaultTmuxExists,
+  now = new Date(),
+} = {}) {
+  if (TERMINAL_RUN_STATUSES.has(state.status)) {
     return { actions: [] };
+  }
+  if (state.status === "waiting_decision") {
+    return { actions: [] };
+  }
+  if (state.status === "waiting_capacity") {
+    const resumeAtMs = Date.parse(state.capacity?.resume_not_before || "");
+    const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+    const due =
+      state.capacity?.auto_resume === true &&
+      state.capacity?.wait_cancelled !== true &&
+      Number.isFinite(resumeAtMs) &&
+      Number.isFinite(nowMs) &&
+      nowMs >= resumeAtMs;
+    return {
+      actions: due
+        ? [{ kind: "resume_capacity_supervision", runId: state.runId }]
+        : [],
+    };
   }
   const actions = [];
   const injectWorker = INJECT.worker;
@@ -306,9 +362,7 @@ export function buildResumePlan(state, { tmuxExists = defaultTmuxExists } = {}) 
 
   const crashSpawnDisabled =
     state.recovery?.crash_spawn === false ||
-    state.capacity?.wait_cancelled === true ||
-    state.status === "waiting_decision" ||
-    state.status === "waiting_capacity";
+    state.capacity?.wait_cancelled === true;
 
   if (
     !crashSpawnDisabled &&
@@ -525,13 +579,22 @@ export function resumeAll({
   const report = { at: now.toISOString(), runs: [] };
   try {
     for (const state of listActiveStates()) {
-      const plan = buildResumePlan(state, { tmuxExists });
-      report.runs.push({ runId: state.runId, status: state.status, actions: plan.actions });
+      const resolved = resolveRunState(state, classifyMailbox(state.runId));
+      const effectiveState = resolved.state;
+      if (!dryRun && resolved.changed) saveState(effectiveState);
+      const plan = buildResumePlan(effectiveState, { tmuxExists, now });
+      report.runs.push({
+        runId: effectiveState.runId,
+        status: effectiveState.status,
+        actions: plan.actions,
+      });
       if (dryRun) continue;
       for (const action of plan.actions) {
-        execute(action, state);
+        execute(action, effectiveState);
       }
-      atomicWriteText(path.join(mailboxDir(state.runId), "REATTACH_WATCHER"), "1\n");
+      if (plan.actions.some((action) => action.kind === "flag_reattach_watcher")) {
+        atomicWriteText(path.join(mailboxDir(effectiveState.runId), "REATTACH_WATCHER"), "1\n");
+      }
     }
   } finally {
     try {
@@ -548,10 +611,20 @@ export function resumeAll({
 }
 
 export function waitMailbox(runId, { ceilingSec = 3600 } = {}) {
+  let resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
+  if (resolved.changed) saveState(resolved.state);
+  if (
+    TERMINAL_RUN_STATUSES.has(resolved.state.status) ||
+    ["done", "failed", "cancelled", "question"].includes(resolved.classified?.status)
+  ) {
+    return { waitExit: 0, classified: resolved.classified };
+  }
+
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
   const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
-  const classified = classifyMailbox(runId);
-  return { waitExit: r.status ?? 1, classified };
+  resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
+  if (resolved.changed) saveState(resolved.state);
+  return { waitExit: r.status ?? 1, classified: resolved.classified };
 }
 
 function argValue(args, flag) {
