@@ -23,7 +23,9 @@ test("parseCodexStatus derives used from percent left", () => {
   const text = fs.readFileSync(path.join(FIX, "codex-status.txt"), "utf8");
   const w = parseCodexStatus(text);
   assert.equal(w["codex:weekly"].used, 1);
-  assert.match(w["codex:weekly"].resets_at, /23 Jul/);
+  assert.match(w["codex:weekly"].resets_at_raw, /23 Jul/);
+  assert.match(w["codex:weekly"].resets_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(w["codex:weekly"].reset_confidence, "provider");
 });
 
 test("parseCursorUsage reads included/auto/api", () => {

@@ -1,4 +1,5 @@
 // parse-claude-usage.mjs — pure parser for claude /usage output.
+import { normalizeWindowRecord } from "../usage/usage-windows.mjs";
 
 const LINE_RE = /^Current\s+(.+?):\s*(\d+)%\s+used(?:\s*·\s*resets\s+(.+?))?\s*$/gim;
 
@@ -16,7 +17,6 @@ export function labelToWindowSlug(label) {
 /**
  * @param {string} text
  * @param {{ now?: string, source?: string }} [opts]
- * @returns {Record<string, { used: number, resets_at: string|null, updated: string, source: string }>}
  */
 export function parseClaudeUsage(text, opts = {}) {
   const updated = opts.now || new Date().toISOString();
@@ -25,12 +25,18 @@ export function parseClaudeUsage(text, opts = {}) {
   for (const m of text.matchAll(LINE_RE)) {
     const slug = labelToWindowSlug(m[1]);
     const key = `claude:${slug}`;
-    windows[key] = {
-      used: Number(m[2]) / 100,
-      resets_at: m[3]?.trim() || null,
-      updated,
-      source,
-    };
+    const raw = m[3]?.trim() || null;
+    windows[key] = normalizeWindowRecord(
+      key,
+      {
+        used: Number(m[2]) / 100,
+        resets_at_raw: raw,
+        resets_at: raw,
+        source,
+        updated_at: updated,
+      },
+      { now: updated }
+    );
   }
   return windows;
 }

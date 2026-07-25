@@ -40,13 +40,115 @@ function parseCodexResetUtc(str, now) {
   return ts;
 }
 
+function zonedWallTimeToUtc({ year, month, day, hour, minute }, timeZone) {
+  // Find UTC ms whose wall clock in `timeZone` matches the desired local time.
+  let guess = Date.UTC(year, month, day, hour, minute, 0);
+  for (let i = 0; i < 4; i++) {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      })
+        .formatToParts(new Date(guess))
+        .map((p) => [p.type, p.value])
+    );
+    const asIfUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second || 0)
+    );
+    const desired = Date.UTC(year, month, day, hour, minute, 0);
+    const delta = desired - asIfUtc;
+    if (delta === 0) return guess;
+    guess += delta;
+  }
+  return guess;
+}
+
+/** Claude-style: "Jul 25, 8:10pm (Europe/Berlin)" → epoch ms. */
+function parseClaudeResetLocal(str, now) {
+  const m =
+    /^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*(?:\(([^)]+)\))?$/i.exec(
+      str.trim()
+    );
+  if (!m) return null;
+  const month = MONTH[m[1].toLowerCase().slice(0, 3)];
+  if (month === undefined) return null;
+  let hour = Number(m[3]) % 12;
+  if (m[5].toLowerCase() === "pm") hour += 12;
+  const minute = Number(m[4]);
+  const day = Number(m[2]);
+  const timeZone = (m[6] || "UTC").trim();
+  const baseYear = new Date(now).getUTCFullYear();
+  for (const year of [baseYear, baseYear + 1, baseYear - 1]) {
+    try {
+      const ts = zonedWallTimeToUtc({ year, month, day, hour, minute }, timeZone);
+      if (Number.isFinite(ts) && ts >= now - 60_000) return ts;
+      if (Number.isFinite(ts) && year === baseYear + 1) return ts;
+    } catch {
+      // invalid IANA zone → fall through
+    }
+  }
+  let ts = Date.UTC(baseYear, month, day, hour, minute, 0);
+  if (ts < now) ts = Date.UTC(baseYear + 1, month, day, hour, minute, 0);
+  return ts;
+}
+
 /** Best-effort parse of CLI /usage reset strings. null = unknown (no timed expiry). */
 export function parseResetAt(str, now = Date.now()) {
   if (!str || typeof str !== "string") return null;
   const trimmed = str.trim();
   const direct = Date.parse(trimmed);
   if (Number.isFinite(direct)) return direct;
-  return parseCodexResetUtc(trimmed, now);
+  return parseClaudeResetLocal(trimmed, now) ?? parseCodexResetUtc(trimmed, now);
+}
+
+/** Convert raw reset string to ISO-8601 or null. Inject `now` for year rollover tests. */
+export function normalizeResetAt(raw, now = Date.now()) {
+  const ms = parseResetAt(raw, typeof now === "string" ? Date.parse(now) : now);
+  return ms == null ? null : new Date(ms).toISOString();
+}
+
+/**
+ * Normalize a collector window record to the shared reset contract.
+ * Never invents a reset from staleness fallback.
+ */
+export function normalizeWindowRecord(windowKey, partial, opts = {}) {
+  const nowIso = opts.now || new Date().toISOString();
+  const nowMs = Date.parse(nowIso);
+  const raw =
+    partial.resets_at_raw != null
+      ? partial.resets_at_raw
+      : partial.resets_at && !/^\d{4}-\d{2}-\d{2}T/.test(String(partial.resets_at))
+        ? partial.resets_at
+        : partial.resets_at_raw ?? null;
+  let iso = null;
+  if (partial.resets_at && /^\d{4}-\d{2}-\d{2}T/.test(String(partial.resets_at))) {
+    iso = partial.resets_at;
+  } else if (raw) {
+    iso = normalizeResetAt(raw, nowMs);
+  }
+  const confidence = partial.reset_confidence ?? (iso ? "provider" : "unknown");
+  const updatedAt = partial.updated_at || partial.updated || nowIso;
+  return {
+    window: windowKey.includes(":") ? windowKey.split(":").slice(1).join(":") : windowKey,
+    used: partial.used,
+    resets_at: iso,
+    resets_at_raw: raw,
+    reset_confidence: confidence,
+    updated_at: updatedAt,
+    source: partial.source || "unknown",
+    updated: updatedAt,
+  };
 }
 
 /** Burst-type windows (session/5h) reset in hours, not days — waiting one out
@@ -75,11 +177,15 @@ export function resolveHandoffAt(wkey, limits) {
  * cannot stick forever.
  */
 export function effectiveResetAt(w, wkey, limits = 0.95, now = Date.now()) {
-  const parsed = parseResetAt(w?.resets_at, now);
+  if (w?.resets_at && /^\d{4}-\d{2}-\d{2}T/.test(String(w.resets_at))) {
+    const isoMs = Date.parse(w.resets_at);
+    if (Number.isFinite(isoMs)) return isoMs;
+  }
+  const parsed = parseResetAt(w?.resets_at_raw || w?.resets_at, now);
   if (parsed !== null) return parsed;
   const handoffAt = resolveHandoffAt(wkey, limits);
   if (typeof w?.used !== "number" || w.used < handoffAt) return null;
-  const updated = Date.parse(w?.updated || "");
+  const updated = Date.parse(w?.updated_at || w?.updated || "");
   if (!Number.isFinite(updated)) return null;
   return updated + windowMaxAgeMs(wkey);
 }
