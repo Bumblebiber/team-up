@@ -11,8 +11,9 @@ import { normalizeRequest } from "../../src/specialists/request.mjs";
 import { materialize, exists } from "../../src/sandbox/materialize.mjs";
 import { writeTypedResult, createRun, runDir } from "../../src/runs/runs.mjs";
 import { sha256Dir } from "../../src/specialists/manifest.mjs";
+import { findSpecialistRepos } from "../helpers/specialist-repos.mjs";
 
-const REPOS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../");
+const REPOS = findSpecialistRepos(path.dirname(fileURLToPath(import.meta.url)));
 const HANNES = path.join(REPOS, "team-up-with-hannes");
 const HUGO = path.join(REPOS, "team-up-with-hugo");
 

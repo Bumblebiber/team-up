@@ -4,8 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateManifest } from "../../src/specialists/manifest.mjs";
+import { findSpecialistRepos } from "../helpers/specialist-repos.mjs";
 
-const repos = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../");
+const repos = findSpecialistRepos(path.dirname(fileURLToPath(import.meta.url)));
 const hannesPath = path.join(repos, "team-up-with-hannes", "specialist.json");
 const hugoPath = path.join(repos, "team-up-with-hugo", "specialist.json");
 
