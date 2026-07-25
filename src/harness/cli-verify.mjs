@@ -89,20 +89,29 @@ export function parseClaudeStreamEvents(text) {
     const pushTool = (block, extra = {}) => {
       if (!block || typeof block !== "object") return;
       if (block.type === "tool_use" || block.name) {
+        const err =
+          block.error ??
+          (typeof block.message === "string" ? block.message : undefined);
         events.push({
           type: "tool_use",
           name: block.name || block.tool_name,
           input: block.input,
           id: block.id,
+          is_error: block.is_error === true || block.isError === true,
+          ...(err != null ? { error: err } : {}),
           ...extra,
         });
       }
       if (block.type === "tool_result") {
+        const err =
+          block.error ??
+          (typeof block.content === "string" ? block.content : undefined);
         events.push({
           type: "tool_result",
           tool_use_id: block.tool_use_id || block.toolUseId,
           content: block.content,
           is_error: block.is_error === true || block.isError === true,
+          ...(err != null ? { error: err } : {}),
           ...extra,
         });
       }

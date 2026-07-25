@@ -551,6 +551,7 @@ export function buildProductionSuperviseDeps({
         saveState(st);
       }
     },
+    loadState: (runId) => loadState(runId),
     persistState: async (patch = {}) => {
       if (!patch.runId) return;
       const st = loadState(patch.runId);

@@ -1,5 +1,12 @@
 <!-- o9k-provenance
 who: cursor:grok-4.5
+when: 2026-07-25T17:53:19.402Z
+why: Correct authoritative policy snapshot path; clarify run/policy copy is non-authoritative
+trigger: Final focused runtime corrections — item 3
+host: cursor
+-->
+<!-- o9k-provenance
+who: cursor:grok-4.5
 when: 2026-07-25T17:40:00.217Z
 why: Clarify command restriction protects accidental mutation not hostile same-UID tampering
 trigger: fourth runtime review — accepted trust boundary
@@ -16,9 +23,11 @@ host: cursor
 
 Project owners map specialist action IDs to fixed argv arrays in
 `.team-up/commands.json`. Approvals bind the policy checksum. At launch,
-`team-up` snapshots the policy into `<run>/policy/commands.json` (mode
-`0444`) and exposes one MCP tool per action via
-`bin/team-up-command-broker.mjs`.
+`team-up` writes the **authoritative** approved snapshot under
+`~/.team-up/policy-snapshots/<runId>/` (mode `0444`) and exposes one MCP
+tool per action via `bin/team-up-command-broker.mjs`. A copy may also appear
+under `<run>/policy/` for humans — that mirror is **non-authoritative**;
+checksum checks and broker execution always read the home snapshot.
 
 ## Contract
 

@@ -69,6 +69,7 @@ export async function executeTransition(plan, deps = {}) {
     appendEvent,
     notifyMailbox,
     persistState,
+    loadState,
     maxStartRetries = 2,
   } = deps;
 
@@ -212,12 +213,31 @@ export async function executeTransition(plan, deps = {}) {
       return { ok: false, action, reason: "start_worker_failed", error: String(lastErr.message || lastErr) };
     }
 
-    await persistState?.({
+    // startWorker already persisted live TMUX/session/sandbox. Never replace
+    // worker with next.runtime (no tmux) — reload and merge identity only.
+    const runtime = next.runtime || {};
+    const live =
+      typeof loadState === "function" ? loadState(plan.runId || ctx.runId) : null;
+    const patch = {
       runId: plan.runId,
       status: "watching",
       current_attempt_id: next.id,
-      worker: next.runtime,
-    });
+    };
+    if (live) {
+      patch.worker = {
+        cli: runtime.cli,
+        model: runtime.model,
+        ...(runtime.effort !== undefined ? { effort: runtime.effort } : {}),
+        ...(runtime.limit_windows ? { limit_windows: runtime.limit_windows } : {}),
+        ...(live.worker || {}),
+      };
+      patch.runtime = {
+        ...runtime,
+        ...(live.runtime || {}),
+      };
+      if (live.sandbox) patch.sandbox = live.sandbox;
+    }
+    await persistState?.(patch);
     await appendEvent?.({ action, attempt: next?.id }, ctx);
     await notifyMailbox?.({ status: "watching" }, ctx);
     return { ok: true, action, attempt: next };

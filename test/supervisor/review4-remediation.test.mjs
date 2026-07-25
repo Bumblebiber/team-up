@@ -402,6 +402,167 @@ test("second request_handoff clears prior ready until new matching acknowledgeme
   });
 });
 
+test("structured Bash rejection with is_error/error classifies denied; prose stays unverified", () => {
+  const stream = [
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_bash1",
+            name: "Bash",
+            input: { command: "echo hi" },
+            is_error: true,
+            error: "Bash tool is disallowed by policy",
+          },
+        ],
+      },
+    }),
+  ].join("\n");
+  const events = parseClaudeStreamEvents(stream);
+  assert.ok(
+    events.some((e) => e.type === "tool_use" && e.name === "Bash" && e.is_error === true),
+    `expected is_error preserved on tool_use, got ${JSON.stringify(events)}`
+  );
+  assert.ok(
+    events.some((e) => e.error && /disallowed/i.test(String(e.error))),
+    `expected error preserved on tool_use, got ${JSON.stringify(events)}`
+  );
+  assert.equal(evaluateNativeShellFromStream({ events, text: stream }), "denied");
+
+  const prose =
+    "Bash is unavailable or denied by policy. NATIVE_SHELL_DENIED. I will not invent tools.";
+  assert.equal(
+    evaluateNativeShellFromStream({
+      events: parseClaudeStreamEvents(prose),
+      text: prose,
+    }),
+    "unverified"
+  );
+});
+
+test("complete_handoff preserves startWorker tmux new-live for next handoff", async () => {
+  await withTempEnv(async () => {
+    const run = createRun({
+      cwd: "/tmp",
+      role: "specialist:r4",
+      parent: { cli: "team-up", attach: "manual" },
+      worker: { cli: "claude", model: "m1" },
+      prompt: "hi",
+    });
+    const a1 = createAttempt({
+      runId: run.runId,
+      runtime: { cli: "claude", model: "m1" },
+    });
+    acquireAttemptLease({
+      runId: run.runId,
+      attemptId: a1.id,
+      owner: "tmux:old-live",
+    });
+    const st = loadState(run.runId);
+    st.current_attempt_id = a1.id;
+    st.worker = { tmux: "old-live", cli: "claude", model: "m1" };
+    st.status = "handing_off";
+    saveState(st);
+
+    const stopped = [];
+    const deps = buildProductionSuperviseDeps({
+      now: "2026-07-25T18:00:00Z",
+      refreshUsageImpl: async () => ({ ok: true, results: [] }),
+      stopTmux: async (session) => {
+        stopped.push(session);
+      },
+      startWorker: async (attempt, ctx = {}) => {
+        const runId = ctx.runId || run.runId;
+        const live = loadState(runId);
+        live.worker = {
+          tmux: "new-live",
+          cli: attempt.runtime?.cli || "claude",
+          model: attempt.runtime?.model || "m2",
+          limit_windows: attempt.runtime?.limit_windows || ["claude:7d"],
+        };
+        live.runtime = { ...(attempt.runtime || {}), ...(live.runtime || {}) };
+        live.sandbox = { mode: "none", enforced: false };
+        saveState(live);
+      },
+    });
+    deps.validateCheckpoint = () => ({ ok: true });
+    deps.loadState = (runId) => loadState(runId);
+    deps.resolveChain = async () => ({
+      chain: [{ cli: "claude", model: "m2", limit_windows: ["claude:7d"] }],
+      capacity_report: { available: true, blocked_candidates: [] },
+    });
+
+    const ck = (attemptId) => ({
+      schema: "team-up.checkpoint/v1",
+      status: "complete",
+      run_id: run.runId,
+      attempt_id: attemptId,
+      summary: "ok",
+      completed: [],
+      open: [],
+      artifacts: [],
+      verification_commands: [],
+      risks: [],
+      questions: [],
+      repository: { head: null, dirty: null, diff_stat: null },
+      created_at: "2026-07-25T18:00:00Z",
+    });
+
+    const result = await executeTransition(
+      {
+        action: "complete_handoff",
+        runId: run.runId,
+        now: "2026-07-25T18:00:00Z",
+        release: { runId: run.runId, attemptId: a1.id },
+        tmuxSession: "old-live",
+        checkpoint: ck(a1.id),
+      },
+      deps
+    );
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const after = loadState(run.runId);
+    assert.equal(after.worker?.tmux, "new-live");
+    assert.equal(after.status, "watching");
+    assert.ok(after.current_attempt_id);
+    assert.notEqual(after.current_attempt_id, a1.id);
+
+    // Next handoff must target the preserved successor session, not old-live.
+    const a2 = after.current_attempt_id;
+    deps.resolveChain = async () => ({
+      chain: [{ cli: "claude", model: "m3", limit_windows: ["claude:5h"] }],
+      capacity_report: { available: true, blocked_candidates: [] },
+    });
+    deps.startWorker = async (attempt, ctx = {}) => {
+      const runId = ctx.runId || run.runId;
+      const live = loadState(runId);
+      live.worker = {
+        tmux: "third-live",
+        cli: attempt.runtime?.cli || "claude",
+        model: attempt.runtime?.model || "m3",
+      };
+      saveState(live);
+    };
+    stopped.length = 0;
+    const result2 = await executeTransition(
+      {
+        action: "complete_handoff",
+        runId: run.runId,
+        now: "2026-07-25T18:05:00Z",
+        release: { runId: run.runId, attemptId: a2 },
+        tmuxSession: after.worker.tmux,
+        excludeCandidate: { cli: "claude", model: "m2" },
+        checkpoint: ck(a2),
+      },
+      deps
+    );
+    assert.equal(result2.ok, true, JSON.stringify(result2));
+    assert.deepEqual(stopped, ["new-live"]);
+    assert.equal(loadState(run.runId).worker?.tmux, "third-live");
+  });
+});
+
 test("due-wait resume retains startWorker tmux/sandbox/descriptor/runtime/windows", async () => {
   await withTempEnv(async () => {
     const run = createRun({

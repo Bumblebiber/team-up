@@ -22,6 +22,38 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const RUNS_BIN = path.join(ROOT, "src/runs/runs.mjs");
 const USAGE_BIN = path.join(ROOT, "src/usage/usage-watcher.mjs");
 
+/** Stable fake Claude for E2E — version + /usage only; launch path never needs real CLI. */
+const FAKE_CLAUDE_VERSION = "2.1.220";
+
+function writeFakeClaude(binDir) {
+  fs.mkdirSync(binDir, { recursive: true });
+  const script = `#!/usr/bin/env bash
+set -euo pipefail
+# Deterministic local collector for production-entrypoint E2E.
+if [[ "\${1:-}" == "--version" ]]; then
+  printf '%s (Claude Code)\\n' ${JSON.stringify(FAKE_CLAUDE_VERSION)}
+  exit 0
+fi
+# Fast subscription usage path: claude -p /usage
+if [[ "\${1:-}" == "-p" && "\${2:-}" == "/usage" ]]; then
+  cat <<'USAGE'
+You are currently using your subscription to power your Claude Code usage
+
+Current session: 10% used · resets Jul 25, 11:00pm (Europe/Berlin)
+Current week (all models): 20% used · resets Jul 28, 10am (Europe/Berlin)
+Current week (Fable): 5% used · resets Jul 28, 10am (Europe/Berlin)
+Current 5h: 15% used · resets Jul 25, 11:30pm (Europe/Berlin)
+USAGE
+  exit 0
+fi
+# Launch / print path — succeed quietly (tmux fake never waits on output).
+exit 0
+`;
+  const claudePath = path.join(binDir, "claude");
+  fs.writeFileSync(claudePath, script, { mode: 0o755 });
+  return claudePath;
+}
+
 function writeFakeTmux(binDir, logPath) {
   fs.mkdirSync(binDir, { recursive: true });
   const sessionsPath = `${logPath}.sessions`;
@@ -110,6 +142,7 @@ async function withEntrypointEnv(fn) {
   const binDir = path.join(home, "bin");
   const tmuxLog = path.join(home, "tmux.log");
   writeFakeTmux(binDir, tmuxLog);
+  writeFakeClaude(binDir);
 
   const prev = { ...process.env };
   const env = {
@@ -146,7 +179,7 @@ async function withEntrypointEnv(fn) {
       clis: {
         claude: {
           cmd: ["claude", "--print", "{prompt}"],
-          sandbox: { runtime_paths: ["/usr/bin", process.execPath] },
+          sandbox: { runtime_paths: ["/usr/bin", process.execPath, binDir] },
         },
       },
       models: {
@@ -171,6 +204,8 @@ async function withEntrypointEnv(fn) {
       },
       limits: { handoff_at: 0.95 },
       specialist_handoff: { prepare_at: 0.9, force_at: 0.95 },
+      // Exact-tier collect only needs claude for this fixture.
+      subscriptions: ["claude"],
     })
   );
   fs.writeFileSync(
@@ -184,16 +219,8 @@ async function withEntrypointEnv(fn) {
     })
   );
 
-  // Seed harness verification for the live Claude version.
-  let cliVersion = "2.1.220";
-  try {
-    const { execFileSync } = await import("node:child_process");
-    const out = execFileSync("claude", ["--version"], { encoding: "utf8" });
-    const m = String(out).match(/\b(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.]+)?)\b/);
-    if (m) cliVersion = m[1];
-  } catch {
-    // keep default
-  }
+  // Seed harness verification for the fake Claude on PATH (deterministic).
+  const cliVersion = FAKE_CLAUDE_VERSION;
   const verDir = path.join(home, "harness-verification", "claude");
   fs.mkdirSync(verDir, { recursive: true });
   fs.writeFileSync(
