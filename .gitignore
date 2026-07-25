@@ -1,2 +1,5 @@
 .worktrees/
 node_modules/
+
+# harness verify scratch under fixtures
+test/fixtures/**/.team-up-verify-run-*/

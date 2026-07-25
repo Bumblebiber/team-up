@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync, execFileSync } from "node:child_process";
 import { getAdapter } from "./registry.mjs";
@@ -22,7 +23,7 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
     };
   }
 
-  const runDir = fs.mkdtempSync(path.join(fixtureProject, ".team-up-verify-run-"));
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-run-"));
   const policy = {
     schema_version: 1,
     commands: {
