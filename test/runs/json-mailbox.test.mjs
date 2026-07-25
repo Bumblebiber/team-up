@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRun, classifyMailbox, setStatus, runDir, atomicWriteText } from "../../src/runs/runs.mjs";
-import { atomicWriteJson } from "../../src/json-store.mjs";
+import { createRun, classifyMailbox, setStatus, runDir } from "../../src/runs/runs.mjs";
+import { atomicWriteJson, atomicWriteText } from "../../src/json-store.mjs";
 
 function withTempRuns(fn) {
   return async () => {
@@ -20,12 +20,13 @@ function withTempRuns(fn) {
   };
 }
 
-test("RESULT.md alone with STATUS=done is not success", withTempRuns(async () => {
+test("typed RESULT.md alone with STATUS=done is not success", withTempRuns(async () => {
   const s = createRun({
     cwd: "/tmp/p", role: "specialist:x",
     parent: { cli: "team-up", attach: "manual" },
     worker: { cli: "codex" },
     prompt: "x",
+    result_protocol: "RESULT.json",
   });
   const mb = path.join(runDir(s.runId), "mailbox");
   atomicWriteText(path.join(mb, "RESULT.md"), "# ok\n");
@@ -35,12 +36,13 @@ test("RESULT.md alone with STATUS=done is not success", withTempRuns(async () =>
   assert.match(c.error, /RESULT\.json/);
 }));
 
-test("valid RESULT.json classifies done", withTempRuns(async () => {
+test("valid RESULT.json classifies done for typed runs", withTempRuns(async () => {
   const s = createRun({
     cwd: "/tmp/p", role: "specialist:x",
     parent: { cli: "team-up", attach: "manual" },
     worker: { cli: "codex" },
     prompt: "x",
+    result_protocol: "RESULT.json",
   });
   const mb = path.join(runDir(s.runId), "mailbox");
   atomicWriteJson(path.join(mb, "RESULT.json"), {

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { teamUpHome } from "../paths.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
-import { resolveInstalled, loadInstalledManifest } from "./store.mjs";
+import { resolveInstalled, loadInstalledManifest, verifyInstalledIntegrity } from "./store.mjs";
 
 function approvalsPath(env = process.env) {
   return path.join(teamUpHome(env), "approvals.json");
@@ -38,30 +38,45 @@ export async function approveSpecialist({ idAtVersion, project, env = process.en
   if (!id || !version) {
     return { ok: false, errors: ["expected <id>@<version>"] };
   }
-  const installed = resolveInstalled(id, { version, env });
-  if (!installed) {
-    // allow matching id with that version from index even if version field differs check
-    const any = resolveInstalled(id, { env });
-    if (!any || any.version !== version) {
-      return { ok: false, errors: [`not installed: ${id}@${version}`] };
-    }
+  // Prefer project pin; fall back to explicit version match
+  let entry = resolveInstalled(id, { version, project, env });
+  if (!entry) {
+    entry = resolveInstalled(id, { version, env });
   }
-  const entry = resolveInstalled(id, { env });
-  const { manifest } = loadInstalledManifest(id, env);
+  if (!entry || entry.version !== version) {
+    return { ok: false, errors: [`not installed: ${id}@${version}`] };
+  }
+
+  const loaded = loadInstalledManifest(id, {
+    project,
+    version: entry.version,
+    checksum: entry.checksum,
+    env,
+  });
+  if (!loaded) {
+    return { ok: false, errors: [`not installed: ${id}@${version}`] };
+  }
+
+  try {
+    verifyInstalledIntegrity(loaded, loaded.manifest);
+  } catch (e) {
+    return { ok: false, errors: [e.message], code: e.code || "PACKAGE_INTEGRITY_FAILED" };
+  }
+
   const key = approvalKey({
     project,
     id,
-    version,
-    checksum: entry.checksum,
-    permissions: manifest.permissions,
+    version: loaded.version,
+    checksum: loaded.checksum,
+    permissions: loaded.manifest.permissions,
   });
   const data = loadApprovals(env);
   data.approvals[key] = {
     project: path.resolve(project),
     id,
-    version,
-    checksum: entry.checksum,
-    permissions: manifest.permissions,
+    version: loaded.version,
+    checksum: loaded.checksum,
+    permissions: loaded.manifest.permissions,
     approved_at: new Date().toISOString(),
   };
   saveApprovals(data, env);

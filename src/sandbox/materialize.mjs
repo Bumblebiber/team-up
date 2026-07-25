@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { atomicWriteJson, atomicWriteText } from "../json-store.mjs";
+import { assertPathInsideRoot, assertSafeSpecialistSegment, assertSafeRelPath } from "../specialists/safe-id.mjs";
 
 function assertUnderRoot(absPath, root) {
   const resolved = fs.realpathSync(absPath);
@@ -18,9 +19,12 @@ export async function materialize({
   manifest,
   projectRoot,
   inputs = [],
+  filesystem,
 }) {
   fs.mkdirSync(destination, { recursive: true });
   const pkgRoot = fs.realpathSync(packageDir);
+  const destRoot = path.resolve(destination);
+  const fsMode = filesystem ?? manifest?.permissions?.filesystem;
 
   const copyFile = (rel) => {
     const from = path.join(pkgRoot, rel);
@@ -29,7 +33,8 @@ export async function materialize({
       throw new Error(`refusing symlink: ${from}`);
     }
     assertUnderRoot(from, pkgRoot);
-    const to = path.join(destination, rel);
+    assertPathInsideRoot(path.join(destRoot, rel), destRoot);
+    const to = path.join(destRoot, rel);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.copyFileSync(from, to);
     return true;
@@ -37,21 +42,39 @@ export async function materialize({
 
   copyFile("specialist.json");
   copyFile("instructions.md");
-  // Declared skills
   const skills = manifest?.capabilities?.skills || [];
   for (const skill of skills) {
+    assertSafeSpecialistSegment(String(skill), "skill id");
     copyFile(path.join("skills", `${skill}.md`));
   }
-  // Eval suite path if present
   if (manifest?.eval_suite) {
-    copyFile(manifest.eval_suite);
+    const rel = assertSafeRelPath(String(manifest.eval_suite), "eval_suite");
+    copyFile(rel);
   }
 
   atomicWriteJson(path.join(destination, "REQUEST.json"), request);
 
   const inputsDir = path.join(destination, "inputs");
   fs.mkdirSync(inputsDir, { recursive: true });
-  if (projectRoot) {
+
+  // filesystem:none — do not bind or traverse the project tree.
+  // Only explicitly provided absolute (or already-approved) input artifacts.
+  if (fsMode === "none") {
+    for (const item of inputs) {
+      if (!item?.path) continue;
+      if (!path.isAbsolute(item.path)) {
+        throw new Error("filesystem:none requires absolute input artifact paths");
+      }
+      const src = item.path;
+      if (fs.lstatSync(src).isSymbolicLink()) {
+        throw new Error(`refusing symlink input: ${src}`);
+      }
+      const base = path.basename(src);
+      const dest = path.join(inputsDir, base);
+      assertPathInsideRoot(dest, destRoot);
+      fs.copyFileSync(src, dest);
+    }
+  } else if (projectRoot) {
     const proj = fs.realpathSync(projectRoot);
     for (const item of inputs) {
       if (!item?.path) continue;

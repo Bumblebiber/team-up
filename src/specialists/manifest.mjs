@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { assertSafeSpecialistSegment } from "./safe-id.mjs";
+import { assertSafeSpecialistSegment, assertSafeRelPath, assertPathInsideRoot } from "./safe-id.mjs";
 
 export const REQUIRED = [
   "schema_version",
@@ -74,11 +74,12 @@ function walkKeys(value, pathParts, onKey) {
 }
 
 function isSafeRelPath(p) {
-  if (!p || typeof p !== "string") return false;
-  if (path.isAbsolute(p)) return false;
-  const norm = path.normalize(p);
-  if (norm.startsWith("..") || norm.includes(`..${path.sep}`)) return false;
-  return true;
+  try {
+    assertSafeRelPath(p, "path");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function validateManifest(manifest, { packageDir } = {}) {
@@ -151,6 +152,26 @@ export function validateManifest(manifest, { packageDir } = {}) {
         errors.push(`capabilities.${key} must be an array`);
       }
     }
+    if (Array.isArray(caps.skills)) {
+      for (const skill of caps.skills) {
+        try {
+          assertSafeSpecialistSegment(String(skill), "skill id");
+        } catch (e) {
+          errors.push(e.message);
+        }
+      }
+    }
+    for (const key of ["tools", "mcps", "frameworks"]) {
+      if (!Array.isArray(caps[key])) continue;
+      for (const item of caps[key]) {
+        try {
+          // Capability ids are single segments (may contain dots like filesystem.read)
+          assertSafeSpecialistSegment(String(item), `capabilities.${key} entry`);
+        } catch (e) {
+          errors.push(e.message);
+        }
+      }
+    }
   }
 
   const budget = manifest.budget;
@@ -165,8 +186,12 @@ export function validateManifest(manifest, { packageDir } = {}) {
     }
   }
 
-  if (manifest.eval_suite != null && !isSafeRelPath(manifest.eval_suite)) {
-    errors.push(`unsafe eval_suite path: ${manifest.eval_suite}`);
+  if (manifest.eval_suite != null) {
+    try {
+      assertSafeRelPath(String(manifest.eval_suite), "eval_suite");
+    } catch (e) {
+      errors.push(e.message);
+    }
   }
 
   if (manifest.output_contract && manifest.output_contract !== "team-up.result/v1") {
@@ -202,15 +227,31 @@ export function validateManifest(manifest, { packageDir } = {}) {
 }
 
 export function declaredPackageFiles(packageDir, manifest) {
+  const root = path.resolve(packageDir);
   const files = new Set(["specialist.json", "instructions.md"]);
-  if (fs.existsSync(path.join(packageDir, "package.json"))) files.add("package.json");
-  if (fs.existsSync(path.join(packageDir, "README.md"))) files.add("README.md");
+  if (fs.existsSync(path.join(root, "package.json"))) files.add("package.json");
+  if (fs.existsSync(path.join(root, "README.md"))) files.add("README.md");
   const skills = manifest?.capabilities?.skills || [];
   for (const skill of skills) {
-    files.add(path.join("skills", `${skill}.md`));
+    assertSafeSpecialistSegment(String(skill), "skill id");
+    const rel = path.join("skills", `${skill}.md`);
+    assertPathInsideRoot(path.join(root, rel), root);
+    files.add(rel);
   }
-  if (manifest?.eval_suite) files.add(manifest.eval_suite);
-  return [...files].filter((rel) => fs.existsSync(path.join(packageDir, rel)));
+  if (manifest?.eval_suite) {
+    const rel = assertSafeRelPath(String(manifest.eval_suite), "eval_suite");
+    assertPathInsideRoot(path.join(root, rel), root);
+    files.add(rel);
+  }
+  return [...files].filter((rel) => {
+    const abs = path.join(root, rel);
+    try {
+      assertPathInsideRoot(abs, root);
+    } catch {
+      return false;
+    }
+    return fs.existsSync(abs);
+  });
 }
 
 export function inspectPackageDir(packageDir) {

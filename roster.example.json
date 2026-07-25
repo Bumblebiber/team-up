@@ -8,11 +8,30 @@
     "api": { "kind": "credit", "enabled": true, "remaining": 100 }
   },
   "clis": {
-    "claude": { "cmd": ["claude", "--dangerously-skip-permissions", "--model", "{model}", "{prompt}"] },
-    "codex": { "cmd": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "{model}", "-c", "model_reasoning_effort={effort}", "{prompt}"] },
-    "cursor": { "cmd": ["cursor-agent", "--yolo", "--model", "{model}", "{prompt}"] },
-    "opencode": { "cmd": ["opencode", "--model", "{model}", "--prompt", "{prompt}"] },
-    "hermes": { "cmd": ["hermes", "chat", "-q", "{prompt}", "--model", "{model}"] }
+    "claude": {
+      "cmd": ["claude", "--dangerously-skip-permissions", "--model", "{model}", "{prompt}"],
+      "sandbox": { "mediated_commands": false, "token_budget_adapter": false }
+    },
+    "codex": {
+      "cmd": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "{model}", "-c", "model_reasoning_effort={effort}", "{prompt}"],
+      "sandbox": { "mediated_commands": false, "token_budget_adapter": false }
+    },
+    "cursor": {
+      "cmd": ["cursor-agent", "--yolo", "--model", "{model}", "{prompt}"],
+      "sandbox": {
+        "mediated_commands": false,
+        "token_budget_adapter": false,
+        "runtime_paths": []
+      }
+    },
+    "opencode": {
+      "cmd": ["opencode", "--model", "{model}", "--prompt", "{prompt}"],
+      "sandbox": { "mediated_commands": false, "token_budget_adapter": false }
+    },
+    "hermes": {
+      "cmd": ["hermes", "chat", "-q", "{prompt}", "--model", "{model}"],
+      "sandbox": { "mediated_commands": false, "token_budget_adapter": false }
+    }
   },
   "subscriptions": ["claude", "codex", "cursor"],
   "usage_watcher": {

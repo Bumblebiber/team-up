@@ -56,10 +56,14 @@ function savePins(pins, env = process.env) {
 }
 
 function copyDeclaredFiles(src, dest, files) {
+  const srcRoot = path.resolve(src);
+  const destRoot = path.resolve(dest);
   fs.mkdirSync(dest, { recursive: true });
   for (const rel of files) {
-    const from = path.join(src, rel);
-    const to = path.join(dest, rel);
+    const from = path.join(srcRoot, rel);
+    const to = path.join(destRoot, rel);
+    assertPathInsideRoot(from, srcRoot);
+    assertPathInsideRoot(to, destRoot);
     if (!fs.existsSync(from)) continue;
     if (fs.lstatSync(from).isSymbolicLink()) {
       throw new Error(`refusing to copy symlink: ${from}`);
@@ -231,11 +235,44 @@ export function resolveInstalled(id, { version, checksum, project, env = process
   return entry;
 }
 
-export function loadInstalledManifest(id, env = process.env) {
-  const entry = resolveInstalled(id, { env });
+export function loadInstalledManifest(id, opts = {}) {
+  // Backward compatible: second arg may be env object (has TEAM_UP_* / PATH keys)
+  const options =
+    opts && typeof opts === "object" && (opts.project != null || opts.version != null || opts.checksum != null || opts.env != null)
+      ? opts
+      : { env: opts && typeof opts === "object" ? opts : process.env };
+  const env = options.env || process.env;
+  const entry = resolveInstalled(id, {
+    version: options.version,
+    checksum: options.checksum,
+    project: options.project,
+    env,
+  });
   if (!entry) return null;
   const { manifest } = loadManifestFromDir(entry.path);
   return { ...entry, manifest };
+}
+
+/**
+ * Recompute checksum of an installed package tree and compare to the indexed pin.
+ * Throws Error with code PACKAGE_INTEGRITY_FAILED on mismatch.
+ */
+export function verifyInstalledIntegrity(entry, manifest) {
+  if (!entry?.path || !entry?.checksum) {
+    const err = new Error("PACKAGE_INTEGRITY_FAILED: missing installed entry");
+    err.code = "PACKAGE_INTEGRITY_FAILED";
+    throw err;
+  }
+  const files = declaredPackageFiles(entry.path, manifest || loadManifestFromDir(entry.path).manifest);
+  const actual = sha256Declared(entry.path, files);
+  if (actual !== entry.checksum) {
+    const err = new Error(
+      `PACKAGE_INTEGRITY_FAILED: expected ${entry.checksum}, got ${actual}`
+    );
+    err.code = "PACKAGE_INTEGRITY_FAILED";
+    throw err;
+  }
+  return actual;
 }
 
 export { validateManifest, PACKAGE_FILES, declaredPackageFiles };

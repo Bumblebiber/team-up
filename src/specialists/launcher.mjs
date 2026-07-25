@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { loadInstalledManifest } from "./store.mjs";
+import { loadInstalledManifest, verifyInstalledIntegrity } from "./store.mjs";
 import { isApproved } from "./approvals.mjs";
 import { normalizeRequest } from "./request.mjs";
 import { intersectPermissions, assertCallTypeAllowed } from "./permissions.mjs";
@@ -18,15 +18,49 @@ function argValue(args, flag) {
   return i === -1 ? undefined : args[i + 1];
 }
 
-function resolveCliPath(argv0) {
+/** Resolve argv0 to a realpath (follow symlink wrappers). */
+export function resolveCliPath(argv0) {
   if (!argv0) return null;
-  if (path.isAbsolute(argv0) && fs.existsSync(argv0)) return argv0;
-  try {
-    const which = execFileSync("which", [argv0], { encoding: "utf8" }).trim();
-    return which || null;
-  } catch {
-    return null;
+  let candidate = null;
+  if (path.isAbsolute(argv0) && fs.existsSync(argv0)) {
+    candidate = argv0;
+  } else {
+    try {
+      const which = execFileSync("which", [argv0], { encoding: "utf8" }).trim();
+      candidate = which || null;
+    } catch {
+      candidate = null;
+    }
   }
+  if (!candidate) return null;
+  try {
+    return fs.realpathSync(candidate);
+  } catch {
+    return path.resolve(candidate);
+  }
+}
+
+function cliSandboxConfig(roster, cli) {
+  const entry = roster?.clis?.[cli] || {};
+  const sandbox = entry.sandbox && typeof entry.sandbox === "object" ? entry.sandbox : {};
+  return {
+    mediated_commands: Boolean(
+      sandbox.mediated_commands ?? entry.mediated_commands
+    ),
+    token_budget_adapter: Boolean(
+      sandbox.token_budget_adapter ?? entry.token_budget_adapter
+    ),
+    sandbox_runtime_paths:
+      sandbox.runtime_paths ??
+      entry.sandbox_runtime_paths ??
+      null,
+  };
+}
+
+function needsCommandMediation(effectivePerms, manifest) {
+  if ((effectivePerms.commands || []).length > 0) return true;
+  const tools = effectivePerms.tools ?? manifest?.capabilities?.tools ?? [];
+  return tools.some((t) => /^(command|shell|exec)([.]|$)/i.test(String(t)));
 }
 
 /**
@@ -48,13 +82,21 @@ export async function launch({
     err.code = "SANDBOX_UNAVAILABLE";
     throw err;
   }
-  const installed = loadInstalledManifest(specialistId, env);
+  const installed = loadInstalledManifest(specialistId, { project, env });
   if (!installed) {
     const err = new Error(`specialist not installed: ${specialistId}`);
     err.code = "NOT_INSTALLED";
     throw err;
   }
   const manifest = installed.manifest;
+
+  try {
+    verifyInstalledIntegrity(installed, manifest);
+  } catch (e) {
+    e.code = e.code || "PACKAGE_INTEGRITY_FAILED";
+    throw e;
+  }
+
   try {
     assertCallTypeAllowed(callType, manifest);
   } catch (e) {
@@ -87,7 +129,6 @@ export async function launch({
     throw e;
   }
 
-  // Validate tool/command allowlists at launch — undeclared materialization prevented in materialize
   const allowedCommands = new Set(manifest.permissions?.commands || []);
   for (const c of effectivePerms.commands || []) {
     if (!allowedCommands.has(c)) {
@@ -96,16 +137,6 @@ export async function launch({
       throw err;
     }
   }
-
-  const request = normalizeRequest({
-    specialist_id: specialistId,
-    specialist_version: installed.version,
-    call_type: callType,
-    objective,
-    inputs,
-    permissions: effectivePerms,
-    budget: manifest.budget,
-  });
 
   const roster = requireRoster();
   const usage = loadJson(usagePath());
@@ -123,6 +154,26 @@ export async function launch({
     throw err;
   }
   const cell = profileResult.chain[0];
+  const cliCfg = cliSandboxConfig(roster, cell.cli);
+
+  if (needsCommandMediation(effectivePerms, manifest) && !cliCfg.mediated_commands) {
+    const err = new Error(
+      "ALLOWLIST_UNENFORCEABLE: selected CLI/sandbox cannot mediate command/tool allowlists (mediated tool broker required)"
+    );
+    err.code = "ALLOWLIST_UNENFORCEABLE";
+    throw err;
+  }
+
+  if (manifest.budget?.max_tokens != null && !cliCfg.token_budget_adapter) {
+    const err = new Error(
+      "TOKEN_BUDGET_UNENFORCEABLE: budget.max_tokens set but selected CLI has no token_budget_adapter"
+    );
+    err.code = "TOKEN_BUDGET_UNENFORCEABLE";
+    throw err;
+  }
+
+  const fsMode = effectivePerms.filesystem;
+  const runCwd = fsMode === "none" ? null : project;
 
   const barePrompt = [
     `# Specialist ${manifest.display_name} (${callType})`,
@@ -132,7 +183,7 @@ export async function launch({
     "Read REQUEST.json and instructions.md in the context directory. Follow remit/anti-remit.",
     "Write mailbox/RESULT.json conforming to schema team-up.result/v1 when done.",
     "RESULT.md is optional human-readable detail and does not count as success by itself.",
-    manifest.budget?.max_tokens
+    manifest.budget?.max_tokens && cliCfg.token_budget_adapter
       ? `Token budget: ${manifest.budget.max_tokens}. Stay within budget.`
       : null,
     manifest.budget?.timeout_seconds
@@ -141,20 +192,29 @@ export async function launch({
   ].filter(Boolean).join("\n");
 
   const state = createRun({
-    cwd: project,
-    project,
+    cwd: runCwd || undefined,
+    project: fsMode === "none" ? null : project,
     role: `specialist:${specialistId}`,
     parent: { cli: "team-up", attach: "manual" },
     worker: { cli: cell.cli, model: cell.model },
     prompt: barePrompt,
+    result_protocol: "RESULT.json",
+  });
+  const request = normalizeRequest({
+    specialist_id: specialistId,
+    specialist_version: installed.version,
+    call_type: callType,
+    objective,
+    inputs,
+    permissions: effectivePerms,
+    budget: manifest.budget,
   });
   request.run_id = state.runId;
 
-  // Carry budgets into state metadata / worker contract
   const st = loadState(state.runId);
   st.budget = {
     timeout_seconds: manifest.budget?.timeout_seconds ?? null,
-    max_tokens: manifest.budget?.max_tokens ?? null,
+    max_tokens: cliCfg.token_budget_adapter ? (manifest.budget?.max_tokens ?? null) : null,
   };
   st.output_contract = "team-up.result/v1";
   st.result_protocol = "RESULT.json";
@@ -166,8 +226,9 @@ export async function launch({
     request,
     destination: dest,
     manifest,
-    projectRoot: project,
+    projectRoot: fsMode === "none" ? null : project,
     inputs,
+    filesystem: fsMode,
   });
 
   atomicWriteJson(path.join(runDir(state.runId), "mailbox", "REQUEST.json"), request);
@@ -175,6 +236,7 @@ export async function launch({
   const workerPrompt = wrapPromptWithMailboxProtocol(barePrompt, {
     runId: state.runId,
     runDirectory: runDir(state.runId),
+    resultProtocol: "RESULT.json",
   });
   atomicWriteText(path.join(runDir(state.runId), "mailbox", "PROMPT.md"), workerPrompt);
 
@@ -201,19 +263,20 @@ export async function launch({
     writablePaths: [runPath, dest],
     readOnlyPaths: cliPath ? [cliPath] : [],
     callType,
-    projectPath: project,
+    projectPath: fsMode === "none" ? null : project,
     packagePath: installed.path,
     runPath,
     cliPath,
     writableProject:
+      fsMode !== "none" &&
       callType === "delegate" &&
       (effectivePerms.writes === "delegated_only" || effectivePerms.writes === true) &&
       effectivePerms.filesystem === "project",
     probe,
     timeoutSeconds: timeoutSec,
+    sandboxRuntimePaths: cliCfg.sandbox_runtime_paths,
   });
 
-  // Enforce timeout via sandbox RuntimeMaxSec when provided
   if (timeoutSec && wrapped.sandbox === "systemd-run-user") {
     const idx = wrapped.argv.indexOf("--");
     if (idx !== -1) {

@@ -56,11 +56,18 @@ export function promptHasMailboxProtocol(text) {
  * Wrap a bare task prompt with templates/worker-prompt.md so the worker
  * knows to set mailbox STATUS=done. Without this, parents hang on `runs wait`
  * while PLAN.md already exists on disk (2026-07-20 live failure).
+ *
+ * @param {string} taskBody
+ * @param {{ runId?: string, runDirectory?: string, resultProtocol?: string }} [opts]
+ *   resultProtocol "RESULT.json" → typed specialist closeout;
+ *   omitted / "RESULT.md" → generic Path-B RESULT.md closeout.
  */
-export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory } = {}) {
+export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory, resultProtocol } = {}) {
   const body = (taskBody || "").trim();
   if (promptHasMailboxProtocol(body)) return body.endsWith("\n") ? body : `${body}\n`;
-  const tplPath = path.join(rosterPluginRoot(), "templates", "worker-prompt.md");
+  const typed = resultProtocol === "RESULT.json";
+  const tplName = typed ? "worker-prompt.md" : "worker-prompt-legacy.md";
+  const tplPath = path.join(rosterPluginRoot(), "templates", tplName);
   let tpl = fs.readFileSync(tplPath, "utf8");
   const rd = runDirectory || (runId ? runDir(runId) : "{{RUN_DIR}}");
   tpl = tpl
@@ -72,6 +79,7 @@ export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory } 
 
 export function createRun({
   cwd, project, role, parent, worker, prompt, now = new Date(),
+  result_protocol,
 }) {
   const runId = newRunId(now);
   const attach = parent.attach || (parent.tmux ? "tmux" : "manual");
@@ -99,12 +107,17 @@ export function createRun({
     watcher: { kind: "internal_subagent", attached: false },
     mailbox: "mailbox/",
   };
+  if (result_protocol) state.result_protocol = result_protocol;
   const rd = runDir(runId);
   const mb = path.join(rd, "mailbox");
   fs.mkdirSync(mb, { recursive: true });
   atomicWriteJson(path.join(rd, "STATE.json"), state);
   atomicWriteText(path.join(mb, "STATUS"), "starting");
-  const wrapped = wrapPromptWithMailboxProtocol(prompt, { runId, runDirectory: rd });
+  const wrapped = wrapPromptWithMailboxProtocol(prompt, {
+    runId,
+    runDirectory: rd,
+    resultProtocol: result_protocol,
+  });
   atomicWriteText(path.join(mb, "PROMPT.md"), wrapped);
   return state;
 }
@@ -139,8 +152,8 @@ function readMaybe(filePath) {
 }
 
 /** Inspect mailbox once; return { status, question?, resultPath?, error? }.
- * Specialist success requires RESULT.json conforming to team-up.result/v1.
- * RESULT.md alone must never classify as success.
+ * Only runs whose STATE declares result_protocol: "RESULT.json" require typed JSON.
+ * Generic/legacy Path-B runs succeed with RESULT.md.
  */
 export function classifyMailbox(runId) {
   const mb = mailboxDir(runId);
@@ -150,6 +163,8 @@ export function classifyMailbox(runId) {
   const resultJsonRaw = readMaybe(path.join(mb, "RESULT.json"));
   const resultJsonPath = path.join(mb, "RESULT.json");
   const resultMdPath = path.join(mb, "RESULT.md");
+  const state = loadState(runId);
+  const typed = state?.result_protocol === "RESULT.json";
 
   if (statusLine === "failed") {
     return {
@@ -160,6 +175,20 @@ export function classifyMailbox(runId) {
   }
 
   if (statusLine === "done") {
+    if (!typed) {
+      if (!resultMd && !resultJsonRaw) {
+        return {
+          status: "failed",
+          error: "STATUS=done but RESULT.md missing",
+          resultPath: null,
+        };
+      }
+      return {
+        status: "done",
+        resultPath: resultMd ? resultMdPath : resultJsonPath,
+        summary: String(resultMd || resultJsonRaw || "").slice(0, 500),
+      };
+    }
     if (!resultJsonRaw) {
       return {
         status: "failed",
