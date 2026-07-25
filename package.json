@@ -3,8 +3,14 @@
   "version": "0.1.0",
   "description": "Standalone deterministic model roster and specialist runtime",
   "type": "module",
-  "bin": { "team-up": "bin/team-up.mjs" },
-  "scripts": { "test": "node --test" },
-  "engines": { "node": ">=18" },
+  "bin": {
+    "team-up": "bin/team-up.mjs"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT"
 }
