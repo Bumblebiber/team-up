@@ -55,8 +55,7 @@ function cmdPick(args) {
   }
   console.log(`model: ${r.model}`);
   console.log(`cli: ${r.cli}`);
-  const effort = resolveEffort({ roster, role, model: r.model, cellEffort: r.effort });
-  if (effort !== undefined && effort !== null && effort !== "") console.log(`effort: ${effort}`);
+  if (r.effort) console.log(`effort: ${r.effort}`);
 }
 
 function cmdMarkLimited(args) {
@@ -155,12 +154,6 @@ async function spawnInTmux({ roster: rosterCfg, role, dir, prompt, runId }) {
   } catch {
     // stale cache — proceed with pick above
   }
-  const effort = resolveEffort({
-    roster: rosterCfg,
-    role,
-    model: r.model,
-    cellEffort: r.effort,
-  });
   await spawnPinnedInTmux({
     roster: rosterCfg,
     model: r.model,
@@ -168,7 +161,7 @@ async function spawnInTmux({ roster: rosterCfg, role, dir, prompt, runId }) {
     dir,
     prompt,
     runId,
-    effort,
+    effort: r.effort,
     sessionPrefix: `team-up-${role}`,
   });
 }

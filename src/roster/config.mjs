@@ -67,6 +67,9 @@ export function validateRoster(roster) {
       if (model.provider !== undefined && typeof model.provider !== "string") {
         errors.push(`models.${id}.provider must be a string`);
       }
+      if (model.effort !== undefined && typeof model.effort !== "string") {
+        errors.push(`models.${id}.effort must be a string`);
+      }
     }
   }
 
@@ -75,6 +78,9 @@ export function validateRoster(roster) {
       if (!isPlainObject(role) || !Array.isArray(role.chain) || role.chain.length === 0) {
         errors.push(`roles.${id}.chain must be a non-empty array`);
         continue;
+      }
+      if (role.effort !== undefined && typeof role.effort !== "string") {
+        errors.push(`roles.${id}.effort must be a string`);
       }
       for (const entry of role.chain) {
         let parsed;

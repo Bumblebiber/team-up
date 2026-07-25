@@ -14,38 +14,37 @@ export function firstPositional(args) {
   return undefined;
 }
 
-export function buildCommand({ roster, model, cli, prompt, effort }) {
+/**
+ * CLI-native effort string for a spawn. Highest wins:
+ * chain-entry.effort > roles.<role>.effort > models.<id>.effort > null.
+ * Accepts entryEffort or cellEffort (plan alias).
+ */
+export function resolveEffort({ roster, role, model, entryEffort, cellEffort }) {
+  return entryEffort || cellEffort || roster?.roles?.[role]?.effort || roster?.models?.[model]?.effort || null;
+}
+
+export function buildCommand({ roster, model, cli, prompt, effort = null }) {
   const template = roster.clis?.[cli]?.cmd;
   if (!template) throw new Error(`no cli template for "${cli}" in roster.json clis section`);
   const cliModel = roster.models?.[model]?.cli_model || model;
-  const resolvedEffort = effort !== undefined
-    ? effort
-    : resolveEffort({ roster, role: null, model, cellEffort: undefined });
-  const out = [];
+  const hasSlot = template.some((p) => p.includes("{effort}"));
+  if (effort && !hasSlot) {
+    console.error(`roster: effort "${effort}" set but clis.${cli}.cmd has no {effort} — ignored`);
+  }
+  const argv = [];
   for (let i = 0; i < template.length; i++) {
     const part = template[i];
-    if (part.includes("{effort}")) {
-      if (resolvedEffort == null || resolvedEffort === "") {
-        // Drop flag/value pair when previous token looks like a flag for this value slot
-        if (out.length && typeof out[out.length - 1] === "string" && out[out.length - 1].startsWith("-")) {
-          out.pop();
-        }
-        continue;
-      }
-      out.push(part.replaceAll("{model}", cliModel).replaceAll("{prompt}", prompt).replaceAll("{effort}", String(resolvedEffort)));
+    if (part.includes("{effort}") && !effort) {
+      if (argv.length && template[i - 1]?.startsWith("-")) argv.pop();
       continue;
     }
-    out.push(part.replaceAll("{model}", cliModel).replaceAll("{prompt}", prompt));
+    argv.push(
+      part.replaceAll("{model}", cliModel)
+        .replaceAll("{prompt}", prompt)
+        .replaceAll("{effort}", effort ?? "")
+    );
   }
-  return out;
-}
-
-/** Cell → role → model effort precedence. */
-export function resolveEffort({ roster, role, model, cellEffort }) {
-  if (cellEffort !== undefined) return cellEffort;
-  if (role && roster?.roles?.[role]?.effort !== undefined) return roster.roles[role].effort;
-  if (model && roster?.models?.[model]?.effort !== undefined) return roster.models[model].effort;
-  return undefined;
+  return argv;
 }
 
 function shellQuote(s) {
@@ -65,7 +64,7 @@ export async function spawnPinnedInTmux({
   dir,
   prompt,
   runId,
-  effort,
+  effort = null,
   sessionPrefix = "team-up-pass",
 }) {
   if (!roster.clis?.[cli]?.cmd) {
@@ -77,7 +76,7 @@ export async function spawnPinnedInTmux({
   execFileSync("tmux", tmuxArgs({ session, dir, argv }), { stdio: "inherit" });
   linkDispatchToRun(runId, session);
   console.log(`model: ${model} (${cli})`);
-  if (effort !== undefined && effort !== null && effort !== "") console.log(`effort: ${effort}`);
+  if (effort) console.log(`effort: ${effort}`);
   console.log(`tmux session: ${session}`);
   console.log(`attach: tmux attach -t ${session}`);
   return { session, model, cli, effort };

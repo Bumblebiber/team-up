@@ -1,6 +1,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { modelUsageGate, windowIsBlocking, effectiveResetAt } from "../usage/usage-windows.mjs";
+import { resolveEffort } from "./command.mjs";
+export { resolveEffort };
 
 export function limits(roster) {
   return { warn_at: 0.9, handoff_at: 0.95, handoff_at_burst: 0.8, ...(roster.limits || {}) };
@@ -13,27 +15,29 @@ function markedUntil(usage, key, now) {
 }
 
 /**
- * Parse a chain entry into {model, cli|null, effort?}.
+ * Parse a chain entry into {model, cli|null, effort|null}.
  */
 export function parseChainEntry(entry) {
   if (entry && typeof entry === "object" && !Array.isArray(entry)) {
     if (typeof entry.model !== "string" || !entry.model) {
       throw new Error(`invalid chain entry object: ${JSON.stringify(entry)}`);
     }
-    const out = { model: entry.model, cli: entry.cli ?? null };
-    if (entry.effort !== undefined) out.effort = entry.effort;
-    return out;
+    if (entry.effort !== undefined && entry.effort !== null && typeof entry.effort !== "string") {
+      throw new Error(`invalid chain entry effort (must be a string): ${JSON.stringify(entry)}`);
+    }
+    return { model: entry.model, cli: entry.cli ?? null, effort: entry.effort || null };
   }
   if (typeof entry !== "string" || !entry) {
     throw new Error(`invalid chain entry: ${entry}`);
   }
   const i = entry.indexOf(":");
-  if (i === -1) return { model: entry, cli: null };
+  if (i === -1) return { model: entry, cli: null, effort: null };
   const cli = entry.slice(0, i);
   const model = entry.slice(i + 1);
   if (!cli || !model) throw new Error(`invalid chain entry: ${entry}`);
-  return { model, cli };
+  return { model, cli, effort: null };
 }
+
 
 function entryLabel(model, cli) {
   return cli ? `${cli}:${model}` : model;
@@ -125,11 +129,14 @@ export function pick({ roster, usage, role, now = Date.now() }) {
       skipped.push({ model: label, reason: `cli marked limited until ${usage.marked[cli].until}` });
       continue;
     }
-    const out = { model: name, cli, skipped };
-    if (parsed.effort !== undefined) out.effort = parsed.effort;
-    return out;
+    return {
+      model: name,
+      cli,
+      effort: resolveEffort({ roster, role, model: name, entryEffort: parsed.effort }),
+      skipped,
+    };
   }
-  return { model: null, cli: null, skipped };
+  return { model: null, cli: null, effort: null, skipped };
 }
 
 export function parseTtl(str) {
@@ -242,5 +249,5 @@ export function resolvePickAfterRefresh({
   ) {
     return priorPick;
   }
-  return { model: null, cli: null, skipped: r2.skipped };
+  return { model: null, cli: null, effort: null, skipped: r2.skipped };
 }
