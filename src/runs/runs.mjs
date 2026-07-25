@@ -228,6 +228,16 @@ export function classifyMailbox(runId) {
       return { status: "failed", error: parsed.summary || "RESULT.json status=failed", resultPath: resultJsonPath };
     }
     if (parsed.status === "blocked") {
+      if (
+        Object.prototype.hasOwnProperty.call(parsed, "questions") &&
+        !Array.isArray(parsed.questions)
+      ) {
+        return {
+          status: "failed",
+          error: "invalid RESULT.json questions: expected array",
+          resultPath: resultJsonPath,
+        };
+      }
       return { status: "question", question: (parsed.questions || []).join("\n") || parsed.summary || "blocked", resultPath: resultJsonPath };
     }
     return {
@@ -254,6 +264,7 @@ export function classifyMailbox(runId) {
 }
 
 const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
+const CAPACITY_RUN_STATUSES = new Set(["waiting_capacity", "waiting_decision"]);
 
 /**
  * Purely reconcile durable STATE with a mailbox observation.
@@ -273,7 +284,10 @@ export function resolveRunState(state, classified = { status: "watching" }) {
     }
   } else if (TERMINAL_RUN_STATUSES.has(classified?.status)) {
     nextStatus = classified.status;
-  } else if (classified?.status === "question") {
+  } else if (
+    classified?.status === "question" &&
+    !CAPACITY_RUN_STATUSES.has(currentStatus)
+  ) {
     nextStatus = "waiting_human";
   }
 
@@ -282,6 +296,21 @@ export function resolveRunState(state, classified = { status: "watching" }) {
     classified: effectiveClassified,
     changed: nextStatus !== currentStatus,
   };
+}
+
+function persistResolvedRunStatus(runId, classified) {
+  const latestState = loadState(runId);
+  if (!latestState) throw new Error(`unknown run ${runId}`);
+  const latestResolution = resolveRunState(latestState, classified);
+  if (latestResolution.changed) {
+    const nextState = {
+      ...latestState,
+      status: latestResolution.state.status,
+    };
+    saveState(nextState);
+    latestResolution.state = nextState;
+  }
+  return latestResolution;
 }
 
 export function setStatus(runId, status) {
@@ -581,9 +610,11 @@ export function resumeAll({
   }
   try {
     for (const state of listActiveStates()) {
-      const resolved = resolveRunState(state, classifyMailbox(state.runId));
+      let resolved = resolveRunState(state, classifyMailbox(state.runId));
+      if (!dryRun && resolved.changed) {
+        resolved = persistResolvedRunStatus(state.runId, resolved.classified);
+      }
       const effectiveState = resolved.state;
-      if (!dryRun && resolved.changed) saveState(effectiveState);
       const plan = buildResumePlan(effectiveState, { tmuxExists, now });
       report.runs.push({
         runId: effectiveState.runId,
@@ -620,7 +651,9 @@ export function resumeAll({
 
 export function waitMailbox(runId, { ceilingSec = 3600 } = {}) {
   let resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
-  if (resolved.changed) saveState(resolved.state);
+  if (resolved.changed) {
+    resolved = persistResolvedRunStatus(runId, resolved.classified);
+  }
   if (
     TERMINAL_RUN_STATUSES.has(resolved.state.status) ||
     ["done", "failed", "cancelled", "question"].includes(resolved.classified?.status)
@@ -631,7 +664,9 @@ export function waitMailbox(runId, { ceilingSec = 3600 } = {}) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
   const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
   resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
-  if (resolved.changed) saveState(resolved.state);
+  if (resolved.changed) {
+    resolved = persistResolvedRunStatus(runId, resolved.classified);
+  }
   return { waitExit: r.status ?? 1, classified: resolved.classified };
 }
 

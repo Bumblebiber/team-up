@@ -177,6 +177,48 @@ test("typed result matrix reconciles without weakening RESULT.json semantics", w
   }
 }));
 
+test("typed blocked result rejects non-array questions without aborting resume", withTempRuns(async (dir) => {
+  const invalidQuestions = [
+    "single scalar question",
+    { prompt: "object question" },
+    42,
+    null,
+  ];
+  const runIds = [];
+
+  for (const questions of invalidQuestions) {
+    const state = createFixture({
+      stateStatus: "watching",
+      mailboxStatus: "done",
+      typed: true,
+    });
+    writeTyped(state.runId, {
+      schema: "team-up.result/v1",
+      status: "blocked",
+      summary: "blocked",
+      questions,
+    });
+    runIds.push(state.runId);
+
+    const classified = runs.classifyMailbox(state.runId);
+    assert.equal(classified.status, "failed");
+    assert.match(classified.error, /questions.*array/i);
+    assert.match(classified.resultPath, /RESULT\.json$/);
+  }
+
+  const report = runs.resumeAll({
+    dryRun: true,
+    tmuxExists: () => false,
+    logDir: dir,
+    now: new Date("2026-07-25T18:00:00Z"),
+  });
+  for (const runId of runIds) {
+    const entry = report.runs.find((item) => item.runId === runId);
+    assert.equal(entry.status, "failed");
+    assert.deepEqual(entry.actions, []);
+  }
+}));
+
 test("generic RESULT.md remains a valid terminal result", withTempRuns(async () => {
   const state = createFixture({ stateStatus: "watching", mailboxStatus: "done" });
   runs.atomicWriteText(path.join(runs.mailboxDir(state.runId), "RESULT.md"), "legacy result");
@@ -333,6 +375,70 @@ test("resumeAll persists terminal mailbox and emits no worker, parent, or watche
   assert.deepEqual(executed, []);
 }));
 
+test("resumeAll reconciliation preserves concurrent STATE updates", withTempRuns(async (dir) => {
+  const state = createFixture({
+    stateStatus: "watching",
+    mailboxStatus: "done",
+    parentAttach: "tmux",
+  });
+  runs.atomicWriteText(path.join(runs.mailboxDir(state.runId), "RESULT.md"), "complete");
+  const statePath = path.join(runs.runDir(state.runId), "STATE.json");
+  const statusPath = path.join(runs.mailboxDir(state.runId), "STATUS");
+  const originalReadFileSync = fs.readFileSync;
+  let injected = false;
+
+  fs.readFileSync = function readFileSyncWithConcurrentUpdate(filePath, ...args) {
+    const result = originalReadFileSync.call(fs, filePath, ...args);
+    if (!injected && String(filePath) === statusPath) {
+      injected = true;
+      const concurrent = JSON.parse(originalReadFileSync.call(fs, statePath, "utf8"));
+      concurrent.worker = {
+        ...concurrent.worker,
+        sessionId: "replacement-session",
+        tmux: "replacement-worker",
+      };
+      concurrent.supervision = {
+        controller_pid: 4242,
+        generation: 7,
+      };
+      concurrent.capacity = {
+        auto_resume: true,
+        resume_not_before: "2026-07-25T19:00:00Z",
+      };
+      runs.saveState(concurrent);
+    }
+    return result;
+  };
+
+  let report;
+  try {
+    report = runs.resumeAll({
+      dryRun: false,
+      tmuxExists: () => true,
+      logDir: dir,
+      now: new Date("2026-07-25T18:00:00Z"),
+      execute: () => {},
+    });
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+  }
+
+  assert.equal(injected, true);
+  assert.equal(report.runs.find((entry) => entry.runId === state.runId).status, "done");
+  const persisted = runs.loadState(state.runId);
+  assert.equal(persisted.status, "done");
+  assert.equal(persisted.worker.sessionId, "replacement-session");
+  assert.equal(persisted.worker.tmux, "replacement-worker");
+  assert.deepEqual(persisted.supervision, {
+    controller_pid: 4242,
+    generation: 7,
+  });
+  assert.deepEqual(persisted.capacity, {
+    auto_resume: true,
+    resume_not_before: "2026-07-25T19:00:00Z",
+  });
+}));
+
 test("resumeAll maps question to waiting_human before planning recovery", withTempRuns(async (dir) => {
   const state = createFixture({
     stateStatus: "watching",
@@ -443,4 +549,57 @@ test("resumeAll preserves waiting_capacity when mailbox says watching", withTemp
   assert.equal(entry.status, "waiting_capacity");
   assert.deepEqual(entry.actions, [{ kind: "resume_capacity_supervision", runId: state.runId }]);
   assert.equal(runs.loadState(state.runId).status, "waiting_capacity");
+}));
+
+test("capacity QUESTIONS.md does not bypass capacity-specific resume routing", withTempRuns(async (dir) => {
+  const due = createFixture({
+    stateStatus: "waiting_capacity",
+    mailboxStatus: "waiting_capacity",
+  });
+  due.capacity = {
+    auto_resume: true,
+    wait_cancelled: false,
+    resume_not_before: "2026-07-25T18:00:00Z",
+  };
+  runs.saveState(due);
+  runs.atomicWriteText(
+    path.join(runs.mailboxDir(due.runId), "QUESTIONS.md"),
+    "# Capacity exhausted\n\nChoose wait, change_roster, or cancel_run.",
+  );
+
+  const decision = createFixture({
+    stateStatus: "waiting_decision",
+    mailboxStatus: "waiting_decision",
+  });
+  decision.capacity = {
+    auto_resume: false,
+    wait_cancelled: true,
+  };
+  runs.saveState(decision);
+  runs.atomicWriteText(
+    path.join(runs.mailboxDir(decision.runId), "QUESTIONS.md"),
+    "# Capacity exhausted\n\nChoose the next action.",
+  );
+
+  assert.equal(runs.classifyMailbox(due.runId).status, "question");
+  assert.equal(runs.classifyMailbox(decision.runId).status, "question");
+
+  const report = runs.resumeAll({
+    dryRun: true,
+    tmuxExists: () => false,
+    logDir: dir,
+    now: new Date("2026-07-25T18:30:00Z"),
+  });
+
+  const dueEntry = report.runs.find((entry) => entry.runId === due.runId);
+  assert.equal(dueEntry.status, "waiting_capacity");
+  assert.deepEqual(
+    dueEntry.actions,
+    [{ kind: "resume_capacity_supervision", runId: due.runId }],
+  );
+  const decisionEntry = report.runs.find((entry) => entry.runId === decision.runId);
+  assert.equal(decisionEntry.status, "waiting_decision");
+  assert.deepEqual(decisionEntry.actions, []);
+  assert.equal(runs.loadState(due.runId).status, "waiting_capacity");
+  assert.equal(runs.loadState(decision.runId).status, "waiting_decision");
 }));
