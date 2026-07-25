@@ -22,7 +22,13 @@ import {
   prepareHarnessLaunch,
 } from "../harness/registry.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
-import { beginSupervisedAttempt } from "../supervisor/production.mjs";
+import {
+  buildLaunchDescriptor,
+  persistLaunchDescriptor,
+  startFromLaunchDescriptor,
+  prepareArgvFromDescriptor,
+  resolveLimitWindowsForCell,
+} from "../supervisor/start.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -305,13 +311,12 @@ export async function launch({
 
   const cliPath = resolveCliPath(cliArgv[0]);
   const timeoutSec = budgetNorm.timeout_seconds;
+  const limitWindows = resolveLimitWindowsForCell(cell, roster);
 
   const probe = sandbox?.probe
     ? sandbox.probe
     : systemdAvailable;
 
-  // Policy snapshot is authoritative under ~/.team-up/policy-snapshots — never
-  // bind the whole run tree as writable in a way that includes that path.
   const workerWritable = [
     path.join(runPath, "mailbox"),
     path.join(runPath, "context"),
@@ -319,16 +324,20 @@ export async function launch({
     dest,
   ];
   if (fs.existsSync(path.join(runPath, "policy"))) {
-    // Worker-visible copy is intentionally mutable for audit demos; broker ignores it.
     workerWritable.push(path.join(runPath, "policy"));
   }
+
+  const readOnlyPaths = [];
+  if (cliPath) readOnlyPaths.push(cliPath);
+  // Authoritative policy snapshot must remain readable under ProtectHome.
+  if (policySnapshot?.path) readOnlyPaths.push(policySnapshot.path);
 
   const wrapped = wrapWithSandbox({
     command: cliArgv,
     permissions: effectivePerms,
     cwd: dest,
     writablePaths: workerWritable,
-    readOnlyPaths: cliPath ? [cliPath] : [],
+    readOnlyPaths,
     callType,
     projectPath: fsMode === "none" ? null : project,
     packagePath: installed.path,
@@ -345,62 +354,117 @@ export async function launch({
     enforcement: "best_effort",
   });
 
-  st.sandbox = {
+  const descriptor = buildLaunchDescriptor({
+    cli: cell.cli,
+    model: cell.model,
+    effort: cell.effort,
+    promptPath: path.join(runPath, "mailbox", "PROMPT.md"),
+    contextDir: dest,
+    project: fsMode === "none" ? null : path.resolve(project),
+    packagePath: installed.path,
+    permissions: effectivePerms,
+    callType,
+    broker: policySnapshot
+      ? {
+          policySnapshot: policySnapshot.path,
+          policyChecksum: policySnapshot.checksum,
+          project: path.resolve(project),
+          runDir: runPath,
+          actionIds: effectivePerms.commands || [],
+        }
+      : null,
+    harnessRequirements: requirements,
+    specialistProfile: profileResult.profile,
+    limitWindows,
+    timeoutSeconds: timeoutSec,
+    sandboxRuntimePaths: cliCfg.sandbox_runtime_paths,
+    specialist: {
+      id: specialistId,
+      version: installed.version,
+      checksum: installed.checksum,
+    },
+    filesystemMode: fsMode,
+    writableProject:
+      fsMode !== "none" &&
+      callType === "delegate" &&
+      (effectivePerms.writes === "delegated_only" || effectivePerms.writes === true) &&
+      effectivePerms.filesystem === "project",
+  });
+  persistLaunchDescriptor(state.runId, descriptor);
+
+  const stAfter = loadState(state.runId);
+  stAfter.sandbox = {
     kind: wrapped.sandbox,
     enforced: wrapped.enforced === true,
     warning: wrapped.warning ?? null,
     enforcement: "best_effort",
   };
-  saveState(st);
-  if (timeoutSec && wrapped.sandbox === "systemd-run-user") {
-    const idx = wrapped.argv.indexOf("--");
-    if (idx !== -1) {
-      wrapped.argv.splice(idx, 0, "-p", `RuntimeMaxSec=${timeoutSec}`);
-    }
-  }
+  stAfter.harness_requirements = requirements;
+  stAfter.specialist_profile = profileResult.profile;
+  stAfter.runtime = {
+    cli: cell.cli,
+    model: cell.model,
+    effort: cell.effort,
+    limit_windows: limitWindows,
+  };
+  stAfter.budget = st.budget;
+  stAfter.command_policy = st.command_policy;
+  stAfter.output_contract = st.output_contract;
+  stAfter.result_protocol = st.result_protocol;
+  saveState(stAfter);
 
   if (!dryRun) {
-    beginSupervisedAttempt({
-      runId: state.runId,
-      runtime: { cli: cell.cli, model: cell.model, effort: cell.effort },
-      specialist: {
-        id: specialistId,
-        version: installed.version,
-        checksum: installed.checksum,
-      },
-    });
     const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
-    const startWorker =
+    const startTmux =
       sandbox?.startWorker ||
       (({ argv, dir, sessionName }) => {
-        execFileSync("tmux", tmuxArgs({ session: sessionName, dir, argv }), { stdio: "inherit" });
+        execFileSync("tmux", tmuxArgs({ session: sessionName, dir, argv }), {
+          stdio: "inherit",
+        });
       });
-    startWorker({
-      argv: wrapped.argv,
-      dir: dest,
-      sessionName: session,
-      runId: state.runId,
-    });
-    linkDispatchToRun(state.runId, session);
-    const live = loadState(state.runId);
-    if (live) {
-      live.worker = { ...(live.worker || {}), tmux: session, cli: cell.cli, model: cell.model };
-      live.specialist_profile = profileResult.profile;
-      saveState(live);
+    try {
+      startFromLaunchDescriptor({
+        runId: state.runId,
+        sessionName: session,
+        probe,
+        startTmux: ({ session: sess, dir, argv }) => {
+          startTmux({
+            argv,
+            dir,
+            sessionName: sess,
+            runId: state.runId,
+          });
+        },
+        rollbackStatus: "failed",
+      });
+    } catch (e) {
+      throw e;
     }
+    linkDispatchToRun(state.runId, session);
   }
 
+  const live = loadState(state.runId);
   return {
     runId: state.runId,
-    runtime: { cli: cell.cli, model: cell.model, effort: cell.effort },
-    sandbox: wrapped.sandbox,
-    enforced: wrapped.enforced === true,
-    sandbox_warning: wrapped.warning ?? null,
-    argv: wrapped.argv,
+    runtime: {
+      cli: cell.cli,
+      model: cell.model,
+      effort: cell.effort,
+      limit_windows: limitWindows,
+    },
+    sandbox: live?.sandbox?.kind || wrapped.sandbox,
+    enforced: live?.sandbox?.enforced === true || wrapped.enforced === true,
+    sandbox_warning: live?.sandbox?.warning ?? wrapped.warning ?? null,
+    argv: dryRun
+      ? wrapped.argv
+      : prepareArgvFromDescriptor(descriptor, { probe }).argv,
     permissions: effectivePerms,
     budget: st.budget,
   };
 }
+
+/** Alias used by production entrypoint tests. */
+export const launchSpecialist = launch;
 
 export async function runSpecialist(args, io = { out: console.log, err: console.error }) {
   const id = argValue(args, "--id") || args[0];

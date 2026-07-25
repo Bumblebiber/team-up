@@ -70,6 +70,12 @@ export function cancelCapacityWait({ runId, reason = "cancelled", env = process.
     wait_cancelled: true,
     cancel_reason: reason,
   };
+  // Disable generic crash-recovery spawn on `runs resume` as well.
+  state.recovery = {
+    ...(state.recovery || {}),
+    crash_spawn: false,
+    cancel_wait_at: new Date().toISOString(),
+  };
   saveState(state);
   setStatus(runId, "waiting_decision");
   const waits = loadWaits(env);
@@ -126,6 +132,8 @@ export async function recheckCapacity({
       attemptId: attempt.id,
       expectedPrevious: prev,
       now,
+      owner: `starting:pid:${process.pid}`,
+      expiresAt: new Date(Date.parse(now) + 120_000).toISOString(),
     });
     if (!lease.ok) {
       return { ok: false, reason: "lease_failed", lease, report };

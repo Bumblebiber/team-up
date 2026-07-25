@@ -105,10 +105,30 @@ export async function executeTransition(plan, deps = {}) {
       );
     }
     if (!chain.length) {
-      await notifyMailbox?.({ status: "waiting_capacity" }, ctx);
-      await persistState?.({ runId: plan.runId, status: "waiting_capacity" });
-      await appendEvent?.({ action: "enter_waiting_capacity" }, ctx);
-      return { ok: true, action: "enter_waiting_capacity" };
+      const report = chainResult.capacity_report || {
+        blocked_candidates: chainResult.quota_blocked || [],
+        next_reset_at: null,
+        reset_confidence: "unknown",
+      };
+      if (typeof deps.persistCapacityReport === "function") {
+        await deps.persistCapacityReport(report, ctx);
+      } else {
+        await persistState?.({
+          runId: plan.runId,
+          status: "waiting_capacity",
+          capacity: {
+            blocked_candidates: report.blocked_candidates || [],
+            next_reset_at: report.next_reset_at ?? null,
+            reset_confidence: report.reset_confidence || "unknown",
+            auto_resume: false,
+            wait_cancelled: false,
+            available_actions: ["wait", "change_roster", "cancel_run"],
+          },
+        });
+        await notifyMailbox?.({ status: "waiting_capacity" }, ctx);
+      }
+      await appendEvent?.({ action: "enter_waiting_capacity", capacity: report }, ctx);
+      return { ok: true, action: "enter_waiting_capacity", capacity: report };
     }
 
     const next = await createAttempt?.(chain[0], ctx);
@@ -211,6 +231,9 @@ export async function superviseActiveRuns({ now = new Date().toISOString(), deps
         stopTmux: deps.stopTmux,
         refreshUsage: deps.refreshUsage,
         validateCheckpoint: deps.validateCheckpoint,
+        persistCapacityReport: deps.persistCapacityReport
+          ? (report) => deps.persistCapacityReport(report, { runId: run.runId })
+          : undefined,
         maxStartRetries: deps.maxStartRetries,
       }),
     });

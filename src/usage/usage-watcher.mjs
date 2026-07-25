@@ -200,11 +200,12 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
  * Caps collection interval at 60s while supervised runs exist (caller).
  */
 export async function afterUsageCollectSupervise({ now = new Date().toISOString(), deps } = {}) {
-  const { superviseActiveRuns } = await import("../supervisor/controller.mjs");
-  const resolved =
-    deps ||
-    (await import("../supervisor/production.mjs")).buildProductionSuperviseDeps({ now });
-  return superviseActiveRuns({ now, deps: resolved });
+  if (deps) {
+    const { superviseActiveRuns } = await import("../supervisor/controller.mjs");
+    return superviseActiveRuns({ now, deps });
+  }
+  const { superviseProductionRuns } = await import("../supervisor/production.mjs");
+  return superviseProductionRuns({ now });
 }
 
 async function main() {

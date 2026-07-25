@@ -63,7 +63,7 @@ test("production launch path records attempt+lease without test-only composition
     assert.equal(st.supervision?.enabled, true);
     assert.equal(st.current_attempt_id, attempt.id);
     assert.equal(listAttempts(run.runId).length, 1);
-    assert.equal(st.status, "watching");
+    assert.ok(["starting", "watching"].includes(st.status));
   });
 });
 

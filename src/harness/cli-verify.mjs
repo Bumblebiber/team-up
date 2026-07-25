@@ -18,10 +18,38 @@ function claudeLoginOrQuotaFailure(text) {
   );
 }
 
+function auditPath(runDir) {
+  return path.join(runDir, "audit", "commands.jsonl");
+}
+
+function countAuditLines(runDir) {
+  const p = auditPath(runDir);
+  if (!fs.existsSync(p)) return 0;
+  const text = fs.readFileSync(p, "utf8").trim();
+  if (!text) return 0;
+  return text.split("\n").length;
+}
+
+function lastAuditRecord(runDir) {
+  const p = auditPath(runDir);
+  if (!fs.existsSync(p)) return null;
+  const lines = fs.readFileSync(p, "utf8").trim().split("\n").filter(Boolean);
+  if (!lines.length) return null;
+  try {
+    return JSON.parse(lines[lines.length - 1]);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Live Claude conformance: invoke the installed CLI with the prepared MCP
  * broker config. Never infer denial from argv alone and never grant the
- * command-broker capability from flag inspection.
+ * command-broker capability from flag inspection or a direct MCP preflight.
+ *
+ * A direct MCP client call may diagnose the broker but cannot set
+ * `broker_tool=passed`. Only the Claude invocation that produces exact `ok`
+ * stdout and a fresh broker audit row may.
  */
 export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersion }) {
   let versionOut = "";
@@ -60,7 +88,8 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       workerVisibleDir: path.join(runDir, "policy"),
     });
 
-    // Exercise the configured MCP broker via the same stdio server Claude would spawn.
+    // Diagnostic MCP preflight — never promotes broker_tool to passed.
+    let broker_preflight = "failed";
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [brokerBinPath()],
@@ -73,25 +102,24 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       },
     });
     const client = new Client({ name: "team-up-verify", version: "0.0.0" });
-    let broker_tool = "failed";
     try {
       await client.connect(transport);
       const listed = await client.listTools();
       const names = listed.tools.map((t) => t.name);
-      if (!names.includes("project_test")) {
-        broker_tool = "failed";
-      } else {
+      if (names.includes("project_test")) {
         const call = await client.callTool({ name: "project_test", arguments: {} });
         const body = call.content?.[0]?.text || "";
         const parsed = JSON.parse(body);
-        broker_tool = parsed.exit_code === 0 && parsed.stdout === "ok" ? "passed" : "failed";
+        broker_preflight =
+          parsed.exit_code === 0 && parsed.stdout === "ok" ? "ok" : "failed";
       }
     } catch (e) {
-      broker_tool = "failed";
+      broker_preflight = "failed";
       if (claudeLoginOrQuotaFailure(e.message)) {
         return {
           native_shell: "unverified",
           broker_tool: "unverified",
+          broker_preflight,
           error: e.message,
           cli_version: cliVersion,
         };
@@ -103,6 +131,10 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
         // ignore
       }
     }
+
+    // Preflight may have written an audit row — record baseline after it.
+    const auditBaseline = countAuditLines(runDir);
+    let broker_tool = "unverified";
 
     function prepareWithPrompt(prompt) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-harness-"));
@@ -124,7 +156,6 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
     }
 
     // Real Claude invocation: ask it to run Bash. Denial must come from the live CLI.
-    // Prompt must appear before adapter-appended flags.
     const shellProbePrompt =
       "Use the Bash tool to run the command: echo SHELL_SHOULD_BE_DENIED. " +
       "If Bash is unavailable, reply exactly with NATIVE_SHELL_DENIED. Do not invent success.";
@@ -132,7 +163,13 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
     try {
       shellPrepared = prepareWithPrompt(shellProbePrompt);
     } catch (e) {
-      return { native_shell: "unverified", broker_tool, error: e.message, cli_version: cliVersion };
+      return {
+        native_shell: "unverified",
+        broker_tool,
+        broker_preflight,
+        error: e.message,
+        cli_version: cliVersion,
+      };
     }
     const shellArgv = shellPrepared.argv;
     const shellRun = spawnSync(shellArgv[0], shellArgv.slice(1), {
@@ -146,13 +183,15 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       return {
         native_shell: "unverified",
         broker_tool: "unverified",
+        broker_preflight,
         error: `claude executable unavailable: ${shellRun.error.message}`,
       };
     }
     if (claudeLoginOrQuotaFailure(shellText) || (shellRun.status !== 0 && /login|auth|quota/i.test(shellText))) {
       return {
         native_shell: "unverified",
-        broker_tool: broker_tool === "passed" ? "passed" : "unverified",
+        broker_tool: "unverified",
+        broker_preflight,
         error: shellText.trim().slice(0, 500) || "claude login/quota failure",
         cli_version: cliVersion,
       };
@@ -163,7 +202,7 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       /NATIVE_SHELL_DENIED/i.test(shellText) ||
       /bash.*(?:not allowed|disallowed|denied|unavailable)/i.test(shellText) ||
       /tool.*bash.*(?:not|denied|disallowed)/i.test(shellText) ||
-      (/don't have a bash|do not have a bash|no bash tool/i.test(shellText))
+      /don't have a bash|do not have a bash|no bash tool/i.test(shellText)
     ) {
       native_shell = "denied";
     } else if (/SHELL_SHOULD_BE_DENIED/.test(shellText) && !/NATIVE_SHELL_DENIED/i.test(shellText)) {
@@ -172,17 +211,24 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       native_shell = "unverified";
     }
 
-    if (native_shell === "denied" && broker_tool === "passed") {
+    if (native_shell === "denied") {
       const brokerPrompt =
         "Call the MCP tool mcp__team_up_command_broker__project_test with no arguments. " +
-        "Reply with the tool stdout only.";
+        "Reply with the tool stdout only — exactly the characters ok and nothing else.";
       let brokerPrepared;
       try {
         brokerPrepared = prepareWithPrompt(brokerPrompt);
       } catch (e) {
-        return { native_shell, broker_tool: "unverified", error: e.message, cli_version: cliVersion };
+        return {
+          native_shell,
+          broker_tool: "unverified",
+          broker_preflight,
+          error: e.message,
+          cli_version: cliVersion,
+        };
       }
       const brokerArgv = brokerPrepared.argv;
+      const beforeAudit = countAuditLines(runDir);
       const brokerRun = spawnSync(brokerArgv[0], brokerArgv.slice(1), {
         encoding: "utf8",
         timeout: 90_000,
@@ -194,11 +240,33 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
         return {
           native_shell,
           broker_tool: "unverified",
+          broker_preflight,
           error: brokerText.trim().slice(0, 500),
           cli_version: cliVersion,
         };
       }
-      if (/ACTION_DENIED|COMMAND_POLICY|failed/i.test(brokerText) && !/\bok\b/.test(brokerText)) {
+
+      const afterAudit = countAuditLines(runDir);
+      const freshAudit = afterAudit > beforeAudit && afterAudit > auditBaseline;
+      const audit = lastAuditRecord(runDir);
+      const auditOk =
+        freshAudit &&
+        audit &&
+        (audit.action_id === "project-test" || audit.actionId === "project-test") &&
+        (audit.exit_code === 0 || audit.exitCode === 0);
+
+      // Exact expected tool output from the Claude response (stdout only).
+      const stdoutExact = String(brokerRun.stdout || "").trim() === "ok";
+      const textHasExactOk =
+        stdoutExact ||
+        /(^|\n)ok(\n|$)/.test(String(brokerRun.stdout || "").trim());
+
+      if (textHasExactOk && auditOk) {
+        broker_tool = "passed";
+      } else if (/ACTION_DENIED|COMMAND_POLICY/i.test(brokerText)) {
+        broker_tool = "failed";
+      } else {
+        // Claude skipped MCP, wrong output, or no fresh audit → not verified.
         broker_tool = "failed";
       }
     }
@@ -206,6 +274,7 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
     return {
       native_shell,
       broker_tool,
+      broker_preflight,
       cli_version: cliVersion || String(versionOut).trim(),
       argv_sample: shellPrepared.argv.slice(0, 12),
     };

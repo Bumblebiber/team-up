@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { listActiveStates, loadState, saveState, setStatus, runDir } from "../runs/runs.mjs";
 import {
   createAttempt,
@@ -7,21 +8,31 @@ import {
   releaseAttemptLease,
   reclaimStaleLease,
 } from "./attempts.mjs";
-import { materializePartialCheckpoint } from "./checkpoint.mjs";
+import { materializePartialCheckpoint, validateCheckpoint } from "./checkpoint.mjs";
 import { decideTransition, executeTransition, superviseActiveRuns } from "./controller.mjs";
 import { loadJson, requireRoster, usagePath } from "../roster/config.mjs";
 import { resolveProfile } from "../roster/profile.mjs";
 import { chainCapacityReport } from "./capacity.mjs";
+import { getAdapter } from "../harness/registry.mjs";
+import {
+  startFromLaunchDescriptor,
+  startSuccessorFromDescriptor,
+  resolveLimitWindowsForCell,
+} from "./start.mjs";
+import { resumeDueWaits } from "./waits.mjs";
 
 /**
  * Record the first supervised attempt + lease for a specialist launch.
- * Production path — not test-only composition.
+ * Prefer startFromLaunchDescriptor for production starts — this helper remains
+ * for tests that only need attempt/lease bookkeeping.
  */
 export function beginSupervisedAttempt({
   runId,
   runtime,
   specialist = null,
   now = new Date().toISOString(),
+  owner = `starting:pid:${process.pid}`,
+  expiresAt = null,
 }) {
   const attempt = createAttempt({ runId, runtime, specialist, now });
   const lease = acquireAttemptLease({
@@ -29,6 +40,10 @@ export function beginSupervisedAttempt({
     attemptId: attempt.id,
     expectedPrevious: null,
     now,
+    owner,
+    expiresAt:
+      expiresAt ??
+      new Date(Date.parse(now) + 120_000).toISOString(),
   });
   if (!lease.ok) {
     const err = new Error(`LEASE_FAILED: ${lease.reason}`);
@@ -38,7 +53,7 @@ export function beginSupervisedAttempt({
   }
   const state = loadState(runId);
   if (state) {
-    state.status = "watching";
+    state.status = "starting";
     state.supervision = {
       ...(state.supervision || {}),
       enabled: true,
@@ -46,7 +61,7 @@ export function beginSupervisedAttempt({
       force_at: state.supervision?.force_at ?? 0.95,
     };
     saveState(state);
-    setStatus(runId, "watching");
+    setStatus(runId, "starting");
   }
   return attempt;
 }
@@ -60,6 +75,16 @@ function heartbeatFresh(state, nowMs, staleSec = 120) {
 }
 
 function processAlive(state) {
+  const owner = state?.lease_owner || "";
+  if (/^tmux:/.test(owner) || state?.worker?.tmux) {
+    const session = state?.worker?.tmux || owner.slice("tmux:".length);
+    try {
+      execFileSync("tmux", ["has-session", "-t", session], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const pid = state?.worker_pid;
   if (!pid) return true;
   try {
@@ -71,22 +96,78 @@ function processAlive(state) {
   }
 }
 
-function usedFraction(state, usage) {
+/**
+ * Usage fraction from the current runtime's persisted limit windows only.
+ * Unrelated provider windows must not trigger handoff.
+ */
+export function usedFraction(state, usage) {
   if (typeof state?.usage_used === "number") return state.usage_used;
   const windows = usage?.windows || {};
   const keys = state?.runtime?.limit_windows || state?.worker?.limit_windows || [];
+  if (!keys.length) return 0;
   let max = 0;
   for (const k of keys) {
     const u = windows[k]?.used;
     if (typeof u === "number" && u > max) max = u;
   }
-  // Fall back to any matching cli window max.
-  if (!keys.length) {
-    for (const [k, w] of Object.entries(windows)) {
-      if (typeof w?.used === "number" && w.used > max) max = w.used;
-    }
-  }
   return max;
+}
+
+function readMailboxCheckpoint(runId) {
+  const dir = path.join(runDir(runId), "mailbox");
+  const cpPath = path.join(dir, "CHECKPOINT.json");
+  const controlPath = path.join(dir, "CONTROL.json");
+  let checkpoint = null;
+  let handoffReady = false;
+  try {
+    checkpoint = JSON.parse(fs.readFileSync(cpPath, "utf8"));
+  } catch {
+    checkpoint = null;
+  }
+  try {
+    const control = JSON.parse(fs.readFileSync(controlPath, "utf8"));
+    if (control?.handoff_ready === true || control?.type === "handoff_ready") {
+      handoffReady = true;
+    }
+  } catch {
+    // ignore
+  }
+  return { checkpoint, handoffReady };
+}
+
+function persistCapacityWaiting(runId, report, now) {
+  const st = loadState(runId);
+  if (!st) return;
+  st.status = "waiting_capacity";
+  st.capacity = {
+    blocked_candidates: report?.blocked_candidates || [],
+    next_reset_at: report?.next_reset_at ?? null,
+    reset_confidence: report?.reset_confidence || "unknown",
+    auto_resume: false,
+    wait_cancelled: false,
+    available_actions: ["wait", "change_roster", "cancel_run"],
+    reported_at: now,
+  };
+  saveState(st);
+  setStatus(runId, "waiting_capacity");
+  const qPath = path.join(runDir(runId), "mailbox", "QUESTIONS.md");
+  fs.mkdirSync(path.dirname(qPath), { recursive: true });
+  fs.writeFileSync(
+    qPath,
+    [
+      "# Capacity exhausted",
+      "",
+      "Exact compatible chain is quota-exhausted.",
+      "",
+      "```json",
+      JSON.stringify(st.capacity, null, 2),
+      "```",
+      "",
+      "Available actions: wait-capacity, change roster, cancel.",
+      "Waiting is an explicit human/parent decision (`team-up runs wait-capacity`).",
+      "",
+    ].join("\n")
+  );
 }
 
 export function listSupervisedRuns({ now = new Date().toISOString(), usage = null } = {}) {
@@ -96,44 +177,115 @@ export function listSupervisedRuns({ now = new Date().toISOString(), usage = nul
   for (const state of listActiveStates()) {
     if (!state.supervision?.enabled) continue;
     if (state.status === "waiting_capacity" && state.capacity?.wait_cancelled) continue;
+    if (state.status === "waiting_decision") continue;
     reclaimStaleLease({
       runId: state.runId,
       now,
       maxAgeMs: (state.supervision?.lease_stale_seconds || 600) * 1000,
     });
+
+    const { checkpoint: mailboxCp, handoffReady } = readMailboxCheckpoint(state.runId);
+    let checkpoint = state.checkpoint || null;
+    if (mailboxCp) {
+      const v = validateCheckpoint(mailboxCp, {
+        runId: state.runId,
+        attemptId: state.current_attempt_id,
+      });
+      if (v.ok) {
+        checkpoint = mailboxCp;
+        if (handoffReady || mailboxCp.status === "complete" || mailboxCp.status === "partial") {
+          const live = loadState(state.runId);
+          if (live) {
+            live.checkpoint = mailboxCp;
+            if (handoffReady && live.status === "handoff_preparing") {
+              live.status = "handing_off";
+              setStatus(state.runId, "handing_off");
+            }
+            saveState(live);
+          }
+        }
+      }
+    }
+
+    const refreshed = loadState(state.runId) || state;
     out.push({
-      runId: state.runId,
+      runId: refreshed.runId,
       state:
-        state.status === "watching"
+        refreshed.status === "watching" || refreshed.status === "starting"
           ? "running"
-          : state.status === "waiting_capacity"
+          : refreshed.status === "waiting_capacity"
             ? "waiting_capacity"
-            : state.status === "handoff_preparing"
+            : refreshed.status === "handoff_preparing"
               ? "handoff_preparing"
-              : state.status === "handing_off"
+              : refreshed.status === "handing_off"
                 ? "handing_off"
                 : "running",
-      used: usedFraction(state, usageDoc),
-      prepareAt: state.supervision?.prepare_at ?? 0.9,
-      forceAt: state.supervision?.force_at ?? 0.95,
-      heartbeatFresh: heartbeatFresh(state, nowMs, state.supervision?.heartbeat_stale_seconds ?? 120),
-      processAlive: processAlive(state),
-      capacityAvailable: state.status !== "waiting_capacity",
-      checkpoint: state.checkpoint || null,
-      release: state.current_attempt_id
-        ? { runId: state.runId, attemptId: state.current_attempt_id }
+      used: usedFraction(refreshed, usageDoc),
+      prepareAt: refreshed.supervision?.prepare_at ?? 0.9,
+      forceAt: refreshed.supervision?.force_at ?? 0.95,
+      heartbeatFresh: heartbeatFresh(
+        refreshed,
+        nowMs,
+        refreshed.supervision?.heartbeat_stale_seconds ?? 120
+      ),
+      processAlive: processAlive(refreshed),
+      capacityAvailable: refreshed.status !== "waiting_capacity",
+      checkpoint,
+      release: refreshed.current_attempt_id
+        ? { runId: refreshed.runId, attemptId: refreshed.current_attempt_id }
         : null,
-      tmuxSession: state.worker?.tmux || null,
-      excludeCandidate: state.worker
-        ? { cli: state.worker.cli, model: state.worker.model }
+      tmuxSession: refreshed.worker?.tmux || null,
+      excludeCandidate: refreshed.worker
+        ? { cli: refreshed.worker.cli, model: refreshed.worker.model }
         : null,
       controlMessage:
-        "Please write a typed checkpoint and set handoff_ready in mailbox/CONTROL.json.",
+        "Please write mailbox/CHECKPOINT.json (team-up.checkpoint/v1) and set handoff_ready in mailbox/CONTROL.json.",
     });
   }
   return out;
 }
 
+function defaultStopTmux(session) {
+  if (!session) return;
+  try {
+    execFileSync("tmux", ["kill-session", "-t", session], { stdio: "ignore" });
+  } catch {
+    // already gone
+  }
+}
+
+function defaultInjectControl(message, ctx = {}) {
+  const st = ctx.runId ? loadState(ctx.runId) : null;
+  const session = ctx.tmuxSession || st?.worker?.tmux;
+  if (!session) {
+    throw new Error("injectControl requires a live tmux session");
+  }
+  const cli = st?.worker?.cli || st?.runtime?.cli || "claude";
+  let adapter;
+  try {
+    adapter = getAdapter(cli);
+  } catch {
+    adapter = null;
+  }
+  if (adapter?.injectControl) {
+    adapter.injectControl({
+      tmuxSession: session,
+      message,
+      execFileSync,
+    });
+    return;
+  }
+  execFileSync("tmux", ["send-keys", "-t", session, "-l", String(message)], {
+    stdio: "ignore",
+  });
+  execFileSync("tmux", ["send-keys", "-t", session, "Enter"], { stdio: "ignore" });
+}
+
+/**
+ * Production supervision deps — real TMUX inject/stop/start via the unified
+ * launch descriptor path. Injected callbacks are optional overrides for tests
+ * only; required operations never default to no-ops.
+ */
 export function buildProductionSuperviseDeps({
   startWorker,
   injectControl,
@@ -147,7 +299,16 @@ export function buildProductionSuperviseDeps({
       const dir = path.join(runDir(runId), "mailbox");
       fs.mkdirSync(dir, { recursive: true });
       const p = path.join(dir, "CONTROL.json");
-      fs.writeFileSync(p, `${JSON.stringify({ type, at }, null, 2)}\n`);
+      let prev = {};
+      try {
+        prev = JSON.parse(fs.readFileSync(p, "utf8"));
+      } catch {
+        prev = {};
+      }
+      fs.writeFileSync(
+        p,
+        `${JSON.stringify({ ...prev, type, at, handoff_ready: prev.handoff_ready === true }, null, 2)}\n`
+      );
       const st = loadState(runId);
       if (st && type === "request_handoff") {
         st.status = "handoff_preparing";
@@ -158,12 +319,11 @@ export function buildProductionSuperviseDeps({
     injectControl: async (message, ctx) => {
       if (typeof injectControl === "function") {
         await injectControl(message, ctx);
+        return;
       }
+      defaultInjectControl(message, ctx);
     },
-    validateCheckpoint: (cp) => {
-      if (!cp) return { ok: true };
-      return { ok: true };
-    },
+    validateCheckpoint: (cp, ids) => validateCheckpoint(cp, ids),
     releaseLease: async (target) => {
       if (!target?.attemptId && !target?.id) return;
       const runId = target.runId;
@@ -172,7 +332,11 @@ export function buildProductionSuperviseDeps({
       releaseAttemptLease({ runId, attemptId, reason: "handoff", now });
     },
     stopTmux: async (session) => {
-      if (session && typeof stopTmux === "function") await stopTmux(session);
+      if (typeof stopTmux === "function") {
+        await stopTmux(session);
+        return;
+      }
+      defaultStopTmux(session);
     },
     refreshUsage: async () => {},
     resolveChain: async (ctx = {}) => {
@@ -180,7 +344,8 @@ export function buildProductionSuperviseDeps({
       const usage = loadJson(usagePath()) || {};
       const st = ctx.runId ? loadState(ctx.runId) : null;
       const profile = st?.specialist_profile || st?.profile || { tier: "frontier", reasoning: "max" };
-      const requirements = st?.harness_requirements || {};
+      const requirements =
+        st?.harness_requirements || st?.launch_descriptor?.harness_requirements || {};
       const resolved = resolveProfile({
         roster,
         usage,
@@ -194,19 +359,28 @@ export function buildProductionSuperviseDeps({
           (c) => !(c.cli === exclude.cli && c.model === exclude.model)
         );
       }
+      const capacity_report = chainCapacityReport({
+        profileResult: { ...resolved, chain },
+        usage,
+        roster,
+        now,
+      });
       return {
         chain,
         quota_blocked: resolved.quota_blocked || [],
         skipped: resolved.skipped || [],
         code: resolved.code,
+        capacity_report,
       };
     },
     createAttempt: async (cell, ctx = {}) => {
       const runId = ctx.runId;
       const st = loadState(runId);
+      const roster = requireRoster();
+      const limit_windows = resolveLimitWindowsForCell(cell, roster);
       return createAttempt({
         runId,
-        runtime: cell,
+        runtime: { ...cell, limit_windows },
         specialist: st?.specialist || null,
         now,
       });
@@ -219,24 +393,23 @@ export function buildProductionSuperviseDeps({
         attemptId: attempt.id,
         expectedPrevious: st?.current_attempt_id ?? null,
         now,
+        owner: `starting:pid:${process.pid}`,
+        expiresAt: new Date(Date.parse(now) + 120_000).toISOString(),
       });
     },
     startWorker: async (attempt, ctx = {}) => {
-      if (typeof startWorker !== "function") {
-        throw new Error("startWorker required for production handoff");
+      const runId = ctx.runId;
+      if (typeof startWorker === "function") {
+        await startWorker({ attempt, runId, ...ctx });
+        return;
       }
-      await startWorker({ attempt, runId: ctx.runId, ...ctx });
-      const st = loadState(ctx.runId);
-      if (st) {
-        st.status = "watching";
-        st.worker = {
-          ...(st.worker || {}),
-          cli: attempt.runtime?.cli,
-          model: attempt.runtime?.model,
-        };
-        saveState(st);
-        setStatus(ctx.runId, "watching");
-      }
+      const cell = attempt.runtime || {};
+      await startSuccessorFromDescriptor({
+        runId,
+        cell,
+        attempt,
+        now,
+      });
     },
     appendEvent: async (event, ctx = {}) => {
       const runId = ctx.runId || event.runId;
@@ -257,6 +430,10 @@ export function buildProductionSuperviseDeps({
       if (!patch.runId) return;
       const st = loadState(patch.runId);
       if (!st) return;
+      if (patch.status === "waiting_capacity" && patch.capacity == null && !st.capacity?.reported_at) {
+        // Controller entered waiting without a report — leave a stub; caller
+        // should have attached capacity via enterWaitingCapacity helper.
+      }
       Object.assign(st, patch);
       delete st.runId;
       st.runId = patch.runId;
@@ -270,6 +447,10 @@ export function buildProductionSuperviseDeps({
         attemptId: ctx.attemptId,
       });
     },
+    persistCapacityReport: async (report, ctx = {}) => {
+      if (!ctx.runId) return;
+      persistCapacityWaiting(ctx.runId, report, now);
+    },
   };
 }
 
@@ -278,7 +459,44 @@ export async function superviseProductionRuns({
   deps,
 } = {}) {
   const resolved = deps || buildProductionSuperviseDeps({ now });
-  return superviseActiveRuns({ now, deps: resolved });
+  const results = await superviseActiveRuns({ now, deps: resolved });
+
+  // Production watcher also executes due approved capacity waits.
+  try {
+    const roster = requireRoster();
+    const usage = loadJson(usagePath()) || {};
+    await resumeDueWaits({
+      now,
+      usage,
+      roster,
+      resolveProfileForRun: async (runId, state) => {
+        const profile = state.specialist_profile || state.profile || {
+          tier: "frontier",
+          reasoning: "max",
+        };
+        return resolveProfile({
+          roster,
+          usage,
+          profile,
+          requirements:
+            state.harness_requirements ||
+            state.launch_descriptor?.harness_requirements ||
+            {},
+        });
+      },
+      startWorker: async ({ attempt, runId }) => {
+        await startFromLaunchDescriptor({
+          runId,
+          runtimeOverride: attempt.runtime,
+          attempt,
+          now,
+        });
+      },
+    });
+  } catch {
+    // capacity resume errors are non-fatal to the supervise tick
+  }
+  return results;
 }
 
-export { decideTransition, executeTransition, chainCapacityReport };
+export { decideTransition, executeTransition, chainCapacityReport, persistCapacityWaiting };

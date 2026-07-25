@@ -57,6 +57,11 @@ export const claudeAdapter = {
     const harnessDir = `${runDir}/harness`;
     mkdirSync(harnessDir, { recursive: true });
     const mcpPath = `${harnessDir}/claude-mcp.json`;
+    try {
+      chmodSync(mcpPath, 0o644);
+    } catch {
+      // first write — file may not exist
+    }
     const mcpConfig = {
       mcpServers: {
         team_up_command_broker: {
@@ -72,7 +77,7 @@ export const claudeAdapter = {
         },
       },
     };
-    writeFileSync(mcpPath, `${JSON.stringify(mcpConfig, null, 2)}\n`, { mode: 0o444 });
+    writeFileSync(mcpPath, `${JSON.stringify(mcpConfig, null, 2)}\n`, { mode: 0o644 });
     try {
       chmodSync(mcpPath, 0o444);
     } catch {
@@ -88,6 +93,9 @@ export const claudeAdapter = {
     if (!next.includes("--strict-mcp-config")) next.push("--strict-mcp-config");
     next.push("--mcp-config", mcpPath);
     next.push("--tools", tools);
+    // Pre-approve the allowlisted tools so live verify/MCP calls do not stall
+    // on interactive permission prompts — without bypassing all permissions.
+    next.push("--allowedTools", tools);
     next.push("--disallowedTools", "Bash");
 
     return {

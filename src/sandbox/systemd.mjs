@@ -237,12 +237,14 @@ export function wrapWithSandbox({
   cliPath,
   writableProject,
   probe = systemdAvailable,
+  timeoutSeconds: timeoutSecondsArg,
   sandboxRuntimePaths,
   requireHomeRuntime = false,
   execPaths = [],
   enforcement = "required",
   ...rest
 }) {
+  const timeoutSeconds = timeoutSecondsArg ?? rest.timeoutSeconds ?? null;
   const needsIsolation =
     permissions?.network === false ||
     permissions?.filesystem === "project" ||
@@ -251,31 +253,43 @@ export function wrapWithSandbox({
     permissions?.writes === "delegated_only" ||
     permissions?.filesystem === "none";
 
+  function withTimeout(argv) {
+    if (!(Number.isInteger(timeoutSeconds) && timeoutSeconds > 0)) {
+      return { argv, timeout_enforced: false };
+    }
+    return {
+      argv: [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=5s",
+        `${timeoutSeconds}s`,
+        ...argv,
+      ],
+      timeout_enforced: true,
+    };
+  }
+
+  // Timeout is independent of isolation: enforce even when permissions need none.
   if (!needsIsolation) {
-    return { argv: command, sandbox: "none", enforced: false };
+    const timed = withTimeout(command);
+    return {
+      argv: timed.argv,
+      sandbox: "none",
+      enforced: false,
+      timeout_enforced: timed.timeout_enforced,
+    };
   }
 
   if (typeof probe !== "function" || !probe()) {
     if (enforcement === "best_effort") {
-      const timeoutSeconds = rest.timeoutSeconds;
-      let argv = command;
-      // Enforce timeout even without systemd RuntimeMaxSec.
-      if (Number.isInteger(timeoutSeconds) && timeoutSeconds > 0) {
-        argv = [
-          "timeout",
-          "--signal=TERM",
-          "--kill-after=5s",
-          `${timeoutSeconds}s`,
-          ...command,
-        ];
-      }
+      const timed = withTimeout(command);
       return {
-        argv,
+        argv: timed.argv,
         sandbox: "none",
         enforced: false,
         warning:
           "best-effort sandbox unavailable; trusted specialist runs without OS isolation",
-        timeout_enforced: Number.isInteger(timeoutSeconds) && timeoutSeconds > 0,
+        timeout_enforced: timed.timeout_enforced,
       };
     }
     const err = new Error("SANDBOX_UNAVAILABLE: systemd-run --user cannot enforce requested permissions");
@@ -324,23 +338,34 @@ export function wrapWithSandbox({
         (permissions?.writes === "delegated_only" || permissions?.writes === true) &&
         permissions?.filesystem === "project"));
 
+  let argv = systemdSandboxArgv({
+    cwd,
+    network: Boolean(permissions?.network),
+    writablePaths,
+    readOnlyPaths: extraRo,
+    command,
+    callType,
+    projectPath: effectiveProjectPath,
+    packagePath,
+    runPath,
+    cliPath,
+    writableProject: Boolean(allowWritableProject),
+    execPaths: exec,
+    ...rest,
+  });
+  let timeout_enforced = false;
+  if (Number.isInteger(timeoutSeconds) && timeoutSeconds > 0) {
+    const idx = argv.indexOf("--");
+    if (idx !== -1) {
+      argv = [...argv];
+      argv.splice(idx, 0, "-p", `RuntimeMaxSec=${timeoutSeconds}`);
+      timeout_enforced = true;
+    }
+  }
   return {
-    argv: systemdSandboxArgv({
-      cwd,
-      network: Boolean(permissions?.network),
-      writablePaths,
-      readOnlyPaths: extraRo,
-      command,
-      callType,
-      projectPath: effectiveProjectPath,
-      packagePath,
-      runPath,
-      cliPath,
-      writableProject: Boolean(allowWritableProject),
-      execPaths: exec,
-      ...rest,
-    }),
+    argv,
     sandbox: "systemd-run-user",
     enforced: true,
+    timeout_enforced,
   };
 }

@@ -40,16 +40,58 @@ function nextAttemptId(attempts) {
   return `a${String(n).padStart(4, "0")}`;
 }
 
-function withExclusiveLock(lockPath, fn) {
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    if (e.code === "ESRCH") return false;
+    if (e.code === "EPERM") return true;
+    return true;
+  }
+}
+
+/**
+ * Exclusive lock with owner PID + age recovery.
+ * A dead controller must not leave a permanent lock_busy.
+ */
+function withExclusiveLock(lockPath, fn, { maxAgeMs = 120_000 } = {}) {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  const tryOpen = () => {
+    const fd = fs.openSync(lockPath, "wx");
+    fs.writeFileSync(fd, `${process.pid}\n${Date.now()}\n`);
+    return fd;
+  };
   let fd;
   try {
-    fd = fs.openSync(lockPath, "wx");
+    fd = tryOpen();
   } catch (e) {
-    if (e.code === "EEXIST") {
+    if (e.code !== "EEXIST") throw e;
+    let steal = false;
+    try {
+      const raw = fs.readFileSync(lockPath, "utf8").trim();
+      const [pidRaw, ageRaw] = raw.split(/\n/);
+      const pid = Number.parseInt(pidRaw, 10);
+      const started = Number.parseInt(ageRaw, 10);
+      const ownerDead = Number.isInteger(pid) && pid > 0 && !isPidAlive(pid);
+      const agedOut =
+        Number.isFinite(started) && Date.now() - started > maxAgeMs;
+      if (ownerDead || agedOut || !Number.isInteger(pid)) steal = true;
+    } catch {
+      steal = true;
+    }
+    if (!steal) return { ok: false, reason: "lock_busy" };
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
       return { ok: false, reason: "lock_busy" };
     }
-    throw e;
+    try {
+      fd = tryOpen();
+    } catch (e2) {
+      if (e2.code === "EEXIST") return { ok: false, reason: "lock_busy" };
+      throw e2;
+    }
   }
   try {
     return fn();
@@ -198,6 +240,46 @@ export function releaseAttemptLease({
  * - attempt heartbeat older than maxAgeMs → reclaim
  * - owner `pid:N` and process dead → reclaim
  */
+/**
+ * Atomically transfer lease ownership (startup reservation → live TMUX worker).
+ */
+export function transferLeaseOwner({
+  runId,
+  attemptId,
+  owner,
+  now = new Date().toISOString(),
+  clearExpiry = false,
+}) {
+  return withLeaseLock(runId, () => {
+    let current = null;
+    try {
+      current = JSON.parse(fs.readFileSync(leasePath(runId), "utf8"));
+    } catch (e) {
+      if (e.code === "ENOENT") return { ok: false, reason: "no_lease" };
+      throw e;
+    }
+    if (current.attempt_id !== attemptId) {
+      return { ok: false, reason: "not_holder", current: current.attempt_id };
+    }
+    if (current.released_at != null) {
+      return { ok: false, reason: "already_released" };
+    }
+    current.owner = owner;
+    current.transferred_at = now;
+    if (clearExpiry) current.expires_at = null;
+    atomicWriteJson(leasePath(runId), current);
+    try {
+      const attemptState = JSON.parse(fs.readFileSync(attemptStatePath(runId, attemptId), "utf8"));
+      attemptState.lease_owner = owner;
+      attemptState.heartbeat_at = now;
+      atomicWriteJson(attemptStatePath(runId, attemptId), attemptState);
+    } catch {
+      // ignore
+    }
+    return { ok: true, lease: current };
+  });
+}
+
 export function reclaimStaleLease({
   runId,
   now = new Date().toISOString(),
@@ -222,13 +304,14 @@ export function reclaimStaleLease({
       reason = "expired";
     } else {
       const owner = current.owner || "";
-      const m = /^pid:(\d+)$/.exec(owner);
-      if (m) {
-        const pid = Number(m[1]);
-        try {
-          process.kill(pid, 0);
-        } catch (e) {
-          if (e.code === "ESRCH") {
+      // Live TMUX ownership is never reclaimed via launcher PID liveness.
+      if (/^tmux:/.test(owner)) {
+        // only age / heartbeat / expiry
+      } else {
+        const m = /^(?:pid|starting:pid):(\d+)$/.exec(owner);
+        if (m) {
+          const pid = Number(m[1]);
+          if (!isPidAlive(pid)) {
             stale = true;
             reason = "owner_dead";
           }
@@ -269,7 +352,6 @@ export function reclaimStaleLease({
     }
     const st = loadState(runId);
     if (st && st.current_attempt_id === current.attempt_id) {
-      // keep current_attempt_id for expectedPrevious chaining; lease is released
       st.supervision = { ...(st.supervision || {}), last_reclaim: reason };
       saveState(st);
     }
