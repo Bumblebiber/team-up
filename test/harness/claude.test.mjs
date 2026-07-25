@@ -13,6 +13,7 @@ test("claude prepareLaunch denies shell bypass and writes mcp config", () => {
     runDir,
     broker: {
       policySnapshot: "/abs/policy/commands.json",
+      policyChecksum: "sha256:test",
       project: "/abs/project",
       runDir: "/abs/run",
       actionIds: ["project-test"],

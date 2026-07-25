@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { teamUpHome } from "../paths.mjs";
 
 export const COMMAND_POLICY_FILE = ".team-up/commands.json";
 
@@ -38,6 +39,19 @@ function isRelativeCwdSafe(cwd) {
   if (normalized === ".." || normalized.startsWith("../")) return false;
   if (normalized.includes("\0")) return false;
   return true;
+}
+
+function writeImmutableJson(target, body) {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, body, { mode: 0o444 });
+  fs.chmodSync(tmp, 0o444);
+  fs.renameSync(tmp, target);
+  try {
+    fs.chmodSync(target, 0o444);
+  } catch {
+    // some filesystems ignore mode on rename
+  }
 }
 
 export function validateCommandPolicy(policy) {
@@ -129,7 +143,21 @@ export function commandPolicyChecksum(policy) {
   return `sha256:${crypto.createHash("sha256").update(canonical).digest("hex")}`;
 }
 
-export function snapshotCommandPolicy({ policy, runDir }) {
+export function policySnapshotRoot(runId, env = process.env) {
+  return path.join(teamUpHome(env), "policy-snapshots", runId);
+}
+
+/**
+ * Write the authoritative approved snapshot outside every worker-writable path.
+ * Optionally mirrors a non-authoritative copy under workerVisibleDir for humans.
+ */
+export function snapshotCommandPolicy({
+  policy,
+  runId,
+  runDir,
+  workerVisibleDir,
+  env = process.env,
+}) {
   const result = validateCommandPolicy(policy);
   if (!result.ok) {
     const err = new Error(`COMMAND_POLICY_INVALID: ${result.errors.join("; ")}`);
@@ -137,21 +165,48 @@ export function snapshotCommandPolicy({ policy, runDir }) {
     err.errors = result.errors;
     throw err;
   }
-  const checksum = commandPolicyChecksum(policy);
-  const dir = path.join(runDir, "policy");
-  fs.mkdirSync(dir, { recursive: true });
-  const target = path.join(dir, "commands.json");
-  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  const body = `${JSON.stringify(sortedCanonical(policy), null, 2)}\n`;
-  fs.writeFileSync(tmp, body, { mode: 0o444 });
-  fs.chmodSync(tmp, 0o444);
-  fs.renameSync(tmp, target);
-  try {
-    fs.chmodSync(target, 0o444);
-  } catch {
-    // some filesystems ignore mode on rename
+  const id = runId || (runDir ? path.basename(path.resolve(runDir)) : null);
+  if (!id) {
+    throw new Error("snapshotCommandPolicy requires runId or runDir");
   }
-  return { path: target, checksum };
+  const checksum = commandPolicyChecksum(policy);
+  const body = `${JSON.stringify(sortedCanonical(policy), null, 2)}\n`;
+  const authDir = policySnapshotRoot(id, env);
+  const target = path.join(authDir, "commands.json");
+  writeImmutableJson(target, body);
+
+  const visibleRoot = workerVisibleDir || (runDir ? path.join(runDir, "policy") : null);
+  let visiblePath = null;
+  if (visibleRoot) {
+    visiblePath = path.join(visibleRoot, "commands.json");
+    writeImmutableJson(visiblePath, body);
+  }
+
+  return {
+    path: target,
+    checksum,
+    visible_path: visiblePath,
+    run_id: id,
+  };
+}
+
+export function assertPolicyChecksum(policy, expectedChecksum) {
+  const actual = commandPolicyChecksum(policy);
+  if (!expectedChecksum) {
+    const err = new Error("POLICY_CHECKSUM_REQUIRED: approval-bound checksum missing");
+    err.code = "POLICY_CHECKSUM_REQUIRED";
+    throw err;
+  }
+  if (actual !== expectedChecksum) {
+    const err = new Error(
+      `POLICY_CHECKSUM_MISMATCH: snapshot ${actual} != approved ${expectedChecksum}`
+    );
+    err.code = "POLICY_CHECKSUM_MISMATCH";
+    err.actual = actual;
+    err.expected = expectedChecksum;
+    throw err;
+  }
+  return actual;
 }
 
 export function actionFor(policy, actionId) {

@@ -60,6 +60,7 @@ export function resolveProfile({
       profile: effective || null,
       chain: [],
       skipped: [{ model: "*", reason: "missing tier or reasoning on profile" }],
+      quota_blocked: [],
     };
   }
 
@@ -72,6 +73,7 @@ export function resolveProfile({
       profile: effective,
       chain: [],
       skipped: [{ model: "*", reason: e.message }],
+      quota_blocked: [],
     };
   }
 
@@ -81,12 +83,14 @@ export function resolveProfile({
       profile: effective,
       chain: [],
       skipped: [{ model: "*", reason: `unknown reasoning: ${effective.reasoning}` }],
+      quota_blocked: [],
     };
   }
 
   const roleLimits = limits(roster || {});
   const chain = [];
   const skipped = [];
+  const quota_blocked = [];
   const requiredBroker = requirements?.command_broker || null;
 
   for (const [model, spec] of Object.entries(roster?.models || {})) {
@@ -153,7 +157,15 @@ export function resolveProfile({
         }
       }
 
-      // Usage / mark gates — exact same provider/CLI gate as legacy pick()
+      // Usage / mark gates — exact same provider/CLI gate as legacy pick().
+      // Capability-compatible quota-blocked cells are preserved for capacity
+      // reporting so an exhausted chain still exposes reset information.
+      const cell = {
+        cli,
+        model,
+        effort: reasoningMap[effective.reasoning],
+        priority: spec.priority ?? 100,
+      };
       const limitWindows = Array.isArray(spec.limit_windows) ? spec.limit_windows : [];
       const gate = modelUsageGate({
         usage,
@@ -165,30 +177,32 @@ export function resolveProfile({
       });
       if (gate.blocked) {
         skipped.push({ model: `${cli}:${model}`, reason: gate.reason });
+        quota_blocked.push({ ...cell, block_reason: gate.reason });
         continue;
       }
       if (markedUntil(usage, model, now)) {
-        skipped.push({ model: `${cli}:${model}`, reason: `marked limited until ${usage.marked[model].until}` });
+        const reason = `marked limited until ${usage.marked[model].until}`;
+        skipped.push({ model: `${cli}:${model}`, reason });
+        quota_blocked.push({ ...cell, block_reason: reason });
         continue;
       }
       if (spec.provider && markedUntil(usage, spec.provider, now)) {
+        const reason = `provider marked limited until ${usage.marked[spec.provider].until}`;
         skipped.push({
           model: `${cli}:${model}`,
-          reason: `provider marked limited until ${usage.marked[spec.provider].until}`,
+          reason,
         });
+        quota_blocked.push({ ...cell, block_reason: reason });
         continue;
       }
       if (markedUntil(usage, cli, now)) {
-        skipped.push({ model: `${cli}:${model}`, reason: `cli marked limited until ${usage.marked[cli].until}` });
+        const reason = `cli marked limited until ${usage.marked[cli].until}`;
+        skipped.push({ model: `${cli}:${model}`, reason });
+        quota_blocked.push({ ...cell, block_reason: reason });
         continue;
       }
 
-      chain.push({
-        cli,
-        model,
-        effort: reasoningMap[effective.reasoning],
-        priority: spec.priority ?? 100,
-      });
+      chain.push(cell);
     }
   }
 
@@ -196,10 +210,26 @@ export function resolveProfile({
     (a, b) =>
       a.priority - b.priority || `${a.cli}:${a.model}`.localeCompare(`${b.cli}:${b.model}`)
   );
+  quota_blocked.sort(
+    (a, b) =>
+      a.priority - b.priority || `${a.cli}:${a.model}`.localeCompare(`${b.cli}:${b.model}`)
+  );
 
   return chain.length
-    ? { code: "OK", profile: { tier, reasoning: effective.reasoning }, chain, skipped }
-    : { code: "PROFILE_UNAVAILABLE", profile: { tier, reasoning: effective.reasoning }, chain: [], skipped };
+    ? {
+        code: "OK",
+        profile: { tier, reasoning: effective.reasoning },
+        chain,
+        skipped,
+        quota_blocked,
+      }
+    : {
+        code: "PROFILE_UNAVAILABLE",
+        profile: { tier, reasoning: effective.reasoning },
+        chain: [],
+        skipped,
+        quota_blocked,
+      };
 }
 
 export { COMMAND_BROKER_CAPABILITY };

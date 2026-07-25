@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { actionFor, validateCommandPolicy } from "./policy.mjs";
 
-const MAX_CAPTURE = 1024 * 1024;
+export const MAX_CAPTURE = 1024 * 1024;
 const ALLOWED_ENV = new Set(["PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "CI"]);
 
 function sanitizeEnvironment(base = process.env) {
@@ -14,13 +14,38 @@ function sanitizeEnvironment(base = process.env) {
   return env;
 }
 
-function boundCapture(buf, limit = MAX_CAPTURE) {
-  const text = Buffer.isBuffer(buf) ? buf.toString("utf8") : String(buf || "");
-  if (Buffer.byteLength(text, "utf8") <= limit) {
-    return { text, truncated: false };
-  }
-  const sliced = Buffer.from(text, "utf8").subarray(0, limit).toString("utf8");
-  return { text: sliced, truncated: true };
+/**
+ * Bounded streaming accumulator — stops growing after `limit` bytes.
+ */
+export function createBoundedStream(limit = MAX_CAPTURE) {
+  let buf = Buffer.alloc(0);
+  let truncated = false;
+  let dropped = 0;
+  return {
+    push(chunk) {
+      const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (truncated) {
+        dropped += incoming.length;
+        return;
+      }
+      const room = limit - buf.length;
+      if (incoming.length <= room) {
+        buf = Buffer.concat([buf, incoming]);
+        return;
+      }
+      if (room > 0) buf = Buffer.concat([buf, incoming.subarray(0, room)]);
+      truncated = true;
+      dropped += incoming.length - Math.max(room, 0);
+    },
+    result() {
+      return {
+        text: buf.toString("utf8"),
+        truncated,
+        bytes: buf.length,
+        dropped,
+      };
+    },
+  };
 }
 
 function appendAudit(runDir, record) {
@@ -50,6 +75,7 @@ export async function executeApprovedAction({
   project,
   runDir,
   env = process.env,
+  maxCapture = MAX_CAPTURE,
 }) {
   const validated = validateCommandPolicy(policy);
   if (!validated.ok) {
@@ -65,8 +91,8 @@ export async function executeApprovedAction({
   const timeoutMs = action.timeout_seconds * 1000;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let stdoutBuf = Buffer.alloc(0);
-  let stderrBuf = Buffer.alloc(0);
+  const stdoutAcc = createBoundedStream(maxCapture);
+  const stderrAcc = createBoundedStream(maxCapture);
   let timedOut = false;
 
   try {
@@ -78,12 +104,8 @@ export async function executeApprovedAction({
         stdio: ["ignore", "pipe", "pipe"],
         signal: controller.signal,
       });
-      child.stdout.on("data", (chunk) => {
-        stdoutBuf = Buffer.concat([stdoutBuf, chunk]);
-      });
-      child.stderr.on("data", (chunk) => {
-        stderrBuf = Buffer.concat([stderrBuf, chunk]);
-      });
+      child.stdout.on("data", (chunk) => stdoutAcc.push(chunk));
+      child.stderr.on("data", (chunk) => stderrAcc.push(chunk));
       child.on("error", (err) => {
         if (err.name === "AbortError" || controller.signal.aborted) {
           timedOut = true;
@@ -109,8 +131,8 @@ export async function executeApprovedAction({
       });
     });
 
-    const stdout = boundCapture(stdoutBuf);
-    const stderr = boundCapture(stderrBuf);
+    const stdout = stdoutAcc.result();
+    const stderr = stderrAcc.result();
     const finishedAt = new Date().toISOString();
     const result = {
       action_id: actionId,

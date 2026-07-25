@@ -201,7 +201,10 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
  */
 export async function afterUsageCollectSupervise({ now = new Date().toISOString(), deps } = {}) {
   const { superviseActiveRuns } = await import("../supervisor/controller.mjs");
-  return superviseActiveRuns({ now, deps });
+  const resolved =
+    deps ||
+    (await import("../supervisor/production.mjs")).buildProductionSuperviseDeps({ now });
+  return superviseActiveRuns({ now, deps: resolved });
 }
 
 async function main() {
@@ -213,6 +216,18 @@ async function main() {
   if (once) {
     const r = tickOnce({ roster, dryRun });
     console.log(`state=${r.state} counts=${JSON.stringify(r.counts)} collect=${r.collect.join(",") || "(none)"}`);
+    if (!dryRun) {
+      try {
+        const results = await afterUsageCollectSupervise({
+          now: new Date().toISOString(),
+        });
+        if (results?.length) {
+          console.log(`supervised: ${results.map((x) => `${x.runId}:${x.decision.action}`).join(",")}`);
+        }
+      } catch (e) {
+        console.error("supervise error:", e.message || e);
+      }
+    }
     return;
   }
 
@@ -221,6 +236,16 @@ async function main() {
     try {
       const r = tickOnce({ roster });
       if (r.collect.length) console.log(`collected: ${r.successful.join(", ") || "(none ok)"}`);
+      try {
+        const results = await afterUsageCollectSupervise({
+          now: new Date().toISOString(),
+        });
+        if (results?.length) {
+          console.log(`supervised: ${results.map((x) => `${x.runId}:${x.decision.action}`).join(",")}`);
+        }
+      } catch (e) {
+        console.error("supervise error:", e.message || e);
+      }
     } catch (e) {
       console.error("watcher tick error:", e.message || e);
     }

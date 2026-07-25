@@ -648,11 +648,73 @@ function cmdResume(args) {
       console.log(parts.join(" "));
     }
   }
-  // Reattach due capacity waits without spawning workers for future waits.
-  import("../supervisor/waits.mjs").then(({ listDueWaits }) => {
-    const due = listDueWaits({ now: new Date().toISOString() });
-    for (const id of due) console.log(`due-wait: ${id}`);
-  }).catch(() => {});
+  // Durable automatic resume for due capacity waits (actual worker start).
+  import("../supervisor/waits.mjs")
+    .then(async ({ resumeDueWaits }) => {
+      const { loadJson, requireRoster, usagePath } = await import("../roster/config.mjs");
+      const { resolveProfile } = await import("../roster/profile.mjs");
+      const roster = requireRoster();
+      const usage = loadJson(usagePath()) || {};
+      if (dryRun) {
+        const { listDueWaits } = await import("../supervisor/waits.mjs");
+        for (const id of listDueWaits({ now: new Date().toISOString() })) {
+          console.log(`due-wait: ${id}`);
+        }
+        return;
+      }
+      const results = await resumeDueWaits({
+        now: new Date().toISOString(),
+        usage,
+        roster,
+        resolveProfileForRun: async (runId, state) => {
+          const profile = state.specialist_profile || state.profile || {
+            tier: "frontier",
+            reasoning: "max",
+          };
+          return resolveProfile({
+            roster,
+            usage,
+            profile,
+            requirements: state.harness_requirements || {},
+          });
+        },
+        startWorker: async ({ attempt, runId }) => {
+          const st = loadState(runId);
+          const session =
+            st?.worker?.tmux ||
+            `team-up-resume-${runId.slice(0, 8)}-${Date.now().toString(36)}`;
+          const dir = path.join(runDir(runId), "context");
+          const promptPath = path.join(runDir(runId), "mailbox", "PROMPT.md");
+          const prompt = fs.existsSync(promptPath)
+            ? fs.readFileSync(promptPath, "utf8")
+            : `Resume attempt ${attempt.id}`;
+          const { buildCommand, tmuxArgs } = await import("../roster/command.mjs");
+          const argv = buildCommand({
+            roster,
+            model: attempt.runtime?.model || st?.worker?.model,
+            cli: attempt.runtime?.cli || st?.worker?.cli || "claude",
+            prompt,
+            effort: attempt.runtime?.effort,
+          });
+          execFileSync("tmux", tmuxArgs({ session, dir: fs.existsSync(dir) ? dir : runDir(runId), argv }), {
+            stdio: "inherit",
+          });
+          if (st) {
+            st.worker = { ...(st.worker || {}), tmux: session };
+            saveState(st);
+          }
+          console.log(`resumed-wait: ${runId} attempt=${attempt.id} tmux=${session}`);
+        },
+      });
+      for (const r of results) {
+        console.log(
+          `capacity-resume: ${r.runId} ok=${r.ok} resumed=${Boolean(r.resumed)} reason=${r.reason || ""}`
+        );
+      }
+    })
+    .catch((e) => {
+      console.error(`capacity resume error: ${e.message || e}`);
+    });
   console.log(`log: ${report.logFile}`);
 }
 
@@ -696,8 +758,55 @@ async function cmdRecheckCapacity(args) {
     console.error("usage: runs.mjs recheck-capacity <runId>");
     process.exit(1);
   }
+  const { recheckCapacity } = await import("../supervisor/waits.mjs");
+  const { loadJson, requireRoster, usagePath } = await import("../roster/config.mjs");
+  const { resolveProfile } = await import("../roster/profile.mjs");
+  const { buildCommand, tmuxArgs } = await import("../roster/command.mjs");
+  const roster = requireRoster();
+  const usage = loadJson(usagePath()) || {};
   const state = loadState(runId);
-  console.log(JSON.stringify(state?.capacity || null, null, 2));
+  const profile = state?.specialist_profile || state?.profile || {
+    tier: "frontier",
+    reasoning: "max",
+  };
+  const profileResult = resolveProfile({
+    roster,
+    usage,
+    profile,
+    requirements: state?.harness_requirements || {},
+  });
+  const result = await recheckCapacity({
+    runId,
+    usage,
+    roster,
+    profileResult,
+    startWorker: async ({ attempt }) => {
+      const st = loadState(runId);
+      const session =
+        st?.worker?.tmux ||
+        `team-up-recheck-${runId.slice(0, 8)}-${Date.now().toString(36)}`;
+      const dir = path.join(runDir(runId), "context");
+      const promptPath = path.join(runDir(runId), "mailbox", "PROMPT.md");
+      const prompt = fs.existsSync(promptPath)
+        ? fs.readFileSync(promptPath, "utf8")
+        : `Resume attempt ${attempt.id}`;
+      const argv = buildCommand({
+        roster,
+        model: attempt.runtime?.model || st?.worker?.model,
+        cli: attempt.runtime?.cli || st?.worker?.cli || "claude",
+        prompt,
+        effort: attempt.runtime?.effort,
+      });
+      execFileSync("tmux", tmuxArgs({ session, dir: fs.existsSync(dir) ? dir : runDir(runId), argv }), {
+        stdio: "inherit",
+      });
+      if (st) {
+        st.worker = { ...(st.worker || {}), tmux: session };
+        saveState(st);
+      }
+    },
+  });
+  console.log(JSON.stringify(result, null, 2));
 }
 
 function cmdCancel(args) {

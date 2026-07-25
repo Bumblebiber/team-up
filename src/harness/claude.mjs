@@ -65,6 +65,7 @@ export const claudeAdapter = {
           args: [brokerBin],
           env: {
             TEAM_UP_COMMAND_POLICY_SNAPSHOT: broker.policySnapshot,
+            TEAM_UP_COMMAND_POLICY_CHECKSUM: broker.policyChecksum,
             TEAM_UP_PROJECT: broker.project,
             TEAM_UP_RUN_DIR: broker.runDir,
           },

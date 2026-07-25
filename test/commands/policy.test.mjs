@@ -36,9 +36,26 @@ test("rejects shell strings, cwd escape, env overrides, and unknown keys", () =>
   }
 });
 
-test("snapshot is immutable and checksum bound", () => {
+test("snapshot is immutable, checksum bound, and outside worker-writable run dir", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-polhome-"));
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-policy-"));
-  const snap = snapshotCommandPolicy({ policy: valid, runDir });
-  assert.equal(snap.checksum, commandPolicyChecksum(valid));
-  assert.equal(fs.statSync(snap.path).mode & 0o222, 0);
+  const prev = process.env.TEAM_UP_HOME;
+  process.env.TEAM_UP_HOME = home;
+  try {
+    const snap = snapshotCommandPolicy({
+      policy: valid,
+      runId: path.basename(runDir),
+      workerVisibleDir: path.join(runDir, "policy"),
+    });
+    assert.equal(snap.checksum, commandPolicyChecksum(valid));
+    assert.equal(fs.statSync(snap.path).mode & 0o222, 0);
+    assert.ok(snap.path.startsWith(path.join(home, "policy-snapshots")));
+    assert.ok(!snap.path.startsWith(runDir));
+    assert.ok(fs.existsSync(path.join(runDir, "policy", "commands.json")));
+  } finally {
+    if (prev === undefined) delete process.env.TEAM_UP_HOME;
+    else process.env.TEAM_UP_HOME = prev;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
 });

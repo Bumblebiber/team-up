@@ -2,19 +2,34 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync, execFileSync } from "node:child_process";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { getAdapter } from "./registry.mjs";
 import { verifyHarness } from "./verify.mjs";
 import { snapshotCommandPolicy } from "../commands/policy.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
 
+function claudeLoginOrQuotaFailure(text) {
+  const t = String(text || "").toLowerCase();
+  return (
+    /not logged in|please run .*login|authentication|unauthorized|quota|rate limit|credit|subscription/.test(
+      t
+    )
+  );
+}
+
 /**
- * Live Claude conformance runner. Does not invoke a paid model chat —
- * only checks CLI flags / MCP tool listing via the broker when possible.
- * Returns not-ready style failures when the CLI is missing or unauthenticated.
+ * Live Claude conformance: invoke the installed CLI with the prepared MCP
+ * broker config. Never infer denial from argv alone and never grant the
+ * command-broker capability from flag inspection.
  */
 export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersion }) {
+  let versionOut = "";
   try {
-    execFileSync("claude", ["--version"], { encoding: "utf8", timeout: 10_000 });
+    versionOut = execFileSync("claude", ["--version"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
   } catch (e) {
     return {
       native_shell: "unverified",
@@ -23,75 +38,190 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
     };
   }
 
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-home-"));
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-run-"));
-  const policy = {
-    schema_version: 1,
-    commands: {
-      "project-test": {
-        argv: [process.execPath, "-e", "process.stdout.write('ok')"],
-        cwd: ".",
-        timeout_seconds: 30,
-        environment: {},
-      },
-    },
-  };
-  const snap = snapshotCommandPolicy({ policy, runDir });
-  let prepared;
+  const prevHome = process.env.TEAM_UP_HOME;
+  process.env.TEAM_UP_HOME = home;
   try {
-    prepared = adapter.prepareLaunch({
-      argv: ["claude", "--print", "noop"],
-      runDir,
-      broker: {
-        policySnapshot: snap.path,
-        project: path.resolve(fixtureProject),
-        runDir,
-        actionIds: ["project-test"],
+    const policy = {
+      schema_version: 1,
+      commands: {
+        "project-test": {
+          argv: [process.execPath, "-e", "process.stdout.write('ok')"],
+          cwd: ".",
+          timeout_seconds: 30,
+          environment: {},
+        },
       },
-      brokerBin: brokerBinPath(),
-      writeFileSync: fs.writeFileSync,
-      mkdirSync: fs.mkdirSync,
-      chmodSync: fs.chmodSync,
+    };
+    const snap = snapshotCommandPolicy({
+      policy,
+      runId: path.basename(runDir),
+      workerVisibleDir: path.join(runDir, "policy"),
     });
-  } catch (e) {
-    return { native_shell: "unverified", broker_tool: "failed", error: e.message };
-  }
 
-  const deniesBash = prepared.argv.includes("--disallowedTools") &&
-    prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1] === "Bash";
-  const native_shell = deniesBash ? "denied" : "allowed";
-
-  const listed = spawnSync(
-    process.execPath,
-    [brokerBinPath()],
-    {
+    // Exercise the configured MCP broker via the same stdio server Claude would spawn.
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [brokerBinPath()],
       env: {
         ...process.env,
         TEAM_UP_COMMAND_POLICY_SNAPSHOT: snap.path,
+        TEAM_UP_COMMAND_POLICY_CHECKSUM: snap.checksum,
         TEAM_UP_PROJECT: path.resolve(fixtureProject),
         TEAM_UP_RUN_DIR: runDir,
       },
-      encoding: "utf8",
-      timeout: 5_000,
-      input: "",
-    }
-  );
-  // Broker exits when stdin closes without MCP handshake — still proves binary loads.
-  // Prefer an explicit tools/list via a tiny node client would be heavier; for live
-  // verify we execute the approved action directly through execute module.
-  const { executeApprovedAction } = await import("../commands/execute.mjs");
-  try {
-    const result = await executeApprovedAction({
-      actionId: "project-test",
-      policy,
-      project: fixtureProject,
-      runDir,
     });
-    const broker_tool = result.exit_code === 0 && result.stdout === "ok" ? "passed" : "failed";
-    return { native_shell, broker_tool, cli_version: cliVersion, argv_sample: prepared.argv.slice(0, 12) };
-  } catch (e) {
-    return { native_shell, broker_tool: "failed", error: e.message };
+    const client = new Client({ name: "team-up-verify", version: "0.0.0" });
+    let broker_tool = "failed";
+    try {
+      await client.connect(transport);
+      const listed = await client.listTools();
+      const names = listed.tools.map((t) => t.name);
+      if (!names.includes("project_test")) {
+        broker_tool = "failed";
+      } else {
+        const call = await client.callTool({ name: "project_test", arguments: {} });
+        const body = call.content?.[0]?.text || "";
+        const parsed = JSON.parse(body);
+        broker_tool = parsed.exit_code === 0 && parsed.stdout === "ok" ? "passed" : "failed";
+      }
+    } catch (e) {
+      broker_tool = "failed";
+      if (claudeLoginOrQuotaFailure(e.message)) {
+        return {
+          native_shell: "unverified",
+          broker_tool: "unverified",
+          error: e.message,
+          cli_version: cliVersion,
+        };
+      }
+    } finally {
+      try {
+        await client.close();
+      } catch {
+        // ignore
+      }
+    }
+
+    function prepareWithPrompt(prompt) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-harness-"));
+      return adapter.prepareLaunch({
+        argv: ["claude", "--print", "--output-format", "text", prompt],
+        runDir: dir,
+        broker: {
+          policySnapshot: snap.path,
+          policyChecksum: snap.checksum,
+          project: path.resolve(fixtureProject),
+          runDir,
+          actionIds: ["project-test"],
+        },
+        brokerBin: brokerBinPath(),
+        writeFileSync: fs.writeFileSync,
+        mkdirSync: fs.mkdirSync,
+        chmodSync: fs.chmodSync,
+      });
+    }
+
+    // Real Claude invocation: ask it to run Bash. Denial must come from the live CLI.
+    // Prompt must appear before adapter-appended flags.
+    const shellProbePrompt =
+      "Use the Bash tool to run the command: echo SHELL_SHOULD_BE_DENIED. " +
+      "If Bash is unavailable, reply exactly with NATIVE_SHELL_DENIED. Do not invent success.";
+    let shellPrepared;
+    try {
+      shellPrepared = prepareWithPrompt(shellProbePrompt);
+    } catch (e) {
+      return { native_shell: "unverified", broker_tool, error: e.message, cli_version: cliVersion };
+    }
+    const shellArgv = shellPrepared.argv;
+    const shellRun = spawnSync(shellArgv[0], shellArgv.slice(1), {
+      encoding: "utf8",
+      timeout: 90_000,
+      env: { ...process.env },
+      cwd: fixtureProject,
+    });
+    const shellText = `${shellRun.stdout || ""}\n${shellRun.stderr || ""}`;
+    if (shellRun.error && /ENOENT/.test(String(shellRun.error))) {
+      return {
+        native_shell: "unverified",
+        broker_tool: "unverified",
+        error: `claude executable unavailable: ${shellRun.error.message}`,
+      };
+    }
+    if (claudeLoginOrQuotaFailure(shellText) || (shellRun.status !== 0 && /login|auth|quota/i.test(shellText))) {
+      return {
+        native_shell: "unverified",
+        broker_tool: broker_tool === "passed" ? "passed" : "unverified",
+        error: shellText.trim().slice(0, 500) || "claude login/quota failure",
+        cli_version: cliVersion,
+      };
+    }
+
+    let native_shell = "allowed";
+    if (
+      /NATIVE_SHELL_DENIED/i.test(shellText) ||
+      /bash.*(?:not allowed|disallowed|denied|unavailable)/i.test(shellText) ||
+      /tool.*bash.*(?:not|denied|disallowed)/i.test(shellText) ||
+      (/don't have a bash|do not have a bash|no bash tool/i.test(shellText))
+    ) {
+      native_shell = "denied";
+    } else if (/SHELL_SHOULD_BE_DENIED/.test(shellText) && !/NATIVE_SHELL_DENIED/i.test(shellText)) {
+      native_shell = "allowed";
+    } else if (shellRun.status !== 0) {
+      native_shell = "unverified";
+    }
+
+    if (native_shell === "denied" && broker_tool === "passed") {
+      const brokerPrompt =
+        "Call the MCP tool mcp__team_up_command_broker__project_test with no arguments. " +
+        "Reply with the tool stdout only.";
+      let brokerPrepared;
+      try {
+        brokerPrepared = prepareWithPrompt(brokerPrompt);
+      } catch (e) {
+        return { native_shell, broker_tool: "unverified", error: e.message, cli_version: cliVersion };
+      }
+      const brokerArgv = brokerPrepared.argv;
+      const brokerRun = spawnSync(brokerArgv[0], brokerArgv.slice(1), {
+        encoding: "utf8",
+        timeout: 90_000,
+        env: { ...process.env },
+        cwd: fixtureProject,
+      });
+      const brokerText = `${brokerRun.stdout || ""}\n${brokerRun.stderr || ""}`;
+      if (claudeLoginOrQuotaFailure(brokerText)) {
+        return {
+          native_shell,
+          broker_tool: "unverified",
+          error: brokerText.trim().slice(0, 500),
+          cli_version: cliVersion,
+        };
+      }
+      if (/ACTION_DENIED|COMMAND_POLICY|failed/i.test(brokerText) && !/\bok\b/.test(brokerText)) {
+        broker_tool = "failed";
+      }
+    }
+
+    return {
+      native_shell,
+      broker_tool,
+      cli_version: cliVersion || String(versionOut).trim(),
+      argv_sample: shellPrepared.argv.slice(0, 12),
+    };
   } finally {
-    void listed;
+    if (prevHome === undefined) delete process.env.TEAM_UP_HOME;
+    else process.env.TEAM_UP_HOME = prevHome;
+    try {
+      fs.rmSync(home, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+    try {
+      fs.rmSync(runDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
   }
 }
 

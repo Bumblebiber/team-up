@@ -257,12 +257,25 @@ export function wrapWithSandbox({
 
   if (typeof probe !== "function" || !probe()) {
     if (enforcement === "best_effort") {
+      const timeoutSeconds = rest.timeoutSeconds;
+      let argv = command;
+      // Enforce timeout even without systemd RuntimeMaxSec.
+      if (Number.isInteger(timeoutSeconds) && timeoutSeconds > 0) {
+        argv = [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          `${timeoutSeconds}s`,
+          ...command,
+        ];
+      }
       return {
-        argv: command,
+        argv,
         sandbox: "none",
         enforced: false,
         warning:
           "best-effort sandbox unavailable; trusted specialist runs without OS isolation",
+        timeout_enforced: Number.isInteger(timeoutSeconds) && timeoutSeconds > 0,
       };
     }
     const err = new Error("SANDBOX_UNAVAILABLE: systemd-run --user cannot enforce requested permissions");

@@ -9,7 +9,8 @@
   },
   "clis": {
     "claude": {
-      "cmd": ["claude", "--dangerously-skip-permissions", "--model", "{model}", "{prompt}"]
+      "$comment": "Do not use --dangerously-skip-permissions — the Claude harness adapter refuses it and denies Bash while exposing only the team-up command broker MCP tools.",
+      "cmd": ["claude", "--model", "{model}", "{prompt}"]
     },
     "codex": {
       "cmd": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "{model}", "-c", "model_reasoning_effort={effort}", "{prompt}"]

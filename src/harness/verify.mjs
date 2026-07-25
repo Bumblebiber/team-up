@@ -55,10 +55,17 @@ export async function verifyHarness({
     fixtureProject,
     cliVersion,
   });
-  const status =
-    checks.native_shell === "denied" && checks.broker_tool === "passed"
-      ? "verified"
-      : "failed";
+  let status;
+  if (checks.native_shell === "denied" && checks.broker_tool === "passed") {
+    status = "verified";
+  } else if (
+    checks.native_shell === "unverified" ||
+    checks.broker_tool === "unverified"
+  ) {
+    status = "unverified";
+  } else {
+    status = "failed";
+  }
   const record = {
     adapter: adapter.id,
     cli_version: cliVersion,

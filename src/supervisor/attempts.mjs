@@ -14,6 +14,10 @@ function leaseLockPath(runId) {
   return path.join(runDir(runId), "ACTIVE_LEASE.lock");
 }
 
+function attemptsLockPath(runId) {
+  return path.join(runDir(runId), "ATTEMPTS.lock");
+}
+
 function attemptStatePath(runId, attemptId) {
   return path.join(runDir(runId), "attempts", attemptId, "STATE.json");
 }
@@ -36,42 +40,14 @@ function nextAttemptId(attempts) {
   return `a${String(n).padStart(4, "0")}`;
 }
 
-export function createAttempt({ runId, runtime = {}, specialist = null, now = new Date().toISOString() }) {
-  const data = loadAttempts(runId);
-  const id = nextAttemptId(data.attempts);
-  const record = {
-    id,
-    created_at: now,
-    status: "created",
-    runtime,
-    specialist,
-  };
-  data.attempts.push({ id, created_at: now, status: "created" });
-  saveAttempts(runId, data);
-  fs.mkdirSync(path.dirname(attemptStatePath(runId, id)), { recursive: true });
-  atomicWriteJson(attemptStatePath(runId, id), {
-    ...record,
-    heartbeat_at: null,
-  });
-  const state = loadState(runId);
-  if (state) {
-    state.attempt_count = data.attempts.length;
-    state.supervision = { ...(state.supervision || {}), enabled: true };
-    if (specialist) state.specialist = specialist;
-    saveState(state);
-  }
-  return record;
-}
-
-function withLeaseLock(runId, fn) {
-  const lock = leaseLockPath(runId);
-  fs.mkdirSync(path.dirname(lock), { recursive: true });
+function withExclusiveLock(lockPath, fn) {
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   let fd;
   try {
-    fd = fs.openSync(lock, "wx");
+    fd = fs.openSync(lockPath, "wx");
   } catch (e) {
     if (e.code === "EEXIST") {
-      return { ok: false, reason: "lease_lock_busy" };
+      return { ok: false, reason: "lock_busy" };
     }
     throw e;
   }
@@ -84,11 +60,50 @@ function withLeaseLock(runId, fn) {
       // ignore
     }
     try {
-      fs.unlinkSync(lock);
+      fs.unlinkSync(lockPath);
     } catch {
       // ignore
     }
   }
+}
+
+export function createAttempt({ runId, runtime = {}, specialist = null, now = new Date().toISOString() }) {
+  const locked = withExclusiveLock(attemptsLockPath(runId), () => {
+    const data = loadAttempts(runId);
+    const id = nextAttemptId(data.attempts);
+    const record = {
+      id,
+      created_at: now,
+      status: "created",
+      runtime,
+      specialist,
+    };
+    data.attempts.push({ id, created_at: now, status: "created" });
+    saveAttempts(runId, data);
+    fs.mkdirSync(path.dirname(attemptStatePath(runId, id)), { recursive: true });
+    atomicWriteJson(attemptStatePath(runId, id), {
+      ...record,
+      heartbeat_at: null,
+    });
+    const state = loadState(runId);
+    if (state) {
+      state.attempt_count = data.attempts.length;
+      state.supervision = { ...(state.supervision || {}), enabled: true };
+      if (specialist) state.specialist = specialist;
+      saveState(state);
+    }
+    return { ok: true, record };
+  });
+  if (!locked.ok) {
+    const err = new Error(`ATTEMPT_LOCK_BUSY: concurrent createAttempt for ${runId}`);
+    err.code = "ATTEMPT_LOCK_BUSY";
+    throw err;
+  }
+  return locked.record;
+}
+
+function withLeaseLock(runId, fn) {
+  return withExclusiveLock(leaseLockPath(runId), fn);
 }
 
 export function acquireAttemptLease({
@@ -96,6 +111,8 @@ export function acquireAttemptLease({
   attemptId,
   expectedPrevious = null,
   now = new Date().toISOString(),
+  owner = `pid:${process.pid}`,
+  expiresAt = null,
 }) {
   return withLeaseLock(runId, () => {
     let current = null;
@@ -122,6 +139,8 @@ export function acquireAttemptLease({
       acquired_at: now,
       released_at: null,
       previous_attempt_id: expectedPrevious,
+      owner,
+      expires_at: expiresAt,
     };
     atomicWriteJson(leasePath(runId), lease);
     const st = loadState(runId);
@@ -133,6 +152,7 @@ export function acquireAttemptLease({
     const attemptState = JSON.parse(fs.readFileSync(attemptStatePath(runId, attemptId), "utf8"));
     attemptState.status = "active";
     attemptState.heartbeat_at = now;
+    attemptState.lease_owner = owner;
     atomicWriteJson(attemptStatePath(runId, attemptId), attemptState);
     return { ok: true, lease };
   });
@@ -167,6 +187,93 @@ export function releaseAttemptLease({
       // attempt state optional for crash paths
     }
     return { ok: true, lease: current };
+  });
+}
+
+/**
+ * Reclaim a held lease when ownership expired or heartbeat is stale.
+ * Rules:
+ * - lease with released_at set → noop
+ * - expires_at in the past → reclaim
+ * - attempt heartbeat older than maxAgeMs → reclaim
+ * - owner `pid:N` and process dead → reclaim
+ */
+export function reclaimStaleLease({
+  runId,
+  now = new Date().toISOString(),
+  maxAgeMs = 600_000,
+}) {
+  return withLeaseLock(runId, () => {
+    let current = null;
+    try {
+      current = JSON.parse(fs.readFileSync(leasePath(runId), "utf8"));
+    } catch (e) {
+      if (e.code === "ENOENT") return { ok: false, reason: "no_lease" };
+      throw e;
+    }
+    if (current.released_at != null) {
+      return { ok: false, reason: "already_released" };
+    }
+    const nowMs = Date.parse(now);
+    let stale = false;
+    let reason = "stale";
+    if (current.expires_at && Date.parse(current.expires_at) <= nowMs) {
+      stale = true;
+      reason = "expired";
+    } else {
+      const owner = current.owner || "";
+      const m = /^pid:(\d+)$/.exec(owner);
+      if (m) {
+        const pid = Number(m[1]);
+        try {
+          process.kill(pid, 0);
+        } catch (e) {
+          if (e.code === "ESRCH") {
+            stale = true;
+            reason = "owner_dead";
+          }
+        }
+      }
+      if (!stale) {
+        try {
+          const attemptState = JSON.parse(
+            fs.readFileSync(attemptStatePath(runId, current.attempt_id), "utf8")
+          );
+          const hb = attemptState.heartbeat_at
+            ? Date.parse(attemptState.heartbeat_at)
+            : Date.parse(current.acquired_at);
+          if (Number.isFinite(hb) && nowMs - hb > maxAgeMs) {
+            stale = true;
+            reason = "heartbeat_stale";
+          }
+        } catch {
+          stale = true;
+          reason = "missing_attempt_state";
+        }
+      }
+    }
+    if (!stale) return { ok: false, reason: "not_stale", lease: current };
+
+    current.released_at = now;
+    current.release_reason = `reclaimed:${reason}`;
+    atomicWriteJson(leasePath(runId), current);
+    try {
+      const attemptState = JSON.parse(
+        fs.readFileSync(attemptStatePath(runId, current.attempt_id), "utf8")
+      );
+      attemptState.status = "reclaimed";
+      attemptState.released_at = now;
+      atomicWriteJson(attemptStatePath(runId, current.attempt_id), attemptState);
+    } catch {
+      // ignore
+    }
+    const st = loadState(runId);
+    if (st && st.current_attempt_id === current.attempt_id) {
+      // keep current_attempt_id for expectedPrevious chaining; lease is released
+      st.supervision = { ...(st.supervision || {}), last_reclaim: reason };
+      saveState(st);
+    }
+    return { ok: true, reason, lease: current };
   });
 }
 

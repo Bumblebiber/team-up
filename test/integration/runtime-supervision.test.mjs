@@ -141,15 +141,20 @@ test("runtime supervision fake-harness integration", async () => {
     assert.equal(budget.tokens.enforcement, "advisory");
 
     const runDirPath = fs.mkdtempSync(path.join(home, "broker-run-"));
-    const snapPath = path.join(runDirPath, "policy", "commands.json");
-    fs.mkdirSync(path.dirname(snapPath), { recursive: true });
-    fs.writeFileSync(snapPath, JSON.stringify(policy));
+    const { snapshotCommandPolicy } = await import("../../src/commands/policy.mjs");
+    const snap = snapshotCommandPolicy({
+      policy,
+      runId: path.basename(runDirPath),
+      workerVisibleDir: path.join(runDirPath, "policy"),
+    });
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [brokerBin],
       env: {
         ...process.env,
-        TEAM_UP_COMMAND_POLICY_SNAPSHOT: snapPath,
+        TEAM_UP_HOME: home,
+        TEAM_UP_COMMAND_POLICY_SNAPSHOT: snap.path,
+        TEAM_UP_COMMAND_POLICY_CHECKSUM: snap.checksum,
         TEAM_UP_PROJECT: project,
         TEAM_UP_RUN_DIR: runDirPath,
       },

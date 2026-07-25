@@ -22,6 +22,7 @@ import {
   prepareHarnessLaunch,
 } from "../harness/registry.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
+import { beginSupervisedAttempt } from "../supervisor/production.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -203,7 +204,7 @@ export async function launch({
       ? `Advisory token target: ${budgetNorm.tokens.target} (not hard-enforced).`
       : null,
     budgetNorm.timeout_seconds
-      ? `Timeout budget: ${budgetNorm.timeout_seconds}s (enforced by sandbox runtime).`
+      ? `Timeout budget: ${budgetNorm.timeout_seconds}s (enforced by sandbox runtime or timeout(1) fallback).`
       : null,
   ].filter(Boolean).join("\n");
 
@@ -221,7 +222,8 @@ export async function launch({
   if (projectPolicy) {
     policySnapshot = snapshotCommandPolicy({
       policy: projectPolicy,
-      runDir: runDir(state.runId),
+      runId: state.runId,
+      workerVisibleDir: path.join(runDir(state.runId), "policy"),
     });
   }
 
@@ -289,6 +291,7 @@ export async function launch({
       runDir: runPath,
       broker: {
         policySnapshot: policySnapshot.path,
+        policyChecksum: policySnapshot.checksum,
         project: path.resolve(project),
         runDir: runPath,
         actionIds: effectivePerms.commands || [],
@@ -307,11 +310,24 @@ export async function launch({
     ? sandbox.probe
     : systemdAvailable;
 
+  // Policy snapshot is authoritative under ~/.team-up/policy-snapshots — never
+  // bind the whole run tree as writable in a way that includes that path.
+  const workerWritable = [
+    path.join(runPath, "mailbox"),
+    path.join(runPath, "context"),
+    path.join(runPath, "attempts"),
+    dest,
+  ];
+  if (fs.existsSync(path.join(runPath, "policy"))) {
+    // Worker-visible copy is intentionally mutable for audit demos; broker ignores it.
+    workerWritable.push(path.join(runPath, "policy"));
+  }
+
   const wrapped = wrapWithSandbox({
     command: cliArgv,
     permissions: effectivePerms,
     cwd: dest,
-    writablePaths: [runPath, dest],
+    writablePaths: workerWritable,
     readOnlyPaths: cliPath ? [cliPath] : [],
     callType,
     projectPath: fsMode === "none" ? null : project,
@@ -344,9 +360,34 @@ export async function launch({
   }
 
   if (!dryRun) {
+    beginSupervisedAttempt({
+      runId: state.runId,
+      runtime: { cli: cell.cli, model: cell.model, effort: cell.effort },
+      specialist: {
+        id: specialistId,
+        version: installed.version,
+        checksum: installed.checksum,
+      },
+    });
     const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
-    execFileSync("tmux", tmuxArgs({ session, dir: dest, argv: wrapped.argv }), { stdio: "inherit" });
+    const startWorker =
+      sandbox?.startWorker ||
+      (({ argv, dir, sessionName }) => {
+        execFileSync("tmux", tmuxArgs({ session: sessionName, dir, argv }), { stdio: "inherit" });
+      });
+    startWorker({
+      argv: wrapped.argv,
+      dir: dest,
+      sessionName: session,
+      runId: state.runId,
+    });
     linkDispatchToRun(state.runId, session);
+    const live = loadState(state.runId);
+    if (live) {
+      live.worker = { ...(live.worker || {}), tmux: session, cli: cell.cli, model: cell.model };
+      live.specialist_profile = profileResult.profile;
+      saveState(live);
+    }
   }
 
   return {

@@ -1,4 +1,11 @@
 <!-- o9k-provenance
+who: cursor:grok-4.5
+when: 2026-07-25T15:41:04.855Z
+why: Document delivered command allowlist / broker boundary
+trigger: runtime-supervision review remediation Minor 13
+host: cursor
+-->
+<!-- o9k-provenance
 who: cursor-agent:grok
 when: 2026-07-25T15:18:22.926Z
 why: Document best-effort OS sandbox for trusted specialists
@@ -73,8 +80,12 @@ metadata. The home sentinel for the semantic probe stays under `$HOME`; the
 no-exec probe script is created outside `$HOME` so home-hiding alone cannot
 fake executable blocking.
 
-**Command allowlists remain hard at the harness/broker boundary** (later
-tasks). Token targets are **advisory** only — see budget normalization.
+**Command allowlists are hard at the harness/broker boundary.** Project
+actions live in `.team-up/commands.json`, are checksum-bound on specialist
+approval, and are snapshotted under `~/.team-up/policy-snapshots/<runId>/`
+outside every worker-writable path. The MCP broker validates that approval
+checksum before each action and never re-reads a worker-modifiable copy.
+Token targets are **advisory** only — see budget normalization.
 Legacy config booleans such as `mediated_commands: true` or
 `token_budget_adapter: true` are ignored. Until a command-broker adapter is
 verified:
@@ -83,8 +94,8 @@ verified:
   tools → `ALLOWLIST_UNENFORCEABLE` (pre-broker gate)
 
 Starter manifests declare the approved design capabilities (including Hannes
-`command.test` / `project-test` and advisory token targets). Command
-mediation lands with the shared broker; OS sandboxing no longer blocks launch.
+`command.test` / `project-test` and advisory token targets). Claude is the
+first verified adapter; Cursor / Codex / Hermes / OpenCode remain unsupported.
 
 Home-installed CLIs need a **non-empty** `sandbox.runtime_paths` list when
 OS isolation is actually applied.

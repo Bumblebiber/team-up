@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadState, saveState, runDir, setStatus } from "../runs/runs.mjs";
 import { chainCapacityReport } from "./capacity.mjs";
-import { createAttempt, acquireAttemptLease } from "./attempts.mjs";
+import { createAttempt, acquireAttemptLease, releaseAttemptLease } from "./attempts.mjs";
 
 function waitsIndexPath(env = process.env) {
   const root = env.TEAM_UP_RUNS || env.O9K_RUNS || path.join(process.env.HOME || "", ".team-up/runs");
@@ -94,13 +94,18 @@ export function listDueWaits({ now = new Date().toISOString(), env = process.env
   return due;
 }
 
-export function recheckCapacity({
+/**
+ * Recheck capacity for one wait. When available, create attempt + lease and
+ * optionally start the successor via startWorker.
+ */
+export async function recheckCapacity({
   runId,
   usage,
   roster,
   profileResult,
   now = new Date().toISOString(),
   env = process.env,
+  startWorker = null,
 }) {
   const state = loadState(runId);
   if (!state?.capacity?.auto_resume) {
@@ -108,26 +113,57 @@ export function recheckCapacity({
   }
   const report = chainCapacityReport({ profileResult, usage, roster, now });
   if (report.available_count > 0) {
+    const candidate = report.reports.find((r) => r.available)?.candidate || {};
     const attempt = createAttempt({
       runId,
-      runtime: report.reports.find((r) => r.available)?.candidate || {},
+      runtime: candidate,
       specialist: state.specialist || null,
       now,
     });
     const prev = state.current_attempt_id || null;
-    // If previous lease still held, caller must release first.
-    acquireAttemptLease({
+    const lease = acquireAttemptLease({
       runId,
       attemptId: attempt.id,
       expectedPrevious: prev,
       now,
     });
+    if (!lease.ok) {
+      return { ok: false, reason: "lease_failed", lease, report };
+    }
+
+    if (typeof startWorker === "function") {
+      try {
+        await startWorker({ attempt, runId, candidate, report });
+      } catch (e) {
+        releaseAttemptLease({ runId, attemptId: attempt.id, reason: "start_failed", now });
+        const st = loadState(runId);
+        st.capacity = {
+          ...st.capacity,
+          last_resume_error: String(e.message || e),
+          last_recheck_at: now,
+          resume_retry_after: new Date(Date.parse(now) + 60_000).toISOString(),
+        };
+        saveState(st);
+        const waits = loadWaits(env);
+        if (waits.waits[runId]) {
+          waits.waits[runId].resume_not_before = st.capacity.resume_retry_after;
+          saveWaits(waits, env);
+        }
+        return { ok: false, reason: "start_worker_failed", error: String(e.message || e), attempt, report };
+      }
+    }
+
     state.status = "watching";
     state.capacity = {
       ...state.capacity,
       last_recheck_at: now,
       next_reset_at: null,
+      last_resume_error: null,
     };
+    state.current_attempt_id = attempt.id;
+    if (candidate.cli) {
+      state.worker = { ...(state.worker || {}), cli: candidate.cli, model: candidate.model };
+    }
     saveState(state);
     setStatus(runId, "watching");
     const waits = loadWaits(env);
@@ -150,6 +186,43 @@ export function recheckCapacity({
     saveWaits(waits, env);
   }
   return { ok: true, resumed: false, report };
+}
+
+/**
+ * Durable automatic resume for all due capacity waits.
+ */
+export async function resumeDueWaits({
+  now = new Date().toISOString(),
+  env = process.env,
+  usage,
+  roster,
+  profileResult,
+  startWorker,
+  resolveProfileForRun,
+} = {}) {
+  const due = listDueWaits({ now, env });
+  const results = [];
+  for (const runId of due) {
+    const state = loadState(runId);
+    if (!state?.capacity?.auto_resume || state.capacity?.wait_cancelled) {
+      continue;
+    }
+    let profile = profileResult;
+    if (typeof resolveProfileForRun === "function") {
+      profile = await resolveProfileForRun(runId, state);
+    }
+    const result = await recheckCapacity({
+      runId,
+      usage,
+      roster,
+      profileResult: profile || { chain: [] },
+      now,
+      env,
+      startWorker,
+    });
+    results.push({ runId, ...result });
+  }
+  return results;
 }
 
 export function capacityWaitsPath(env = process.env) {
