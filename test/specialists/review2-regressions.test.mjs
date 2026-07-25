@@ -47,6 +47,24 @@ function writePkg(dir, manifest, { skillBody = "skill\n" } = {}) {
   }
 }
 
+function writeProjectCommands(project, actions = ["project-test"]) {
+  const commands = {};
+  for (const id of actions) {
+    commands[id] = {
+      argv: ["npm", "test"],
+      cwd: ".",
+      timeout_seconds: 1800,
+      environment: {},
+    };
+  }
+  const dir = path.join(project, ".team-up");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "commands.json"),
+    JSON.stringify({ schema_version: 1, commands })
+  );
+}
+
 function withTempRuns(fn) {
   return async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-runs-"));
@@ -185,6 +203,7 @@ test("non-empty commands without mediated_commands → ALLOWLIST_UNENFORCEABLE",
         commands: ["project-test"],
       },
     }));
+    writeProjectCommands(project);
     const inst = await installPackage(pkg, env);
     assert.equal(inst.ok, true, inst.errors?.join("; "));
     assert.equal((await approveSpecialist({ idAtVersion: "testing.cmds@0.1.0", project, env })).ok, true);

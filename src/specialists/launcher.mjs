@@ -13,6 +13,10 @@ import { materialize } from "../sandbox/materialize.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
 import { resolveCommandMediation } from "./adapters.mjs";
 import { normalizeBudget } from "./budget.mjs";
+import {
+  resolveCommandPolicyForApproval,
+  snapshotCommandPolicy,
+} from "../commands/policy.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 
 function argValue(args, flag) {
@@ -103,12 +107,26 @@ export async function launch({
     throw e;
   }
 
+  let commandPolicyChecksum = null;
+  let projectPolicy = null;
+  try {
+    ({ checksum: commandPolicyChecksum, policy: projectPolicy } = resolveCommandPolicyForApproval({
+      project,
+      permissions: manifest.permissions,
+      env,
+    }));
+  } catch (e) {
+    e.code = e.code || "COMMAND_POLICY_INVALID";
+    throw e;
+  }
+
   if (!isApproved({
     project,
     id: specialistId,
     version: installed.version,
     checksum: installed.checksum,
     permissions: manifest.permissions,
+    command_policy_checksum: commandPolicyChecksum,
     env,
   })) {
     const err = new Error(`specialist not approved for project (checksum/permissions binding)`);
@@ -193,6 +211,15 @@ export async function launch({
     prompt: barePrompt,
     result_protocol: "RESULT.json",
   });
+
+  let policySnapshot = null;
+  if (projectPolicy) {
+    policySnapshot = snapshotCommandPolicy({
+      policy: projectPolicy,
+      runDir: runDir(state.runId),
+    });
+  }
+
   const request = normalizeRequest({
     specialist_id: specialistId,
     specialist_version: installed.version,
@@ -213,6 +240,9 @@ export async function launch({
     tokens: budgetNorm.tokens,
     warnings: budgetNorm.warnings,
   };
+  st.command_policy = policySnapshot
+    ? { checksum: policySnapshot.checksum, snapshot: policySnapshot.path }
+    : { checksum: null, snapshot: null };
   st.output_contract = "team-up.result/v1";
   st.result_protocol = "RESULT.json";
   saveState(st);

@@ -36,6 +36,24 @@ function writePkg(dir, manifest) {
   fs.writeFileSync(path.join(dir, "evals", "evals.json"), "[]");
 }
 
+function writeProjectCommands(project, actions = ["project-test"]) {
+  const commands = {};
+  for (const id of actions) {
+    commands[id] = {
+      argv: ["npm", "test"],
+      cwd: ".",
+      timeout_seconds: 1800,
+      environment: {},
+    };
+  }
+  const dir = path.join(project, ".team-up");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "commands.json"),
+    JSON.stringify({ schema_version: 1, commands })
+  );
+}
+
 test("legacy mediated_commands:true cannot enable mediation (no concrete adapter)", () => {
   const r = resolveCommandMediation({ mediated_commands: true }, { mediated_commands: true });
   assert.equal(r.enabled, false);
@@ -106,6 +124,7 @@ test("setting mediated_commands true cannot bypass ALLOWLIST_UNENFORCEABLE", asy
       })
     );
     assert.equal((await installPackage(pkg, env)).ok, true);
+    writeProjectCommands(project);
     assert.equal(
       (await approveSpecialist({ idAtVersion: "testing.bypass@0.1.0", project, env })).ok,
       true

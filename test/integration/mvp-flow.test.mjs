@@ -82,13 +82,29 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
     assert.equal(hInstall.ok, true, hInstall.errors?.join("; "));
     assert.equal(uInstall.ok, true);
 
+    fs.mkdirSync(path.join(project, ".team-up"), { recursive: true });
+    fs.writeFileSync(
+      path.join(project, ".team-up", "commands.json"),
+      JSON.stringify({
+        schema_version: 1,
+        commands: {
+          "project-test": {
+            argv: ["npm", "test"],
+            cwd: ".",
+            timeout_seconds: 1800,
+            environment: {},
+          },
+        },
+      })
+    );
+
     // 3. Approve Hannes for temp project
     const approval = await approveSpecialist({
       idAtVersion: "testing.hannes@0.1.0",
       project,
       env,
     });
-    assert.equal(approval.ok, true);
+    assert.equal(approval.ok, true, approval.errors?.join("; "));
 
     // 4–5. Resolve frontier+max only
     const resolved = resolveProfile({
@@ -148,6 +164,7 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
         version: "0.1.0",
         checksum: hInstall.checksum,
         permissions: hannesManifest.permissions,
+        command_policy_checksum: approval.approval.command_policy_checksum,
         env,
       }),
       true
@@ -159,6 +176,7 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
         version: "0.1.0",
         checksum: "sha256:deadbeef",
         permissions: hannesManifest.permissions,
+        command_policy_checksum: approval.approval.command_policy_checksum,
         env,
       }),
       false
@@ -170,6 +188,7 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
         version: "0.1.0",
         checksum: hInstall.checksum,
         permissions: hannesManifest.permissions,
+        command_policy_checksum: approval.approval.command_policy_checksum,
       }),
       approvalKey({
         project,
@@ -177,6 +196,7 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
         version: "0.1.0",
         checksum: "sha256:deadbeef",
         permissions: hannesManifest.permissions,
+        command_policy_checksum: approval.approval.command_policy_checksum,
       })
     );
 
