@@ -161,7 +161,7 @@ test("post-approval mutation fails PACKAGE_INTEGRITY_FAILED and does not launch"
 
 // --- 3. unmediated command/tool policy ---
 
-test("non-empty commands without mediated_commands → ALLOWLIST_UNENFORCEABLE", async () => {
+test("non-empty commands without verified command broker → PROFILE_UNAVAILABLE", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-allow-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-ap-"));
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-apk-"));
@@ -218,7 +218,7 @@ test("non-empty commands without mediated_commands → ALLOWLIST_UNENFORCEABLE",
         dryRun: true,
         sandbox: { available: true, probe: () => true },
       }),
-      (e) => e.code === "ALLOWLIST_UNENFORCEABLE" || /ALLOWLIST_UNENFORCEABLE/.test(e.message)
+      (e) => e.code === "PROFILE_UNAVAILABLE" || /PROFILE_UNAVAILABLE|command broker/.test(e.message)
     );
   } finally {
     for (const k of Object.keys(process.env)) {

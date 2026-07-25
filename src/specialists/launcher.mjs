@@ -163,12 +163,18 @@ export async function launch({
 
   const roster = requireRoster();
   const usage = loadJson(usagePath());
+  const requirements =
+    (manifest.permissions?.commands || []).length > 0
+      ? { command_broker: "team-up.command-broker/v1" }
+      : {};
   const profileResult = resolveProfile({
     roster,
     usage,
     profile: manifest.model_profile,
     specialistId,
     callType,
+    requirements,
+    harnessCapabilities: defaultHarnessCapabilities,
   });
   if (profileResult.code !== "OK") {
     const err = new Error(`PROFILE_UNAVAILABLE: ${JSON.stringify(profileResult.skipped.slice(0, 5))}`);
@@ -179,14 +185,6 @@ export async function launch({
   const cell = profileResult.chain[0];
   const harnessCaps = defaultHarnessCapabilities(cell.cli);
   const cliCfg = cliSandboxConfig(roster, cell.cli, { harnessCapabilities: harnessCaps });
-
-  if (needsCommandMediation(effectivePerms, manifest) && !cliCfg.mediated_commands) {
-    const err = new Error(
-      "ALLOWLIST_UNENFORCEABLE: selected CLI has no code-registered command mediation adapter (legacy mediated_commands boolean is ignored)"
-    );
-    err.code = "ALLOWLIST_UNENFORCEABLE";
-    throw err;
-  }
 
   const budgetNorm = normalizeBudget(manifest.budget ?? {});
 

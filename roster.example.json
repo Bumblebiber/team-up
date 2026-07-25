@@ -1,5 +1,5 @@
 {
-  "$comment": "team-up user config. Copied to ~/.team-up/roster.json by 'team-up init'. Curate models/roles/chains yourself — team-up ships no live model list. cmd templates are argv arrays; {model}, {prompt}, and {effort} are substituted literally per element. Chain entries may be bare model ids (uses models[m].cli[0]) or CLI×model pins ('cursor:grok-4.5-high' / {\"cli\":\"hermes\",\"model\":\"deepseek-v4-pro\"}). Specialist-eligible models (those with tier) must declare account + abstract reasoning maps.",
+  "$comment": "team-up user config. Copied to ~/.team-up/roster.json by 'team-up init'. Curate models/roles/chains yourself — team-up ships no live model list. cmd templates are argv arrays; {model}, {prompt}, and {effort} are substituted literally per element. Chain entries may be bare model ids (uses models[m].cli[0]) or CLI×model pins ('cursor:grok-4.5-high' / {\"cli\":\"hermes\",\"model\":\"deepseek-v4-pro\"}). Specialist-eligible models (those with tier) must declare account + abstract reasoning maps. Command-broker / shell-denial support comes from installed team-up harness adapters plus ~/.team-up/harness-verification records — never from roster booleans.",
   "schema_version": 2,
   "accounts": {
     "claude": { "kind": "subscription", "enabled": true },

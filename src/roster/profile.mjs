@@ -1,5 +1,7 @@
 import { modelUsageGate } from "../usage/usage-windows.mjs";
 import { limits } from "./chain.mjs";
+import { defaultHarnessCapabilities } from "../harness/registry.mjs";
+import { COMMAND_BROKER_CAPABILITY } from "../harness/capabilities.mjs";
 
 const TIER_ALIASES = { mid: "medium" };
 const VALID_TIERS = new Set(["frontier", "high", "medium", "low"]);
@@ -34,6 +36,8 @@ function markedUntil(usage, key, now) {
 /**
  * Resolve abstract {tier, reasoning} into an exact-tier fallback chain.
  * Never upgrades or downgrades tier.
+ * Optional requirements (e.g. command_broker) filter harnesses after CLI
+ * template validation and before usage gates.
  */
 export function resolveProfile({
   roster,
@@ -42,6 +46,8 @@ export function resolveProfile({
   specialistId,
   callType,
   now = Date.now(),
+  requirements = {},
+  harnessCapabilities = defaultHarnessCapabilities,
 }) {
   const effective =
     roster?.specialists?.[specialistId]?.calls?.[callType]?.model_profile ||
@@ -81,6 +87,7 @@ export function resolveProfile({
   const roleLimits = limits(roster || {});
   const chain = [];
   const skipped = [];
+  const requiredBroker = requirements?.command_broker || null;
 
   for (const [model, spec] of Object.entries(roster?.models || {})) {
     const modelTier = (() => {
@@ -128,6 +135,22 @@ export function resolveProfile({
       if (!roster.clis?.[cli]?.cmd) {
         skipped.push({ model: `${cli}:${model}`, reason: `no cli template for "${cli}"` });
         continue;
+      }
+
+      if (requiredBroker) {
+        let caps;
+        try {
+          caps = harnessCapabilities(cli);
+        } catch {
+          caps = { command_broker: null };
+        }
+        if (caps?.command_broker !== requiredBroker) {
+          skipped.push({
+            model: `${cli}:${model}`,
+            reason: `command broker unavailable (need ${requiredBroker})`,
+          });
+          continue;
+        }
       }
 
       // Usage / mark gates — exact same provider/CLI gate as legacy pick()
@@ -178,3 +201,5 @@ export function resolveProfile({
     ? { code: "OK", profile: { tier, reasoning: effective.reasoning }, chain, skipped }
     : { code: "PROFILE_UNAVAILABLE", profile: { tier, reasoning: effective.reasoning }, chain: [], skipped };
 }
+
+export { COMMAND_BROKER_CAPABILITY };

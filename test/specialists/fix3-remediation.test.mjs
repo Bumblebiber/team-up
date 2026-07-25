@@ -74,7 +74,7 @@ test("legacy token_budget_adapter boolean is ignored; tokens stay advisory", () 
   assert.equal(cfg.token_budget_adapter, undefined);
 });
 
-test("setting mediated_commands true cannot bypass ALLOWLIST_UNENFORCEABLE", async () => {
+test("setting mediated_commands true cannot bypass missing command broker capability", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-allow-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-ap-"));
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-apk-"));
@@ -141,7 +141,7 @@ test("setting mediated_commands true cannot bypass ALLOWLIST_UNENFORCEABLE", asy
           dryRun: true,
           sandbox: { available: true, probe: () => true },
         }),
-      (e) => e.code === "ALLOWLIST_UNENFORCEABLE" || /ALLOWLIST_UNENFORCEABLE/.test(e.message)
+      (e) => e.code === "PROFILE_UNAVAILABLE" || /PROFILE_UNAVAILABLE|command broker/.test(e.message)
     );
   } finally {
     for (const k of Object.keys(process.env)) {
