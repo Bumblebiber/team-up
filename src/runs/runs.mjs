@@ -572,11 +572,13 @@ export function resumeAll({
   now = new Date(),
   execute = executeResumeAction,
 } = {}) {
-  fs.mkdirSync(runsRoot(), { recursive: true });
   const lock = resumeLockPath();
-  acquireResumeLock(lock);
   const resolvedLogDir = logDir || path.join(os.homedir(), ".team-up/logs");
   const report = { at: now.toISOString(), runs: [] };
+  if (!dryRun) {
+    fs.mkdirSync(runsRoot(), { recursive: true });
+    acquireResumeLock(lock);
+  }
   try {
     for (const state of listActiveStates()) {
       const resolved = resolveRunState(state, classifyMailbox(state.runId));
@@ -597,11 +599,17 @@ export function resumeAll({
       }
     }
   } finally {
-    try {
-      fs.unlinkSync(lock);
-    } catch {
-      /* */
+    if (!dryRun) {
+      try {
+        fs.unlinkSync(lock);
+      } catch {
+        /* */
+      }
     }
+  }
+  if (dryRun) {
+    report.logFile = null;
+    return report;
   }
   fs.mkdirSync(resolvedLogDir, { recursive: true });
   const logFile = path.join(resolvedLogDir, `resume-${now.toISOString().replace(/[:.]/g, "-")}.log`);

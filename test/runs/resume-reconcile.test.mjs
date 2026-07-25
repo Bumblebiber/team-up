@@ -252,6 +252,57 @@ test("resumeAll dry-run plans from terminal mailbox but leaves STATE untouched",
   assert.equal(fs.readFileSync(path.join(runs.runDir(state.runId), "STATE.json"), "utf8"), before);
 }));
 
+test("resumeAll dry-run returns a plan without any filesystem writes", withTempRuns(async (dir) => {
+  const state = createFixture({ stateStatus: "watching", mailboxStatus: "watching" });
+  const statePath = path.join(runs.runDir(state.runId), "STATE.json");
+  const mailboxStatusPath = path.join(runs.mailboxDir(state.runId), "STATUS");
+  const logDir = path.join(dir, "dry-run-logs");
+  const before = {
+    rootMtimeNs: fs.statSync(dir, { bigint: true }).mtimeNs,
+    state: fs.readFileSync(statePath, "utf8"),
+    stateMtimeNs: fs.statSync(statePath, { bigint: true }).mtimeNs,
+    mailboxStatus: fs.readFileSync(mailboxStatusPath, "utf8"),
+    mailboxStatusMtimeNs: fs.statSync(mailboxStatusPath, { bigint: true }).mtimeNs,
+    entries: fs.readdirSync(dir).sort(),
+  };
+
+  const report = runs.resumeAll({
+    dryRun: true,
+    tmuxExists: () => false,
+    logDir,
+    now: new Date("2026-07-25T18:00:00Z"),
+  });
+
+  const entry = report.runs.find((item) => item.runId === state.runId);
+  assert.ok(entry.actions.some((action) => action.kind === "spawn_worker"));
+  assert.equal(report.logFile, null);
+  assert.equal(fs.existsSync(logDir), false);
+  assert.equal(fs.existsSync(runs.resumeLockPath()), false);
+  assert.deepEqual(fs.readdirSync(dir).sort(), before.entries);
+  assert.equal(fs.statSync(dir, { bigint: true }).mtimeNs, before.rootMtimeNs);
+  assert.equal(fs.readFileSync(statePath, "utf8"), before.state);
+  assert.equal(fs.statSync(statePath, { bigint: true }).mtimeNs, before.stateMtimeNs);
+  assert.equal(fs.readFileSync(mailboxStatusPath, "utf8"), before.mailboxStatus);
+  assert.equal(
+    fs.statSync(mailboxStatusPath, { bigint: true }).mtimeNs,
+    before.mailboxStatusMtimeNs,
+  );
+
+  const missingRoot = path.join(dir, "missing-runs");
+  const missingLogs = path.join(dir, "missing-logs");
+  process.env.TEAM_UP_RUNS = missingRoot;
+  const emptyReport = runs.resumeAll({
+    dryRun: true,
+    tmuxExists: () => false,
+    logDir: missingLogs,
+    now: new Date("2026-07-25T18:00:00Z"),
+  });
+  assert.deepEqual(emptyReport.runs, []);
+  assert.equal(emptyReport.logFile, null);
+  assert.equal(fs.existsSync(missingRoot), false);
+  assert.equal(fs.existsSync(missingLogs), false);
+}));
+
 test("resumeAll persists terminal mailbox and emits no worker, parent, or watcher action", withTempRuns(async (dir) => {
   for (const status of ["done", "failed", "cancelled"]) {
     const state = createFixture({ stateStatus: "watching", mailboxStatus: status, parentAttach: "tmux" });

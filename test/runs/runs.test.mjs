@@ -303,19 +303,27 @@ test("resumeAll dry-run lists actions without tmux", withTempRuns(async (dir) =>
   const report = resumeAll({ dryRun: true, tmuxExists: () => false, logDir: dir });
   assert.ok(report.runs.some((r) => r.runId === s.runId));
   assert.ok(report.runs[0].actions.some((a) => a.kind === "spawn_worker"));
-  assert.ok(report.logFile && fs.existsSync(report.logFile));
+  assert.equal(report.logFile, null);
 }));
 
 test("resumeAll lock prevents concurrent run", withTempRuns(async (dir) => {
   const lock = path.join(dir, ".resume.lock");
   fs.writeFileSync(lock, String(process.pid));
-  assert.throws(() => resumeAll({ dryRun: true, logDir: dir }), /lock/);
+  assert.throws(
+    () => resumeAll({ dryRun: false, tmuxExists: () => true, logDir: dir, execute: () => {} }),
+    /lock/,
+  );
 }));
 
 test("resumeAll steals stale lock from dead pid", withTempRuns(async (dir) => {
   const lock = resumeLockPath();
   fs.writeFileSync(lock, "2147483646\n"); // almost certainly dead
-  const report = resumeAll({ dryRun: true, tmuxExists: () => true, logDir: dir });
+  const report = resumeAll({
+    dryRun: false,
+    tmuxExists: () => true,
+    logDir: dir,
+    execute: () => {},
+  });
   assert.ok(report.logFile);
   assert.ok(!fs.existsSync(lock)); // released in finally
 }));
