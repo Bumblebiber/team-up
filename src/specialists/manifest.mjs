@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { assertSafeSpecialistSegment } from "./safe-id.mjs";
 
 export const REQUIRED = [
   "schema_version",
@@ -22,6 +23,9 @@ export const REQUIRED = [
 const FORBIDDEN_KEYS = new Set([
   "model",
   "provider",
+  "preferred_model",
+  "model_id",
+  "model_name",
   "install",
   "postinstall",
   "preinstall",
@@ -30,6 +34,31 @@ const FORBIDDEN_KEYS = new Set([
 
 const VALID_TIERS = new Set(["frontier", "high", "medium", "low"]);
 const VALID_REASONING = new Set(["max", "high", "medium", "low"]);
+const VALID_CALL_TYPES = new Set(["consult", "delegate", "review"]);
+const VALID_FS = new Set(["none", "project_readonly", "project", "home"]);
+const VALID_WRITES = new Set([false, true, "delegated_only"]);
+
+const ALLOWED_TOP_LEVEL = new Set([
+  "specialist.json",
+  "instructions.md",
+  "package.json",
+  "README.md",
+  "skills",
+  "evals",
+  "templates",
+  "docs",
+]);
+
+const FORBIDDEN_PKG_SCRIPTS = new Set([
+  "preinstall",
+  "install",
+  "postinstall",
+  "prepublish",
+  "preprepare",
+  "prepare",
+  "prestart",
+  "start",
+]);
 
 function walkKeys(value, pathParts, onKey) {
   if (Array.isArray(value)) {
@@ -44,7 +73,15 @@ function walkKeys(value, pathParts, onKey) {
   }
 }
 
-export function validateManifest(manifest) {
+function isSafeRelPath(p) {
+  if (!p || typeof p !== "string") return false;
+  if (path.isAbsolute(p)) return false;
+  const norm = path.normalize(p);
+  if (norm.startsWith("..") || norm.includes(`..${path.sep}`)) return false;
+  return true;
+}
+
+export function validateManifest(manifest, { packageDir } = {}) {
   const errors = [];
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     return { ok: false, errors: ["manifest must be an object"] };
@@ -62,8 +99,24 @@ export function validateManifest(manifest) {
     }
   });
 
-  // Concrete model name smell in string values under common forbidden fields already covered;
-  // also reject top-level model-ish fields already handled.
+  try {
+    if (manifest.id != null) assertSafeSpecialistSegment(String(manifest.id), "id");
+  } catch (e) {
+    errors.push(e.message);
+  }
+  try {
+    if (manifest.version != null) assertSafeSpecialistSegment(String(manifest.version), "version");
+  } catch (e) {
+    errors.push(e.message);
+  }
+
+  if (Array.isArray(manifest.call_types)) {
+    for (const ct of manifest.call_types) {
+      if (!VALID_CALL_TYPES.has(ct)) errors.push(`invalid call_type: ${ct}`);
+    }
+  } else if (manifest.call_types != null) {
+    errors.push("call_types must be an array");
+  }
 
   const profile = manifest.model_profile;
   if (profile && typeof profile === "object") {
@@ -75,6 +128,47 @@ export function validateManifest(manifest) {
     }
   }
 
+  const perms = manifest.permissions;
+  if (perms && typeof perms === "object") {
+    if (perms.filesystem != null && !VALID_FS.has(perms.filesystem)) {
+      errors.push(`invalid permissions.filesystem: ${perms.filesystem}`);
+    }
+    if (perms.writes != null && !VALID_WRITES.has(perms.writes)) {
+      errors.push(`invalid permissions.writes: ${perms.writes}`);
+    }
+    if (perms.network != null && typeof perms.network !== "boolean") {
+      errors.push("permissions.network must be boolean");
+    }
+    if (perms.commands != null && !Array.isArray(perms.commands)) {
+      errors.push("permissions.commands must be an array");
+    }
+  }
+
+  const caps = manifest.capabilities;
+  if (caps && typeof caps === "object") {
+    for (const key of ["skills", "tools", "mcps", "frameworks"]) {
+      if (caps[key] != null && !Array.isArray(caps[key])) {
+        errors.push(`capabilities.${key} must be an array`);
+      }
+    }
+  }
+
+  const budget = manifest.budget;
+  if (budget && typeof budget === "object") {
+    if (budget.timeout_seconds != null &&
+      (typeof budget.timeout_seconds !== "number" || budget.timeout_seconds <= 0)) {
+      errors.push("budget.timeout_seconds must be a positive number");
+    }
+    if (budget.max_tokens != null &&
+      (typeof budget.max_tokens !== "number" || budget.max_tokens <= 0)) {
+      errors.push("budget.max_tokens must be a positive number");
+    }
+  }
+
+  if (manifest.eval_suite != null && !isSafeRelPath(manifest.eval_suite)) {
+    errors.push(`unsafe eval_suite path: ${manifest.eval_suite}`);
+  }
+
   if (manifest.output_contract && manifest.output_contract !== "team-up.result/v1") {
     errors.push(`unsupported output_contract: ${manifest.output_contract}`);
   }
@@ -83,7 +177,77 @@ export function validateManifest(manifest) {
     errors.push(`unsupported schema_version: ${manifest.schema_version}`);
   }
 
+  if (packageDir) {
+    const pkgJsonPath = path.join(packageDir, "package.json");
+    if (fs.existsSync(pkgJsonPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+        if (pkg.bin || pkg.directories?.bin) {
+          errors.push("package.json must not declare executable bin entries");
+        }
+        if (pkg.scripts && typeof pkg.scripts === "object") {
+          for (const name of Object.keys(pkg.scripts)) {
+            if (FORBIDDEN_PKG_SCRIPTS.has(name) || /^(pre|post)/.test(name)) {
+              errors.push(`package.json refuses lifecycle script: ${name}`);
+            }
+          }
+        }
+      } catch (e) {
+        errors.push(`invalid package.json: ${e.message}`);
+      }
+    }
+  }
+
   return { ok: errors.length === 0, errors };
+}
+
+export function declaredPackageFiles(packageDir, manifest) {
+  const files = new Set(["specialist.json", "instructions.md"]);
+  if (fs.existsSync(path.join(packageDir, "package.json"))) files.add("package.json");
+  if (fs.existsSync(path.join(packageDir, "README.md"))) files.add("README.md");
+  const skills = manifest?.capabilities?.skills || [];
+  for (const skill of skills) {
+    files.add(path.join("skills", `${skill}.md`));
+  }
+  if (manifest?.eval_suite) files.add(manifest.eval_suite);
+  return [...files].filter((rel) => fs.existsSync(path.join(packageDir, rel)));
+}
+
+export function inspectPackageDir(packageDir) {
+  const errors = [];
+  const abs = path.resolve(packageDir);
+  let manifest;
+  try {
+    ({ manifest } = loadManifestFromDir(abs));
+  } catch (e) {
+    return { ok: false, errors: [String(e.message || e)], files: [] };
+  }
+
+  for (const ent of fs.readdirSync(abs, { withFileTypes: true })) {
+    if (ent.isSymbolicLink()) {
+      errors.push(`refusing symlink at package root: ${ent.name}`);
+      continue;
+    }
+    if (!ALLOWED_TOP_LEVEL.has(ent.name) && ent.name !== ".git") {
+      // .git is ignored (not copied) but other undeclared top-level is rejected
+      errors.push(`undeclared top-level entry: ${ent.name}`);
+    }
+    if (ent.name === ".git") {
+      // allowed to exist in source repo but never hashed/copied
+      continue;
+    }
+  }
+
+  // Walk for symlinks inside allowed trees
+  const files = declaredPackageFiles(abs, manifest);
+  for (const rel of files) {
+    const p = path.join(abs, rel);
+    if (fs.lstatSync(p).isSymbolicLink()) {
+      errors.push(`refusing symlink: ${rel}`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors, files, manifest };
 }
 
 export function sha256File(filePath) {
@@ -92,26 +256,24 @@ export function sha256File(filePath) {
   return `sha256:${hash.digest("hex")}`;
 }
 
-export function sha256Dir(root) {
+/** Hash only declared package content — never .git or arbitrary repo files. */
+export function sha256Declared(root, files) {
   const hash = crypto.createHash("sha256");
-  const files = [];
-  function walk(dir) {
-    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, ent.name);
-      if (ent.isDirectory()) walk(p);
-      else if (ent.isFile()) files.push(p);
-    }
-  }
-  walk(root);
-  files.sort();
-  for (const f of files) {
-    const rel = path.relative(root, f).split(path.sep).join("/");
-    hash.update(rel);
+  const list = [...files].sort();
+  for (const rel of list) {
+    const f = path.join(root, rel);
+    hash.update(rel.split(path.sep).join("/"));
     hash.update("\0");
     hash.update(fs.readFileSync(f));
     hash.update("\0");
   }
   return `sha256:${hash.digest("hex")}`;
+}
+
+/** @deprecated prefer sha256Declared — kept for callers that still pass a dir of declared-only trees */
+export function sha256Dir(root) {
+  const { manifest } = loadManifestFromDir(root);
+  return sha256Declared(root, declaredPackageFiles(root, manifest));
 }
 
 export function loadManifestFromDir(packageDir) {

@@ -4,17 +4,29 @@ import { execFileSync } from "node:child_process";
 import { loadInstalledManifest } from "./store.mjs";
 import { isApproved } from "./approvals.mjs";
 import { normalizeRequest } from "./request.mjs";
+import { intersectPermissions, assertCallTypeAllowed } from "./permissions.mjs";
 import { resolveProfile } from "../roster/profile.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
-import { createRun, runDir, wrapPromptWithMailboxProtocol, atomicWriteText, linkDispatchToRun } from "../runs/runs.mjs";
+import { createRun, runDir, wrapPromptWithMailboxProtocol, atomicWriteText, linkDispatchToRun, saveState, loadState } from "../runs/runs.mjs";
 import { materialize } from "../sandbox/materialize.mjs";
-import { wrapWithSandbox } from "../sandbox/systemd.mjs";
+import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
   return i === -1 ? undefined : args[i + 1];
+}
+
+function resolveCliPath(argv0) {
+  if (!argv0) return null;
+  if (path.isAbsolute(argv0) && fs.existsSync(argv0)) return argv0;
+  try {
+    const which = execFileSync("which", [argv0], { encoding: "utf8" }).trim();
+    return which || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -26,7 +38,7 @@ export async function launch({
   objective,
   project,
   inputs = [],
-  sandbox = { available: true },
+  sandbox = {},
   permissions,
   env = process.env,
   dryRun = false,
@@ -43,6 +55,13 @@ export async function launch({
     throw err;
   }
   const manifest = installed.manifest;
+  try {
+    assertCallTypeAllowed(callType, manifest);
+  } catch (e) {
+    e.code = "CALL_TYPE_DENIED";
+    throw e;
+  }
+
   if (!isApproved({
     project,
     id: specialistId,
@@ -56,23 +75,37 @@ export async function launch({
     throw err;
   }
 
+  let effectivePerms;
+  try {
+    effectivePerms = intersectPermissions(
+      manifest.permissions,
+      permissions ?? null,
+      { capabilities: manifest.capabilities }
+    );
+  } catch (e) {
+    e.code = "PERMISSION_ESCALATION";
+    throw e;
+  }
+
+  // Validate tool/command allowlists at launch — undeclared materialization prevented in materialize
+  const allowedCommands = new Set(manifest.permissions?.commands || []);
+  for (const c of effectivePerms.commands || []) {
+    if (!allowedCommands.has(c)) {
+      const err = new Error(`undeclared command in launch allowlist: ${c}`);
+      err.code = "ALLOWLIST_VIOLATION";
+      throw err;
+    }
+  }
+
   const request = normalizeRequest({
     specialist_id: specialistId,
     specialist_version: installed.version,
     call_type: callType,
     objective,
     inputs,
-    permissions: permissions || manifest.permissions,
+    permissions: effectivePerms,
     budget: manifest.budget,
   });
-
-  const effectivePerms = request.permissions;
-  // Merge filesystem/network from manifest
-  const mergedPerms = {
-    ...manifest.permissions,
-    ...effectivePerms,
-  };
-
 
   const roster = requireRoster();
   const usage = loadJson(usagePath());
@@ -97,8 +130,15 @@ export async function launch({
     `Objective: ${objective}`,
     "",
     "Read REQUEST.json and instructions.md in the context directory. Follow remit/anti-remit.",
-    "Write mailbox/RESULT.json with schema team-up.result/v1 when done.",
-  ].join("\n");
+    "Write mailbox/RESULT.json conforming to schema team-up.result/v1 when done.",
+    "RESULT.md is optional human-readable detail and does not count as success by itself.",
+    manifest.budget?.max_tokens
+      ? `Token budget: ${manifest.budget.max_tokens}. Stay within budget.`
+      : null,
+    manifest.budget?.timeout_seconds
+      ? `Timeout budget: ${manifest.budget.timeout_seconds}s (enforced by sandbox runtime).`
+      : null,
+  ].filter(Boolean).join("\n");
 
   const state = createRun({
     cwd: project,
@@ -109,6 +149,16 @@ export async function launch({
     prompt: barePrompt,
   });
   request.run_id = state.runId;
+
+  // Carry budgets into state metadata / worker contract
+  const st = loadState(state.runId);
+  st.budget = {
+    timeout_seconds: manifest.budget?.timeout_seconds ?? null,
+    max_tokens: manifest.budget?.max_tokens ?? null,
+  };
+  st.output_contract = "team-up.result/v1";
+  st.result_protocol = "RESULT.json";
+  saveState(st);
 
   const dest = path.join(runDir(state.runId), "context");
   await materialize({
@@ -136,13 +186,40 @@ export async function launch({
     effort: cell.effort,
   });
 
+  const cliPath = resolveCliPath(cliArgv[0]);
+  const runPath = runDir(state.runId);
+  const timeoutSec = manifest.budget?.timeout_seconds;
+
+  const probe = sandbox?.probe
+    ? sandbox.probe
+    : systemdAvailable;
+
   const wrapped = wrapWithSandbox({
     command: cliArgv,
-    permissions: mergedPerms,
+    permissions: effectivePerms,
     cwd: dest,
-    writablePaths: [runDir(state.runId), dest],
-    probe: () => sandbox?.available !== false && (sandbox?.probe ? sandbox.probe() : true),
+    writablePaths: [runPath, dest],
+    readOnlyPaths: cliPath ? [cliPath] : [],
+    callType,
+    projectPath: project,
+    packagePath: installed.path,
+    runPath,
+    cliPath,
+    writableProject:
+      callType === "delegate" &&
+      (effectivePerms.writes === "delegated_only" || effectivePerms.writes === true) &&
+      effectivePerms.filesystem === "project",
+    probe,
+    timeoutSeconds: timeoutSec,
   });
+
+  // Enforce timeout via sandbox RuntimeMaxSec when provided
+  if (timeoutSec && wrapped.sandbox === "systemd-run-user") {
+    const idx = wrapped.argv.indexOf("--");
+    if (idx !== -1) {
+      wrapped.argv.splice(idx, 0, "-p", `RuntimeMaxSec=${timeoutSec}`);
+    }
+  }
 
   if (!dryRun) {
     const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
@@ -155,6 +232,8 @@ export async function launch({
     runtime: { cli: cell.cli, model: cell.model, effort: cell.effort },
     sandbox: wrapped.sandbox,
     argv: wrapped.argv,
+    permissions: effectivePerms,
+    budget: st.budget,
   };
 }
 

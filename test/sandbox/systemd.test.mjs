@@ -12,6 +12,7 @@ test("systemdSandboxArgv builds fail-closed argv", () => {
   assert.equal(argv[0], "systemd-run");
   assert.ok(argv.includes("PrivateNetwork=yes"));
   assert.ok(argv.includes("ProtectSystem=strict"));
+  assert.ok(argv.includes("ProtectHome=tmpfs"));
 });
 
 test("wrapWithSandbox refuses when unavailable", () => {
