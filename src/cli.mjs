@@ -12,6 +12,7 @@ import {
 } from "./specialists/store.mjs";
 import { approveSpecialist, listApprovals } from "./specialists/approvals.mjs";
 import { runSpecialist } from "./specialists/launcher.mjs";
+import { runHarnessVerify } from "./harness/cli-verify.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -133,6 +134,12 @@ export async function runCli(args, io = { out: console.log, err: console.error }
   if (cmd === "pick") return cmdPick(rest, io);
   if (cmd === "runs") return cmdRuns(rest, io);
   if (cmd === "specialist") return cmdSpecialist(rest, io);
+  if (cmd === "harness") {
+    const [sub, ...harnessArgs] = rest;
+    if (sub === "verify") return runHarnessVerify(harnessArgs, io);
+    io.err("usage: team-up harness verify <claude> --fixture-project <path>");
+    return 1;
+  }
   if (
     [
       "init",
@@ -149,6 +156,6 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     // Preserve roster CLI surface through the facade (uses console directly).
     return runRosterCli(args);
   }
-  io.err("usage: team-up <version|validate|pick|dispatch|runs|specialist>");
+  io.err("usage: team-up <version|validate|pick|dispatch|runs|specialist|harness>");
   return 1;
 }

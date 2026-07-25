@@ -17,6 +17,10 @@ import {
   resolveCommandPolicyForApproval,
   snapshotCommandPolicy,
 } from "../commands/policy.mjs";
+import {
+  defaultHarnessCapabilities,
+  prepareHarnessLaunch,
+} from "../harness/registry.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 
 function argValue(args, flag) {
@@ -48,16 +52,18 @@ export function resolveCliPath(argv0) {
 
 /**
  * CLI sandbox config. Legacy mediated_commands boolean never enables
- * enforcement — only code-registered adapters do (none until harness task).
+ * enforcement — verified harness command_broker capability does.
  * Token targets are always advisory; no token_budget_adapter gate.
  */
-export function cliSandboxConfig(roster, cli) {
+export function cliSandboxConfig(roster, cli, { harnessCapabilities: caps } = {}) {
   const entry = roster?.clis?.[cli] || {};
   const sandbox = entry.sandbox && typeof entry.sandbox === "object" ? entry.sandbox : {};
-  const cmd = resolveCommandMediation(sandbox, entry);
+  const resolvedCaps = caps ?? defaultHarnessCapabilities(cli);
+  const cmd = resolveCommandMediation(sandbox, entry, { harnessCapabilities: resolvedCaps });
   return {
     mediated_commands: cmd.enabled,
     command_adapter: cmd.adapter,
+    harness_capabilities: resolvedCaps,
     sandbox_runtime_paths:
       sandbox.runtime_paths ??
       entry.sandbox_runtime_paths ??
@@ -171,7 +177,8 @@ export async function launch({
     throw err;
   }
   const cell = profileResult.chain[0];
-  const cliCfg = cliSandboxConfig(roster, cell.cli);
+  const harnessCaps = defaultHarnessCapabilities(cell.cli);
+  const cliCfg = cliSandboxConfig(roster, cell.cli, { harnessCapabilities: harnessCaps });
 
   if (needsCommandMediation(effectivePerms, manifest) && !cliCfg.mediated_commands) {
     const err = new Error(
@@ -267,7 +274,7 @@ export async function launch({
   });
   atomicWriteText(path.join(runDir(state.runId), "mailbox", "PROMPT.md"), workerPrompt);
 
-  const cliArgv = buildCommand({
+  const cliArgvRaw = buildCommand({
     roster,
     model: cell.model,
     cli: cell.cli,
@@ -275,8 +282,27 @@ export async function launch({
     effort: cell.effort,
   });
 
-  const cliPath = resolveCliPath(cliArgv[0]);
   const runPath = runDir(state.runId);
+  let cliArgv = cliArgvRaw;
+  if (policySnapshot) {
+    const prepared = prepareHarnessLaunch({
+      cli: cell.cli,
+      argv: cliArgvRaw,
+      runDir: runPath,
+      broker: {
+        policySnapshot: policySnapshot.path,
+        project: path.resolve(project),
+        runDir: runPath,
+        actionIds: effectivePerms.commands || [],
+      },
+      verification: harnessCaps.command_broker
+        ? { status: "verified", cli_version: "launch" }
+        : null,
+    });
+    cliArgv = prepared.argv;
+  }
+
+  const cliPath = resolveCliPath(cliArgv[0]);
   const timeoutSec = budgetNorm.timeout_seconds;
 
   const probe = sandbox?.probe

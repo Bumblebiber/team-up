@@ -1,0 +1,95 @@
+import { CLAUDE_DECLARED_CAPABILITIES, UNVERIFIED_CAPABILITIES } from "./capabilities.mjs";
+
+export const claudeAdapter = {
+  id: "claude",
+  capabilities: CLAUDE_DECLARED_CAPABILITIES,
+
+  version({ execFileSync }) {
+    const out = execFileSync("claude", ["--version"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    return String(out).trim().split(/\s+/).pop() || String(out).trim();
+  },
+
+  injectControl({ tmuxSession, message, execFileSync }) {
+    execFileSync("tmux", ["send-keys", "-t", tmuxSession, "-l", message], {
+      stdio: "ignore",
+    });
+    execFileSync("tmux", ["send-keys", "-t", tmuxSession, "Enter"], {
+      stdio: "ignore",
+    });
+  },
+
+  prepareLaunch({
+    argv,
+    runDir,
+    broker,
+    allowedBuiltins = ["Read", "Edit", "Write", "Glob", "Grep"],
+    nodePath = process.execPath,
+    brokerBin,
+    writeFileSync,
+    mkdirSync,
+    chmodSync,
+  }) {
+    const forbidden = [
+      "--dangerously-skip-permissions",
+      "--allow-dangerously-skip-permissions",
+    ];
+    for (const flag of forbidden) {
+      if (argv.includes(flag)) {
+        const err = new Error(`HARNESS_POLICY: refusing ${flag}`);
+        err.code = "HARNESS_POLICY";
+        throw err;
+      }
+    }
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] === "--permission-mode" && argv[i + 1] === "bypassPermissions") {
+        const err = new Error("HARNESS_POLICY: refusing --permission-mode bypassPermissions");
+        err.code = "HARNESS_POLICY";
+        throw err;
+      }
+    }
+
+    const harnessDir = `${runDir}/harness`;
+    mkdirSync(harnessDir, { recursive: true });
+    const mcpPath = `${harnessDir}/claude-mcp.json`;
+    const mcpConfig = {
+      mcpServers: {
+        team_up_command_broker: {
+          type: "stdio",
+          command: nodePath,
+          args: [brokerBin],
+          env: {
+            TEAM_UP_COMMAND_POLICY_SNAPSHOT: broker.policySnapshot,
+            TEAM_UP_PROJECT: broker.project,
+            TEAM_UP_RUN_DIR: broker.runDir,
+          },
+        },
+      },
+    };
+    writeFileSync(mcpPath, `${JSON.stringify(mcpConfig, null, 2)}\n`, { mode: 0o444 });
+    try {
+      chmodSync(mcpPath, 0o444);
+    } catch {
+      // best-effort immutable mode
+    }
+
+    const brokerTools = (broker.actionIds || []).map(
+      (id) => `mcp__team_up_command_broker__${String(id).replace(/-/g, "_")}`
+    );
+    const tools = [...allowedBuiltins, ...brokerTools].join(",");
+
+    const next = [...argv];
+    if (!next.includes("--strict-mcp-config")) next.push("--strict-mcp-config");
+    next.push("--mcp-config", mcpPath);
+    next.push("--tools", tools);
+    next.push("--disallowedTools", "Bash");
+
+    return {
+      argv: next,
+      env: {},
+      files: [mcpPath],
+    };
+  },
+};
