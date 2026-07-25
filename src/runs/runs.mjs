@@ -591,3 +591,18 @@ function main() {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
+
+
+import { writeTypedResult as writeTypedResultImpl, validateResult } from "../specialists/request.mjs";
+
+export function writeTypedResult(runId, result) {
+  return writeTypedResultImpl(runId, result, {
+    runDir,
+    atomicWriteJson,
+    atomicWriteText,
+    setStatus,
+    classifyMailbox,
+  });
+}
+
+export { validateResult };
