@@ -38,9 +38,28 @@ export function validateRoster(roster) {
     return { errors: ["roster is not a JSON object"], warnings };
   }
 
-  for (const key of ["models", "roles", "clis"]) {
+  for (const key of ["models", "roles", "clis", "accounts"]) {
     if (roster[key] !== undefined && !isPlainObject(roster[key])) {
       errors.push(`${key} must be an object`);
+    }
+  }
+
+  if (isPlainObject(roster.accounts)) {
+    for (const [id, account] of Object.entries(roster.accounts)) {
+      if (!isPlainObject(account)) {
+        errors.push(`accounts.${id} must be an object`);
+        continue;
+      }
+      if (account.kind !== "subscription" && account.kind !== "credit") {
+        errors.push(`accounts.${id}.kind must be subscription|credit`);
+      }
+      if (typeof account.enabled !== "boolean") {
+        errors.push(`accounts.${id}.enabled must be boolean`);
+      }
+      if (account.kind === "credit" && account.remaining !== undefined &&
+        typeof account.remaining !== "number") {
+        errors.push(`accounts.${id}.remaining must be a number`);
+      }
     }
   }
 
@@ -69,6 +88,17 @@ export function validateRoster(roster) {
       }
       if (model.effort !== undefined && typeof model.effort !== "string") {
         errors.push(`models.${id}.effort must be a string`);
+      }
+      // Specialist-eligible (tiered) models require account + reasoning map
+      if (model.tier !== undefined) {
+        if (!model.account || typeof model.account !== "string") {
+          errors.push(`models.${id}.account required for tiered/specialist-eligible models`);
+        } else if (isPlainObject(roster.accounts) && !roster.accounts[model.account]) {
+          errors.push(`models.${id}.account "${model.account}" not in accounts`);
+        }
+        if (!isPlainObject(model.reasoning)) {
+          errors.push(`models.${id}.reasoning map required for tiered/specialist-eligible models`);
+        }
       }
     }
   }

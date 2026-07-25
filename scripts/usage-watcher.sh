@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# o9k-usage-watcher.sh — systemd/cron entrypoint (never exec .mjs without node).
+# team-up-usage-watcher.sh — systemd/cron entrypoint (never exec .mjs without node).
 set -euo pipefail
 
 resolve_path() {
@@ -35,18 +35,18 @@ fi
 
 if [[ ! -f "$WATCHER" ]]; then
   cat >&2 <<'EOF'
-o9k-usage-watcher: usage-watcher.mjs not found.
+team-up-usage-watcher: usage-watcher.mjs not found.
 
 Install one of:
-  ln -sf <o9k-repo>/plugins/team-up/scripts/o9k-usage-watcher.sh ~/.local/bin/o9k-usage-watcher
-  # or set TEAM_UP_SCRIPTS=<o9k-repo>/plugins/team-up/scripts (systemd drop-in / cron env)
+  ln -sf team-up package scripts/team-up-usage-watcher.sh ~/.local/bin/team-up-usage-watcher
+  # or set TEAM_UP_SCRIPTS=team-up package scripts (systemd drop-in / cron env)
 EOF
   exit 127
 fi
 
 NODE="${NODE_BIN:-$(command -v node 2>/dev/null || true)}"
 if [[ -z "$NODE" || ! -x "$NODE" ]]; then
-  echo "o9k-usage-watcher: node not found (set NODE_BIN)" >&2
+  echo "team-up-usage-watcher: node not found (set NODE_BIN)" >&2
   exit 127
 fi
 

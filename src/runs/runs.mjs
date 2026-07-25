@@ -138,20 +138,73 @@ function readMaybe(filePath) {
   }
 }
 
-/** Inspect mailbox once; return { status, question?, resultPath?, error? }. */
+/** Inspect mailbox once; return { status, question?, resultPath?, error? }.
+ * Specialist success requires RESULT.json conforming to team-up.result/v1.
+ * RESULT.md alone must never classify as success.
+ */
 export function classifyMailbox(runId) {
   const mb = mailboxDir(runId);
   const statusLine = (readMaybe(path.join(mb, "STATUS")) || "").trim();
   const questions = readMaybe(path.join(mb, "QUESTIONS.md"));
-  const result = readMaybe(path.join(mb, "RESULT.md"));
-  const resultPath = path.join(mb, "RESULT.md");
+  const resultMd = readMaybe(path.join(mb, "RESULT.md"));
+  const resultJsonRaw = readMaybe(path.join(mb, "RESULT.json"));
+  const resultJsonPath = path.join(mb, "RESULT.json");
+  const resultMdPath = path.join(mb, "RESULT.md");
 
   if (statusLine === "failed") {
-    return { status: "failed", error: "STATUS=failed", resultPath: result ? resultPath : null };
+    return {
+      status: "failed",
+      error: "STATUS=failed",
+      resultPath: resultJsonRaw ? resultJsonPath : (resultMd ? resultMdPath : null),
+    };
   }
-  if (statusLine === "done" && result) {
-    return { status: "done", resultPath, summary: result.slice(0, 500) };
+
+  if (statusLine === "done") {
+    if (!resultJsonRaw) {
+      return {
+        status: "failed",
+        error: "STATUS=done but RESULT.json missing (RESULT.md is not sufficient)",
+        resultPath: resultMd ? resultMdPath : null,
+      };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(resultJsonRaw);
+    } catch (e) {
+      return {
+        status: "failed",
+        error: `malformed RESULT.json: ${e.message}`,
+        resultPath: resultJsonPath,
+      };
+    }
+    if (parsed?.schema && parsed.schema !== "team-up.result/v1") {
+      return {
+        status: "failed",
+        error: `unsupported RESULT.json schema: ${parsed.schema}`,
+        resultPath: resultJsonPath,
+      };
+    }
+    if (!["success", "partial", "blocked", "failed"].includes(parsed?.status)) {
+      return {
+        status: "failed",
+        error: `invalid RESULT.json status: ${parsed?.status}`,
+        resultPath: resultJsonPath,
+      };
+    }
+    if (parsed.status === "failed") {
+      return { status: "failed", error: parsed.summary || "RESULT.json status=failed", resultPath: resultJsonPath };
+    }
+    if (parsed.status === "blocked") {
+      return { status: "question", question: (parsed.questions || []).join("\n") || parsed.summary || "blocked", resultPath: resultJsonPath };
+    }
+    return {
+      status: "done",
+      resultPath: resultJsonPath,
+      summary: String(parsed.summary || resultMd || "").slice(0, 500),
+      result: parsed,
+    };
   }
+
   if (questions && questions.trim() && statusLine !== "done") {
     const qStat = fs.statSync(path.join(mb, "QUESTIONS.md"));
     const aPath = path.join(mb, "ANSWER.md");

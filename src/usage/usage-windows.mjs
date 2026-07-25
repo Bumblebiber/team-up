@@ -100,7 +100,8 @@ export function windowIsBlocking(wkey, usage, limits, now = Date.now()) {
  * @returns {{ blocked: boolean, reason?: string }}
  */
 export function modelUsageGate({ usage, limitWindows, provider, cli, limits, now = Date.now() }) {
-  const withData = limitWindows.filter((k) => usage?.windows?.[k] != null);
+  const windows = Array.isArray(limitWindows) ? limitWindows : [];
+  const withData = windows.filter((k) => usage?.windows?.[k] != null);
   if (withData.length > 0) {
     for (const wkey of withData) {
       if (windowIsBlocking(wkey, usage, limits, now)) {

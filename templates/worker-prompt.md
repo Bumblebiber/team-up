@@ -1,3 +1,10 @@
+<!-- o9k-provenance
+who: cursor:grok-4.5
+when: 2026-07-25T13:30:47.243Z
+why: unspecified
+trigger: afterFileEdit
+host: cursor
+-->
 # Worker task (mailbox protocol)
 
 Run directory: `{{RUN_DIR}}`
@@ -15,10 +22,12 @@ The parent chat **cannot see your tmux pane**. It only wakes when mailbox
 3. Need a human/parent decision: write `mailbox/QUESTIONS.md`, set `STATUS=waiting_human`, update HEARTBEAT, then wait for `mailbox/ANSWER.md` (do not exit).
 4. Finished:
    - Write task-dir artifacts (`PLAN.md`, `GRILL.md`, code, …) as required by the task.
-   - Write `mailbox/RESULT.md` (outcome summary, paths to artifacts, commits, tests).
-   - Set `mailbox/STATUS` = `done` (or run: `node <o9k-roster>/scripts/runs.mjs set-status {{RUN_ID}} done`).
+   - Write `mailbox/RESULT.json` conforming to schema `team-up.result/v1`
+     (`status`, `summary`, …). This is the live specialist mailbox protocol.
+   - Optionally write `mailbox/RESULT.md` as human-readable detail (not sufficient alone).
+   - Set `mailbox/STATUS` = `done` (or run: `team-up runs set-status {{RUN_ID}} done`).
    - Then you may stop.
-5. Hard failure: `STATUS=failed` and explain in `mailbox/RESULT.md`.
+5. Hard failure: `STATUS=failed` and explain in `mailbox/RESULT.json` (and optional RESULT.md).
 
 Do **not** leave STATUS=`watching` after you finished the work. That traps the parent watcher forever.
 

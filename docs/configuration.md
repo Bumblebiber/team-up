@@ -39,3 +39,15 @@ export TEAM_UP_BIN=/path/to/team-up/bin/team-up.mjs
 Specialists declare abstract `{ tier, reasoning }`. Resolution keeps **exact
 tier only** — never upgrades or downgrades. Legacy roster `tier: "mid"` imports
 as `medium`.
+
+## Accounts and reasoning maps
+
+Specialist-eligible models (any model with a `tier`) must declare:
+
+- `account` — key into top-level `accounts` (`subscription` or `credit`)
+- `reasoning` — map of abstract levels (`max|high|medium|low`) to CLI-native effort values
+
+Legacy `tier: "mid"` imports as `medium` via `migrateRoster()`. After copying
+an old `~/.o9k/roster.json`, run migration (or `team-up init` refresh) before
+resolving Hannes (`frontier:max`) / Hugo (`medium:low`).
+

@@ -96,7 +96,11 @@ export function resolveProfile({
     }
 
     const accountId = spec.account;
-    if (accountId) {
+    if (!accountId) {
+      skipped.push({ model, reason: "no account" });
+      continue;
+    }
+    {
       const account = roster.accounts?.[accountId];
       if (!account?.enabled) {
         skipped.push({ model, reason: "account unavailable" });
@@ -126,22 +130,19 @@ export function resolveProfile({
         continue;
       }
 
-      // Usage / mark gates (same spirit as pick())
+      // Usage / mark gates — exact same provider/CLI gate as legacy pick()
       const limitWindows = Array.isArray(spec.limit_windows) ? spec.limit_windows : [];
-      if (limitWindows.length || usage?.windows || usage?.providers) {
-        const gate = modelUsageGate({
-          usage,
-          limitWindows: limitWindows.length ? limitWindows : undefined,
-          provider: spec.provider,
-          cli,
-          limits: roleLimits,
-          now,
-        });
-        // modelUsageGate with empty limitWindows may still check provider — only apply when data present
-        if (limitWindows.length && gate.blocked) {
-          skipped.push({ model: `${cli}:${model}`, reason: gate.reason });
-          continue;
-        }
+      const gate = modelUsageGate({
+        usage,
+        limitWindows,
+        provider: spec.provider,
+        cli,
+        limits: roleLimits,
+        now,
+      });
+      if (gate.blocked) {
+        skipped.push({ model: `${cli}:${model}`, reason: gate.reason });
+        continue;
       }
       if (markedUntil(usage, model, now)) {
         skipped.push({ model: `${cli}:${model}`, reason: `marked limited until ${usage.marked[model].until}` });

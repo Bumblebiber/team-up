@@ -89,7 +89,11 @@ test("classifyMailbox returns done when RESULT present", withTempRuns(async () =
   });
   const mb = path.join(runDir(s.runId), "mailbox");
   atomicWriteText(path.join(mb, "STATUS"), "done");
-  atomicWriteText(path.join(mb, "RESULT.md"), "# ok\n");
+  atomicWriteJson(path.join(mb, "RESULT.json"), {
+    schema: "team-up.result/v1",
+    status: "success",
+    summary: "ok",
+  });
   assert.equal(classifyMailbox(s.runId).status, "done");
 }));
 

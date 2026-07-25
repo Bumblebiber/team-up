@@ -1,8 +1,15 @@
 {
-  "$comment": "o9k-roster user config. Copied to ~/.o9k/roster.json by 'roster init'. Curate models/roles/chains yourself — o9k ships no live model list. cmd templates are argv arrays; {model} and {prompt} are substituted literally per element. Chain entries may be bare model ids (uses models[m].cli[0]) or CLI×model pins ('cursor:grok-4.5-high' / {\"cli\":\"hermes\",\"model\":\"deepseek-v4-pro\"}).",
+  "$comment": "team-up user config. Copied to ~/.team-up/roster.json by 'team-up init'. Curate models/roles/chains yourself — team-up ships no live model list. cmd templates are argv arrays; {model}, {prompt}, and {effort} are substituted literally per element. Chain entries may be bare model ids (uses models[m].cli[0]) or CLI×model pins ('cursor:grok-4.5-high' / {\"cli\":\"hermes\",\"model\":\"deepseek-v4-pro\"}). Specialist-eligible models (those with tier) must declare account + abstract reasoning maps.",
+  "schema_version": 2,
+  "accounts": {
+    "claude": { "kind": "subscription", "enabled": true },
+    "codex": { "kind": "subscription", "enabled": true },
+    "cursor": { "kind": "subscription", "enabled": true },
+    "api": { "kind": "credit", "enabled": true, "remaining": 100 }
+  },
   "clis": {
     "claude": { "cmd": ["claude", "--dangerously-skip-permissions", "--model", "{model}", "{prompt}"] },
-    "codex": { "cmd": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "{model}", "{prompt}"] },
+    "codex": { "cmd": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "{model}", "-c", "model_reasoning_effort={effort}", "{prompt}"] },
     "cursor": { "cmd": ["cursor-agent", "--yolo", "--model", "{model}", "{prompt}"] },
     "opencode": { "cmd": ["opencode", "--model", "{model}", "--prompt", "{prompt}"] },
     "hermes": { "cmd": ["hermes", "chat", "-q", "{prompt}", "--model", "{model}"] }
@@ -17,7 +24,10 @@
       "provider": "anthropic",
       "tier": "frontier",
       "cli": ["claude"],
+      "account": "claude",
+      "reasoning": { "max": "max", "high": "high", "medium": "medium", "low": "low" },
       "limit_windows": ["claude:session", "claude:week", "claude:5h", "claude:fable-week"],
+      "priority": 1,
       "price": { "in": null, "out": null, "note": "fill in per effort level" },
       "strengths": ["architecture", "review"],
       "weaknesses": ["cost"]
@@ -26,64 +36,97 @@
       "provider": "anthropic",
       "tier": "high",
       "cli": ["claude"],
-      "limit_windows": ["claude:session", "claude:week", "claude:5h"]
+      "account": "claude",
+      "reasoning": { "max": "max", "high": "high", "medium": "medium", "low": "low" },
+      "limit_windows": ["claude:session", "claude:week", "claude:5h"],
+      "priority": 2
     },
     "claude-sonnet-5": {
       "provider": "anthropic",
-      "tier": "mid",
+      "tier": "medium",
       "cli": ["claude"],
-      "limit_windows": ["claude:session", "claude:week", "claude:5h"]
+      "account": "claude",
+      "reasoning": { "max": "max", "high": "high", "medium": "medium", "low": "low" },
+      "limit_windows": ["claude:session", "claude:week", "claude:5h"],
+      "priority": 2
     },
     "claude-haiku": {
       "provider": "anthropic",
       "tier": "low",
       "cli": ["claude"],
-      "limit_windows": ["claude:session", "claude:week", "claude:5h"]
+      "account": "claude",
+      "reasoning": { "max": "max", "high": "high", "medium": "medium", "low": "low" },
+      "limit_windows": ["claude:session", "claude:week", "claude:5h"],
+      "priority": 3
     },
     "gpt-5.6-sol": {
       "provider": "openai",
       "tier": "frontier",
       "cli": ["codex"],
-      "limit_windows": ["codex:weekly"]
+      "account": "codex",
+      "reasoning": { "max": "xhigh", "high": "high", "medium": "medium", "low": "low" },
+      "limit_windows": ["codex:weekly"],
+      "priority": 2
     },
     "gpt-5.6-terra": {
       "provider": "openai",
       "tier": "high",
       "cli": ["codex"],
-      "limit_windows": ["codex:weekly"]
+      "account": "codex",
+      "reasoning": { "max": "xhigh", "high": "high", "medium": "medium", "low": "low" },
+      "limit_windows": ["codex:weekly"],
+      "priority": 3
     },
     "gpt-5.6-luna": {
       "provider": "openai",
-      "tier": "mid",
+      "tier": "medium",
       "cli": ["codex"],
-      "limit_windows": ["codex:weekly"]
+      "account": "codex",
+      "reasoning": { "max": "xhigh", "high": "high", "medium": "medium", "low": "low" },
+      "limit_windows": ["codex:weekly"],
+      "priority": 3
     },
     "gpt-5.4-mini": {
       "provider": "openai",
       "tier": "low",
       "cli": ["codex"],
-      "limit_windows": ["codex:weekly"]
+      "account": "codex",
+      "reasoning": { "max": "xhigh", "high": "high", "medium": "medium", "low": "low" },
+      "limit_windows": ["codex:weekly"],
+      "priority": 4
     },
     "composer-2.5": {
       "provider": "cursor",
-      "tier": "mid",
+      "tier": "medium",
       "cli": ["cursor"],
-      "limit_windows": ["cursor:included"]
+      "account": "cursor",
+      "reasoning": { "max": "high", "high": "high", "medium": null, "low": null },
+      "limit_windows": ["cursor:included"],
+      "priority": 1
     },
     "grok-4.5-high": {
       "provider": "xai",
       "tier": "high",
-      "cli": ["cursor", "opencode", "hermes"]
+      "cli": ["cursor", "opencode", "hermes"],
+      "account": "cursor",
+      "reasoning": { "max": "high", "high": "high", "medium": null, "low": null },
+      "priority": 4
     },
     "deepseek-v4-pro": {
       "provider": "deepseek",
-      "tier": "mid",
-      "cli": ["hermes", "opencode"]
+      "tier": "medium",
+      "cli": ["hermes", "opencode"],
+      "account": "api",
+      "reasoning": { "max": "high", "high": "high", "medium": "medium", "low": "low" },
+      "priority": 5
     },
     "deepseek-v4-flash": {
       "provider": "deepseek",
       "tier": "low",
-      "cli": ["hermes", "opencode"]
+      "cli": ["hermes", "opencode"],
+      "account": "api",
+      "reasoning": { "max": "high", "high": "high", "medium": "medium", "low": "low" },
+      "priority": 5
     }
   },
   "roles": {

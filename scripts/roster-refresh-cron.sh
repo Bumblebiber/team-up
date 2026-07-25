@@ -4,7 +4,7 @@
 # OPENROUTER_API_KEY in the cron environment (wrapper script or env file).
 #
 # Optional env:
-#   O9K_REPORT_DIR   base dir for reports (default ~/.o9k/reports)
+#   O9K_REPORT_DIR   base dir for reports (default ~/.team-up/reports)
 #   O9K_NOTIFY_CMD   command invoked as: $O9K_NOTIFY_CMD <report-path>
 #                    after each run (e.g. a script that mails/pings you)
 set -euo pipefail
@@ -24,7 +24,7 @@ STATUS=0
   if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
     echo "FAILED: OPENROUTER_API_KEY not set"
     STATUS=1
-  elif [[ ! -f "${O9K_ROSTER:-$HOME/.o9k/roster.json}" ]]; then
+  elif [[ ! -f "${TEAM_UP_ROSTER:-$HOME/.o9k/roster.json}" ]]; then
     echo "SKIP: no roster.json yet — run roster.mjs init and curate first"
     STATUS=0
   else

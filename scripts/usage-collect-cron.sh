@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 COLLECT_JS="$ROOT/scripts/usage-collect.mjs"
-WATCHER_STATE="${O9K_USAGE_WATCHER_STATE:-$HOME/.o9k/usage-watcher.json}"
+WATCHER_STATE="${TEAM_UP_USAGE_WATCHER_STATE:-$HOME/.o9k/usage-watcher.json}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 # Report location: override the base dir via O9K_REPORT_DIR (e.g. a cron
@@ -17,7 +17,7 @@ STATUS=0
 {
   echo "# usage-collector $STAMP"
   echo
-  if [[ ! -f "${O9K_ROSTER:-$HOME/.o9k/roster.json}" ]]; then
+  if [[ ! -f "${TEAM_UP_ROSTER:-$HOME/.o9k/roster.json}" ]]; then
     echo "SKIP: no roster.json"
   elif [[ -f "$WATCHER_STATE" ]]; then
     mtime=$(stat -c %Y "$WATCHER_STATE" 2>/dev/null || stat -f %m "$WATCHER_STATE")
