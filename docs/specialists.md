@@ -1,4 +1,11 @@
 <!-- o9k-provenance
+who: cursor-agent:grok
+when: 2026-07-25T15:18:22.926Z
+why: Document best-effort OS sandbox for trusted specialists
+trigger: runtime-supervision plan Task 2
+host: cursor
+-->
+<!-- o9k-provenance
 who: cursor:grok-4.5
 when: 2026-07-25T13:52:56.781Z
 why: unspecified
@@ -53,27 +60,34 @@ text mailbox for compatibility. Specialist runs set
 
 ## Permissions and fail-closed policy
 
-Sandbox isolation (systemd-run `--user`) enforces filesystem scope, network,
-and write mode **only when a live semantic probe confirms the user manager
-actually applies ProtectHome / NoExecPaths**. If the probe fails, launch
-returns `SANDBOX_UNAVAILABLE` — never unsandboxed.
+Operating-system isolation via systemd-run `--user` is **best effort** for
+trusted, approved specialists — not a security boundary. The launcher always
+requests `enforcement: "best_effort"`: when a live semantic probe confirms
+ProtectHome / NoExecPaths, the worker runs under systemd-run; when the probe
+fails, launch continues without OS isolation and records an audit warning in
+run state (`sandbox.enforced: false`). Callers outside that path still use
+`enforcement: "required"` (fail-closed `SANDBOX_UNAVAILABLE`).
 
-**Command/tool allowlists and hard `max_tokens` in JSON are not
-self-enforcing.** Config booleans such as `mediated_commands: true` or
-`token_budget_adapter: true` are ignored. Enforcement requires a concrete
-adapter registered in team-up code (`command_adapter` / `token_adapter`).
-The MVP ships **no** such adapters, so:
+Declared filesystem and network permissions remain instructions plus audit
+metadata. The home sentinel for the semantic probe stays under `$HOME`; the
+no-exec probe script is created outside `$HOME` so home-hiding alone cannot
+fake executable blocking.
+
+**Command allowlists remain hard at the harness/broker boundary** (later
+tasks). Token targets are **advisory** only — see budget normalization.
+Legacy config booleans such as `mediated_commands: true` or
+`token_budget_adapter: true` are ignored. Until a command-broker adapter is
+verified:
 
 - non-empty `permissions.commands` or `command.*` / `shell.*` / `exec.*`
-  tools → `ALLOWLIST_UNENFORCEABLE`
-- `budget.max_tokens` set → `TOKEN_BUDGET_UNENFORCEABLE`
+  tools → `ALLOWLIST_UNENFORCEABLE` (pre-broker gate)
 
 Starter manifests declare the approved design capabilities (including Hannes
-`command.test` / `project-test` and both packages' `max_tokens: 80000`).
-Those capabilities remain declared so the package matches the design; launch
-still fails closed until a local adapter/backend can enforce them.
+`command.test` / `project-test` and advisory token targets). Command
+mediation lands with the shared broker; OS sandboxing no longer blocks launch.
 
-Home-installed CLIs need a **non-empty** `sandbox.runtime_paths` list.
+Home-installed CLIs need a **non-empty** `sandbox.runtime_paths` list when
+OS isolation is actually applied.
 `runtime_paths: []` is treated as not configured →
 `SANDBOX_RUNTIME_UNAVAILABLE`.
 
@@ -81,6 +95,6 @@ Home-installed CLIs need a **non-empty** `sandbox.runtime_paths` list.
 
 - `team-up-with-hannes` — testing (`frontier` / `max`); tools include
   `filesystem.read` + `command.test`; commands include `project-test`;
-  `max_tokens: 80000` (unenforced until an adapter exists)
+  advisory `tokens.target: 80000`
 - `team-up-with-hugo` — research (`medium` / `low`); read-only project +
-  optional network; `max_tokens: 80000` (unenforced until an adapter exists)
+  optional network; advisory `tokens.target: 80000`

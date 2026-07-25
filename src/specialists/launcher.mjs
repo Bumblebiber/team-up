@@ -81,11 +81,6 @@ export async function launch({
   env = process.env,
   dryRun = false,
 }) {
-  if (sandbox?.available === false) {
-    const err = new Error("SANDBOX_UNAVAILABLE");
-    err.code = "SANDBOX_UNAVAILABLE";
-    throw err;
-  }
   const installed = loadInstalledManifest(specialistId, { project, env });
   if (!installed) {
     const err = new Error(`specialist not installed: ${specialistId}`);
@@ -277,8 +272,16 @@ export async function launch({
     probe,
     timeoutSeconds: timeoutSec,
     sandboxRuntimePaths: cliCfg.sandbox_runtime_paths,
+    enforcement: "best_effort",
   });
 
+  st.sandbox = {
+    kind: wrapped.sandbox,
+    enforced: wrapped.enforced === true,
+    warning: wrapped.warning ?? null,
+    enforcement: "best_effort",
+  };
+  saveState(st);
   if (timeoutSec && wrapped.sandbox === "systemd-run-user") {
     const idx = wrapped.argv.indexOf("--");
     if (idx !== -1) {
@@ -296,6 +299,8 @@ export async function launch({
     runId: state.runId,
     runtime: { cli: cell.cli, model: cell.model, effort: cell.effort },
     sandbox: wrapped.sandbox,
+    enforced: wrapped.enforced === true,
+    sandbox_warning: wrapped.warning ?? null,
     argv: wrapped.argv,
     permissions: effectivePerms,
     budget: st.budget,

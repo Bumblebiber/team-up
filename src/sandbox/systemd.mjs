@@ -11,21 +11,54 @@ export function resetSystemdAvailableCache() {
 }
 
 /**
+ * Create home sentinel + outside-home noexec artifacts for semantic probes.
+ * Home hide and executable block must be independently observable.
+ */
+export function createProbeArtifacts() {
+  const homeProbeDir = fs.mkdtempSync(path.join(os.homedir(), ".team-up-sandbox-probe-"));
+  const noexecProbeDir = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-sandbox-noexec-"));
+  const sentinel = path.join(homeProbeDir, "sentinel.txt");
+  const noexecScript = path.join(noexecProbeDir, "noexec.sh");
+  fs.writeFileSync(sentinel, "HOME_SHOULD_BE_HIDDEN\n", { mode: 0o600 });
+  fs.writeFileSync(noexecScript, "#!/bin/sh\necho NOEXEC_RAN\n", { mode: 0o700 });
+  fs.chmodSync(noexecScript, 0o700);
+  return {
+    homeProbeDir,
+    noexecProbeDir,
+    sentinel,
+    noexecScript,
+    cleanup() {
+      for (const dir of [homeProbeDir, noexecProbeDir]) {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    },
+  };
+}
+
+/** Evaluate raw probe stdout/stderr for independent home + noexec checks. */
+export function evaluateProbeOutput(text) {
+  const out = String(text);
+  if (/HOME_VISIBLE/.test(out) || /NOEXEC_FAILED/.test(out)) return false;
+  return /ENFORCEMENT_OK/.test(out);
+}
+
+/**
  * Semantic live probe: verify ProtectHome hides a home sentinel and
- * NoExecPaths/ExecPaths block executing a script outside ExecPaths.
+ * NoExecPaths/ExecPaths block executing a script outside ExecPaths (and
+ * outside $HOME so hide alone cannot fake noexec success).
  * Caches only success for the process lifetime. Always cleans probe artifacts.
  */
 export function systemdAvailable() {
   if (_systemdAvailableCache === true) return true;
 
-  let probeDir = null;
+  let artifacts = null;
   try {
-    probeDir = fs.mkdtempSync(path.join(os.homedir(), ".team-up-sandbox-probe-"));
-    const sentinel = path.join(probeDir, "sentinel.txt");
-    const noexecScript = path.join(probeDir, "noexec.sh");
-    fs.writeFileSync(sentinel, "HOME_SHOULD_BE_HIDDEN\n", { mode: 0o600 });
-    fs.writeFileSync(noexecScript, "#!/bin/sh\necho NOEXEC_RAN\n", { mode: 0o700 });
-    fs.chmodSync(noexecScript, 0o700);
+    artifacts = createProbeArtifacts();
+    const { sentinel, noexecScript } = artifacts;
 
     // /usr/bin/sh is allowed; the probe asserts home isolation + noexec semantics.
     const inner = [
@@ -59,11 +92,7 @@ export function systemdAvailable() {
       out = `${e.stdout || ""}${e.stderr || ""}${e.message || ""}`;
     }
 
-    const text = String(out);
-    if (/HOME_VISIBLE/.test(text) || /NOEXEC_FAILED/.test(text)) {
-      return false;
-    }
-    if (!/ENFORCEMENT_OK/.test(text)) {
+    if (!evaluateProbeOutput(out)) {
       return false;
     }
 
@@ -72,13 +101,7 @@ export function systemdAvailable() {
   } catch {
     return false;
   } finally {
-    if (probeDir) {
-      try {
-        fs.rmSync(probeDir, { recursive: true, force: true });
-      } catch {
-        // best-effort cleanup
-      }
-    }
+    if (artifacts) artifacts.cleanup();
   }
 }
 
@@ -196,8 +219,10 @@ export function isRuntimePathsConfigured(sandboxRuntimePaths) {
 }
 
 /**
- * Fail-closed: if requested restrictions cannot be enforced, throw SANDBOX_UNAVAILABLE.
- * Default probe is the real systemdAvailable — tests may inject probe.
+ * Wrap a command with OS isolation when available.
+ * `enforcement: "required"` (default) fails closed with SANDBOX_UNAVAILABLE.
+ * `enforcement: "best_effort"` falls back to unsandboxed argv with an audit warning
+ * for trusted specialist launches — not a security boundary.
  */
 export function wrapWithSandbox({
   command,
@@ -215,6 +240,7 @@ export function wrapWithSandbox({
   sandboxRuntimePaths,
   requireHomeRuntime = false,
   execPaths = [],
+  enforcement = "required",
   ...rest
 }) {
   const needsIsolation =
@@ -226,10 +252,19 @@ export function wrapWithSandbox({
     permissions?.filesystem === "none";
 
   if (!needsIsolation) {
-    return { argv: command, sandbox: "none" };
+    return { argv: command, sandbox: "none", enforced: false };
   }
 
   if (typeof probe !== "function" || !probe()) {
+    if (enforcement === "best_effort") {
+      return {
+        argv: command,
+        sandbox: "none",
+        enforced: false,
+        warning:
+          "best-effort sandbox unavailable; trusted specialist runs without OS isolation",
+      };
+    }
     const err = new Error("SANDBOX_UNAVAILABLE: systemd-run --user cannot enforce requested permissions");
     err.code = "SANDBOX_UNAVAILABLE";
     throw err;
@@ -293,5 +328,6 @@ export function wrapWithSandbox({
       ...rest,
     }),
     sandbox: "systemd-run-user",
+    enforced: true,
   };
 }

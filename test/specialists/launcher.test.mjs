@@ -3,26 +3,29 @@ import assert from "node:assert/strict";
 import { launch } from "../../src/specialists/launcher.mjs";
 import { wrapWithSandbox } from "../../src/sandbox/systemd.mjs";
 
-test("launcher refuses unsupported permission enforcement", async () => {
+test("launcher refuses required sandbox when probe fails; missing specialist still errors", async () => {
   await assert.rejects(
     async () => {
-      // Match plan intent: fail closed when sandbox cannot enforce network=false
       wrapWithSandbox({
         command: ["true"],
         permissions: { network: false },
         cwd: "/tmp",
         probe: () => false,
+        enforcement: "required",
       });
-      // Also exercise launch early sandbox gate
-      await launch({
+    },
+    /SANDBOX_UNAVAILABLE/
+  );
+  await assert.rejects(
+    () =>
+      launch({
         specialistId: "missing",
         callType: "review",
         objective: "x",
         project: "/tmp",
-        sandbox: { available: false },
+        sandbox: { probe: () => false },
         permissions: { network: false },
-      });
-    },
-    /SANDBOX_UNAVAILABLE|not installed/
+      }),
+    /not installed/
   );
 });
