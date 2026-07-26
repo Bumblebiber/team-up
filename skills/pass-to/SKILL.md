@@ -1,0 +1,102 @@
+---
+name: o9k-pass-to
+description: "Manual session handoff to a named model in its native CLI (tmux). Use when the user invokes /o9k-pass-to, says pass to <model>, hand off to opus/composer/codex/hermes, or wants to continue this session in another harness with a TIM + HANDOFF.md checkpoint. Not for automatic limit handoff (that is roster handoff --role) and not for Path-B mailbox workers."
+disable-model-invocation: true
+---
+
+> Config lives in `~/.team-up/`. Rosters left behind by an older o9k install are still read from `~/.o9k/` as a fallback, but every write goes to `~/.team-up/` — copy yours over once. Path B is unchanged: `runs create` → `dispatch --run-id` → `runs wait`.
+
+# o9k-pass-to — Manual model handoff
+
+You are the **outgoing** main agent. The human asked to continue in another
+model's native harness. Do the limit-handoff ritual, but **pin their model** —
+do not walk a role chain, do not wait on a mailbox watcher.
+
+**Prerequisite:** `~/.team-up/roster.json` (CLI templates). If missing → say so and
+stop; suggest `/o9k-init` roster setup.
+
+`ROSTER="team-up"`
+(the CLI is on PATH after `npm i -g team-up`).
+
+## Auto-approve flags (required for tmux)
+
+Detached tmux has no human on the TTY for permission prompts. The spawned
+harness **must** run fully auto-approved via `clis.*.cmd` in
+`~/.team-up/roster.json`:
+
+| CLI | Required flag(s) in `cmd` (before `{model}` / `{prompt}`) |
+|---|---|
+| `claude` | `--dangerously-skip-permissions` |
+| `cursor` | `--yolo` (alias of `--force`) |
+| `codex` | `--yolo` if supported; else `--dangerously-bypass-approvals-and-sandbox` (or `-a never`) |
+
+Before `team-up pass-to`, skim those `cmd` arrays. If a flag is missing → fix
+`roster.json` (or tell the human), then spawn. Without these flags the worker
+blocks on approvals and the handoff looks "hung".
+
+## Argument
+
+User form: `/o9k-pass-to <Modellname>` or "pass to opus / composer-2.5 / …".
+`<Modellname>` is free text. Resolution is **code** (`team-up pass-to`), not
+your judgment:
+
+1. Roster first (exact model key / `cli_model` / `cli:model`, else fuzzy /
+   display-name match — `"GPT 5.6 Sol"` ≡ `gpt-5.6-sol`).
+2. **One** hit → use it (spawn uses the **roster slug** / `cli_model`, never a
+   spaced display name — Codex ChatGPT auth rejects `codex -m "GPT 5.6 Sol"`).
+3. **Several** hits → stop, list candidates, ask the human; re-run with exact id.
+4. **Zero** → free-string CLI heuristic (`opus`→claude, `composer*`/`grok*`→cursor,
+   `gpt*`→codex with **slugified** id, `deepseek*`→hermes). Still unknown → ask
+   human for `cli:model`.
+
+## Steps (in order)
+
+1. **Converge** — finish the current unit of work if cheap; leave the tree
+   checkpointable (commit or note uncommitted paths in HANDOFF).
+2. **Write `HANDOFF.md`** in the working directory (cwd / task dir):
+
+```markdown
+# HANDOFF
+
+## Current state
+<1 short paragraph>
+
+## Done
+- …
+
+## Open (exact next steps)
+- …
+
+## Verification
+- <commands to run>
+
+## Paths
+- …
+```
+
+3. **TIM handoff** — follow the `tim-handoff` skill (checkpoint + Next Steps
+   merge). If TIM is unavailable, note that in chat and still continue with
+   `HANDOFF.md` (disk handoff must not block).
+4. **Spawn pinned session:**
+
+```bash
+team-up pass-to --model "<Modellname>" --dir "$PWD"
+```
+
+5. **Report to the human** — copy the script's lines verbatim:
+   - `tmux session: <full-id>`
+   - `attach: tmux attach -t <full-id>`
+   Also echo resolved `model: … (cli)` so they see what launched.
+6. **Stop** — do not keep working in this session. The human attaches to tmux.
+
+Exit codes from `pass-to`: `3` = ambiguous (show list, ask), `4` = unresolved
+(ask for a clearer name or `cli:model`), other non-zero = fix HANDOFF/roster
+and retry. Never invent a substitute model.
+
+## Not this skill
+
+- Automatic ≥handoff-threshold limit warning → `roster` limit handoff
+  (`team-up handoff --role …`), not pass-to.
+- External coding workers the parent waits on → `dispatch` Path B (mailbox +
+  watcher). Pass-to is **human-attach**, no watcher.
+- In-host search/lookup → `dispatch` Path A.
