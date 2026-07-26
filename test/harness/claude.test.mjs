@@ -103,50 +103,63 @@ test("brokered Claude launch strips legacy roster bypass before enforcing policy
   assert.equal(prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1], "Bash");
 });
 
-test("capsule launch uses bare mode and only explicit plugin and MCP paths", () => {
-  const writes = new Map();
-  const prepared = claudeAdapter.prepareLaunch({
-    argv: ["claude", "-p", "work"],
-    runDir: "/run",
-    capsule: {
-      pluginDirs: ["/run/harness/plugins/x"],
-      mcpConfig: { mcpServers: { selected: {
-        type: "stdio", command: "node", args: ["/run/harness/mcp/x/server.mjs"],
-      } } },
-      mcpToolNames: ["mcp__selected__lookup"],
-      mcpToolsByServer: { selected: ["lookup"] },
-      codexHome: "/run/harness/home",
-    },
-    writeFileSync: (file, text) => writes.set(file, text),
-    mkdirSync: () => {},
-    chmodSync: () => {},
-  });
-  assert.equal(prepared.argv.includes("--bare"), true);
-  assert.deepEqual(prepared.argv.slice(
-    prepared.argv.indexOf("--plugin-dir"),
-    prepared.argv.indexOf("--plugin-dir") + 2
-  ), ["--plugin-dir", "/run/harness/plugins/x"]);
-  assert.equal(prepared.argv.includes("--strict-mcp-config"), true);
-  assert.match(writes.get("/run/harness/claude-mcp.json"), /"selected"/);
-  assert.match(prepared.argv.join(" "), /mcp__selected__lookup/);
+test("capsule launch uses auth-only HOME and only explicit plugin and MCP paths", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-launch-"));
+  try {
+    const writes = new Map();
+    const prepared = claudeAdapter.prepareLaunch({
+      argv: ["claude", "-p", "work"],
+      runDir,
+      capsule: {
+        pluginDirs: [`${runDir}/harness/plugins/x`],
+        mcpConfig: { mcpServers: { selected: {
+          type: "stdio", command: "node", args: [`${runDir}/harness/mcp/x/server.mjs`],
+        } } },
+        mcpToolNames: ["mcp__selected__lookup"],
+        mcpToolsByServer: { selected: ["lookup"] },
+        codexHome: `${runDir}/harness/home`,
+      },
+      writeFileSync: (file, text) => writes.set(file, text),
+      mkdirSync: (d, o) => fs.mkdirSync(d, o),
+      chmodSync: () => {},
+    });
+    assert.equal(prepared.argv.includes("--bare"), false);
+    assert.ok(prepared.env.HOME);
+    assert.match(prepared.env.HOME, /claude-home$/);
+    assert.deepEqual(prepared.argv.slice(
+      prepared.argv.indexOf("--plugin-dir"),
+      prepared.argv.indexOf("--plugin-dir") + 2
+    ), ["--plugin-dir", `${runDir}/harness/plugins/x`]);
+    assert.equal(prepared.argv.includes("--strict-mcp-config"), true);
+    assert.match(writes.get(`${runDir}/harness/claude-mcp.json`), /"selected"/);
+    assert.match(prepared.argv.join(" "), /mcp__selected__lookup/);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
 });
 
 test("capsule launch adds skill and framework dirs via --add-dir", () => {
-  const prepared = claudeAdapter.prepareLaunch({
-    argv: ["claude", "-p", "work"],
-    runDir: "/run",
-    capsule: {
-      pluginDirs: [],
-      skillDirs: ["/run/context/skills"],
-      frameworkDirs: ["/run/context/framework"],
-      mcpConfig: { mcpServers: {} },
-      mcpToolNames: [],
-    },
-    writeFileSync: () => {},
-    mkdirSync: () => {},
-    chmodSync: () => {},
-  });
-  assert.equal(prepared.argv.includes("--add-dir"), true);
-  assert.equal(prepared.argv.includes("/run/context/skills"), true);
-  assert.equal(prepared.argv.includes("/run/context/framework"), true);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-add-dir-"));
+  try {
+    const prepared = claudeAdapter.prepareLaunch({
+      argv: ["claude", "-p", "work"],
+      runDir,
+      capsule: {
+        pluginDirs: [],
+        skillDirs: [`${runDir}/context/skills`],
+        frameworkDirs: [`${runDir}/context/framework`],
+        mcpConfig: { mcpServers: {} },
+        mcpToolNames: [],
+      },
+      writeFileSync: () => {},
+      mkdirSync: (d, o) => fs.mkdirSync(d, o),
+      chmodSync: () => {},
+    });
+    assert.equal(prepared.argv.includes("--add-dir"), true);
+    assert.equal(prepared.argv.includes(`${runDir}/context/skills`), true);
+    assert.equal(prepared.argv.includes(`${runDir}/context/framework`), true);
+    assert.ok(prepared.env.HOME);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
 });

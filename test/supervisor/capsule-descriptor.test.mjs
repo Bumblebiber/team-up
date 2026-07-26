@@ -170,7 +170,8 @@ test("prepareArgvFromDescriptor rebuilds Claude bare capsule from persisted desc
     const prepared = prepareArgvFromDescriptor(
       loadAuthoritativeLaunchDescriptor(run.runId)
     );
-    assert.equal(prepared.argv.includes("--bare"), true);
+    assert.equal(prepared.argv.includes("--bare"), false);
+    assert.ok(prepared.env.HOME);
     assert.equal(prepared.argv.includes("--strict-mcp-config"), true);
     assert.ok(prepared.argv.includes("--plugin-dir"));
     assert.ok(
@@ -674,6 +675,7 @@ test("exact unmodified reconstruction succeeds with content manifest", async () 
     const prepared = prepareArgvFromDescriptor(
       loadAuthoritativeLaunchDescriptor(run.runId)
     );
-    assert.equal(prepared.argv.includes("--bare"), true);
+    assert.equal(prepared.argv.includes("--bare"), false);
+    assert.ok(prepared.env.HOME);
   });
 });

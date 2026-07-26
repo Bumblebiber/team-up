@@ -19,6 +19,7 @@ import {
   buildCapsuleContentManifest,
   verifyCapsuleContentManifest,
   CONTENT_MANIFEST_SCHEMA,
+  readFileNoFollow,
 } from "../capabilities/content-manifest.mjs";
 
 export const LAUNCH_SCHEMA = "team-up.launch/v1";
@@ -132,7 +133,7 @@ export function reconstructCapsuleFromLaunchRecord(record) {
     err.code = "CAPSULE_LAUNCH_EFFECTIVE_MISSING";
     throw err;
   }
-  const body = fs.readFileSync(effectivePath);
+  const body = readFileNoFollow(effectivePath);
   const actual = descriptorChecksum(body);
   if (actual !== record.effective_checksum) {
     const err = new Error("CAPSULE_LAUNCH_CHECKSUM: effective capabilities checksum mismatch");
@@ -164,7 +165,7 @@ export function reconstructCapsuleFromLaunchRecord(record) {
   let manifest;
   try {
     manifest = JSON.parse(
-      fs.readFileSync(record.authoritative_content_manifest_path, "utf8")
+      readFileNoFollow(record.authoritative_content_manifest_path).toString("utf8")
     );
   } catch {
     const err = new Error("CONTENT_MANIFEST_CORRUPT: authoritative content manifest unreadable");

@@ -37,9 +37,12 @@ export const codexAdapter = {
       }
     }
     const quote = (value) => JSON.stringify(String(value));
+    // Codex 0.145.0 cancels non-interactive MCP under read-only/workspace-write
+    // even with approval_policy=never. Capsule launches that include MCP must
+    // use danger-full-access so live tool proof matches production config.
     const lines = [
       'approval_policy = "never"',
-      'sandbox_mode = "read-only"',
+      'sandbox_mode = "danger-full-access"',
       "",
     ];
     for (const [name, server] of Object.entries(

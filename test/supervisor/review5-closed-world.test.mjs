@@ -368,6 +368,7 @@ test("unmodified closed-world reconstruction still succeeds", async () => {
   await withTempEnv(async () => {
     const { runId } = persistCapsuleRun();
     const prepared = prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(runId));
-    assert.equal(prepared.argv.includes("--bare"), true);
+    assert.equal(prepared.argv.includes("--bare"), false);
+    assert.ok(prepared.env.HOME);
   });
 });

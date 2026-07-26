@@ -134,6 +134,71 @@ test("stream proof rejects duplicate conflicting tool_use ids for same tool", ()
   );
 });
 
+test("stream proof rejects tool events missing session_id after init", () => {
+  const stream = [
+    initEvent(),
+    line({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: "tu-1", name: TOOL, input: {} }],
+      },
+    }),
+    toolResult(),
+  ].join("\n");
+  assert.equal(
+    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
+    null
+  );
+});
+
+test("codex proof rejects agent_message echo without MCP result content", async () => {
+  const { parseCodexJsonlToolProof } = await import("../../src/harness/isolation-canary.mjs");
+  const stream = [
+    JSON.stringify({ type: "thread.started", thread_id: "thr-1" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "mcp_tool_call",
+        server: "selected",
+        tool: "lookup",
+        status: "in_progress",
+        result: null,
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: `team-up-canary-ok:${NONCE}`,
+      },
+    }),
+  ].join("\n");
+  assert.equal(parseCodexJsonlToolProof(stream, { nonce: NONCE }), null);
+});
+
+test("codex proof accepts completed mcp_tool_call result with exact nonce", async () => {
+  const { parseCodexJsonlToolProof } = await import("../../src/harness/isolation-canary.mjs");
+  const stream = [
+    JSON.stringify({ type: "thread.started", thread_id: "thr-1" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "mcp_tool_call",
+        server: "selected",
+        tool: "lookup",
+        status: "completed",
+        result: {
+          content: [{ type: "text", text: `team-up-canary-ok:${NONCE}` }],
+        },
+        error: null,
+      },
+    }),
+  ].join("\n");
+  const proof = parseCodexJsonlToolProof(stream, { nonce: NONCE });
+  assert.equal(proof?.session_id, "thr-1");
+  assert.equal(proof?.nonce, NONCE);
+});
+
 test("structured init inventory derives tools/skills/plugins/mcp without model JSON", () => {
   const stream = initEvent({
     tools: ["Read", "ToolSearch", TOOL],

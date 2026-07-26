@@ -1,4 +1,41 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { CLAUDE_DECLARED_CAPABILITIES } from "./capabilities.mjs";
+
+/**
+ * Auth-only Claude HOME for capsule launches. Never copies ambient skills,
+ * plugins, MCP, settings, hooks, or commands. Claude 2.1.220 `--bare` breaks
+ * login even with valid credentials, so isolation is HOME sanitization +
+ * `--strict-mcp-config` / selected paths — not `--bare`.
+ */
+export function materializeClaudeAuthHome(runDir, {
+  authSourceHome = process.env.HOME || os.homedir(),
+} = {}) {
+  const home = path.join(runDir, "claude-home");
+  const claudeDir = path.join(home, ".claude");
+  fs.mkdirSync(claudeDir, { recursive: true, mode: 0o700 });
+  const credSrc = path.join(authSourceHome, ".claude", ".credentials.json");
+  const credDest = path.join(claudeDir, ".credentials.json");
+  try {
+    if (fs.existsSync(credSrc)) {
+      if (!fs.existsSync(credDest)) {
+        fs.copyFileSync(credSrc, credDest);
+      }
+    } else if (!fs.existsSync(credDest)) {
+      fs.writeFileSync(credDest, "{}\n", { mode: 0o600 });
+    }
+    fs.chmodSync(credDest, 0o600);
+  } catch {
+    try {
+      fs.writeFileSync(credDest, "{}\n", { mode: 0o600 });
+      fs.chmodSync(credDest, 0o600);
+    } catch {
+      // best-effort; live verify fails closed without usable auth
+    }
+  }
+  return home;
+}
 
 export const claudeAdapter = {
   id: "claude",
@@ -119,7 +156,11 @@ export const claudeAdapter = {
     const tools = [...allowedBuiltins, ...brokerTools, ...mcpTools].join(",");
 
     const next = [...argv];
-    if (capsule && !next.includes("--bare")) next.push("--bare");
+    // Do not inject --bare: on Claude 2.1.220 it breaks authentication.
+    // Capsule isolation uses a run-specific auth-only HOME instead.
+    while (next.includes("--bare")) {
+      next.splice(next.indexOf("--bare"), 1);
+    }
     for (const pluginDir of capsule?.pluginDirs ?? []) {
       next.push("--plugin-dir", pluginDir);
     }
@@ -135,10 +176,18 @@ export const claudeAdapter = {
     next.push("--allowedTools", tools);
     next.push("--disallowedTools", "Bash");
 
+    const env = {};
+    const files = [mcpPath];
+    if (capsule) {
+      const claudeHome = materializeClaudeAuthHome(runDir);
+      env.HOME = claudeHome;
+      files.push(path.join(claudeHome, ".claude", ".credentials.json"));
+    }
+
     return {
       argv: next,
-      env: {},
-      files: [mcpPath],
+      env,
+      files,
     };
   },
 };
