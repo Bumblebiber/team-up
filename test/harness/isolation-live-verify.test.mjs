@@ -49,17 +49,24 @@ function buildHappyInventory(fixture) {
 
 function buildHappySpawnSync(fixture, { inventory, streamLines, mcpNonce } = {}) {
   const inv = inventory ?? buildHappyInventory(fixture);
-  const nonce = mcpNonce ?? fixture.expected.nonces.mcp;
+  const nonces = fixture.expected.nonces;
+  const mcp = mcpNonce ?? nonces.mcp;
   const toolName = "mcp__selected__lookup";
   const sessionId = "sess-happy-1";
+  const fwPath = path.join(
+    fixture.capsule.frameworkDirs[0],
+    "capsule.selected-framework",
+    "framework.json"
+  );
+  const pluginCanary = "capsule.selected-plugin-canary";
   const lines = streamLines ?? [
     JSON.stringify({
       type: "system",
       subtype: "init",
       session_id: sessionId,
-      tools: ["Read", "ToolSearch", toolName],
+      tools: ["Read", "Skill", "ToolSearch", toolName],
       mcp_servers: [{ name: "selected", status: "connected" }],
-      skills: ["capsule.selected-skill"],
+      skills: ["capsule.selected-skill", pluginCanary],
       plugins: ["capsule.selected-plugin"],
       claude_code_version: "2.1.220",
     }),
@@ -67,7 +74,12 @@ function buildHappySpawnSync(fixture, { inventory, streamLines, mcpNonce } = {})
       type: "assistant",
       session_id: sessionId,
       message: {
-        content: [{ type: "tool_use", name: toolName, id: "tu-1", input: {} }],
+        content: [{
+          type: "tool_use",
+          name: "Skill",
+          id: "tu-skill",
+          input: { skill: "capsule.selected-skill" },
+        }],
       },
     }),
     JSON.stringify({
@@ -76,8 +88,97 @@ function buildHappySpawnSync(fixture, { inventory, streamLines, mcpNonce } = {})
       message: {
         content: [{
           type: "tool_result",
-          tool_use_id: "tu-1",
-          content: `team-up-canary-ok:${nonce}`,
+          tool_use_id: "tu-skill",
+          content: "Launching skill: capsule.selected-skill",
+        }],
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      session_id: sessionId,
+      isSynthetic: true,
+      message: {
+        content: [{
+          type: "text",
+          text: `Base directory for this skill: /tmp/skills/capsule.selected-skill\n\n# capsule.selected-skill\nnonce:${nonces.skill}\n`,
+        }],
+      },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      session_id: sessionId,
+      message: {
+        content: [{
+          type: "tool_use",
+          name: "Skill",
+          id: "tu-plugin",
+          input: { skill: pluginCanary },
+        }],
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      session_id: sessionId,
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "tu-plugin",
+          content: `Launching skill: ${pluginCanary}`,
+        }],
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      session_id: sessionId,
+      isSynthetic: true,
+      message: {
+        content: [{
+          type: "text",
+          text: `Base directory for this skill: /tmp/plugins/${pluginCanary}\n\n# ${pluginCanary}\nnonce:${nonces.plugin}\n`,
+        }],
+      },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      session_id: sessionId,
+      message: {
+        content: [{
+          type: "tool_use",
+          name: "Read",
+          id: "tu-fw",
+          input: { file_path: fwPath },
+        }],
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      session_id: sessionId,
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "tu-fw",
+          content: JSON.stringify({
+            name: "capsule.selected-framework",
+            content_nonce: nonces.framework,
+          }),
+        }],
+      },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      session_id: sessionId,
+      message: {
+        content: [{ type: "tool_use", name: toolName, id: "tu-mcp", input: {} }],
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      session_id: sessionId,
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "tu-mcp",
+          content: `team-up-canary-ok:${mcp}`,
         }],
       },
     }),
@@ -462,7 +563,7 @@ test("adversarial: structured init listing a forbidden plugin fails closed", () 
   }
 });
 
-test("adversarial: guessed nonce in content_nonces fails closed without disk fill", () => {
+test("adversarial: guessed final JSON without structured Skill/plugin/Read proofs fails closed", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = prepareClaudeLaunch(fixture);
@@ -473,19 +574,60 @@ test("adversarial: guessed nonce in content_nonces fails closed without disk fil
       framework: "guessed",
       mcp: "guessed",
     };
-    // Model guesses are not accepted; disk must not fill matching nonces either.
+    const sessionId = "sess-guess-only";
+    const nonce = fixture.expected.nonces.mcp;
+    // MCP proof alone + guessed JSON inventory is not a full matrix grant.
+    const streamLines = [
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        session_id: sessionId,
+        tools: ["Read", "Skill", "ToolSearch", "mcp__selected__lookup"],
+        mcp_servers: [{ name: "selected", status: "connected" }],
+        skills: ["capsule.selected-skill"],
+        plugins: ["capsule.selected-plugin"],
+        claude_code_version: "2.1.220",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        session_id: sessionId,
+        message: {
+          content: [{
+            type: "tool_use",
+            name: "mcp__selected__lookup",
+            id: "tu-1",
+            input: {},
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        session_id: sessionId,
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "tu-1",
+            content: `team-up-canary-ok:${nonce}`,
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        session_id: sessionId,
+        message: { content: [{ type: "text", text: JSON.stringify(inventory) }] },
+      }),
+    ];
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
       globalHome: fixture.globalHome,
       expected: fixture.expected,
       adapterId: "claude",
-      spawnSyncFn: buildHappySpawnSync(fixture, { inventory }),
+      spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
     });
     assert.equal(observed, null);
 
-    // Wrong tool-result nonce still fails closed.
-    const goodInventory = buildHappyInventory(fixture);
+    // Wrong MCP structured nonce still fails closed even with otherwise-happy stream.
     const bad = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
@@ -493,7 +635,7 @@ test("adversarial: guessed nonce in content_nonces fails closed without disk fil
       expected: fixture.expected,
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, {
-        inventory: goodInventory,
+        inventory: buildHappyInventory(fixture),
         mcpNonce: "wrong-nonce",
       }),
     });

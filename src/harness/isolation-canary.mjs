@@ -24,6 +24,9 @@ export const ISOLATION_FORBIDDEN_CANARIES = Object.freeze([
   "pool.unselected-framework",
 ]);
 
+/** Uniquely named skill shipped inside the selected plugin fixture for nonce proof. */
+export const PLUGIN_CANARY_SKILL = "capsule.selected-plugin-canary";
+
 function contentNonceField(text, nonce) {
   return `${text}\nnonce:${nonce}\n`;
 }
@@ -97,6 +100,12 @@ function writePackage(root, {
     writeFile(
       path.join(pkg, rel, ".claude-plugin", "plugin.json"),
       JSON.stringify({ name, version: "1.0.0", content_nonce: nonce }, null, 2) + "\n"
+    );
+    // Invokable Skill surface carrying the plugin nonce (not metadata-only).
+    const pluginSkillRel = `${rel}/skills/${PLUGIN_CANARY_SKILL}/SKILL.md`;
+    writeFile(
+      path.join(pkg, pluginSkillRel),
+      `---\nname: ${PLUGIN_CANARY_SKILL}\ndescription: canary skill for plugin ${name}\n---\n${contentNonceField(`# ${PLUGIN_CANARY_SKILL}\nplugin canary skill`, nonce)}`
     );
     provides.plugins.push(rel);
   }
@@ -478,6 +487,257 @@ export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {})
   };
 }
 
+function resultContainsExactNonce(text, nonce) {
+  if (text == null || nonce == null) return false;
+  const raw = String(text);
+  const trimmed = raw.trim();
+  if (trimmed === `team-up-canary-ok:${nonce}`) return true;
+  const escaped = String(nonce).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`nonce:${escaped}(?![A-Za-z0-9_-])`).test(raw)) return true;
+  if (new RegExp(`"content_nonce"\\s*:\\s*"${escaped}"`).test(raw)) return true;
+  return false;
+}
+
+function collectOrderedToolPairs(streamText, sessionId) {
+  const pairs = [];
+  const syntheticTexts = [];
+  let pending = null; // { id, name, input, eventIndex }
+  let eventIndex = -1;
+  for (const line of String(streamText || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] !== "{") continue;
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!evt || typeof evt !== "object" || Array.isArray(evt)) continue;
+    eventIndex += 1;
+    if (evt.type === "system" && evt.subtype === "init") continue;
+    if (evt.session_id !== sessionId) continue;
+    const content = evt.message?.content;
+    if (!Array.isArray(content)) continue;
+
+    // Claude 2.1.220 injects skill bodies as synthetic user text after Skill launch.
+    if (evt.type === "user") {
+      for (const block of content) {
+        if (block?.type === "text" && typeof block.text === "string") {
+          syntheticTexts.push({
+            text: block.text,
+            eventIndex,
+            isSynthetic: evt.isSynthetic === true,
+          });
+        }
+      }
+    }
+
+    if (evt.type === "assistant") {
+      for (const block of content) {
+        if (block?.type !== "tool_use") continue;
+        if (typeof block.id !== "string" || !block.id) continue;
+        if (typeof block.name !== "string" || !block.name) continue;
+        pending = {
+          id: block.id,
+          name: block.name,
+          input: block.input && typeof block.input === "object" ? block.input : {},
+          eventIndex,
+        };
+      }
+      continue;
+    }
+
+    if (evt.type === "user" && pending) {
+      for (const block of content) {
+        if (block?.type !== "tool_result") continue;
+        if (block.tool_use_id !== pending.id) continue;
+        if (eventIndex <= pending.eventIndex) continue;
+        pairs.push({
+          ...pending,
+          resultText: toolResultText(block.content),
+          resultEventIndex: eventIndex,
+        });
+        pending = null;
+        break;
+      }
+    }
+  }
+  return { pairs, syntheticTexts };
+}
+
+function skillNameMatches(inputSkill, want) {
+  const got = String(inputSkill || "");
+  if (!got || !want) return false;
+  if (got === want) return true;
+  // Plugin skills appear as plugin:skill with dots→hyphens in the skill segment.
+  if (got.endsWith(`:${want}`)) return true;
+  const hyphenated = want.replace(/\./g, "-");
+  if (got === hyphenated || got.endsWith(`:${hyphenated}`)) return true;
+  if (got.endsWith(`:${PLUGIN_CANARY_SKILL}`) || got === PLUGIN_CANARY_SKILL) {
+    return want === PLUGIN_CANARY_SKILL;
+  }
+  return false;
+}
+
+function findSkillLaunchProof(pairs, syntheticTexts, skillName, nonce) {
+  const launch = pairs.find((p) =>
+    p.name === "Skill"
+    && skillNameMatches(p.input.skill, skillName)
+    && /Launching skill:/i.test(p.resultText)
+  );
+  if (!launch) {
+    // Also accept tool_result that itself embeds the nonce (fixtures / future CLIs).
+    const direct = pairs.find((p) =>
+      p.name === "Skill"
+      && skillNameMatches(p.input.skill, skillName)
+      && resultContainsExactNonce(p.resultText, nonce)
+    );
+    return direct || null;
+  }
+  const body = syntheticTexts.find((s) =>
+    s.eventIndex >= launch.eventIndex
+    && resultContainsExactNonce(s.text, nonce)
+    && (
+      s.text.includes(skillName)
+      || s.text.includes(skillName.replace(/\./g, "-"))
+      || /Base directory for this skill:/i.test(s.text)
+    )
+  );
+  if (!body) return null;
+  return { ...launch, skillBodyText: body.text };
+}
+
+/**
+ * Derive selected capability + content_nonce proof from Claude 2.1.220
+ * structured init + correlated Skill / plugin Skill / Read / MCP events.
+ * Final model JSON is never authoritative for selected/nonce proof.
+ */
+export function parseClaudeStructuredCapabilityProofs(streamText, {
+  expected = null,
+  capsule = null,
+} = {}) {
+  if (!expected?.nonces || !capsule) return null;
+  const init = extractStructuredInitInventory(streamText);
+  if (!init) return null;
+
+  for (const bad of ["global.canary-skill", "global.canary-plugin"]) {
+    if ((init.skills || []).includes(bad) || (init.plugins || []).includes(bad)) {
+      return null;
+    }
+  }
+  if ((init.mcp_servers || []).includes("global")
+    || (init.mcp_servers || []).includes("excluded")) {
+    return null;
+  }
+  if ((init.tools || []).includes("mcp__global__canary")
+    || (init.tools || []).includes("mcp__excluded__lookup")) {
+    return null;
+  }
+
+  const wantSkill = (expected.skills || [])[0];
+  const wantPlugin = (expected.plugins || [])[0];
+  const wantFramework = (expected.frameworks || [])[0];
+  const wantMcp = (expected.mcp_tools || [])[0];
+  if (!wantSkill || !wantPlugin || !wantFramework || !wantMcp) return null;
+  if (!(init.skills || []).includes(wantSkill)) return null;
+  if (!(init.plugins || []).includes(wantPlugin)) return null;
+
+  const { pairs, syntheticTexts } = collectOrderedToolPairs(streamText, init.session_id);
+  if (!pairs.length) return null;
+
+  const skillPair = findSkillLaunchProof(
+    pairs, syntheticTexts, wantSkill, expected.nonces.skill
+  );
+  if (!skillPair) return null;
+
+  const pluginPair = findSkillLaunchProof(
+    pairs, syntheticTexts, PLUGIN_CANARY_SKILL, expected.nonces.plugin
+  );
+  if (!pluginPair) return null;
+
+  const frameworkRoots = (capsule.frameworkDirs || []).map((d) => path.resolve(d));
+  const expectedFwPaths = new Set(
+    frameworkRoots.map((root) =>
+      path.resolve(root, wantFramework, "framework.json")
+    )
+  );
+  const frameworkPair = pairs.find((p) => {
+    if (p.name !== "Read") return false;
+    const filePath = path.resolve(
+      String(p.input.file_path || p.input.path || "")
+    );
+    if (!expectedFwPaths.has(filePath)) return false;
+    return resultContainsExactNonce(p.resultText, expected.nonces.framework);
+  });
+  if (!frameworkPair) return null;
+
+  const mcpPair = pairs.find((p) =>
+    p.name === wantMcp
+    && resultContainsExactNonce(p.resultText, expected.nonces.mcp)
+  );
+  if (!mcpPair) return null;
+
+  // Prove no forbidden skill/plugin/MCP/framework result was produced.
+  for (const pair of pairs) {
+    const skillName = String(pair.input.skill || "");
+    if (skillName === "global.canary-skill" || skillName === "pool.unselected-skill") {
+      return null;
+    }
+    if (pair.name === "mcp__global__canary" || pair.name === "mcp__excluded__lookup") {
+      return null;
+    }
+    const readPath = String(pair.input.file_path || pair.input.path || "");
+    if (/pool\.unselected-framework|global\.canary/i.test(readPath)) return null;
+  }
+
+  const mcpTools = (init.tools || []).filter((t) => String(t).startsWith("mcp__"));
+  if (!mcpTools.includes(wantMcp)) mcpTools.push(wantMcp);
+
+  const visible = new Set([
+    wantSkill,
+    wantPlugin,
+    wantMcp,
+    wantFramework,
+    PLUGIN_CANARY_SKILL,
+    ...(init.skills || []),
+    ...(init.plugins || []),
+    ...mcpTools,
+  ]);
+  const absent = ISOLATION_FORBIDDEN_CANARIES.filter((name) => {
+    if (visible.has(name)) return false;
+    if ((init.skills || []).includes(name)) return false;
+    if ((init.plugins || []).includes(name)) return false;
+    if ((init.tools || []).includes(name)) return false;
+    if (name.startsWith("mcp__")
+      && (init.mcp_servers || []).some((s) => name.includes(`__${s}__`))) {
+      return false;
+    }
+    return true;
+  });
+  if (!absentListComplete(absent)) return null;
+
+  return {
+    skills: [wantSkill],
+    plugins: [wantPlugin],
+    mcp_tools: [wantMcp],
+    frameworks: [wantFramework],
+    absent,
+    content_nonces: {
+      skill: expected.nonces.skill,
+      plugin: expected.nonces.plugin,
+      framework: expected.nonces.framework,
+      mcp: expected.nonces.mcp,
+    },
+    _init: init,
+    _structured_proofs: {
+      skill_tool_use_id: skillPair.id,
+      plugin_tool_use_id: pluginPair.id,
+      framework_tool_use_id: frameworkPair.id,
+      mcp_tool_use_id: mcpPair.id,
+    },
+  };
+}
+
 /**
  * Derive structured inventory from Claude stream-json system/init only.
  * Model-authored text JSON is never sufficient alone.
@@ -844,15 +1104,13 @@ function parseClaudeMcpList(text) {
 
 const INVENTORY_PROMPT = [
   "You are an isolation canary.",
-  "First call the mcp__selected__lookup tool exactly once.",
-  "If the tool is deferred, use ToolSearch to discover it then call it.",
-  "Read selected skill content from the session skill surface and selected framework files under --add-dir.",
-  "Then reply with ONLY one JSON object and no prose.",
-  "Keys: skills, plugins, mcp_tools, frameworks, absent, content_nonces.",
-  "content_nonces maps skill/plugin/framework/mcp to unpredictable nonce strings found in their content.",
-  "List only capabilities you can actually use in this session.",
-  "Include mcp__selected__lookup in mcp_tools if that tool is available.",
-  "absent must include every forbidden canary you cannot use.",
+  "Call these tools in order, then stop:",
+  "1) Skill tool with skill=capsule.selected-skill exactly once.",
+  `2) Skill tool with skill=${PLUGIN_CANARY_SKILL} exactly once.`,
+  "3) Read the selected framework JSON at the --add-dir framework path ending in capsule.selected-framework/framework.json exactly once.",
+  "4) Call mcp__selected__lookup exactly once (use ToolSearch first if deferred).",
+  "Do not invent inventory JSON as proof — the structured tool results are the proof.",
+  "After the four tool calls, you may reply with a short acknowledgement.",
 ].join(" ");
 
 function contentNoncesMatch(expectedNonces, observedNonces) {
@@ -1114,39 +1372,21 @@ export function collectLiveIsolationObservation({
     }
     if (!(init.plugins || []).includes("capsule.selected-plugin")
       && !(init.tools || []).includes(selectedToolName)
-      && !(init.tools || []).includes("ToolSearch")) {
-      // Must have some selected signal in init.
+      && !(init.tools || []).includes("ToolSearch")
+      && !(init.tools || []).includes("Skill")) {
       return null;
     }
 
-    const toolProof = parseClaudeStreamToolProof(inventoryText, {
-      toolName: selectedToolName,
-      nonce: mcpNonce,
-    });
-    if (!toolProof) return null;
-
-    const modelInventory = extractInventoryFromStream(inventoryText);
-    const observed = buildObservedFromInitAndProof({
-      init,
-      toolProof,
+    // Full matrix proof comes from correlated Skill/plugin/Read/MCP events —
+    // never from final model JSON inventory claims.
+    const observed = parseClaudeStructuredCapabilityProofs(inventoryText, {
       expected,
       capsule,
-      modelInventory,
     });
     if (!observed) return null;
     if (!observed.mcp_tools.includes("mcp__selected__lookup")) return null;
-    if (observed.mcp_tools.includes("mcp__global__canary")) return null;
-    if (observed.mcp_tools.includes("mcp__excluded__lookup")) return null;
     if (!absentListComplete(observed.absent)) return null;
     if (!contentNoncesMatch(expectedNonces, observed.content_nonces)) return null;
-
-    // Ensure selected plugin appears when expected.
-    if ((expected?.plugins || []).includes("capsule.selected-plugin")
-      && !observed.plugins.includes("capsule.selected-plugin")
-      && !(init.plugins || []).includes("capsule.selected-plugin")) {
-      return null;
-    }
-
     return observed;
   } catch {
     return null;

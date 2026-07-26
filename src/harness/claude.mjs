@@ -175,7 +175,7 @@ export const claudeAdapter = {
     runDir,
     broker = null,
     capsule = null,
-    allowedBuiltins = ["Read", "Edit", "Write", "Glob", "Grep", "ToolSearch"],
+    allowedBuiltins = ["Read", "Edit", "Write", "Glob", "Grep", "ToolSearch", "Skill"],
     nodePath = process.execPath,
     brokerBin,
     writeFileSync,
