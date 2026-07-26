@@ -89,6 +89,7 @@ test("brokered Claude launch strips legacy roster bypass before enforcing policy
     },
     verification: {
       status: "verified",
+      adapter: "claude",
       cli_version: "test",
       command_broker: "team-up.command-broker/v1",
       context_isolation: "team-up.context-isolation/v1",

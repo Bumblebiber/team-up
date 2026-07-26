@@ -146,6 +146,7 @@ test("prepareArgvFromDescriptor rebuilds Claude bare capsule from persisted desc
     const promptPath = path.join(rd, "mailbox", "PROMPT.md");
     fs.mkdirSync(path.dirname(promptPath), { recursive: true });
     fs.writeFileSync(promptPath, "do work\n");
+    const claudeVersion = getAdapter("claude").version({ execFileSync });
     const desc = buildLaunchDescriptor({
       cli: "claude",
       model: "m1",
@@ -157,6 +158,8 @@ test("prepareArgvFromDescriptor rebuilds Claude bare capsule from persisted desc
       harnessRequirements: { context_isolation: CONTEXT_ISOLATION_CAPABILITY },
       harnessVerification: {
         status: "verified",
+        adapter: "claude",
+        cli_version: claudeVersion,
         context_isolation: CONTEXT_ISOLATION_CAPABILITY,
       },
       capsuleLaunch,
@@ -183,7 +186,7 @@ test("prepareArgvFromDescriptor rebuilds Claude bare capsule from persisted desc
   });
 });
 
-test("prepareArgvFromDescriptor rebuilds Codex without isolation; isolation fails closed", async () => {
+test("prepareArgvFromDescriptor rebuilds Codex with verified isolation", async () => {
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
@@ -202,8 +205,8 @@ test("prepareArgvFromDescriptor rebuilds Codex without isolation; isolation fail
     const promptPath = path.join(rd, "mailbox", "PROMPT.md");
     fs.mkdirSync(path.dirname(promptPath), { recursive: true });
     fs.writeFileSync(promptPath, "do work\n");
+    const codexVersion = getAdapter("codex").version({ execFileSync });
 
-    // Isolation required + forged Codex token → fail closed (declared null).
     persistLaunchDescriptor(
       run.runId,
       buildLaunchDescriptor({
@@ -218,15 +221,49 @@ test("prepareArgvFromDescriptor rebuilds Codex without isolation; isolation fail
         harnessVerification: {
           status: "verified",
           adapter: "codex",
-          cli_version: "0.145.0",
+          cli_version: codexVersion,
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
         specialist: { id: "research.hugo", version: "0.1.0" },
       })
     );
+    const prepared = prepareArgvFromDescriptor(
+      loadAuthoritativeLaunchDescriptor(run.runId)
+    );
+    assert.ok(prepared.argv.includes("--strict-config") || prepared.env?.CODEX_HOME);
+
+    // Missing isolation token still fails closed.
     assert.throws(
-      () => prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(run.runId)),
+      () =>
+        prepareArgvFromDescriptor(
+          buildLaunchDescriptor({
+            cli: "codex",
+            model: "cx",
+            promptPath,
+            contextDir: path.join(rd, "context"),
+            project: "/tmp",
+            permissions: { filesystem: "none", writes: false, network: false, commands: [] },
+            callType: "consult",
+            harnessRequirements: { context_isolation: CONTEXT_ISOLATION_CAPABILITY },
+            harnessVerification: {
+              status: "verified",
+              adapter: "codex",
+              cli_version: codexVersion,
+              context_isolation: null,
+            },
+            capsuleLaunch: {
+              ...capsuleLaunch,
+              authoritative_effective_path:
+                loadAuthoritativeLaunchDescriptor(run.runId).capsule_launch
+                  .authoritative_effective_path,
+              authoritative_content_manifest_path:
+                loadAuthoritativeLaunchDescriptor(run.runId).capsule_launch
+                  .authoritative_content_manifest_path,
+            },
+            specialist: { id: "research.hugo", version: "0.1.0" },
+          })
+        ),
       /HARNESS_CONTEXT_ISOLATION_UNVERIFIED|BROKER_VERIFY_FAILED/
     );
   });

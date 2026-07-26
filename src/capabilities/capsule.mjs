@@ -130,8 +130,7 @@ export function materializeCapabilityCapsule({
         checksum: item.checksum, reason: item.reason, resolved,
         estimated_description_tokens: item.estimated_description_tokens ?? 0,
         mcp_tool_count: item.mcp_tool_count ?? 0,
-        // Exact harness tokenizer unavailable — persist explicit estimate metadata.
-        prompt_token_contribution: promptEst.estimated_prompt_token_contribution,
+        // Exact harness tokenizer unavailable — persist explicit estimate metadata only.
         estimated_prompt_token_contribution: promptEst.estimated_prompt_token_contribution,
         prompt_token_estimate_method: promptEst.prompt_token_estimate_method,
         mcp_schema_bytes: schema.bytes,
@@ -155,8 +154,6 @@ export function materializeCapabilityCapsule({
       estimated_description_tokens: records.reduce(
         (sum, item) => sum + item.estimated_description_tokens, 0),
       mcp_tool_count: records.reduce((sum, item) => sum + item.mcp_tool_count, 0),
-      prompt_token_contribution: records.reduce(
-        (sum, item) => sum + item.prompt_token_contribution, 0),
       estimated_prompt_token_contribution: records.reduce(
         (sum, item) => sum + item.estimated_prompt_token_contribution, 0),
       mcp_schema_bytes: records.reduce(

@@ -4,8 +4,6 @@ import { loadState, saveState, updateState, runDir, setStatus } from "../runs/ru
 import { chainCapacityReport } from "./capacity.mjs";
 import { createAttempt, acquireAttemptLease, releaseAttemptLease } from "./attempts.mjs";
 import {
-  persistLaunchDescriptor,
-  loadAuthoritativeLaunchDescriptor,
   resolveLimitWindowsForCell,
 } from "./start.mjs";
 
@@ -127,18 +125,9 @@ export async function recheckCapacity({
     const candidate = report.reports.find((r) => r.available)?.candidate || {};
     const limit_windows = resolveLimitWindowsForCell(candidate, roster);
     const runtime = { ...candidate, limit_windows };
-    try {
-      const desc = loadAuthoritativeLaunchDescriptor(runId);
-      persistLaunchDescriptor(runId, {
-        ...desc,
-        cli: candidate.cli || desc.cli,
-        model: candidate.model || desc.model,
-        effort: candidate.effort ?? desc.effort,
-        limit_windows,
-      });
-    } catch {
-      // No authoritative descriptor yet — start path may create one later.
-    }
+    // Do NOT persist the runtime override here. startFromLaunchDescriptor
+    // validates then atomically persists via runtimeOverride; writing first
+    // would leave a corrupted descriptor if start later fails closed.
     const attempt = createAttempt({
       runId,
       runtime,

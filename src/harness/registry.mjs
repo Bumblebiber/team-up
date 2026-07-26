@@ -57,17 +57,23 @@ export function harnessCapabilities(
     return { ...UNVERIFIED_CAPABILITIES };
   }
 
-  // Bind to exact adapter id. Claude tokens must not apply under Codex, etc.
-  if (Object.hasOwn(record, "adapter") && record.adapter !== adapter.id) {
+  // Verified records must bind exact adapter + cli_version. Missing is invalid.
+  if (!Object.hasOwn(record, "adapter") || record.adapter == null || record.adapter === "") {
+    return { ...UNVERIFIED_CAPABILITIES };
+  }
+  if (record.adapter !== adapter.id) {
+    return { ...UNVERIFIED_CAPABILITIES };
+  }
+  if (
+    !Object.hasOwn(record, "cli_version") ||
+    record.cli_version == null ||
+    record.cli_version === ""
+  ) {
     return { ...UNVERIFIED_CAPABILITIES };
   }
 
-  // Optional exact CLI version gate (successor/resume / explicit callers).
-  if (
-    requireExactVersion != null &&
-    Object.hasOwn(record, "cli_version") &&
-    record.cli_version !== requireExactVersion
-  ) {
+  // Exact CLI version gate (successor/resume / explicit callers).
+  if (requireExactVersion != null && record.cli_version !== requireExactVersion) {
     return { ...UNVERIFIED_CAPABILITIES };
   }
 
@@ -117,16 +123,28 @@ export function prepareHarnessLaunch({
   brokerBin = brokerBinPath(),
 }) {
   const adapter = getAdapter(cli);
-  if (
-    verification &&
-    Object.hasOwn(verification, "adapter") &&
-    verification.adapter !== adapter.id
-  ) {
-    const err = new Error(
-      `HARNESS_VERIFICATION_ADAPTER: record adapter ${verification.adapter} != runtime ${adapter.id}`
-    );
-    err.code = "HARNESS_VERIFICATION_ADAPTER";
-    throw err;
+  if (verification && verification.status === "verified") {
+    if (!verification.adapter) {
+      const err = new Error(
+        "HARNESS_VERIFICATION_ADAPTER: verified record missing adapter"
+      );
+      err.code = "HARNESS_VERIFICATION_ADAPTER";
+      throw err;
+    }
+    if (verification.adapter !== adapter.id) {
+      const err = new Error(
+        `HARNESS_VERIFICATION_ADAPTER: record adapter ${verification.adapter} != runtime ${adapter.id}`
+      );
+      err.code = "HARNESS_VERIFICATION_ADAPTER";
+      throw err;
+    }
+    if (!verification.cli_version) {
+      const err = new Error(
+        "HARNESS_VERIFICATION_VERSION: verified record missing cli_version"
+      );
+      err.code = "HARNESS_VERIFICATION_VERSION";
+      throw err;
+    }
   }
   const caps = harnessCapabilities(cli, {
     verification,

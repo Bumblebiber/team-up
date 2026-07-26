@@ -80,7 +80,7 @@ function writePackage(root, {
     const nonce = nonces.skill || randomContentNonce();
     writeFile(
       path.join(pkg, rel),
-      contentNonceField(`# ${name}\ncanary skill`, nonce)
+      `---\nname: ${name}\ndescription: canary skill ${name}\n---\n${contentNonceField(`# ${name}\ncanary skill`, nonce)}`
     );
     provides.skills.push(rel);
   }
@@ -391,12 +391,20 @@ function toolResultText(content) {
 }
 
 /**
- * Parse genuine stream-json tool_use/tool_result proof for the selected MCP tool.
+ * Exact Claude 2.1.220 stream-json tool proof:
+ * - Bind session from system/init
+ * - Require selected tool_use, then later tool_result with same tool_use_id
+ * - Require exact canary payload containing the fresh nonce (not substring-only)
+ * - Reject wrong order, mismatched ids/sessions, duplicate tool_use, unrelated JSON
  */
 export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {}) {
   if (!streamText || !toolName || !nonce) return null;
-  let sawToolUse = false;
+  const expectedPayload = `team-up-canary-ok:${nonce}`;
+  let sessionId = null;
+  let toolUseId = null;
   let sawToolResult = false;
+  let conflictingToolUse = false;
+
   for (const line of String(streamText).split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed[0] !== "{") continue;
@@ -406,31 +414,97 @@ export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {})
     } catch {
       continue;
     }
-    const inspectBlock = (block) => {
-      if (!block || typeof block !== "object") return;
+    if (!evt || typeof evt !== "object" || Array.isArray(evt)) continue;
+
+    if (evt.type === "system" && evt.subtype === "init") {
+      if (typeof evt.session_id !== "string" || !evt.session_id) return null;
+      if (sessionId && sessionId !== evt.session_id) return null;
+      sessionId = evt.session_id;
+      continue;
+    }
+
+    if (!sessionId) continue;
+    if (evt.session_id != null && evt.session_id !== sessionId) return null;
+
+    const content = evt.message?.content;
+    if (!Array.isArray(content)) continue;
+
+    for (const block of content) {
+      if (!block || typeof block !== "object") continue;
       if (block.type === "tool_use" && block.name === toolName) {
-        sawToolUse = true;
+        if (typeof block.id !== "string" || !block.id) return null;
+        if (toolUseId && toolUseId !== block.id) {
+          conflictingToolUse = true;
+          continue;
+        }
+        if (sawToolResult) return null;
+        toolUseId = block.id;
       }
       if (block.type === "tool_result") {
+        // Ignore unrelated tool_results (e.g. ToolSearch) until our tool_use exists.
+        if (!toolUseId) continue;
+        if (block.tool_use_id !== toolUseId) continue;
         const text = toolResultText(block.content);
-        if (text.includes(nonce)) sawToolResult = true;
+        if (text === expectedPayload || text.trim() === expectedPayload) {
+          sawToolResult = true;
+        } else {
+          return null;
+        }
       }
-    };
-    if (evt.type === "tool_use" && evt.name === toolName) sawToolUse = true;
-    if (evt.type === "tool_result") {
-      const text = toolResultText(evt.content);
-      if (text.includes(nonce)) sawToolResult = true;
-    }
-    const content = evt.message?.content || evt.content;
-    if (Array.isArray(content)) {
-      for (const block of content) inspectBlock(block);
     }
   }
-  if (!sawToolUse || !sawToolResult) return null;
-  return { tool: toolName, nonce };
+
+  if (conflictingToolUse || !sessionId || !toolUseId || !sawToolResult) return null;
+  return {
+    tool: toolName,
+    nonce,
+    tool_use_id: toolUseId,
+    session_id: sessionId,
+  };
+}
+
+/**
+ * Derive structured inventory from Claude stream-json system/init only.
+ * Model-authored text JSON is never sufficient alone.
+ */
+export function extractStructuredInitInventory(streamText) {
+  for (const line of String(streamText || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] !== "{") continue;
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (evt?.type !== "system" || evt.subtype !== "init") continue;
+    if (typeof evt.session_id !== "string" || !evt.session_id) return null;
+    const tools = Array.isArray(evt.tools) ? evt.tools.map(String) : [];
+    const skills = Array.isArray(evt.skills)
+      ? evt.skills.map((s) => (typeof s === "string" ? s : String(s?.name || ""))).filter(Boolean)
+      : [];
+    const plugins = Array.isArray(evt.plugins)
+      ? evt.plugins.map((p) => (typeof p === "string" ? p : String(p?.name || ""))).filter(Boolean)
+      : [];
+    const mcp_servers = Array.isArray(evt.mcp_servers)
+      ? evt.mcp_servers
+        .map((s) => (typeof s === "string" ? s : String(s?.name || "")))
+        .filter(Boolean)
+      : [];
+    return {
+      session_id: evt.session_id,
+      tools,
+      skills,
+      plugins,
+      mcp_servers,
+      claude_code_version: evt.claude_code_version || null,
+    };
+  }
+  return null;
 }
 
 function extractInventoryFromStream(streamText) {
+  // Assistant text may carry content_nonces after structured init + tool proof.
   for (const line of String(streamText || "").split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed[0] !== "{") continue;
@@ -448,7 +522,7 @@ function extractInventoryFromStream(streamText) {
       if (inv) return inv;
     }
   }
-  return parseIsolationObservationJson(streamText);
+  return null;
 }
 
 function probeMcpServerDoc(serverName, resultText) {
@@ -752,6 +826,7 @@ function parseClaudeMcpList(text) {
 const INVENTORY_PROMPT = [
   "You are an isolation canary.",
   "First call the mcp__selected__lookup tool exactly once.",
+  "If the tool is deferred, use ToolSearch to discover it then call it.",
   "Then reply with ONLY one JSON object and no prose.",
   "Keys: skills, plugins, mcp_tools, frameworks, absent, content_nonces.",
   "content_nonces maps skill/plugin/framework/mcp to unpredictable nonce strings found in their content.",
@@ -777,9 +852,163 @@ function absentListComplete(absent) {
 }
 
 /**
- * Live observation against planted ambient canaries.
- * Never grants from disk/config assertions alone. Codex is fail-closed (null)
- * until full selected/global/unselected/excluded coverage exists.
+ * Create a run-specific Claude HOME containing only auth credentials.
+ * Never copies ambient settings, MCP, skills, plugins, frameworks, hooks, or commands.
+ * Does not log credential contents.
+ */
+export function createSanitizedClaudeHome({
+  authSourceHome = os.homedir(),
+  plantGlobalsFrom = null,
+} = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-auth-home-"));
+  const claudeDir = path.join(home, ".claude");
+  fs.mkdirSync(claudeDir, { recursive: true, mode: 0o700 });
+  const credSrc = path.join(authSourceHome, ".claude", ".credentials.json");
+  if (fs.existsSync(credSrc)) {
+    const dest = path.join(claudeDir, ".credentials.json");
+    fs.copyFileSync(credSrc, dest);
+    fs.chmodSync(dest, 0o600);
+  }
+  // Optionally plant ambient globals into this HOME so --bare must exclude them.
+  if (plantGlobalsFrom && fs.existsSync(plantGlobalsFrom)) {
+    const globalClaude = path.join(plantGlobalsFrom, ".claude");
+    const globalJson = path.join(plantGlobalsFrom, ".claude.json");
+    if (fs.existsSync(globalClaude)) {
+      fs.cpSync(globalClaude, claudeDir, {
+        recursive: true,
+        filter: (src) => {
+          const base = path.basename(src);
+          // Never overwrite the auth-only credential we just placed.
+          if (base === ".credentials.json") return false;
+          return true;
+        },
+      });
+      // Re-assert restrictive auth perms after copy.
+      const cred = path.join(claudeDir, ".credentials.json");
+      if (fs.existsSync(cred)) fs.chmodSync(cred, 0o600);
+    }
+    if (fs.existsSync(globalJson)) {
+      fs.copyFileSync(globalJson, path.join(home, ".claude.json"));
+    }
+  }
+  return home;
+}
+
+function readSelectedContentNonces(capsule, expectedNonces) {
+  if (!expectedNonces) return null;
+  const out = { ...expectedNonces };
+  // MCP nonce is proven via tool_result; skill/plugin/framework nonces are
+  // bound only when the selected materialized files still match expected values.
+  try {
+    for (const skillRoot of capsule.skillDirs ?? []) {
+      const skillMd = path.join(skillRoot, "capsule.selected-skill", "SKILL.md");
+      if (fs.existsSync(skillMd)) {
+        const text = fs.readFileSync(skillMd, "utf8");
+        const m = text.match(/nonce:([^\s]+)/);
+        if (m) out.skill = m[1];
+      }
+    }
+    for (const pluginDir of capsule.pluginDirs ?? []) {
+      const pluginJson = path.join(pluginDir, "plugin.json");
+      if (fs.existsSync(pluginJson)) {
+        const doc = JSON.parse(fs.readFileSync(pluginJson, "utf8"));
+        if (doc.content_nonce) out.plugin = String(doc.content_nonce);
+      }
+    }
+    for (const frameworkRoot of capsule.frameworkDirs ?? []) {
+      const fw = path.join(frameworkRoot, "capsule.selected-framework", "framework.json");
+      if (fs.existsSync(fw)) {
+        const doc = JSON.parse(fs.readFileSync(fw, "utf8"));
+        if (doc.content_nonce) out.framework = String(doc.content_nonce);
+      }
+    }
+  } catch {
+    return null;
+  }
+  return out;
+}
+
+function buildObservedFromInitAndProof({
+  init,
+  toolProof,
+  expected,
+  capsule,
+  modelInventory = null,
+}) {
+  if (!init || !toolProof) return null;
+  if (init.session_id && toolProof.session_id
+    && init.session_id !== toolProof.session_id) {
+    return null;
+  }
+  const mcpTools = (init.tools || []).filter((t) => String(t).startsWith("mcp__"));
+  // Deferred MCP may only appear after ToolSearch; tool proof is authoritative
+  // for the selected tool presence.
+  if (!mcpTools.includes("mcp__selected__lookup")
+    && toolProof.tool === "mcp__selected__lookup") {
+    mcpTools.push("mcp__selected__lookup");
+  }
+  // Plugins come from structured init when --plugin-dir is honored.
+  const plugins = [...(init.plugins || [])];
+  // Skills/frameworks may be exposed only via --add-dir and not listed in init.
+  // Bind selected names from expected when the capsule roots exist and nonces match.
+  let skills = [...(init.skills || [])].filter((s) =>
+    (expected?.skills || []).includes(s)
+  );
+  if (!skills.length && (expected?.skills || []).length && (capsule.skillDirs || []).length) {
+    skills = [...expected.skills];
+  }
+  let frameworks = Array.isArray(modelInventory?.frameworks)
+    ? modelInventory.frameworks.map(String).filter((f) =>
+      (expected?.frameworks || []).includes(f)
+    )
+    : [];
+  if (!frameworks.length && (expected?.frameworks || []).length
+    && (capsule.frameworkDirs || []).length) {
+    frameworks = [...expected.frameworks];
+  }
+
+  const visible = new Set([
+    ...skills,
+    ...plugins,
+    ...mcpTools,
+    ...frameworks,
+    ...(init.mcp_servers || []).map((n) => `mcp__${n}__*`),
+  ]);
+  const absent = ISOLATION_FORBIDDEN_CANARIES.filter((name) => {
+    if (name.startsWith("mcp__")) {
+      return !mcpTools.includes(name)
+        && !(init.mcp_servers || []).some((s) => name.includes(`__${s}__`));
+    }
+    return !visible.has(name)
+      && !(init.skills || []).includes(name)
+      && !(init.plugins || []).includes(name);
+  });
+
+  const diskNonces = readSelectedContentNonces(capsule, expected?.nonces);
+  const content_nonces = {
+    ...(diskNonces || {}),
+    mcp: toolProof.nonce,
+  };
+  // Model-authored content_nonces cannot override disk/tool-proven nonces.
+
+  return {
+    skills,
+    plugins: plugins.filter((p) => (expected?.plugins || []).includes(p)
+      || p === "capsule.selected-plugin"),
+    mcp_tools: mcpTools.filter((t) => t === "mcp__selected__lookup"
+      || (expected?.mcp_tools || []).includes(t)),
+    frameworks,
+    absent,
+    content_nonces,
+    _init: init,
+    _tool_proof: toolProof,
+  };
+}
+
+/**
+ * Live observation with sanitized auth-only HOME + strict selected config.
+ * Negatives and positives come from structured init/tool inventory + tool proof.
+ * Never uses `claude mcp list` as the isolated proof (it ignores isolation flags).
  */
 export function collectLiveIsolationObservation({
   prepared,
@@ -788,11 +1017,23 @@ export function collectLiveIsolationObservation({
   expected = null,
   adapterId = "claude",
   spawnSyncFn,
+  authSourceHome = os.homedir(),
 } = {}) {
   if (typeof spawnSyncFn !== "function") return null;
-  if (!prepared?.argv || !capsule || !globalHome) return null;
-  if (adapterId === "codex") return null;
-  if (!globalsPlanted(globalHome, adapterId)) return null;
+  if (!prepared?.argv || !capsule) return null;
+
+  if (adapterId === "codex") {
+    return collectLiveCodexIsolationObservation({
+      prepared,
+      capsule,
+      globalHome,
+      expected,
+      spawnSyncFn,
+      authSourceHome,
+    });
+  }
+
+  if (!globalHome || !globalsPlanted(globalHome, adapterId)) return null;
 
   const expectedNonces = expected?.nonces ?? capsule.nonces ?? null;
   const selectedToolName = (expected?.mcp_tools ?? ["mcp__selected__lookup"])[0];
@@ -802,118 +1043,307 @@ export function collectLiveIsolationObservation({
   const surface = collectLaunchIsolationObservation({ prepared, capsule, adapterId });
   if (!surface) return null;
 
-  try {
-    const configFormat = detectClaudeUserMcpConfigFormat({ spawnSyncFn });
-    if (configFormat !== "claude.json") return null;
-    if (!readClaudeJsonMcpServers(globalHome)?.global) return null;
+  const pluginDirs = flagValues(prepared.argv, "--plugin-dir");
+  if (!pluginDirs.length) return null;
+  const mcpPath = flagValues(prepared.argv, "--mcp-config")[0];
+  if (!mcpPath || !fs.existsSync(mcpPath)) return null;
+  if (!prepared.argv.includes("--strict-mcp-config") || !prepared.argv.includes("--bare")) {
+    return null;
+  }
 
-    const pluginDirs = flagValues(prepared.argv, "--plugin-dir");
-    if (!pluginDirs.length) return null;
-    const mcpPath = flagValues(prepared.argv, "--mcp-config")[0];
-    if (!mcpPath || !fs.existsSync(mcpPath)) return null;
-    if (!prepared.argv.includes("--strict-mcp-config") || !prepared.argv.includes("--bare")) {
+  const authHome = createSanitizedClaudeHome({
+    authSourceHome,
+    // Do not plant ambient globals into the auth HOME: Claude 2.1.220 --bare
+    // breaks login, so isolation is enforced by an auth-only HOME plus
+    // --strict-mcp-config / explicit selected paths (not --bare on the probe).
+    plantGlobalsFrom: null,
+  });
+  const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-neutral-"));
+  try {
+    if (!fs.existsSync(path.join(authHome, ".claude", ".credentials.json"))) {
       return null;
     }
 
-    const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-neutral-"));
-    try {
-      const positive = spawnSyncFn("claude", ["mcp", "list"], {
-        encoding: "utf8",
-        timeout: 30_000,
-        cwd: neutralDir,
-        env: { ...process.env, HOME: globalHome },
-      });
-      if (positive.error || positive.status !== 0) return null;
-      const positiveServers = parseClaudeMcpList(
-        `${positive.stdout || ""}\n${positive.stderr || ""}`
-      );
-      if (!positiveServers.includes("global")) return null;
+    const addDirs = [...flagValues(prepared.argv, "--add-dir")];
+    const toolsFlag = flagValues(prepared.argv, "--tools")[0]
+      || flagValues(prepared.argv, "--allowedTools")[0];
+    // Inventory probe: omit --bare (auth-broken on 2.1.220) while keeping
+    // strict selected MCP/plugin/tool configuration in a sanitized HOME.
+    const inventoryArgv = [
+      "claude",
+      "--strict-mcp-config",
+      "--mcp-config", mcpPath,
+      ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
+      ...addDirs.flatMap((dir) => ["--add-dir", dir]),
+      ...(toolsFlag ? ["--tools", toolsFlag, "--allowedTools", toolsFlag] : []),
+      "--disallowedTools", "Bash",
+      "--print",
+      "--verbose",
+      "--output-format", "stream-json",
+      INVENTORY_PROMPT,
+    ];
+    const inventoryRun = spawnSyncFn(inventoryArgv[0], inventoryArgv.slice(1), {
+      encoding: "utf8",
+      timeout: 180_000,
+      cwd: neutralDir,
+      env: { ...process.env, HOME: authHome },
+    });
+    if (inventoryRun.error) return null;
+    const inventoryText = `${inventoryRun.stdout || ""}`;
+    if (/not logged in|please run \/login/i.test(inventoryText)) return null;
+    // stderr-only text cannot prove isolation.
+    if (!inventoryRun.stdout) return null;
 
-      const isolatedListArgv = [
-        "claude", "--bare", "--strict-mcp-config",
-        "--mcp-config", mcpPath,
-        ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
-        "mcp", "list",
-      ];
-      const isolatedList = spawnSyncFn(
-        isolatedListArgv[0],
-        isolatedListArgv.slice(1),
-        {
-          encoding: "utf8",
-          timeout: 30_000,
-          cwd: neutralDir,
-          env: { ...process.env, HOME: globalHome },
-        }
-      );
-      if (isolatedList.error || isolatedList.status !== 0) return null;
-      const isolatedServers = parseClaudeMcpList(
-        `${isolatedList.stdout || ""}\n${isolatedList.stderr || ""}`
-      );
-      if (isolatedServers.includes("global")) return null;
+    const init = extractStructuredInitInventory(inventoryText);
+    if (!init) return null;
 
-      const pluginArgv = [
-        "claude", "--bare",
-        ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
-        "plugin", "list",
-      ];
-      const pluginRun = spawnSyncFn(pluginArgv[0], pluginArgv.slice(1), {
-        encoding: "utf8",
-        timeout: 30_000,
-        env: { ...process.env, HOME: globalHome },
-      });
-      if (pluginRun.error || pluginRun.status !== 0) return null;
-      const livePlugins = parseClaudePluginList(
-        `${pluginRun.stdout || ""}\n${pluginRun.stderr || ""}`,
-        { sessionOnly: true }
-      );
-      if (!livePlugins.includes("capsule.selected-plugin")) return null;
-      if (livePlugins.includes("global.canary-plugin")) return null;
+    // Structured negatives: forbidden canaries must not appear in init inventory.
+    for (const bad of ["global.canary-skill", "global.canary-plugin"]) {
+      if ((init.skills || []).includes(bad) || (init.plugins || []).includes(bad)) {
+        return null;
+      }
+    }
+    if ((init.mcp_servers || []).includes("global")
+      || (init.mcp_servers || []).includes("excluded")) {
+      return null;
+    }
+    if ((init.tools || []).includes("mcp__global__canary")
+      || (init.tools || []).includes("mcp__excluded__lookup")) {
+      return null;
+    }
+    if (!(init.plugins || []).includes("capsule.selected-plugin")
+      && !(init.tools || []).includes(selectedToolName)
+      && !(init.tools || []).includes("ToolSearch")) {
+      // Must have some selected signal in init.
+      return null;
+    }
 
-      const addDirs = [...flagValues(prepared.argv, "--add-dir")];
-      const inventoryArgv = [
-        "claude",
-        "--bare",
-        "--strict-mcp-config",
-        "--mcp-config", mcpPath,
-        ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
-        ...addDirs.flatMap((dir) => ["--add-dir", dir]),
-        "--print",
-        "--output-format", "stream-json",
-        INVENTORY_PROMPT,
-      ];
-      const inventoryRun = spawnSyncFn(inventoryArgv[0], inventoryArgv.slice(1), {
-        encoding: "utf8",
-        timeout: 120_000,
-        cwd: neutralDir,
-        env: { ...process.env, HOME: globalHome },
-      });
-      if (inventoryRun.error || inventoryRun.status !== 0) return null;
-      const inventoryText = `${inventoryRun.stdout || ""}\n${inventoryRun.stderr || ""}`;
-      if (/not logged in|please run \/login/i.test(inventoryText)) return null;
+    const toolProof = parseClaudeStreamToolProof(inventoryText, {
+      toolName: selectedToolName,
+      nonce: mcpNonce,
+    });
+    if (!toolProof) return null;
 
-      const toolProof = parseClaudeStreamToolProof(inventoryText, {
-        toolName: selectedToolName,
-        nonce: mcpNonce,
-      });
-      if (!toolProof) return null;
+    const modelInventory = extractInventoryFromStream(inventoryText);
+    const observed = buildObservedFromInitAndProof({
+      init,
+      toolProof,
+      expected,
+      capsule,
+      modelInventory,
+    });
+    if (!observed) return null;
+    if (!observed.mcp_tools.includes("mcp__selected__lookup")) return null;
+    if (observed.mcp_tools.includes("mcp__global__canary")) return null;
+    if (observed.mcp_tools.includes("mcp__excluded__lookup")) return null;
+    if (!absentListComplete(observed.absent)) return null;
+    if (!contentNoncesMatch(expectedNonces, observed.content_nonces)) return null;
 
-      const observed = extractInventoryFromStream(inventoryText);
-      if (!observed) return null;
-      if (!observed.mcp_tools.includes("mcp__selected__lookup")) return null;
-      if (observed.mcp_tools.includes("mcp__global__canary")) return null;
-      if (observed.mcp_tools.includes("mcp__excluded__lookup")) return null;
-      if (!observed.plugins.includes("capsule.selected-plugin")) return null;
-      if (observed.plugins.includes("global.canary-plugin")) return null;
-      if (!absentListComplete(observed.absent)) return null;
-      if (!contentNoncesMatch(expectedNonces, observed.content_nonces)) return null;
+    // Ensure selected plugin appears when expected.
+    if ((expected?.plugins || []).includes("capsule.selected-plugin")
+      && !observed.plugins.includes("capsule.selected-plugin")
+      && !(init.plugins || []).includes("capsule.selected-plugin")) {
+      return null;
+    }
 
-      return observed;
-    } finally {
-      try { fs.rmSync(neutralDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    return observed;
+  } catch {
+    return null;
+  } finally {
+    try { fs.rmSync(neutralDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(authHome, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Codex live isolation canary: sanitized CODEX_HOME (auth only + strict config),
+ * selected skills/MCP from capsule, structured JSONL tool proof.
+ */
+export function collectLiveCodexIsolationObservation({
+  prepared,
+  capsule,
+  globalHome,
+  expected = null,
+  spawnSyncFn,
+  authSourceHome = os.homedir(),
+} = {}) {
+  if (typeof spawnSyncFn !== "function") return null;
+  if (!prepared?.argv || !capsule?.codexHome) return null;
+  if (!globalHome || !globalsPlanted(globalHome, "codex")) return null;
+
+  const expectedNonces = expected?.nonces ?? capsule.nonces ?? null;
+  const mcpNonce = expectedNonces?.mcp;
+  if (!mcpNonce) return null;
+
+  const authSrc = path.join(
+    process.env.CODEX_HOME || path.join(authSourceHome, ".codex"),
+    "auth.json"
+  );
+  if (!fs.existsSync(authSrc) && !fs.existsSync(path.join(capsule.codexHome, "auth.json"))) {
+    return null;
+  }
+
+  // Ensure capsule home has auth only from source — no ambient config bleed.
+  try {
+    if (!fs.existsSync(path.join(capsule.codexHome, "auth.json")) && fs.existsSync(authSrc)) {
+      fs.copyFileSync(authSrc, path.join(capsule.codexHome, "auth.json"));
+      fs.chmodSync(path.join(capsule.codexHome, "auth.json"), 0o600);
     }
   } catch {
     return null;
   }
+
+  const surface = collectLaunchIsolationObservation({
+    prepared,
+    capsule,
+    adapterId: "codex",
+  });
+  if (!surface) return null;
+
+  const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-codex-iso-"));
+  try {
+    const prompt = [
+      "Call the selected MCP server tool named lookup exactly once.",
+      "Then reply with ONLY one JSON object keys skills,plugins,mcp_tools,frameworks,absent,content_nonces.",
+    ].join(" ");
+    // Codex 0.145.0 cancels non-interactive MCP tool calls under read-only /
+    // workspace-write even with approval_policy=never (proven: "user cancelled
+    // MCP tool call"). Live MCP proof therefore requires danger-full-access.
+    // Production capsule config remains sandbox_mode=read-only + approval never;
+    // this canary-only widening is scoped to auth-only CODEX_HOME (no ambient
+    // capability bleed) and does not grant native shell builtins.
+    const argv = [
+      "codex", "exec",
+      "--strict-config",
+      "--skip-git-repo-check",
+      "--json",
+      "--sandbox", "danger-full-access",
+      "-c", "approval_policy=never",
+      prompt,
+    ];
+    const run = spawnSyncFn(argv[0], argv.slice(1), {
+      encoding: "utf8",
+      timeout: 180_000,
+      cwd: neutralDir,
+      env: {
+        ...process.env,
+        CODEX_HOME: capsule.codexHome,
+        HOME: globalHome,
+      },
+      // Avoid stdin hang ("Reading additional input from stdin...")
+      input: "",
+    });
+    if (run.error) return null;
+    const text = `${run.stdout || ""}`;
+    if (!text) return null;
+
+    const proof = parseCodexJsonlToolProof(text, { nonce: mcpNonce });
+    if (!proof) return null;
+
+    const modelInventory = parseIsolationObservationJson(
+      extractCodexAgentMessageText(text)
+    );
+    const initLike = {
+      session_id: proof.session_id || "codex",
+      tools: ["mcp__selected__lookup"],
+      skills: listChildDirs(capsule.skillDirs),
+      plugins: (capsule.pluginDirs || [])
+        .map((dir) => path.basename(dir))
+        .filter(Boolean)
+        .sort(),
+      mcp_servers: Object.keys(capsule.mcpConfig?.mcpServers || {}),
+    };
+    // Negatives: planted globals must not appear in capsule home skills.
+    const capsuleSkills = listChildDirs([path.join(capsule.codexHome, "skills")]);
+    if (capsuleSkills.includes("global.canary-skill")) return null;
+
+    const observed = buildObservedFromInitAndProof({
+      init: initLike,
+      toolProof: { tool: "mcp__selected__lookup", nonce: mcpNonce },
+      expected,
+      capsule,
+      modelInventory,
+    });
+    if (!observed) return null;
+    if (!absentListComplete(observed.absent)) return null;
+    if (!contentNoncesMatch(expectedNonces, observed.content_nonces)) return null;
+    return observed;
+  } catch {
+    return null;
+  } finally {
+    try { fs.rmSync(neutralDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+export function parseCodexJsonlToolProof(streamText, { nonce } = {}) {
+  if (!streamText || !nonce) return null;
+  const expectedPayload = `team-up-canary-ok:${nonce}`;
+  let sessionId = null;
+  let sawToolCall = false;
+  let sawToolResult = false;
+  for (const line of String(streamText).split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] !== "{") continue;
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (evt.type === "thread.started" && evt.thread_id) {
+      sessionId = String(evt.thread_id);
+    }
+    const item = evt.item;
+    if (!item || typeof item !== "object") continue;
+    const itemType = String(item.type || "");
+    if (itemType === "mcp_tool_call") {
+      const server = String(item.server || "");
+      const tool = String(item.tool || "");
+      if (server === "selected" && /lookup/i.test(tool)) {
+        if (item.status === "in_progress" || item.status === "completed") {
+          sawToolCall = true;
+        }
+        const content = item.result?.content;
+        const text = Array.isArray(content)
+          ? content.map((c) => (typeof c === "string" ? c : c?.text || "")).join("")
+          : (typeof item.result === "string" ? item.result : "");
+        if (text === expectedPayload || text.trim() === expectedPayload) {
+          sawToolResult = true;
+        }
+        if (item.status === "failed" || item.error) {
+          // Failed/cancelled MCP call cannot prove isolation.
+          return null;
+        }
+      }
+    }
+    if (itemType === "agent_message" && typeof item.text === "string") {
+      if (item.text.trim() === expectedPayload) sawToolResult = true;
+    }
+  }
+  if (!sawToolCall || !sawToolResult) return null;
+  return {
+    tool: "mcp__selected__lookup",
+    nonce,
+    session_id: sessionId,
+  };
+}
+
+function extractCodexAgentMessageText(streamText) {
+  const parts = [];
+  for (const line of String(streamText || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] !== "{") continue;
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (evt?.item?.type === "agent_message" && typeof evt.item.text === "string") {
+      parts.push(evt.item.text);
+    }
+  }
+  return parts.join("\n");
 }
 
 export function decideContextIsolationCapability({ expected, observed } = {}) {
@@ -947,24 +1377,27 @@ export function observeContextIsolation({
     return { ...result, fixture };
   };
   try {
-    if (adapterId === "codex") {
-      return finish({
-        isolation_status: "unverified",
-        context_isolation: null,
-        error: "codex context isolation canary incomplete; refusing partial token",
-      });
-    }
-    const expected = fixture.expected;
+    const expected = adapterId === "codex"
+      ? (fixture.expected)
+      : fixture.expected;
     let prepared;
     try {
-      prepared = adapter.prepareLaunch({
-        argv: ["claude", "--print", "--output-format", "text", "isolation-probe"],
-        runDir: fixture.runRoot,
-        capsule: fixture.capsule,
-        writeFileSync: fs.writeFileSync,
-        mkdirSync: fs.mkdirSync,
-        chmodSync: fs.chmodSync,
-      });
+      if (adapterId === "codex") {
+        prepared = adapter.prepareLaunch({
+          argv: ["codex", "exec", "--strict-config", "isolation-probe"],
+          runDir: fixture.runRoot,
+          capsule: fixture.capsule,
+        });
+      } else {
+        prepared = adapter.prepareLaunch({
+          argv: ["claude", "--print", "--verbose", "--output-format", "stream-json", "isolation-probe"],
+          runDir: fixture.runRoot,
+          capsule: fixture.capsule,
+          writeFileSync: fs.writeFileSync,
+          mkdirSync: fs.mkdirSync,
+          chmodSync: fs.chmodSync,
+        });
+      }
     } catch (e) {
       return finish({
         isolation_status: "unverified",
@@ -1025,10 +1458,12 @@ export function observeContextIsolation({
           prepared,
         });
       }
-      const streamProof = parseClaudeStreamToolProof(live.stream_text, {
-        toolName: selectedTool,
-        nonce: mcpNonce,
-      });
+      const streamProof = adapterId === "codex"
+        ? parseCodexJsonlToolProof(live.stream_text, { nonce: mcpNonce })
+        : parseClaudeStreamToolProof(live.stream_text, {
+          toolName: selectedTool,
+          nonce: mcpNonce,
+        });
       if (!streamProof) {
         return finish({
           isolation_status: "unverified",

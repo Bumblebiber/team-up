@@ -148,23 +148,28 @@ export function reconstructCapsuleFromLaunchRecord(record) {
     throw err;
   }
 
-  // Authoritative content manifest is mandatory.
-  let manifest = record.content_manifest;
-  if (record.authoritative_content_manifest_path) {
-    if (!fs.existsSync(record.authoritative_content_manifest_path)) {
-      const err = new Error("CONTENT_MANIFEST_MISSING: authoritative content manifest absent");
-      err.code = "CONTENT_MANIFEST_MISSING";
-      throw err;
-    }
-    try {
-      manifest = JSON.parse(
-        fs.readFileSync(record.authoritative_content_manifest_path, "utf8")
-      );
-    } catch {
-      const err = new Error("CONTENT_MANIFEST_CORRUPT: authoritative content manifest unreadable");
-      err.code = "CONTENT_MANIFEST_CORRUPT";
-      throw err;
-    }
+  // Authoritative on-disk content manifest is mandatory — never use embedded fallback.
+  if (!record.authoritative_content_manifest_path) {
+    const err = new Error(
+      "CONTENT_MANIFEST_MISSING: authoritative_content_manifest_path required"
+    );
+    err.code = "CONTENT_MANIFEST_MISSING";
+    throw err;
+  }
+  if (!fs.existsSync(record.authoritative_content_manifest_path)) {
+    const err = new Error("CONTENT_MANIFEST_MISSING: authoritative content manifest absent");
+    err.code = "CONTENT_MANIFEST_MISSING";
+    throw err;
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(
+      fs.readFileSync(record.authoritative_content_manifest_path, "utf8")
+    );
+  } catch {
+    const err = new Error("CONTENT_MANIFEST_CORRUPT: authoritative content manifest unreadable");
+    err.code = "CONTENT_MANIFEST_CORRUPT";
+    throw err;
   }
   if (!manifest) {
     const err = new Error("CONTENT_MANIFEST_MISSING: content manifest required");
@@ -180,6 +185,7 @@ export function reconstructCapsuleFromLaunchRecord(record) {
     throw err;
   }
   verifyCapsuleContentManifest(manifest, {
+    runRoot: record.run_root,
     skillDirs: record.skill_dirs ?? [],
     pluginDirs: record.plugin_dirs ?? [],
     frameworkDirs: record.framework_dirs ?? [],
@@ -318,6 +324,7 @@ export function persistLaunchDescriptor(runId, descriptor, env = process.env) {
       throw err;
     }
     verifyCapsuleContentManifest(next.capsule_launch.content_manifest, {
+      runRoot: next.capsule_launch.run_root,
       skillDirs: next.capsule_launch.skill_dirs ?? [],
       pluginDirs: next.capsule_launch.plugin_dirs ?? [],
       frameworkDirs: next.capsule_launch.framework_dirs ?? [],
@@ -434,7 +441,13 @@ function resolveSandboxProbe(probe) {
  */
 export function prepareArgvFromDescriptor(
   descriptor,
-  { roster = null, runtimeOverride = null, probe = systemdAvailable, descriptorPath = null } = {}
+  {
+    roster = null,
+    runtimeOverride = null,
+    probe = systemdAvailable,
+    descriptorPath = null,
+    execFileSync: execFileSyncFn = execFileSync,
+  } = {}
 ) {
   const r = roster || requireRoster();
   const cli = runtimeOverride?.cli || descriptor.cli;
@@ -493,11 +506,25 @@ export function prepareArgvFromDescriptor(
     // Never synthesize a verification token from harness_requirements alone.
     let verification = descriptor.harness_verification || null;
     if (verification) {
-      if (verification.adapter && verification.adapter !== cli) {
+      if (!verification.adapter) {
+        const err = new Error(
+          "HARNESS_VERIFICATION_ADAPTER: verified record missing adapter"
+        );
+        err.code = "HARNESS_VERIFICATION_ADAPTER";
+        throw err;
+      }
+      if (verification.adapter !== cli) {
         const err = new Error(
           `HARNESS_VERIFICATION_ADAPTER: descriptor adapter ${verification.adapter} != runtime ${cli}`
         );
         err.code = "HARNESS_VERIFICATION_ADAPTER";
+        throw err;
+      }
+      if (!verification.cli_version) {
+        const err = new Error(
+          "HARNESS_VERIFICATION_VERSION: verified record missing cli_version"
+        );
+        err.code = "HARNESS_VERIFICATION_VERSION";
         throw err;
       }
     } else if (brokerRequired || isolationRequired) {
@@ -510,23 +537,27 @@ export function prepareArgvFromDescriptor(
 
     let requireExactVersion = verification?.cli_version || undefined;
     if (verification?.cli_version) {
+      let liveVersion;
       try {
-        const liveVersion = getAdapter(cli).version({
-          execFileSync,
+        liveVersion = getAdapter(cli).version({
+          execFileSync: execFileSyncFn,
         });
-        if (liveVersion !== verification.cli_version) {
-          const err = new Error(
-            `HARNESS_VERIFICATION_VERSION: record ${verification.cli_version} != live ${liveVersion}`
-          );
-          err.code = "HARNESS_VERIFICATION_VERSION";
-          throw err;
-        }
-        requireExactVersion = liveVersion;
       } catch (e) {
-        if (e.code === "HARNESS_VERIFICATION_VERSION") throw e;
-        // If live version cannot be detected, still bind to the recorded version.
-        requireExactVersion = verification.cli_version;
+        const err = new Error(
+          `HARNESS_VERIFICATION_VERSION: live CLI version unavailable (${e.message || e})`
+        );
+        err.code = "HARNESS_VERIFICATION_VERSION";
+        err.cause = e;
+        throw err;
       }
+      if (liveVersion !== verification.cli_version) {
+        const err = new Error(
+          `HARNESS_VERIFICATION_VERSION: record ${verification.cli_version} != live ${liveVersion}`
+        );
+        err.code = "HARNESS_VERIFICATION_VERSION";
+        throw err;
+      }
+      requireExactVersion = liveVersion;
     }
 
     let prepared;
@@ -547,6 +578,7 @@ export function prepareArgvFromDescriptor(
         capsule,
         verification,
         requireExactVersion,
+        execFileSync: execFileSyncFn,
       });
     } catch (e) {
       if (brokerRequired || isolationRequired) {
@@ -656,7 +688,10 @@ export function startFromLaunchDescriptor({
   env = process.env,
 } = {}) {
   let descriptor = loadAuthoritativeLaunchDescriptor(runId, env);
+  const descriptorPath = path.join(launchDescriptorDir(runId, env), "descriptor.json");
 
+  // Validate (and only then atomically persist) any runtime override. A rejected
+  // override must leave the prior authoritative descriptor byte-for-byte unchanged.
   if (runtimeOverride) {
     const nextDesc = {
       ...descriptor,
@@ -669,11 +704,16 @@ export function startFromLaunchDescriptor({
     } else {
       nextDesc.limit_windows = resolveLimitWindowsForCell(runtimeOverride);
     }
+    // Fully validate the proposed descriptor before touching disk.
+    prepareArgvFromDescriptor(nextDesc, {
+      runtimeOverride,
+      probe,
+      descriptorPath,
+    });
     persistLaunchDescriptor(runId, nextDesc, env);
-    descriptor = nextDesc;
+    descriptor = loadAuthoritativeLaunchDescriptor(runId, env);
   }
 
-  const descriptorPath = path.join(launchDescriptorDir(runId, env), "descriptor.json");
   const prepared = prepareArgvFromDescriptor(descriptor, {
     runtimeOverride,
     probe,

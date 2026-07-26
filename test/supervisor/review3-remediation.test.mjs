@@ -575,7 +575,7 @@ test("watcher tick capped at 60s only when supervised runs exist", () => {
   assert.equal(watcherSleepSec({ tick_sec: 30 }, { supervisedCount: 1 }), 30);
 });
 
-test("alternate-model wait resume persists its own limit windows", async () => {
+test("alternate-model wait resume keeps descriptor intact until validated start", async () => {
   await withTempEnv(async (home) => {
     const run = createRun({
       cwd: "/tmp",
@@ -585,6 +585,7 @@ test("alternate-model wait resume persists its own limit windows", async () => {
       prompt: "hi",
     });
     persistLaunchDescriptor(run.runId, makeDescriptor(run.runId));
+    const before = loadAuthoritativeLaunchDescriptor(run.runId);
     const st = loadState(run.runId);
     st.status = "waiting_capacity";
     st.capacity = {
@@ -608,17 +609,16 @@ test("alternate-model wait resume persists its own limit windows", async () => {
       now: "2026-07-25T18:00:00Z",
       startWorker: async ({ attempt }) => {
         started.push(attempt);
-        // Simulate startFromLaunchDescriptor updating via runtimeOverride persistence
+        // Production wires this to startFromLaunchDescriptor({ runtimeOverride }).
+        // recheckCapacity itself must not mutate the authoritative descriptor.
       },
-      persistRuntimeOverride: true,
     });
     assert.equal(started.length, 1);
-    const live = loadState(run.runId);
-    const windows = live.runtime?.limit_windows || started[0].runtime?.limit_windows;
-    assert.deepEqual(windows, ["claude:7d"]);
+    assert.deepEqual(started[0].runtime?.limit_windows, ["claude:7d"]);
+    assert.equal(started[0].runtime?.model, "m2");
     const auth = loadAuthoritativeLaunchDescriptor(run.runId);
-    assert.deepEqual(auth.limit_windows, ["claude:7d"]);
-    assert.equal(auth.model, "m2");
+    assert.equal(auth.model, before.model);
+    assert.deepEqual(auth.limit_windows, before.limit_windows);
     void home;
   });
 });

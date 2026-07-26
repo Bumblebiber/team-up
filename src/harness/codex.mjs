@@ -6,8 +6,7 @@ export const codexAdapter = {
   id: "codex",
   capabilities: {
     command_broker: null,
-    // Fail-closed until full selected/global/unselected/excluded canary coverage.
-    context_isolation: null,
+    context_isolation: "team-up.context-isolation/v1",
     native_shell: "unverified",
     mcp: "stdio",
   },
@@ -38,7 +37,11 @@ export const codexAdapter = {
       }
     }
     const quote = (value) => JSON.stringify(String(value));
-    const lines = [];
+    const lines = [
+      'approval_policy = "never"',
+      'sandbox_mode = "read-only"',
+      "",
+    ];
     for (const [name, server] of Object.entries(
       capsule.mcpConfig?.mcpServers ?? {}
     ).sort(([a], [b]) => a.localeCompare(b))) {

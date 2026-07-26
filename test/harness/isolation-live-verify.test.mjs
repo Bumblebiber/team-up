@@ -51,15 +51,28 @@ function buildHappySpawnSync(fixture, { inventory, streamLines, mcpNonce } = {})
   const inv = inventory ?? buildHappyInventory(fixture);
   const nonce = mcpNonce ?? fixture.expected.nonces.mcp;
   const toolName = "mcp__selected__lookup";
+  const sessionId = "sess-happy-1";
   const lines = streamLines ?? [
     JSON.stringify({
+      type: "system",
+      subtype: "init",
+      session_id: sessionId,
+      tools: ["Read", "ToolSearch", toolName],
+      mcp_servers: [{ name: "selected", status: "connected" }],
+      skills: ["capsule.selected-skill"],
+      plugins: ["capsule.selected-plugin"],
+      claude_code_version: "2.1.220",
+    }),
+    JSON.stringify({
       type: "assistant",
+      session_id: sessionId,
       message: {
         content: [{ type: "tool_use", name: toolName, id: "tu-1", input: {} }],
       },
     }),
     JSON.stringify({
       type: "user",
+      session_id: sessionId,
       message: {
         content: [{
           type: "tool_result",
@@ -70,6 +83,7 @@ function buildHappySpawnSync(fixture, { inventory, streamLines, mcpNonce } = {})
     }),
     JSON.stringify({
       type: "assistant",
+      session_id: sessionId,
       message: {
         content: [{ type: "text", text: JSON.stringify(inv) }],
       },
@@ -159,15 +173,25 @@ test("selected MCP canary tool executes successfully (diagnostics only)", () => 
 
 test("parseClaudeStreamToolProof requires exact tool and nonce", () => {
   const nonce = "tu-nonce-deadbeef";
+  const sessionId = "sess-unit-1";
   const stream = [
     JSON.stringify({
+      type: "system",
+      subtype: "init",
+      session_id: sessionId,
+      tools: ["mcp__selected__lookup"],
+      mcp_servers: [{ name: "selected" }],
+    }),
+    JSON.stringify({
       type: "assistant",
+      session_id: sessionId,
       message: {
         content: [{ type: "tool_use", name: "mcp__selected__lookup", id: "1" }],
       },
     }),
     JSON.stringify({
       type: "user",
+      session_id: sessionId,
       message: {
         content: [{
           type: "tool_result",
@@ -360,7 +384,7 @@ test("isolated negative control requires global absent under bare strict mcp lis
   }
 });
 
-test("adversarial: correct names but empty absent list fails closed", () => {
+test("adversarial: correct names but empty model absent still derives structured absents", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = prepareClaudeLaunch(fixture);
@@ -374,13 +398,71 @@ test("adversarial: correct names but empty absent list fails closed", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory }),
     });
+    // Model-authored empty absent is ignored; structured init supplies negatives.
+    assert.ok(observed);
+    assert.ok(observed.absent.includes("global.canary-skill"));
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("adversarial: structured init listing a forbidden plugin fails closed", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const inventory = buildHappyInventory(fixture);
+    const nonce = fixture.expected.nonces.mcp;
+    const sessionId = "sess-leak-1";
+    const streamLines = [
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        session_id: sessionId,
+        tools: ["Read", "ToolSearch", "mcp__selected__lookup"],
+        mcp_servers: [{ name: "selected", status: "connected" }],
+        skills: ["capsule.selected-skill"],
+        plugins: ["capsule.selected-plugin", "global.canary-plugin"],
+        claude_code_version: "2.1.220",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        session_id: sessionId,
+        message: {
+          content: [{ type: "tool_use", name: "mcp__selected__lookup", id: "tu-1", input: {} }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        session_id: sessionId,
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "tu-1",
+            content: `team-up-canary-ok:${nonce}`,
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        session_id: sessionId,
+        message: { content: [{ type: "text", text: JSON.stringify(inventory) }] },
+      }),
+    ];
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      expected: fixture.expected,
+      adapterId: "claude",
+      spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
+    });
     assert.equal(observed, null);
   } finally {
     fixture.cleanup();
   }
 });
 
-test("adversarial: guessed nonce in content_nonces fails closed", () => {
+test("adversarial: guessed nonce in content_nonces cannot override disk/tool proof", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = prepareClaudeLaunch(fixture);
@@ -391,6 +473,7 @@ test("adversarial: guessed nonce in content_nonces fails closed", () => {
       framework: "guessed",
       mcp: "guessed",
     };
+    // Model guesses are ignored; disk+tool proof still matches expected → observation ok.
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
@@ -399,7 +482,23 @@ test("adversarial: guessed nonce in content_nonces fails closed", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory }),
     });
-    assert.equal(observed, null);
+    assert.ok(observed);
+    assert.equal(observed.content_nonces.mcp, fixture.expected.nonces.mcp);
+    assert.notEqual(observed.content_nonces.skill, "guessed");
+
+    // Wrong tool-result nonce still fails closed.
+    const bad = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      expected: fixture.expected,
+      adapterId: "claude",
+      spawnSyncFn: buildHappySpawnSync(fixture, {
+        inventory,
+        mcpNonce: "wrong-nonce",
+      }),
+    });
+    assert.equal(bad, null);
   } finally {
     fixture.cleanup();
   }
@@ -610,7 +709,8 @@ test("verifyHarness stores context_isolation only on exact runner token", async 
         { execFileSync: () => "claude 3.3.3\n" }
       ),
     });
-    assert.equal(brokerOnly.status, "verified");
+    // Claude declares context_isolation — broker alone must not verify.
+    assert.equal(brokerOnly.status, "unverified");
     assert.equal(brokerOnly.context_isolation, null);
 
     const withIsolation = await verifyHarness({
@@ -636,7 +736,7 @@ test("verifyHarness stores context_isolation only on exact runner token", async 
   }
 });
 
-test("Codex verify returns context_isolation null until full canary coverage", () => {
+test("Codex live canary grants token only with structured JSONL tool proof", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = codexAdapter.prepareLaunch({
@@ -645,23 +745,72 @@ test("Codex verify returns context_isolation null until full canary coverage", (
       capsule: fixture.capsule,
       authSource: null,
     });
+    assert.equal(
+      codexAdapter.capabilities.context_isolation,
+      CONTEXT_ISOLATION_CAPABILITY
+    );
+
+    const incomplete = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      expected: fixture.expected,
+      adapterId: "codex",
+      spawnSyncFn: () => ({ status: 0, stdout: '{"type":"thread.started"}\n', stderr: "" }),
+    });
+    assert.equal(incomplete, null);
+
+    const nonce = fixture.expected.nonces.mcp;
+    const happyJsonl = [
+      JSON.stringify({ type: "thread.started", thread_id: "codex-thread-1" }),
+      JSON.stringify({
+        type: "item.started",
+        item: {
+          id: "item_0",
+          type: "mcp_tool_call",
+          server: "selected",
+          tool: "lookup",
+          status: "in_progress",
+        },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: "item_0",
+          type: "mcp_tool_call",
+          server: "selected",
+          tool: "lookup",
+          status: "completed",
+          result: {
+            content: [{ type: "text", text: `team-up-canary-ok:${nonce}` }],
+          },
+          error: null,
+        },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "agent_message",
+          text: JSON.stringify(buildHappyInventory(fixture)),
+        },
+      }),
+    ].join("\n");
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
       globalHome: fixture.globalHome,
       expected: fixture.expected,
       adapterId: "codex",
-      spawnSyncFn: spawnSync,
+      spawnSyncFn: () => ({ status: 0, stdout: `${happyJsonl}\n`, stderr: "" }),
     });
-    assert.equal(observed, null);
-    assert.equal(codexAdapter.capabilities.context_isolation, null);
-    const result = observeContextIsolation({
-      adapter: codexAdapter,
-      adapterId: "codex",
-      spawnSyncFn: spawnSync,
-    });
-    assert.equal(result.context_isolation, null);
-    assert.match(result.error || "", /incomplete|partial|null/i);
+    assert.ok(observed);
+    assert.equal(
+      decideContextIsolationCapability({
+        expected: fixture.expected,
+        observed,
+      }),
+      CONTEXT_ISOLATION_CAPABILITY
+    );
     assert.equal(prepared.env.CODEX_HOME, fixture.capsule.codexHome);
   } finally {
     fixture.cleanup();
@@ -701,15 +850,14 @@ test("verifyHarness codex path verifies from isolation without broker", async ()
         async () => ({
           native_shell: "unverified",
           broker_tool: "unverified",
-          isolation_status: "unverified",
-          context_isolation: null,
-          error: "codex context isolation canary incomplete",
+          isolation_status: "passed",
+          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         }),
         { execFileSync: () => "0.145.1" }
       ),
     });
-    assert.equal(verified.status, "unverified");
-    assert.equal(verified.context_isolation, null);
+    assert.equal(verified.status, "verified");
+    assert.equal(verified.context_isolation, CONTEXT_ISOLATION_CAPABILITY);
     assert.equal(verified.command_broker, null);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

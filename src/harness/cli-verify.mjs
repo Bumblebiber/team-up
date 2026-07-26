@@ -11,6 +11,7 @@ import { brokerBinPath } from "../commands/mcp-server.mjs";
 import {
   observeContextIsolation,
   validateIsolationObservation,
+  createSanitizedClaudeHome,
 } from "./isolation-canary.mjs";
 
 export { validateIsolationObservation };
@@ -248,6 +249,7 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-home-"));
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-run-"));
   const prevHome = process.env.TEAM_UP_HOME;
+  let authHome = null;
   process.env.TEAM_UP_HOME = home;
   try {
     const policy = {
@@ -354,10 +356,11 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       };
     }
     const shellArgv = shellPrepared.argv;
+    authHome = createSanitizedClaudeHome();
     const shellRun = spawnSync(shellArgv[0], shellArgv.slice(1), {
       encoding: "utf8",
       timeout: 90_000,
-      env: { ...process.env },
+      env: { ...process.env, HOME: authHome },
       cwd: fixtureProject,
     });
     const shellText = `${shellRun.stdout || ""}\n${shellRun.stderr || ""}`;
@@ -421,7 +424,7 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       const brokerRun = spawnSync(brokerArgv[0], brokerArgv.slice(1), {
         encoding: "utf8",
         timeout: 90_000,
-        env: { ...process.env },
+        env: { ...process.env, HOME: authHome },
         cwd: fixtureProject,
       });
       const brokerText = `${brokerRun.stdout || ""}\n${brokerRun.stderr || ""}`;
@@ -471,6 +474,9 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       ...(isolation.error ? { isolation_error: isolation.error } : {}),
     };
   } finally {
+    if (authHome) {
+      try { fs.rmSync(authHome, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
     if (prevHome === undefined) delete process.env.TEAM_UP_HOME;
     else process.env.TEAM_UP_HOME = prevHome;
     try {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 
 export const CONTENT_MANIFEST_SCHEMA = "team-up.capsule-content/v1";
 
@@ -8,30 +9,209 @@ function sha256Hex(buf) {
   return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
-function fileSha256(filePath) {
-  return `sha256:${sha256Hex(fs.readFileSync(filePath))}`;
+function fail(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  throw err;
 }
 
-function walkFiles(root) {
+/**
+ * Resolve and require that candidate stays strictly under runRoot
+ * (or equals runRoot for the root itself).
+ */
+export function assertPathInsideRunRoot(candidate, runRoot, { label = "path" } = {}) {
+  if (!runRoot) fail("CONTENT_MANIFEST_REQUIRED", "CONTENT_MANIFEST_REQUIRED: runRoot required");
+  const root = path.resolve(runRoot);
+  const resolved = path.resolve(candidate);
+  const rootReal = (() => {
+    try {
+      return fs.realpathSync.native(root);
+    } catch {
+      return root;
+    }
+  })();
+  // Candidate may not exist yet for missing-path errors; still check lexical containment.
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    fail(
+      "CONTENT_MANIFEST_ROOT_ESCAPE",
+      `CONTENT_MANIFEST_ROOT_ESCAPE: ${label} ${resolved} outside runRoot ${root}`
+    );
+  }
+  // If it exists, also require realpath stays inside the real runRoot.
+  try {
+    const st = fs.lstatSync(resolved);
+    if (st.isSymbolicLink()) {
+      fail(
+        "CONTENT_MANIFEST_SYMLINK",
+        `CONTENT_MANIFEST_SYMLINK: ${label} ${resolved} is a symlink`
+      );
+    }
+    const real = fs.realpathSync.native(resolved);
+    if (real !== rootReal && !real.startsWith(`${rootReal}${path.sep}`)) {
+      fail(
+        "CONTENT_MANIFEST_ROOT_ESCAPE",
+        `CONTENT_MANIFEST_ROOT_ESCAPE: ${label} realpath ${real} outside runRoot ${rootReal}`
+      );
+    }
+    return real;
+  } catch (e) {
+    if (e.code?.startsWith("CONTENT_MANIFEST_")) throw e;
+    return resolved;
+  }
+}
+
+/**
+ * Read file bytes without following symlinks (O_NOFOLLOW where supported).
+ * Compares lstat/fstat identity to defeat TOCTOU swaps.
+ */
+export function readFileNoFollow(filePath) {
+  const lstat = fs.lstatSync(filePath);
+  if (lstat.isSymbolicLink()) {
+    fail("CONTENT_MANIFEST_SYMLINK", `CONTENT_MANIFEST_SYMLINK: ${filePath}`);
+  }
+  if (!lstat.isFile()) {
+    fail(
+      "CONTENT_MANIFEST_NONREGULAR",
+      `CONTENT_MANIFEST_NONREGULAR: ${filePath} is not a regular file`
+    );
+  }
+  let fd;
+  try {
+    const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0);
+    fd = fs.openSync(filePath, flags);
+  } catch (e) {
+    if (e.code === "ELOOP") {
+      fail("CONTENT_MANIFEST_SYMLINK", `CONTENT_MANIFEST_SYMLINK: ${filePath}`);
+    }
+    throw e;
+  }
+  try {
+    const fstat = fs.fstatSync(fd);
+    if (fstat.ino !== lstat.ino || fstat.dev !== lstat.dev) {
+      fail(
+        "CONTENT_MANIFEST_TOCTOU",
+        `CONTENT_MANIFEST_TOCTOU: ${filePath} identity changed while opening`
+      );
+    }
+    if (!fstat.isFile()) {
+      fail(
+        "CONTENT_MANIFEST_NONREGULAR",
+        `CONTENT_MANIFEST_NONREGULAR: ${filePath} is not a regular file`
+      );
+    }
+    return fs.readFileSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function fileSha256(filePath) {
+  return `sha256:${sha256Hex(readFileNoFollow(filePath))}`;
+}
+
+/**
+ * List directory entries without following a symlink at `dirPath`.
+ * Opens with O_DIRECTORY|O_NOFOLLOW when available, verifies lstat/fstat
+ * identity, then reads via the held fd (`/proc/self/fd/N` on Linux) so a
+ * concurrent directory↔symlink swap cannot race the readdir.
+ */
+export function listDirectoryNoFollow(dirPath) {
+  const lstat = fs.lstatSync(dirPath);
+  if (lstat.isSymbolicLink()) {
+    fail("CONTENT_MANIFEST_SYMLINK", `CONTENT_MANIFEST_SYMLINK: ${dirPath}`);
+  }
+  if (!lstat.isDirectory()) {
+    fail(
+      "CONTENT_MANIFEST_NONREGULAR",
+      `CONTENT_MANIFEST_NONREGULAR: ${dirPath} is not a directory`
+    );
+  }
+  const O_DIRECTORY = fsConstants.O_DIRECTORY || 0;
+  const O_NOFOLLOW = fsConstants.O_NOFOLLOW || 0;
+  let fd;
+  try {
+    fd = fs.openSync(dirPath, fsConstants.O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+  } catch (e) {
+    if (e.code === "ELOOP") {
+      fail("CONTENT_MANIFEST_SYMLINK", `CONTENT_MANIFEST_SYMLINK: ${dirPath}`);
+    }
+    if (e.code === "ENOTDIR") {
+      fail(
+        "CONTENT_MANIFEST_NONREGULAR",
+        `CONTENT_MANIFEST_NONREGULAR: ${dirPath} is not a directory`
+      );
+    }
+    throw e;
+  }
+  try {
+    const fstat = fs.fstatSync(fd);
+    if (fstat.ino !== lstat.ino || fstat.dev !== lstat.dev) {
+      fail(
+        "CONTENT_MANIFEST_TOCTOU",
+        `CONTENT_MANIFEST_TOCTOU: ${dirPath} identity changed while opening`
+      );
+    }
+    if (!fstat.isDirectory()) {
+      fail(
+        "CONTENT_MANIFEST_NONREGULAR",
+        `CONTENT_MANIFEST_NONREGULAR: ${dirPath} is not a directory`
+      );
+    }
+    // Hold the directory fd across readdir so a path swap cannot redirect listing.
+    const viaFd = `/proc/self/fd/${fd}`;
+    if (fs.existsSync(viaFd)) {
+      return fs.readdirSync(viaFd);
+    }
+    // Non-Linux fallback: still opened with O_NOFOLLOW; readdir by path.
+    return fs.readdirSync(dirPath);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Closed-world walker: every filesystem node under root must be a directory
+ * or regular file. Symlinks and special files are rejected. All paths must
+ * remain inside runRoot. Directory listing uses listDirectoryNoFollow.
+ */
+export function walkClosedWorld(root, { runRoot } = {}) {
   const out = [];
   if (!fs.existsSync(root)) return out;
-  const stack = [root];
+  assertPathInsideRunRoot(root, runRoot, { label: "walk root" });
+  const stack = [path.resolve(root)];
   while (stack.length) {
     const current = stack.pop();
+    assertPathInsideRunRoot(current, runRoot, { label: "node" });
     let stat;
     try {
       stat = fs.lstatSync(current);
-    } catch {
-      continue;
+    } catch (e) {
+      fail("CONTENT_MANIFEST_PATH_MISSING", `CONTENT_MANIFEST_PATH_MISSING: ${current}`);
     }
-    if (stat.isSymbolicLink()) continue;
+    if (stat.isSymbolicLink()) {
+      fail("CONTENT_MANIFEST_SYMLINK", `CONTENT_MANIFEST_SYMLINK: ${current}`);
+    }
     if (stat.isDirectory()) {
-      for (const entry of fs.readdirSync(current)) {
+      let entries;
+      try {
+        entries = listDirectoryNoFollow(current);
+      } catch (e) {
+        if (e.code?.startsWith("CONTENT_MANIFEST_")) throw e;
+        fail("CONTENT_MANIFEST_PATH_MISSING", `CONTENT_MANIFEST_PATH_MISSING: ${current}`);
+      }
+      for (const entry of entries) {
         stack.push(path.join(current, entry));
       }
       continue;
     }
-    if (stat.isFile()) out.push(current);
+    if (stat.isFile()) {
+      out.push(current);
+      continue;
+    }
+    fail(
+      "CONTENT_MANIFEST_NONREGULAR",
+      `CONTENT_MANIFEST_NONREGULAR: ${current}`
+    );
   }
   return out;
 }
@@ -62,16 +242,15 @@ function roleForPath(absPath, { skillDirs, pluginDirs, frameworkDirs, mcpPaths, 
 
 function collectMcpConfigPaths(mcpConfig, runRoot) {
   const paths = [];
-  // Materialized MCP JSON files under harness/mcp when present.
   const mcpRoot = path.join(runRoot, "harness", "mcp");
   if (fs.existsSync(mcpRoot)) {
-    for (const f of walkFiles(mcpRoot)) paths.push(f);
+    for (const f of walkClosedWorld(mcpRoot, { runRoot })) paths.push(f);
   }
-  // Also bind any absolute config path referenced by the capsule if it exists.
   for (const server of Object.values(mcpConfig?.mcpServers ?? {})) {
     if (server?.args) {
       for (const arg of server.args) {
         if (typeof arg === "string" && arg.endsWith(".json") && path.isAbsolute(arg) && fs.existsSync(arg)) {
+          assertPathInsideRunRoot(arg, runRoot, { label: "mcp config" });
           paths.push(arg);
         }
       }
@@ -94,33 +273,44 @@ export function buildCapsuleContentManifest({
   effectivePath,
 }) {
   if (!runRoot || !effectivePath) {
-    const err = new Error("CONTENT_MANIFEST_REQUIRED: runRoot and effectivePath required");
-    err.code = "CONTENT_MANIFEST_REQUIRED";
-    throw err;
+    fail("CONTENT_MANIFEST_REQUIRED", "CONTENT_MANIFEST_REQUIRED: runRoot and effectivePath required");
   }
+  const resolvedRunRoot = path.resolve(runRoot);
+  assertPathInsideRunRoot(effectivePath, resolvedRunRoot, { label: "effectivePath" });
   if (!fs.existsSync(effectivePath)) {
-    const err = new Error(`CONTENT_MANIFEST_EFFECTIVE_MISSING: ${effectivePath}`);
-    err.code = "CONTENT_MANIFEST_EFFECTIVE_MISSING";
-    throw err;
+    fail("CONTENT_MANIFEST_EFFECTIVE_MISSING", `CONTENT_MANIFEST_EFFECTIVE_MISSING: ${effectivePath}`);
   }
 
-  const skillRoots = skillDirs.map((p) => path.resolve(p));
-  const pluginRoots = pluginDirs.map((p) => path.resolve(p));
-  const frameworkRoots = frameworkDirs.map((p) => path.resolve(p));
-  const mcpPaths = collectMcpConfigPaths(mcpConfig, path.resolve(runRoot));
+  const skillRoots = skillDirs.map((p) =>
+    assertPathInsideRunRoot(p, resolvedRunRoot, { label: "skillDir" })
+  );
+  const pluginRoots = pluginDirs.map((p) =>
+    assertPathInsideRunRoot(p, resolvedRunRoot, { label: "pluginDir" })
+  );
+  const frameworkRoots = frameworkDirs.map((p) =>
+    assertPathInsideRunRoot(p, resolvedRunRoot, { label: "frameworkDir" })
+  );
+  const mcpPaths = collectMcpConfigPaths(mcpConfig, resolvedRunRoot);
 
-  // Selected roots must already exist — never create them here.
   for (const dir of [...skillRoots, ...pluginRoots, ...frameworkRoots]) {
     if (!fs.existsSync(dir)) {
-      const err = new Error(`CONTENT_MANIFEST_PATH_MISSING: ${dir}`);
-      err.code = "CONTENT_MANIFEST_PATH_MISSING";
-      throw err;
+      fail("CONTENT_MANIFEST_PATH_MISSING", `CONTENT_MANIFEST_PATH_MISSING: ${dir}`);
     }
   }
 
   const candidates = new Set();
   for (const root of [...skillRoots, ...pluginRoots, ...frameworkRoots]) {
-    for (const f of walkFiles(root)) candidates.add(path.resolve(f));
+    for (const f of walkClosedWorld(root, { runRoot: resolvedRunRoot })) {
+      candidates.add(path.resolve(f));
+    }
+  }
+  // Parent plugins root: bind every file under harness/plugins so sibling
+  // rogue plugins are part of the closed world (not only selected pluginDirs).
+  const pluginsParent = path.join(resolvedRunRoot, "harness", "plugins");
+  if (fs.existsSync(pluginsParent)) {
+    for (const f of walkClosedWorld(pluginsParent, { runRoot: resolvedRunRoot })) {
+      candidates.add(path.resolve(f));
+    }
   }
   for (const f of mcpPaths) candidates.add(f);
   candidates.add(path.resolve(effectivePath));
@@ -154,23 +344,24 @@ export function buildCapsuleContentManifest({
 /**
  * Verify on-disk content against an authoritative content manifest.
  * Fail closed on any missing/changed file OR any unlisted file under
- * selected roots (closed-world). Never creates paths.
+ * selected roots including MCP (closed-world). Never creates paths.
  */
 export function verifyCapsuleContentManifest(manifest, {
+  runRoot,
   skillDirs = [],
   pluginDirs = [],
   frameworkDirs = [],
 } = {}) {
   if (!manifest || manifest.schema !== CONTENT_MANIFEST_SCHEMA) {
-    const err = new Error("CONTENT_MANIFEST_SCHEMA: invalid content manifest");
-    err.code = "CONTENT_MANIFEST_SCHEMA";
-    throw err;
+    fail("CONTENT_MANIFEST_SCHEMA", "CONTENT_MANIFEST_SCHEMA: invalid content manifest");
   }
   if (!Array.isArray(manifest.files) || !manifest.root_checksum) {
-    const err = new Error("CONTENT_MANIFEST_CORRUPT: missing files or root_checksum");
-    err.code = "CONTENT_MANIFEST_CORRUPT";
-    throw err;
+    fail("CONTENT_MANIFEST_CORRUPT", "CONTENT_MANIFEST_CORRUPT: missing files or root_checksum");
   }
+  if (!runRoot) {
+    fail("CONTENT_MANIFEST_REQUIRED", "CONTENT_MANIFEST_REQUIRED: runRoot required for closed-world verify");
+  }
+  const resolvedRunRoot = path.resolve(runRoot);
 
   const files = [...manifest.files]
     .map((f) => ({
@@ -185,44 +376,41 @@ export function verifyCapsuleContentManifest(manifest, {
   );
   const expectedRoot = `sha256:${sha256Hex(canonical)}`;
   if (expectedRoot !== manifest.root_checksum) {
-    const err = new Error("CONTENT_MANIFEST_ROOT_CHECKSUM: root checksum mismatch");
-    err.code = "CONTENT_MANIFEST_ROOT_CHECKSUM";
-    throw err;
+    fail("CONTENT_MANIFEST_ROOT_CHECKSUM", "CONTENT_MANIFEST_ROOT_CHECKSUM: root checksum mismatch");
   }
 
   const bound = new Set(files.map((f) => f.path));
   for (const entry of files) {
+    assertPathInsideRunRoot(entry.path, resolvedRunRoot, { label: "manifest entry" });
     if (!fs.existsSync(entry.path)) {
-      const err = new Error(`CONTENT_MANIFEST_PATH_MISSING: ${entry.path}`);
-      err.code = "CONTENT_MANIFEST_PATH_MISSING";
-      throw err;
+      fail("CONTENT_MANIFEST_PATH_MISSING", `CONTENT_MANIFEST_PATH_MISSING: ${entry.path}`);
     }
     const actual = fileSha256(entry.path);
     if (actual !== entry.sha256) {
-      const err = new Error(`CONTENT_MANIFEST_CHECKSUM: ${entry.path}`);
-      err.code = "CONTENT_MANIFEST_CHECKSUM";
-      throw err;
+      fail("CONTENT_MANIFEST_CHECKSUM", `CONTENT_MANIFEST_CHECKSUM: ${entry.path}`);
     }
   }
 
-  // Closed-world: every file under selected roots must be listed.
   const roots = [
-    ...skillDirs.map((p) => path.resolve(p)),
-    ...pluginDirs.map((p) => path.resolve(p)),
-    ...frameworkDirs.map((p) => path.resolve(p)),
+    ...skillDirs.map((p) => assertPathInsideRunRoot(p, resolvedRunRoot, { label: "skillDir" })),
+    ...pluginDirs.map((p) => assertPathInsideRunRoot(p, resolvedRunRoot, { label: "pluginDir" })),
+    ...frameworkDirs.map((p) =>
+      assertPathInsideRunRoot(p, resolvedRunRoot, { label: "frameworkDir" })
+    ),
   ];
+  const mcpRoot = path.join(resolvedRunRoot, "harness", "mcp");
+  if (fs.existsSync(mcpRoot)) roots.push(mcpRoot);
+  const pluginsRoot = path.join(resolvedRunRoot, "harness", "plugins");
+  if (fs.existsSync(pluginsRoot)) roots.push(pluginsRoot);
+
   for (const root of roots) {
     if (!fs.existsSync(root)) {
-      const err = new Error(`CONTENT_MANIFEST_PATH_MISSING: ${root}`);
-      err.code = "CONTENT_MANIFEST_PATH_MISSING";
-      throw err;
+      fail("CONTENT_MANIFEST_PATH_MISSING", `CONTENT_MANIFEST_PATH_MISSING: ${root}`);
     }
-    for (const found of walkFiles(root)) {
+    for (const found of walkClosedWorld(root, { runRoot: resolvedRunRoot })) {
       const abs = path.resolve(found);
       if (!bound.has(abs)) {
-        const err = new Error(`CONTENT_MANIFEST_UNEXPECTED_FILE: ${abs}`);
-        err.code = "CONTENT_MANIFEST_UNEXPECTED_FILE";
-        throw err;
+        fail("CONTENT_MANIFEST_UNEXPECTED_FILE", `CONTENT_MANIFEST_UNEXPECTED_FILE: ${abs}`);
       }
     }
   }

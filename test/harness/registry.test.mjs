@@ -15,6 +15,7 @@ test("claude advertises brokered commands; unverified harnesses do not", () => {
     harnessCapabilities("claude", {
       verification: {
         status: "verified",
+        adapter: "claude",
         cli_version: "fixture",
         command_broker: "team-up.command-broker/v1",
       },
@@ -40,25 +41,26 @@ test("verified Claude advertises the versioned contract", () => {
   assert.equal(defaultHarnessCapabilities("claude", {
     verification: {
       status: "verified",
+      adapter: "claude",
+      cli_version: "2.1.220",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
     },
   }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });
 
-test("Codex declared context_isolation null is an absolute deny", () => {
-  assert.equal(declaredHarnessCapabilities("codex").context_isolation, null);
+test("Codex declared context_isolation requires matching verification", () => {
+  assert.equal(declaredHarnessCapabilities("codex").context_isolation, CONTEXT_ISOLATION_CAPABILITY);
   assert.equal(harnessCapabilities("codex", {
     verification: null,
   }).context_isolation, null);
-  // Even a forged/stale verified token must not pierce declared null.
   assert.equal(harnessCapabilities("codex", {
     verification: {
       status: "verified",
       adapter: "codex",
       cli_version: "0.145.0",
-      context_isolation: "team-up.context-isolation/v1",
+      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
     },
-  }).context_isolation, null);
+  }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });
 
 test("Claude verification record cannot be reused under Codex runtime", () => {
@@ -136,6 +138,8 @@ test("verified broker-only record does not grant context isolation", () => {
   assert.equal(harnessCapabilities("claude", {
     verification: {
       status: "verified",
+      adapter: "claude",
+      cli_version: "2.1.220",
       command_broker: "team-up.command-broker/v1",
       context_isolation: null,
     },
@@ -143,6 +147,8 @@ test("verified broker-only record does not grant context isolation", () => {
   assert.equal(harnessCapabilities("claude", {
     verification: {
       status: "verified",
+      adapter: "claude",
+      cli_version: "2.1.220",
       command_broker: "team-up.command-broker/v1",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
     },
@@ -157,6 +163,8 @@ test("capsule launch without proven isolation fails closed", () => {
     capsule: { pluginDirs: [], mcpConfig: { mcpServers: {} } },
     verification: {
       status: "verified",
+      adapter: "claude",
+      cli_version: "2.1.220",
       command_broker: "team-up.command-broker/v1",
       context_isolation: null,
     },

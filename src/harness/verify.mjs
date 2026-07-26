@@ -60,18 +60,29 @@ export async function verifyHarness({
   });
   let status;
   const isolationOnly = adapter.capabilities?.command_broker == null;
+  const declaresIsolation =
+    adapter.capabilities?.context_isolation === CONTEXT_ISOLATION_CAPABILITY;
   if (isolationOnly) {
     if (checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY) {
       status = "verified";
-    } else if (
-      checks.isolation_status === "failed"
-    ) {
+    } else if (checks.isolation_status === "failed") {
       status = "failed";
     } else {
       status = "unverified";
     }
   } else if (checks.native_shell === "denied" && checks.broker_tool === "passed") {
-    status = "verified";
+    // Declared context_isolation must also be proven — broker alone is not verified.
+    if (declaresIsolation) {
+      if (checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY) {
+        status = "verified";
+      } else if (checks.isolation_status === "failed") {
+        status = "failed";
+      } else {
+        status = "unverified";
+      }
+    } else {
+      status = "verified";
+    }
   } else if (
     checks.native_shell === "unverified" ||
     checks.broker_tool === "unverified"

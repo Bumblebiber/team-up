@@ -113,7 +113,7 @@ test("unselected pool package does not change capsule bytes", () => {
   void unselected;
 });
 
-test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_bytes", () => {
+test("EFFECTIVE_CAPABILITIES records estimated_prompt_token_contribution and mcp_schema_bytes", () => {
   const canaryServer = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "../../src/harness/canary-mcp-server.mjs"
@@ -174,19 +174,21 @@ test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_by
   const first = materializeCapabilityCapsule({
     runRoot: firstRoot, specialistId: "research.hugo", packages,
   });
-  assert.ok(first.packages[0].prompt_token_contribution > 0);
+  assert.ok(first.packages[0].estimated_prompt_token_contribution > 0);
   assert.ok(first.packages[0].mcp_schema_bytes > 0);
   assert.equal(first.prompt_token_estimate_method, "utf8_bytes_div_4_ceil");
   assert.equal(first.packages[0].mcp_schema_measurement, "tools/list-canonical-json");
   assert.equal(
-    first.totals.prompt_token_contribution,
-    first.packages[0].prompt_token_contribution
+    first.totals.estimated_prompt_token_contribution,
+    first.packages[0].estimated_prompt_token_contribution
   );
   assert.equal(first.totals.mcp_schema_bytes, first.packages[0].mcp_schema_bytes);
   assert.equal(
-    first.packages[0].prompt_token_contribution,
+    first.packages[0].estimated_prompt_token_contribution,
     Math.ceil(Buffer.byteLength(skillBody) / 4)
   );
+  assert.equal(Object.hasOwn(first.packages[0], "prompt_token_contribution"), false);
+  assert.equal(Object.hasOwn(first.totals, "prompt_token_contribution"), false);
   // Must NOT equal config-file bytes (pretty vs compact would differ).
   assert.notEqual(first.packages[0].mcp_schema_bytes, Buffer.byteLength(mcpBodyPretty));
   assert.notEqual(first.packages[0].mcp_schema_bytes, Buffer.byteLength(mcpBodyCompact));
@@ -206,8 +208,8 @@ test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_by
     packages,
   });
   assert.equal(
-    still.totals.prompt_token_contribution,
-    first.totals.prompt_token_contribution
+    still.totals.estimated_prompt_token_contribution,
+    first.totals.estimated_prompt_token_contribution
   );
   assert.equal(still.totals.mcp_schema_bytes, first.totals.mcp_schema_bytes);
   void inert;
@@ -248,8 +250,8 @@ test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_by
     packages: both,
   });
   assert.ok(
-    withExtra.totals.prompt_token_contribution >
-      first.totals.prompt_token_contribution
+    withExtra.totals.estimated_prompt_token_contribution >
+      first.totals.estimated_prompt_token_contribution
   );
   assert.ok(withExtra.totals.mcp_schema_bytes > first.totals.mcp_schema_bytes);
 
@@ -260,8 +262,8 @@ test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_by
     exclusions: [{ package: "extra@1", reason: "exclude:research.hugo" }],
   });
   assert.equal(
-    excluded.totals.prompt_token_contribution,
-    first.totals.prompt_token_contribution
+    excluded.totals.estimated_prompt_token_contribution,
+    first.totals.estimated_prompt_token_contribution
   );
   assert.equal(excluded.totals.mcp_schema_bytes, first.totals.mcp_schema_bytes);
 });
