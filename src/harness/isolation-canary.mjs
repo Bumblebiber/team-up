@@ -164,9 +164,31 @@ export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.t
     path.join(globalHome, ".claude", "skills", "global.canary-skill", "SKILL.md"),
     "# global.canary-skill\n"
   );
+  const globalPluginCache = path.join(
+    globalHome, ".claude", "plugins", "cache", "canary", "global.canary-plugin", "1.0.0"
+  );
   writeFile(
-    path.join(globalHome, ".claude", "plugins", "global.canary-plugin", "plugin.json"),
+    path.join(globalPluginCache, ".claude-plugin", "plugin.json"),
     JSON.stringify({ name: "global.canary-plugin", version: "1.0.0" }, null, 2) + "\n"
+  );
+  writeFile(
+    path.join(globalPluginCache, "plugin.json"),
+    JSON.stringify({ name: "global.canary-plugin", version: "1.0.0" }, null, 2) + "\n"
+  );
+  writeFile(
+    path.join(globalHome, ".claude", "plugins", "installed_plugins.json"),
+    JSON.stringify({
+      version: 2,
+      plugins: {
+        "global.canary-plugin@canary": [{
+          scope: "user",
+          installPath: globalPluginCache,
+          version: "1.0.0",
+          installedAt: "2026-07-26T00:00:00.000Z",
+          lastUpdated: "2026-07-26T00:00:00.000Z",
+        }],
+      },
+    }, null, 2) + "\n"
   );
   writeFile(
     path.join(globalHome, ".claude", ".mcp.json"),
@@ -375,9 +397,19 @@ export function collectLaunchIsolationObservation({
   }
 }
 
-function parseClaudePluginList(text) {
+function parseClaudePluginList(text, { sessionOnly = false } = {}) {
   const names = [];
+  let inSession = false;
   for (const line of String(text || "").split(/\r?\n/)) {
+    if (/Session-only plugins/i.test(line)) {
+      inSession = true;
+      continue;
+    }
+    if (/^Installed plugins:/i.test(line)) {
+      inSession = false;
+      continue;
+    }
+    if (sessionOnly && !inSession) continue;
     const m = line.match(/❯\s+([^\s@]+)@/);
     if (m) names.push(m[1]);
   }
@@ -392,7 +424,7 @@ function globalsPlanted(globalHome, adapterId) {
   }
   return (
     fs.existsSync(path.join(globalHome, ".claude", "skills", "global.canary-skill", "SKILL.md"))
-    && fs.existsSync(path.join(globalHome, ".claude", "plugins", "global.canary-plugin", "plugin.json"))
+    && fs.existsSync(path.join(globalHome, ".claude", "plugins", "installed_plugins.json"))
     && fs.existsSync(path.join(globalHome, ".claude", ".mcp.json"))
   );
 }
@@ -419,6 +451,20 @@ export function collectLiveIsolationObservation({
     if (adapterId === "claude") {
       const pluginDirs = flagValues(prepared.argv, "--plugin-dir");
       if (!pluginDirs.length) return null;
+
+      // Positive control: planted global must be visible without capsule isolation.
+      const control = spawnSyncFn("claude", ["plugin", "list"], {
+        encoding: "utf8",
+        timeout: 30_000,
+        env: { ...process.env, HOME: globalHome },
+      });
+      if (control.error || control.status !== 0) return null;
+      const controlPlugins = parseClaudePluginList(
+        `${control.stdout || ""}\n${control.stderr || ""}`,
+        { sessionOnly: false }
+      );
+      if (!controlPlugins.includes("global.canary-plugin")) return null;
+
       const argv = [
         "claude", "--bare",
         ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
@@ -431,7 +477,8 @@ export function collectLiveIsolationObservation({
       });
       if (run.error || run.status !== 0) return null;
       const text = `${run.stdout || ""}\n${run.stderr || ""}`;
-      const livePlugins = parseClaudePluginList(text);
+      // Only session-loaded plugins count — installed registry may still list globals.
+      const livePlugins = parseClaudePluginList(text, { sessionOnly: true });
       if (!livePlugins.includes("capsule.selected-plugin")) return null;
       if (livePlugins.includes("global.canary-plugin")) return null;
 
@@ -474,13 +521,14 @@ export function collectLiveIsolationObservation({
     });
     if (run.error) return null;
     const text = `${run.stdout || ""}\n${run.stderr || ""}`;
+    const noServers = /No MCP servers configured/i.test(text);
+    if (typeof run.status === "number" && run.status !== 0 && !noServers) return null;
     if (/mcp__global__canary|global\.canary|\[mcp_servers\.global\]/i.test(text)) {
       return null;
     }
     if (fs.existsSync(path.join(capsule.codexHome, "skills", "global.canary-skill"))) {
       return null;
     }
-    // Global canary exists outside the capsule home.
     if (!fs.existsSync(path.join(globalHome, ".codex", "skills", "global.canary-skill", "SKILL.md"))) {
       return null;
     }
