@@ -35,3 +35,20 @@ test("verified Claude advertises the versioned contract", () => {
     verification: { status: "verified" },
   }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });
+
+test("Codex isolation is eligible only with a matching verification record", () => {
+  assert.equal(harnessCapabilities("codex", {
+    verification: null,
+  }).context_isolation, null);
+  assert.equal(harnessCapabilities("codex", {
+    verification: { status: "verified", version: "0.145.0" },
+  }).context_isolation, "team-up.context-isolation/v1");
+});
+
+test("Cursor Hermes and OpenCode remain ineligible without adapters", () => {
+  for (const id of ["cursor", "hermes", "opencode"]) {
+    assert.equal(harnessCapabilities(id, {
+      verification: { status: "verified" },
+    }).context_isolation, null);
+  }
+});
