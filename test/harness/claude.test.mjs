@@ -113,7 +113,7 @@ test("capsule launch uses auth-only HOME and only explicit plugin and MCP paths"
       capsule: {
         pluginDirs: [`${runDir}/harness/plugins/x`],
         mcpConfig: { mcpServers: { selected: {
-          type: "stdio", command: "node", args: [`${runDir}/harness/mcp/x/server.mjs`],
+          type: "stdio", command: process.execPath, args: [`${runDir}/harness/mcp/x/server.mjs`],
         } } },
         mcpToolNames: ["mcp__selected__lookup"],
         mcpToolsByServer: { selected: ["lookup"] },
@@ -138,15 +138,18 @@ test("capsule launch uses auth-only HOME and only explicit plugin and MCP paths"
   }
 });
 
-test("capsule launch adds skill and framework dirs via --add-dir", () => {
+test("capsule launch materializes skills into HOME and frameworks via --add-dir", () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-add-dir-"));
   try {
+    const skillDir = path.join(runDir, "context", "skills", "capsule.selected-skill");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "# skill\n");
     const prepared = claudeAdapter.prepareLaunch({
       argv: ["claude", "-p", "work"],
       runDir,
       capsule: {
         pluginDirs: [],
-        skillDirs: [`${runDir}/context/skills`],
+        skillDirs: [path.join(runDir, "context", "skills")],
         frameworkDirs: [`${runDir}/context/framework`],
         mcpConfig: { mcpServers: {} },
         mcpToolNames: [],
@@ -156,9 +159,14 @@ test("capsule launch adds skill and framework dirs via --add-dir", () => {
       chmodSync: () => {},
     });
     assert.equal(prepared.argv.includes("--add-dir"), true);
-    assert.equal(prepared.argv.includes(`${runDir}/context/skills`), true);
+    assert.equal(prepared.argv.includes(`${runDir}/context/skills`), false);
     assert.equal(prepared.argv.includes(`${runDir}/context/framework`), true);
     assert.ok(prepared.env.HOME);
+    assert.equal(
+      fs.existsSync(path.join(prepared.env.HOME, ".claude", "skills", "capsule.selected-skill", "SKILL.md")),
+      true
+    );
+    assert.ok(prepared.home_generation);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }

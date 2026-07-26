@@ -74,7 +74,7 @@ test("unselected pool package does not change capsule bytes", () => {
   fs.mkdirSync(path.join(selected, "skills", "s"), { recursive: true });
   fs.writeFileSync(path.join(selected, "skills", "s", "SKILL.md"), "# S\n");
   fs.writeFileSync(path.join(selected, "mcp.json"), JSON.stringify({
-    mcpServers: { s: { type: "stdio", command: "node", args: ["s.mjs"] } },
+    mcpServers: { s: { type: "stdio", command: process.execPath, args: ["-e", "process.exit(0)"] } },
     tools: ["lookup"],
   }));
   fs.writeFileSync(path.join(selected, "capability.json"), JSON.stringify({

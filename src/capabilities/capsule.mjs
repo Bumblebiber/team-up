@@ -7,6 +7,7 @@ import {
   estimatePromptTokenContribution,
   mcpSchemaBytesFromToolsList,
 } from "./mcp-schema.mjs";
+import { assertPathInsideRunRoot } from "./content-manifest.mjs";
 
 const DESTINATIONS = {
   skills: ["context", "skills"],
@@ -87,6 +88,87 @@ function materializedMcpSchemaBytes(runRoot, resolved, { spawnSyncFn } = {}) {
   return { bytes, unavailable };
 }
 
+function isAllowedImmutableRuntimeCommand(command) {
+  if (typeof command !== "string" || !command) return false;
+  if (command === process.execPath) return true;
+  try {
+    if (path.isAbsolute(command) && fs.existsSync(command)) {
+      const st = fs.lstatSync(command);
+      if (st.isSymbolicLink()) return false;
+      return fs.realpathSync.native(command) === fs.realpathSync.native(process.execPath);
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function looksLikeFilesystemPath(arg) {
+  if (typeof arg !== "string" || !arg) return false;
+  if (path.isAbsolute(arg)) return true;
+  if (arg.startsWith(".") || arg.includes("/") || arg.includes("\\")) return true;
+  return /\.(mjs|cjs|js|json|py|sh|bin|wasm)$/i.test(arg);
+}
+
+/**
+ * Copy capability-owned MCP runtime scripts into the capsule and rewrite args
+ * to capsule-local paths. Only the detected node binary is allowed as an
+ * external immutable command; arbitrary script paths are rejected or copied.
+ */
+function materializeMcpServerIntoCapsule(serverName, server, runRoot) {
+  if (!isAllowedImmutableRuntimeCommand(server.command)) {
+    const err = new Error(
+      `MCP_RUNTIME_COMMAND_DENIED: ${serverName} command must be the node binary`
+    );
+    err.code = "MCP_RUNTIME_COMMAND_DENIED";
+    throw err;
+  }
+  const next = {
+    ...server,
+    command: process.execPath,
+    args: [...(server.args ?? [])],
+  };
+  const runtimeDir = path.join(runRoot, "harness", "mcp", serverName, "runtime");
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  for (let i = 0; i < next.args.length; i++) {
+    const arg = next.args[i];
+    if (!looksLikeFilesystemPath(arg)) continue;
+    if (!path.isAbsolute(arg)) {
+      const err = new Error(
+        `MCP_RUNTIME_PATH_DENIED: ${serverName} arg must be absolute: ${arg}`
+      );
+      err.code = "MCP_RUNTIME_PATH_DENIED";
+      throw err;
+    }
+    let st;
+    try {
+      st = fs.lstatSync(arg);
+    } catch {
+      const err = new Error(`MCP_RUNTIME_MISSING: ${arg}`);
+      err.code = "MCP_RUNTIME_MISSING";
+      throw err;
+    }
+    if (st.isSymbolicLink()) {
+      const err = new Error(`MCP_RUNTIME_SYMLINK: ${arg}`);
+      err.code = "MCP_RUNTIME_SYMLINK";
+      throw err;
+    }
+    if (!st.isFile()) {
+      const err = new Error(`MCP_RUNTIME_NONREGULAR: ${arg}`);
+      err.code = "MCP_RUNTIME_NONREGULAR";
+      throw err;
+    }
+    const dest = path.join(runtimeDir, path.basename(arg));
+    if (path.resolve(arg) !== path.resolve(dest)) {
+      fs.copyFileSync(arg, dest);
+    }
+    assertPathInsideRunRoot(dest, runRoot, { label: "mcp runtime" });
+    fs.chmodSync(dest, 0o444);
+    next.args[i] = dest;
+  }
+  return next;
+}
+
 export function materializeCapabilityCapsule({
   runRoot, specialistId, packages, exclusions = [], spawnSyncFn,
 }) {
@@ -121,6 +203,17 @@ export function materializeCapabilityCapsule({
           }
           resolved[type].push(path.relative(runRoot, destination));
         }
+      }
+      // Rewrite MCP descriptors in-place so runtime scripts land under harness/mcp.
+      for (const rel of resolved.mcps) {
+        const full = path.join(runRoot, rel);
+        const document = JSON.parse(fs.readFileSync(full, "utf8"));
+        const servers = document.mcpServers ?? {};
+        for (const [name, server] of Object.entries(servers)) {
+          servers[name] = materializeMcpServerIntoCapsule(name, server, runRoot);
+        }
+        document.mcpServers = servers;
+        fs.writeFileSync(full, `${JSON.stringify(document, null, 2)}\n`);
       }
       const promptBytes = materializedPromptBytes(runRoot, resolved);
       const promptEst = estimatePromptTokenContribution(promptBytes);
@@ -174,7 +267,9 @@ export function buildStrictMcpConfig(effective, runRoot) {
         if (mcpServers[name]) {
           throw new Error(`MCP_NAME_COLLISION: ${name}`);
         }
-        mcpServers[name] = server;
+        // Descriptors should already be capsule-local from materialization;
+        // re-bind defensively so hand-built capsules still close the world.
+        mcpServers[name] = materializeMcpServerIntoCapsule(name, server, runRoot);
       }
     }
   }

@@ -462,7 +462,7 @@ test("adversarial: structured init listing a forbidden plugin fails closed", () 
   }
 });
 
-test("adversarial: guessed nonce in content_nonces cannot override disk/tool proof", () => {
+test("adversarial: guessed nonce in content_nonces fails closed without disk fill", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = prepareClaudeLaunch(fixture);
@@ -473,7 +473,7 @@ test("adversarial: guessed nonce in content_nonces cannot override disk/tool pro
       framework: "guessed",
       mcp: "guessed",
     };
-    // Model guesses are ignored; disk+tool proof still matches expected → observation ok.
+    // Model guesses are not accepted; disk must not fill matching nonces either.
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
@@ -482,11 +482,10 @@ test("adversarial: guessed nonce in content_nonces cannot override disk/tool pro
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory }),
     });
-    assert.ok(observed);
-    assert.equal(observed.content_nonces.mcp, fixture.expected.nonces.mcp);
-    assert.notEqual(observed.content_nonces.skill, "guessed");
+    assert.equal(observed, null);
 
     // Wrong tool-result nonce still fails closed.
+    const goodInventory = buildHappyInventory(fixture);
     const bad = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
@@ -494,7 +493,7 @@ test("adversarial: guessed nonce in content_nonces cannot override disk/tool pro
       expected: fixture.expected,
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, {
-        inventory,
+        inventory: goodInventory,
         mcpNonce: "wrong-nonce",
       }),
     });
@@ -736,7 +735,7 @@ test("verifyHarness stores context_isolation only on exact runner token", async 
   }
 });
 
-test("Codex live canary grants token only with structured JSONL tool proof", () => {
+test("Codex live canary cannot grant generic v1 without plugin/framework surfaces", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = codexAdapter.prepareLaunch({
@@ -745,10 +744,7 @@ test("Codex live canary grants token only with structured JSONL tool proof", () 
       capsule: fixture.capsule,
       authSource: null,
     });
-    assert.equal(
-      codexAdapter.capabilities.context_isolation,
-      CONTEXT_ISOLATION_CAPABILITY
-    );
+    assert.equal(codexAdapter.capabilities.context_isolation, null);
 
     const incomplete = collectLiveIsolationObservation({
       prepared,
@@ -803,14 +799,8 @@ test("Codex live canary grants token only with structured JSONL tool proof", () 
       adapterId: "codex",
       spawnSyncFn: () => ({ status: 0, stdout: `${happyJsonl}\n`, stderr: "" }),
     });
-    assert.ok(observed);
-    assert.equal(
-      decideContextIsolationCapability({
-        expected: fixture.expected,
-        observed,
-      }),
-      CONTEXT_ISOLATION_CAPABILITY
-    );
+    // Full expected matrix includes plugins/frameworks Codex cannot natively prove.
+    assert.equal(observed, null);
     assert.equal(prepared.env.CODEX_HOME, fixture.capsule.codexHome);
   } finally {
     fixture.cleanup();
@@ -856,8 +846,9 @@ test("verifyHarness codex path verifies from isolation without broker", async ()
         { execFileSync: () => "0.145.1" }
       ),
     });
-    assert.equal(verified.status, "verified");
-    assert.equal(verified.context_isolation, CONTEXT_ISOLATION_CAPABILITY);
+    // Declared context_isolation is null — runner cannot mint the token.
+    assert.equal(verified.status, "unverified");
+    assert.equal(verified.context_isolation, null);
     assert.equal(verified.command_broker, null);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

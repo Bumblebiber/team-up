@@ -393,17 +393,19 @@ function toolResultText(content) {
 /**
  * Exact Claude 2.1.220 stream-json tool proof:
  * - Bind session from system/init
- * - Require selected tool_use, then later tool_result with same tool_use_id
+ * - Require tool_use only on an assistant event
+ * - Require a strictly later user event with matching tool_result + tool_use_id
  * - Require exact canary payload containing the fresh nonce (not substring-only)
- * - Reject wrong order, mismatched ids/sessions, duplicate tool_use, unrelated JSON
+ * - Reject same-event use+result, wrong roles, duplicate uses/results, wrong order
  */
 export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {}) {
   if (!streamText || !toolName || !nonce) return null;
   const expectedPayload = `team-up-canary-ok:${nonce}`;
   let sessionId = null;
   let toolUseId = null;
+  let toolUseEventIndex = -1;
   let sawToolResult = false;
-  let conflictingToolUse = false;
+  let eventIndex = -1;
 
   for (const line of String(streamText).split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -415,6 +417,7 @@ export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {})
       continue;
     }
     if (!evt || typeof evt !== "object" || Array.isArray(evt)) continue;
+    eventIndex += 1;
 
     if (evt.type === "system" && evt.subtype === "init") {
       if (typeof evt.session_id !== "string" || !evt.session_id) return null;
@@ -430,32 +433,43 @@ export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {})
     const content = evt.message?.content;
     if (!Array.isArray(content)) continue;
 
+    let sawUseInThisEvent = false;
+    let sawResultInThisEvent = false;
+
     for (const block of content) {
       if (!block || typeof block !== "object") continue;
       if (block.type === "tool_use" && block.name === toolName) {
+        if (evt.type !== "assistant") return null;
         if (typeof block.id !== "string" || !block.id) return null;
-        if (toolUseId && toolUseId !== block.id) {
-          conflictingToolUse = true;
-          continue;
-        }
+        if (toolUseId) return null; // duplicate selected tool_use
         if (sawToolResult) return null;
         toolUseId = block.id;
+        toolUseEventIndex = eventIndex;
+        sawUseInThisEvent = true;
       }
       if (block.type === "tool_result") {
-        // Ignore unrelated tool_results (e.g. ToolSearch) until our tool_use exists.
-        if (!toolUseId) continue;
+        if (!toolUseId) {
+          // Result before our tool_use — only reject if it claims our id later.
+          // Unrelated results before use are ignored until use exists.
+          continue;
+        }
         if (block.tool_use_id !== toolUseId) continue;
+        if (evt.type !== "user") return null;
+        if (eventIndex <= toolUseEventIndex) return null; // same or earlier event
+        if (sawToolResult) return null; // duplicate matching result
         const text = toolResultText(block.content);
         if (text === expectedPayload || text.trim() === expectedPayload) {
           sawToolResult = true;
+          sawResultInThisEvent = true;
         } else {
           return null;
         }
       }
     }
+    if (sawUseInThisEvent && sawResultInThisEvent) return null;
   }
 
-  if (conflictingToolUse || !sessionId || !toolUseId || !sawToolResult) return null;
+  if (!sessionId || !toolUseId || !sawToolResult) return null;
   return {
     tool: toolName,
     nonce,
@@ -832,6 +846,7 @@ const INVENTORY_PROMPT = [
   "You are an isolation canary.",
   "First call the mcp__selected__lookup tool exactly once.",
   "If the tool is deferred, use ToolSearch to discover it then call it.",
+  "Read selected skill content from the session skill surface and selected framework files under --add-dir.",
   "Then reply with ONLY one JSON object and no prose.",
   "Keys: skills, plugins, mcp_tools, frameworks, absent, content_nonces.",
   "content_nonces maps skill/plugin/framework/mcp to unpredictable nonce strings found in their content.",
@@ -899,45 +914,11 @@ export function createSanitizedClaudeHome({
   return home;
 }
 
-function readSelectedContentNonces(capsule, expectedNonces) {
-  if (!expectedNonces) return null;
-  const out = { ...expectedNonces };
-  // MCP nonce is proven via tool_result; skill/plugin/framework nonces are
-  // bound only when the selected materialized files still match expected values.
-  try {
-    for (const skillRoot of capsule.skillDirs ?? []) {
-      const skillMd = path.join(skillRoot, "capsule.selected-skill", "SKILL.md");
-      if (fs.existsSync(skillMd)) {
-        const text = fs.readFileSync(skillMd, "utf8");
-        const m = text.match(/nonce:([^\s]+)/);
-        if (m) out.skill = m[1];
-      }
-    }
-    for (const pluginDir of capsule.pluginDirs ?? []) {
-      const pluginJson = path.join(pluginDir, "plugin.json");
-      if (fs.existsSync(pluginJson)) {
-        const doc = JSON.parse(fs.readFileSync(pluginJson, "utf8"));
-        if (doc.content_nonce) out.plugin = String(doc.content_nonce);
-      }
-    }
-    for (const frameworkRoot of capsule.frameworkDirs ?? []) {
-      const fw = path.join(frameworkRoot, "capsule.selected-framework", "framework.json");
-      if (fs.existsSync(fw)) {
-        const doc = JSON.parse(fs.readFileSync(fw, "utf8"));
-        if (doc.content_nonce) out.framework = String(doc.content_nonce);
-      }
-    }
-  } catch {
-    return null;
-  }
-  return out;
-}
-
 function buildObservedFromInitAndProof({
   init,
   toolProof,
   expected,
-  capsule,
+  capsule: _capsule,
   modelInventory = null,
 }) {
   if (!init || !toolProof) return null;
@@ -957,8 +938,12 @@ function buildObservedFromInitAndProof({
     (expected?.plugins || []).includes(p)
   );
   if ((expected?.plugins || []).length && !plugins.length) return null;
-  // Skills/frameworks: only structured live inventory — never fill from expected/disk.
-  const skills = [...(init.skills || [])].filter((s) =>
+  // Skills: structured live init and/or model inventory — never disk listings.
+  const skillCandidates = [
+    ...(init.skills || []),
+    ...(Array.isArray(modelInventory?.skills) ? modelInventory.skills.map(String) : []),
+  ];
+  const skills = [...new Set(skillCandidates)].filter((s) =>
     (expected?.skills || []).includes(s)
   );
   if ((expected?.skills || []).length && !skills.length) return null;
@@ -970,8 +955,6 @@ function buildObservedFromInitAndProof({
       (expected?.frameworks || []).includes(f)
     );
   if ((expected?.frameworks || []).length && !frameworks.length) {
-    // Frameworks are often add-dir only; require modelInventory structured list.
-    if (!Array.isArray(modelInventory?.frameworks)) return null;
     return null;
   }
 
@@ -992,12 +975,17 @@ function buildObservedFromInitAndProof({
       && !(init.plugins || []).includes(name);
   });
 
-  const diskNonces = readSelectedContentNonces(capsule, expected?.nonces);
+  // Live nonces only: MCP from tool_result; skill/plugin/framework from model
+  // inventory that actually read selected content. Never fill from disk/config.
   const content_nonces = {
-    ...(diskNonces || {}),
     mcp: toolProof.nonce,
   };
-  // Model-authored content_nonces cannot override disk/tool-proven nonces.
+  const liveNonces = modelInventory?.content_nonces;
+  if (liveNonces && typeof liveNonces === "object" && !Array.isArray(liveNonces)) {
+    for (const key of ["skill", "plugin", "framework"]) {
+      if (liveNonces[key] != null) content_nonces[key] = String(liveNonces[key]);
+    }
+  }
 
   return {
     skills,
@@ -1067,6 +1055,12 @@ export function collectLiveIsolationObservation({
   }
   if (fs.existsSync(path.join(probeHome, ".claude.json"))) {
     return null;
+  }
+  // Selected skills must be on the sanitized HOME surface Claude discovers.
+  for (const skillName of expected?.skills || []) {
+    if (!fs.existsSync(path.join(probeHome, ".claude", "skills", skillName))) {
+      return null;
+    }
   }
 
   const authHome = probeHome;
@@ -1258,11 +1252,20 @@ export function collectLiveCodexIsolationObservation({
 
     const capsuleSkills = listChildDirs([path.join(capsule.codexHome, "skills")]);
     if (capsuleSkills.includes("global.canary-skill")) return null;
-    if (!capsuleSkills.includes("capsule.selected-skill")) return null;
+    // Disk listing is a negative/presence gate only — never a live inventory source.
+    if ((expected?.skills || []).includes("capsule.selected-skill")
+      && !capsuleSkills.includes("capsule.selected-skill")) {
+      return null;
+    }
+    // Full generic matrix requires native plugin/framework surfaces Codex lacks.
+    if ((expected?.plugins || []).length > 0 || (expected?.frameworks || []).length > 0) {
+      return null;
+    }
 
     const modelInventory = parseIsolationObservationJson(
       extractCodexAgentMessageText(text)
     );
+    if (!modelInventory) return null;
     if (modelInventory?.skills?.includes?.("global.canary-skill")) return null;
     if (modelInventory?.mcp_tools?.some?.((t) => /global|excluded/i.test(String(t)))) {
       return null;
@@ -1275,7 +1278,7 @@ export function collectLiveCodexIsolationObservation({
         ? modelInventory.skills.map(String).filter((s) =>
           (expected?.skills || []).includes(s)
         )
-        : capsuleSkills.filter((s) => (expected?.skills || []).includes(s)),
+        : [],
       plugins: Array.isArray(modelInventory?.plugins)
         ? modelInventory.plugins.map(String).filter((p) =>
           (expected?.plugins || []).includes(p)
@@ -1413,51 +1416,36 @@ export function observeContextIsolation({
     return { ...result, fixture };
   };
   try {
-    const expected = adapterId === "codex"
-      ? {
-          skills: ["capsule.selected-skill"],
-          plugins: [],
-          mcp_tools: ["mcp__selected__lookup"],
-          frameworks: [],
-          nonces: {
-            skill: fixture.expected.nonces.skill,
-            mcp: fixture.expected.nonces.mcp,
-          },
-        }
-      : {
-          // Claude 2.1.220 system/init lists bundled skills, not --add-dir
-          // capsule skills/frameworks. Claim only structured plugin + MCP proof.
-          skills: [],
-          plugins: ["capsule.selected-plugin"],
-          mcp_tools: ["mcp__selected__lookup"],
-          frameworks: [],
-          nonces: {
-            plugin: fixture.expected.nonces.plugin,
-            mcp: fixture.expected.nonces.mcp,
-          },
-        };
+    // Generic team-up.context-isolation/v1 always claims the full selected matrix.
+    // Never shrink expected arrays to make a partial live surface look like a grant.
+    const expected = { ...fixture.expected, nonces: { ...fixture.expected.nonces } };
+
+    if (adapterId === "codex") {
+      // Codex 0.145.0 lacks native plugin/framework isolation surfaces.
+      // Keep declared context_isolation:null and do not grant generic v1.
+      return finish({
+        isolation_status: "unverified",
+        context_isolation: null,
+        expected,
+        error: "codex lacks native plugin/framework surfaces for generic context-isolation/v1",
+      });
+    }
+
     let prepared;
     try {
-      if (adapterId === "codex") {
-        prepared = adapter.prepareLaunch({
-          argv: ["codex", "exec", "--strict-config", "isolation-probe"],
-          runDir: fixture.runRoot,
-          capsule: fixture.capsule,
-        });
-      } else {
-        prepared = adapter.prepareLaunch({
-          argv: ["claude", "--print", "--verbose", "--output-format", "stream-json", "isolation-probe"],
-          runDir: fixture.runRoot,
-          capsule: fixture.capsule,
-          writeFileSync: fs.writeFileSync,
-          mkdirSync: fs.mkdirSync,
-          chmodSync: fs.chmodSync,
-        });
-      }
+      prepared = adapter.prepareLaunch({
+        argv: ["claude", "--print", "--verbose", "--output-format", "stream-json", "isolation-probe"],
+        runDir: fixture.runRoot,
+        capsule: fixture.capsule,
+        writeFileSync: fs.writeFileSync,
+        mkdirSync: fs.mkdirSync,
+        chmodSync: fs.chmodSync,
+      });
     } catch (e) {
       return finish({
         isolation_status: "unverified",
         context_isolation: null,
+        expected,
         error: e.message,
       });
     }
@@ -1471,6 +1459,7 @@ export function observeContextIsolation({
       return finish({
         isolation_status: "unverified",
         context_isolation: null,
+        expected,
         error: "isolation launch surface incomplete or malformed",
         prepared,
       });
@@ -1491,6 +1480,7 @@ export function observeContextIsolation({
         return finish({
           isolation_status: "unverified",
           context_isolation: null,
+          expected,
           error: "live isolation probe skipped or incomplete",
           prepared,
         });
@@ -1499,6 +1489,7 @@ export function observeContextIsolation({
         return finish({
           isolation_status: live.isolation_status || "unverified",
           context_isolation: null,
+          expected,
           error: live.error,
           prepared,
         });
@@ -1510,20 +1501,20 @@ export function observeContextIsolation({
         return finish({
           isolation_status: "unverified",
           context_isolation: null,
+          expected,
           error: "liveProbe missing stream_text or nonce for re-proof",
           prepared,
         });
       }
-      const streamProof = adapterId === "codex"
-        ? parseCodexJsonlToolProof(live.stream_text, { nonce: mcpNonce })
-        : parseClaudeStreamToolProof(live.stream_text, {
-          toolName: selectedTool,
-          nonce: mcpNonce,
-        });
+      const streamProof = parseClaudeStreamToolProof(live.stream_text, {
+        toolName: selectedTool,
+        nonce: mcpNonce,
+      });
       if (!streamProof) {
         return finish({
           isolation_status: "unverified",
           context_isolation: null,
+          expected,
           error: "liveProbe stream_text failed tool_use/tool_result re-proof",
           prepared,
         });
@@ -1544,6 +1535,7 @@ export function observeContextIsolation({
       return finish({
         isolation_status: "unverified",
         context_isolation: null,
+        expected,
         error: "live isolation observation missing, malformed, or skipped",
         prepared,
       });
@@ -1562,6 +1554,7 @@ export function observeContextIsolation({
     return finish({
       isolation_status: "unverified",
       context_isolation: null,
+      expected: fixture.expected,
       error: e.message,
     });
   }

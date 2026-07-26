@@ -179,15 +179,29 @@ test("prepareArgvFromDescriptor rebuilds Claude bare capsule from persisted desc
         prepared.argv[i - 1] === "--plugin-dir" && a === capsule.pluginDirs[0]
       )
     );
-    assert.ok(
+    // Skills are materialized into sanitized HOME; frameworks stay on --add-dir.
+    assert.equal(
       prepared.argv.some((a, i) =>
         prepared.argv[i - 1] === "--add-dir" && a === capsule.skillDirs[0]
+      ),
+      false
+    );
+    assert.ok(
+      prepared.argv.some((a, i) =>
+        prepared.argv[i - 1] === "--add-dir" && a === capsule.frameworkDirs[0]
       )
     );
+    assert.equal(
+      fs.existsSync(path.join(
+        prepared.env.HOME, ".claude", "skills", "capsule.selected-skill", "SKILL.md"
+      )),
+      true
+    );
+    assert.ok(prepared.home_generation);
   });
 });
 
-test("prepareArgvFromDescriptor rebuilds Codex with verified isolation", async () => {
+test("prepareArgvFromDescriptor fails closed for Codex isolation (no native full matrix)", async () => {
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
@@ -229,10 +243,11 @@ test("prepareArgvFromDescriptor rebuilds Codex with verified isolation", async (
         specialist: { id: "research.hugo", version: "0.1.0" },
       })
     );
-    const prepared = prepareArgvFromDescriptor(
-      loadAuthoritativeLaunchDescriptor(run.runId)
+    // Declared context_isolation is null — verification token cannot unlock capsules.
+    assert.throws(
+      () => prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(run.runId)),
+      /HARNESS_CONTEXT_ISOLATION_UNVERIFIED|BROKER_VERIFY_FAILED/
     );
-    assert.ok(prepared.argv.includes("--strict-config") || prepared.env?.CODEX_HOME);
 
     // Missing isolation token still fails closed.
     assert.throws(

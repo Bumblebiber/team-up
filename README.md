@@ -53,12 +53,15 @@ user. A harness must have a version-keyed verification record that explicitly
 stores `context_isolation: "team-up.context-isolation/v1"` before it is
 eligible for specialist work. Live `team-up harness verify` plants global
 canaries on a fake HOME, prepares a capsule launch, and collects a live CLI
-observation (Claude `plugin list` under `--bare`/`--plugin-dir`, Codex
-`mcp list` under run-specific `CODEX_HOME`). The token is stored only on an
-exact match with every forbidden canary absent. Missing, malformed, or skipped
-live observations stay fail-closed at `context_isolation: null`. Codex returns
-explicit unverified results when auth/runtime is missing instead of
-"adapter not ready".
+observation proving the full selected skill/plugin/MCP/framework matrix with
+fresh content nonces (Claude stream-json init + tool proof). The token is
+stored only on an exact match with every forbidden canary absent. Missing,
+malformed, or skipped live observations stay fail-closed at
+`context_isolation: null`. Codex 0.145.0 declares `context_isolation: null`
+because it lacks native plugin/framework isolation surfaces for the full
+generic matrix — partial MCP/skill proof must not grant v1. Closed-world
+content manifests require Linux `/proc` fd-based directory walks; other
+platforms fail closed rather than using a weaker path-based fallback.
 
 ## Docs
 

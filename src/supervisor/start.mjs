@@ -111,6 +111,10 @@ export function buildCapsuleLaunchRecord({ runRoot, capsule, env = process.env }
     effective_checksum: effectiveChecksum,
     content_manifest: contentManifest,
     content_root_checksum: contentManifest.root_checksum,
+    // Attempt-specific HOME/CODEX_HOME generation bound at prepareLaunch time.
+    home_generation: capsule.home_generation ?? null,
+    home_checksum: capsule.home_checksum ?? null,
+    claude_home: capsule.claudeHome ? path.resolve(capsule.claudeHome) : null,
     // Placeholders filled by persistLaunchDescriptor once runId is known.
     authoritative_effective_path: null,
     authoritative_content_manifest_path: null,
@@ -209,6 +213,9 @@ export function reconstructCapsuleFromLaunchRecord(record) {
     skillDirs: [...(record.skill_dirs ?? [])],
     frameworkDirs: [...(record.framework_dirs ?? [])],
     codexHome: record.codex_home,
+    claudeHome: record.claude_home ?? null,
+    home_generation: record.home_generation ?? null,
+    home_checksum: record.home_checksum ?? null,
     mcpConfig: record.mcp_config ?? { mcpServers: {} },
     mcpToolNames: [...(record.mcp_tool_names ?? [])],
     mcpToolsByServer: { ...(record.mcp_tools_by_server ?? {}) },
@@ -498,6 +505,8 @@ export function prepareArgvFromDescriptor(
     Boolean(broker?.policySnapshot && broker?.policyChecksum);
 
   let adapterEnv = {};
+  let home_generation = null;
+  let home_checksum = null;
   if (needsHarnessPrepare) {
     if (broker && (!broker.policySnapshot || !broker.policyChecksum)) {
       const err = new Error("BROKER_INVALID: incomplete broker fields");
@@ -594,6 +603,8 @@ export function prepareArgvFromDescriptor(
     }
     argv = prepared.argv;
     adapterEnv = { ...(prepared.env || {}) };
+    home_generation = prepared.home_generation ?? prepared.generationId ?? null;
+    home_checksum = prepared.home_checksum ?? null;
     argv = injectAdapterEnv(argv, adapterEnv);
   }
 
@@ -655,6 +666,8 @@ export function prepareArgvFromDescriptor(
     model,
     effort,
     dir: descriptor.context_dir || runPath,
+    home_generation,
+    home_checksum,
   };
 }
 

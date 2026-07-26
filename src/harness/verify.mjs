@@ -63,7 +63,7 @@ export async function verifyHarness({
   const declaresIsolation =
     adapter.capabilities?.context_isolation === CONTEXT_ISOLATION_CAPABILITY;
   if (isolationOnly) {
-    if (checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY) {
+    if (declaresIsolation && checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY) {
       status = "verified";
     } else if (checks.isolation_status === "failed") {
       status = "failed";
@@ -100,7 +100,7 @@ export async function verifyHarness({
     command_broker:
       !isolationOnly && status === "verified" ? COMMAND_BROKER_CAPABILITY : null,
     context_isolation:
-      checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY
+      declaresIsolation && checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY
         ? CONTEXT_ISOLATION_CAPABILITY
         : null,
     status,

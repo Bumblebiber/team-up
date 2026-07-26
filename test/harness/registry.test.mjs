@@ -48,8 +48,8 @@ test("verified Claude advertises the versioned contract", () => {
   }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });
 
-test("Codex declared context_isolation requires matching verification", () => {
-  assert.equal(declaredHarnessCapabilities("codex").context_isolation, CONTEXT_ISOLATION_CAPABILITY);
+test("Codex declared context_isolation stays null without full native matrix", () => {
+  assert.equal(declaredHarnessCapabilities("codex").context_isolation, null);
   assert.equal(harnessCapabilities("codex", {
     verification: null,
   }).context_isolation, null);
@@ -60,7 +60,7 @@ test("Codex declared context_isolation requires matching verification", () => {
       cli_version: "0.145.0",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
     },
-  }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
+  }).context_isolation, null);
 });
 
 test("Claude verification record cannot be reused under Codex runtime", () => {

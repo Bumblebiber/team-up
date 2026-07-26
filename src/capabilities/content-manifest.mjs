@@ -114,6 +114,11 @@ function fileSha256(filePath) {
  * Opens with O_DIRECTORY|O_NOFOLLOW when available, verifies lstat/fstat
  * identity, then reads via the held fd (`/proc/self/fd/N` on Linux) so a
  * concurrent directory↔symlink swap cannot race the readdir.
+ *
+ * Platform support boundary for team-up.context-isolation/v1 closed-world:
+ * only Linux `/proc` fd-based readdir is accepted. Non-Linux hosts (and any
+ * environment where `/proc/self/fd/N` is unavailable) fail closed with
+ * CONTENT_MANIFEST_UNSUPPORTED_PLATFORM — never a weaker path-based listing.
  */
 export function listDirectoryNoFollow(dirPath) {
   const lstat = fs.lstatSync(dirPath);
@@ -158,12 +163,17 @@ export function listDirectoryNoFollow(dirPath) {
       );
     }
     // Hold the directory fd across readdir so a path swap cannot redirect listing.
+    // Content-isolation v1 requires fd-based listing; path readdir is TOCTOU-prone
+    // and must not silently authorize closed-world manifests off Linux / without /proc.
     const viaFd = `/proc/self/fd/${fd}`;
-    if (fs.existsSync(viaFd)) {
+    const forceNoProc = process.env.TEAM_UP_FORCE_NO_PROC_FD === "1";
+    if (!forceNoProc && process.platform === "linux" && fs.existsSync(viaFd)) {
       return fs.readdirSync(viaFd);
     }
-    // Non-Linux fallback: still opened with O_NOFOLLOW; readdir by path.
-    return fs.readdirSync(dirPath);
+    fail(
+      "CONTENT_MANIFEST_UNSUPPORTED_PLATFORM",
+      "CONTENT_MANIFEST_UNSUPPORTED_PLATFORM: closed-world content-isolation/v1 requires Linux /proc fd readdir"
+    );
   } finally {
     fs.closeSync(fd);
   }
@@ -240,6 +250,13 @@ function roleForPath(absPath, { skillDirs, pluginDirs, frameworkDirs, mcpPaths, 
   return "file";
 }
 
+function looksLikeFilesystemPath(arg) {
+  if (typeof arg !== "string" || !arg) return false;
+  if (path.isAbsolute(arg)) return true;
+  if (arg.startsWith(".") || arg.includes("/") || arg.includes("\\")) return true;
+  return /\.(mjs|cjs|js|json|py|sh|bin|wasm)$/i.test(arg);
+}
+
 function collectMcpConfigPaths(mcpConfig, runRoot) {
   const paths = [];
   const mcpRoot = path.join(runRoot, "harness", "mcp");
@@ -249,10 +266,21 @@ function collectMcpConfigPaths(mcpConfig, runRoot) {
   for (const server of Object.values(mcpConfig?.mcpServers ?? {})) {
     if (server?.args) {
       for (const arg of server.args) {
-        if (typeof arg === "string" && arg.endsWith(".json") && path.isAbsolute(arg) && fs.existsSync(arg)) {
-          assertPathInsideRunRoot(arg, runRoot, { label: "mcp config" });
-          paths.push(arg);
+        if (typeof arg !== "string" || !looksLikeFilesystemPath(arg)) continue;
+        if (!path.isAbsolute(arg)) {
+          fail(
+            "CONTENT_MANIFEST_ROOT_ESCAPE",
+            `CONTENT_MANIFEST_ROOT_ESCAPE: mcp arg ${arg} must be absolute capsule path`
+          );
         }
+        if (!fs.existsSync(arg)) {
+          fail(
+            "CONTENT_MANIFEST_PATH_MISSING",
+            `CONTENT_MANIFEST_PATH_MISSING: mcp runtime ${arg}`
+          );
+        }
+        assertPathInsideRunRoot(arg, runRoot, { label: "mcp runtime" });
+        paths.push(arg);
       }
     }
   }
