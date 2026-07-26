@@ -78,3 +78,55 @@ test("direct MCP preflight alone is insufficient for verification record", async
   assert.equal(record.broker_tool, "failed");
   fs.rmSync(home, { recursive: true, force: true });
 });
+
+test("isolation observation accepts exact selected set and required absences", async () => {
+  const { validateIsolationObservation } = await import(
+    "../../src/harness/cli-verify.mjs"
+  );
+  const expected = {
+    skills: ["capsule.selected-skill"],
+    plugins: ["capsule.selected-plugin"],
+    mcp_tools: ["mcp__selected__lookup"],
+    frameworks: ["capsule.selected-framework"],
+  };
+  const observed = {
+    skills: ["capsule.selected-skill"],
+    plugins: ["capsule.selected-plugin"],
+    mcp_tools: ["mcp__selected__lookup"],
+    frameworks: ["capsule.selected-framework"],
+    absent: [
+      "global.canary-skill", "global.canary-plugin", "mcp__global__canary",
+      "pool.unselected-skill", "mcp__excluded__lookup",
+      "pool.unselected-framework",
+    ],
+  };
+  assert.deepEqual(validateIsolationObservation({ expected, observed }), {
+    ok: true, errors: [],
+  });
+});
+
+test("isolation observation fails on globals unselected excluded and mismatches", async () => {
+  const { validateIsolationObservation } = await import(
+    "../../src/harness/cli-verify.mjs"
+  );
+  const expected = {
+    skills: ["capsule.selected-skill"],
+    plugins: [],
+    mcp_tools: ["mcp__selected__lookup"],
+    frameworks: [],
+  };
+  const bad = validateIsolationObservation({
+    expected,
+    observed: {
+      skills: ["capsule.selected-skill", "global.canary-skill"],
+      plugins: ["global.canary-plugin"],
+      mcp_tools: ["mcp__selected__lookup", "mcp__excluded__lookup"],
+      frameworks: ["pool.unselected-framework"],
+      absent: [],
+    },
+  });
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.some((e) => /skills mismatch/.test(e)));
+  assert.ok(bad.errors.some((e) => /forbidden capability visible: global.canary-skill/.test(e)));
+  assert.ok(bad.errors.some((e) => /forbidden capability visible: mcp__excluded__lookup/.test(e)));
+});

@@ -37,6 +37,21 @@ node bin/team-up.mjs runs wait <run-id>
 State lives under `~/.team-up` (override with `TEAM_UP_HOME`). Reads may fall
 back to `~/.o9k` during migration; writes never touch `~/.o9k`.
 
+## Capability isolation
+
+`team-up` keeps shared skills, plugins, MCPs, frameworks, and bundles inert in
+a content-addressed pool. Installation does not activate a package. The human
+enables an exact checksum for `all` or named specialists; an explicit
+exclusion wins over `all`.
+
+Use the supervisor-only `/team-up-manage` skill or deterministic
+`team-up capability` commands. Specialist recommendations are opt-in and
+start unselected.
+
+This isolates model context, not Unix files. Workers run as the same trusted
+user. A harness must pass `team-up.context-isolation/v1` conformance before it
+is eligible for specialist work.
+
 ## Docs
 
 - [configuration.md](docs/configuration.md)

@@ -210,6 +210,28 @@ export function decideBrokerToolFromEvidence({
   return "unverified";
 }
 
+export function validateIsolationObservation({ expected, observed }) {
+  const errors = [];
+  for (const key of ["skills", "plugins", "mcp_tools", "frameworks"]) {
+    const want = [...(expected[key] ?? [])].sort();
+    const got = [...(observed[key] ?? [])].sort();
+    if (JSON.stringify(want) !== JSON.stringify(got)) {
+      errors.push(`${key} mismatch: expected ${want.join(",")} got ${got.join(",")}`);
+    }
+  }
+  const forbidden = [
+    "global.canary-skill", "global.canary-plugin", "mcp__global__canary",
+    "pool.unselected-skill", "mcp__excluded__lookup",
+    "pool.unselected-framework",
+  ];
+  for (const name of forbidden) {
+    if (!(observed.absent ?? []).includes(name)) {
+      errors.push(`forbidden capability visible: ${name}`);
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+
 /**
  * Live Claude conformance: invoke the installed CLI with the prepared MCP
  * broker config. Never infer denial from argv alone and never grant the
