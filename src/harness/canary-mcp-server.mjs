@@ -7,6 +7,7 @@ import readline from "node:readline";
 
 const TOOL_NAME = process.env.TEAM_UP_CANARY_TOOL || "lookup";
 const TOOL_RESULT = process.env.TEAM_UP_CANARY_RESULT || "team-up-canary-ok";
+const TOOL_NONCE = process.env.TEAM_UP_CANARY_NONCE || "";
 
 const tools = [
   {
@@ -55,7 +56,10 @@ function handle(msg) {
       jsonrpc: "2.0",
       id,
       result: {
-        content: [{ type: "text", text: TOOL_RESULT }],
+        content: [{
+          type: "text",
+          text: TOOL_NONCE ? `${TOOL_RESULT}:${TOOL_NONCE}` : TOOL_RESULT,
+        }],
         isError: false,
       },
     });

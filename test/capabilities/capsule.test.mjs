@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { materializeCapabilityCapsule }
   from "../../src/capabilities/capsule.mjs";
 
@@ -113,18 +114,29 @@ test("unselected pool package does not change capsule bytes", () => {
 });
 
 test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_bytes", () => {
+  const canaryServer = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../src/harness/canary-mcp-server.mjs"
+  );
   const selected = fs.mkdtempSync(path.join(os.tmpdir(), "tu-pkg-"));
   const skillBody = "# Selected skill with measurable prompt weight\n";
   fs.mkdirSync(path.join(selected, "skills", "s"), { recursive: true });
   fs.writeFileSync(path.join(selected, "skills", "s", "SKILL.md"), skillBody);
-  const mcpDoc = {
+  const mcpDocCompact = {
     mcpServers: {
-      selected: { type: "stdio", command: "node", args: ["s.mjs"] },
+      selected: {
+        type: "stdio",
+        command: process.execPath,
+        args: [canaryServer],
+        env: { TEAM_UP_CANARY_TOOL: "lookup", TEAM_UP_CANARY_RESULT: "ok" },
+      },
     },
     tools: ["lookup"],
   };
-  const mcpBody = `${JSON.stringify(mcpDoc, null, 2)}\n`;
-  fs.writeFileSync(path.join(selected, "mcp.json"), mcpBody);
+  const mcpBodyCompact = `${JSON.stringify(mcpDocCompact)}\n`;
+  const mcpBodyPretty = `${JSON.stringify(mcpDocCompact, null, 2)}\n`;
+  assert.notEqual(Buffer.byteLength(mcpBodyCompact), Buffer.byteLength(mcpBodyPretty));
+  fs.writeFileSync(path.join(selected, "mcp.json"), mcpBodyPretty);
   fs.writeFileSync(path.join(selected, "capability.json"), JSON.stringify({
     schema_version: 1, id: "sel", version: "1", display_name: "Sel",
     provides: { skills: ["skills/s/SKILL.md"], mcps: ["mcp.json"] },
@@ -135,7 +147,14 @@ test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_by
   fs.mkdirSync(path.join(inert, "skills", "inert"), { recursive: true });
   fs.writeFileSync(path.join(inert, "skills", "inert", "SKILL.md"), "# INERT HUGE ".repeat(200));
   fs.writeFileSync(path.join(inert, "mcp-inert.json"), JSON.stringify({
-    mcpServers: { inert: { type: "stdio", command: "node", args: ["i.mjs"] } },
+    mcpServers: {
+      inert: {
+        type: "stdio",
+        command: process.execPath,
+        args: [canaryServer],
+        env: { TEAM_UP_CANARY_TOOL: "noop", TEAM_UP_CANARY_RESULT: "ok" },
+      },
+    },
     tools: ["noop"],
   }));
   fs.writeFileSync(path.join(inert, "capability.json"), JSON.stringify({
@@ -157,6 +176,8 @@ test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_by
   });
   assert.ok(first.packages[0].prompt_token_contribution > 0);
   assert.ok(first.packages[0].mcp_schema_bytes > 0);
+  assert.equal(first.prompt_token_estimate_method, "utf8_bytes_div_4_ceil");
+  assert.equal(first.packages[0].mcp_schema_measurement, "tools/list-canonical-json");
   assert.equal(
     first.totals.prompt_token_contribution,
     first.packages[0].prompt_token_contribution
@@ -166,7 +187,17 @@ test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_by
     first.packages[0].prompt_token_contribution,
     Math.ceil(Buffer.byteLength(skillBody) / 4)
   );
-  assert.equal(first.packages[0].mcp_schema_bytes, Buffer.byteLength(mcpBody));
+  // Must NOT equal config-file bytes (pretty vs compact would differ).
+  assert.notEqual(first.packages[0].mcp_schema_bytes, Buffer.byteLength(mcpBodyPretty));
+  assert.notEqual(first.packages[0].mcp_schema_bytes, Buffer.byteLength(mcpBodyCompact));
+
+  // Canonical-format invariance: compact config yields same schema bytes.
+  fs.writeFileSync(path.join(selected, "mcp.json"), mcpBodyCompact);
+  const compactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-"));
+  const compact = materializeCapabilityCapsule({
+    runRoot: compactRoot, specialistId: "research.hugo", packages,
+  });
+  assert.equal(compact.packages[0].mcp_schema_bytes, first.packages[0].mcp_schema_bytes);
 
   // Inert (unselected) pool package must not change either metric.
   const still = materializeCapabilityCapsule({
@@ -191,7 +222,14 @@ test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_by
         fs.mkdirSync(path.join(d, "skills", "extra"), { recursive: true });
         fs.writeFileSync(path.join(d, "skills", "extra", "SKILL.md"), "# EXTRA WEIGHT\n");
         fs.writeFileSync(path.join(d, "mcp.json"), JSON.stringify({
-          mcpServers: { extra: { type: "stdio", command: "node", args: ["e.mjs"] } },
+          mcpServers: {
+            extra: {
+              type: "stdio",
+              command: process.execPath,
+              args: [canaryServer],
+              env: { TEAM_UP_CANARY_TOOL: "x", TEAM_UP_CANARY_RESULT: "ok" },
+            },
+          },
           tools: ["x"],
         }));
         fs.writeFileSync(path.join(d, "capability.json"), JSON.stringify({

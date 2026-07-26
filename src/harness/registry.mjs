@@ -36,7 +36,12 @@ export function declaredHarnessCapabilities(cli) {
 
 export function harnessCapabilities(
   cli,
-  { verification = undefined, env = process.env, execFileSync = realExecFileSync } = {}
+  {
+    verification = undefined,
+    env = process.env,
+    execFileSync = realExecFileSync,
+    requireExactVersion = undefined,
+  } = {}
 ) {
   const adapter = getAdapter(cli);
   let record = verification;
@@ -48,21 +53,39 @@ export function harnessCapabilities(
       record = null;
     }
   }
-  if (record?.status === "verified") {
-    return {
-      // Legacy broker-only records may omit command_broker; keep that working.
-      // context_isolation must be explicit — never inferred from status alone.
-      command_broker: Object.hasOwn(record, "command_broker")
-        ? record.command_broker
-        : (adapter.capabilities.command_broker ?? null),
-      context_isolation: Object.hasOwn(record, "context_isolation")
-        ? record.context_isolation
-        : null,
-      native_shell: adapter.capabilities.native_shell,
-      mcp: adapter.capabilities.mcp,
-    };
+  if (record?.status !== "verified") {
+    return { ...UNVERIFIED_CAPABILITIES };
   }
-  return { ...UNVERIFIED_CAPABILITIES };
+
+  // Bind to exact adapter id. Claude tokens must not apply under Codex, etc.
+  if (Object.hasOwn(record, "adapter") && record.adapter !== adapter.id) {
+    return { ...UNVERIFIED_CAPABILITIES };
+  }
+
+  // Optional exact CLI version gate (successor/resume / explicit callers).
+  if (
+    requireExactVersion != null &&
+    Object.hasOwn(record, "cli_version") &&
+    record.cli_version !== requireExactVersion
+  ) {
+    return { ...UNVERIFIED_CAPABILITIES };
+  }
+
+  const declared = adapter.capabilities;
+  const verifiedBroker = Object.hasOwn(record, "command_broker")
+    ? record.command_broker
+    : (declared.command_broker ?? null);
+  const verifiedIsolation = Object.hasOwn(record, "context_isolation")
+    ? record.context_isolation
+    : null;
+
+  // Declared null is an absolute deny — never intersect upward.
+  return {
+    command_broker: declared.command_broker == null ? null : verifiedBroker,
+    context_isolation: declared.context_isolation == null ? null : verifiedIsolation,
+    native_shell: declared.native_shell,
+    mcp: declared.mcp,
+  };
 }
 
 export function defaultHarnessCapabilities(cli, opts = {}) {
@@ -84,6 +107,7 @@ export function prepareHarnessLaunch({
   capsule = null,
   allowedBuiltins,
   verification,
+  requireExactVersion = undefined,
   env = process.env,
   execFileSync = realExecFileSync,
   writeFileSync = fs.writeFileSync,
@@ -93,7 +117,23 @@ export function prepareHarnessLaunch({
   brokerBin = brokerBinPath(),
 }) {
   const adapter = getAdapter(cli);
-  const caps = harnessCapabilities(cli, { verification, env, execFileSync });
+  if (
+    verification &&
+    Object.hasOwn(verification, "adapter") &&
+    verification.adapter !== adapter.id
+  ) {
+    const err = new Error(
+      `HARNESS_VERIFICATION_ADAPTER: record adapter ${verification.adapter} != runtime ${adapter.id}`
+    );
+    err.code = "HARNESS_VERIFICATION_ADAPTER";
+    throw err;
+  }
+  const caps = harnessCapabilities(cli, {
+    verification,
+    env,
+    execFileSync,
+    requireExactVersion,
+  });
   if (broker && caps.command_broker == null) {
     const err = new Error(
       `HARNESS_UNSUPPORTED: ${cli} lacks verified command broker`

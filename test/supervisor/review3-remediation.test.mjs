@@ -28,6 +28,8 @@ import {
 import { recheckCapacity } from "../../src/supervisor/waits.mjs";
 import { watcherSleepSec } from "../../src/usage/usage-watcher.mjs";
 import { evaluateNativeShellFromStream } from "../../src/harness/cli-verify.mjs";
+import { getAdapter } from "../../src/harness/registry.mjs";
+import { execFileSync } from "node:child_process";
 
 function withTempEnv(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r3-"));
@@ -113,6 +115,13 @@ function makeDescriptor(runId, overrides = {}) {
       actionIds: ["project-test"],
     },
     harnessRequirements: { command_broker: "team-up.command-broker/v1" },
+    harnessVerification: {
+      status: "verified",
+      adapter: "claude",
+      cli_version: getAdapter("claude").version({ execFileSync }),
+      command_broker: "team-up.command-broker/v1",
+      context_isolation: null,
+    },
     specialistProfile: { tier: "frontier", reasoning: "max" },
     limitWindows: ["claude:5h"],
     specialist: { id: "testing.r3", version: "0.1.0" },

@@ -13,30 +13,121 @@ import {
   collectLaunchIsolationObservation,
   collectLiveIsolationObservation,
   decideContextIsolationCapability,
+  detectClaudeUserMcpConfigFormat,
   executeConfiguredMcpCanaryTool,
+  parseClaudeStreamToolProof,
   parseIsolationObservationJson,
   observeContextIsolation,
+  validateIsolationObservation,
   ISOLATION_FORBIDDEN_CANARIES,
 } from "../../src/harness/isolation-canary.mjs";
 
-test("canary fixture exposes selected set and keeps forbidden canaries out of capsule", () => {
+function prepareClaudeLaunch(fixture) {
+  return claudeAdapter.prepareLaunch({
+    argv: ["claude", "--print", "probe"],
+    runDir: fixture.runRoot,
+    capsule: fixture.capsule,
+    writeFileSync: (file, text) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, text);
+    },
+    mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
+    chmodSync: () => {},
+  });
+}
+
+function buildHappyInventory(fixture) {
+  return {
+    skills: ["capsule.selected-skill"],
+    plugins: ["capsule.selected-plugin"],
+    mcp_tools: ["mcp__selected__lookup"],
+    frameworks: ["capsule.selected-framework"],
+    absent: [...ISOLATION_FORBIDDEN_CANARIES],
+    content_nonces: { ...fixture.expected.nonces },
+  };
+}
+
+function buildHappySpawnSync(fixture, { inventory, streamLines, mcpNonce } = {}) {
+  const inv = inventory ?? buildHappyInventory(fixture);
+  const nonce = mcpNonce ?? fixture.expected.nonces.mcp;
+  const toolName = "mcp__selected__lookup";
+  const lines = streamLines ?? [
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", name: toolName, id: "tu-1", input: {} }],
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "tu-1",
+          content: `team-up-canary-ok:${nonce}`,
+        }],
+      },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: JSON.stringify(inv) }],
+      },
+    }),
+  ];
+  return (cmd, args, opts) => {
+    const joined = [cmd, ...(args || [])].join(" ");
+    const home = opts?.env?.HOME || "";
+    if (joined.includes("mcp list")) {
+      if (home.includes("tu-claude-json-home")) {
+        return { status: 0, stdout: "format-probe-claude: ok\n", stderr: "" };
+      }
+      if (home.includes("tu-mcp-json-home")) {
+        return { status: 0, stdout: "No MCP servers configured\n", stderr: "" };
+      }
+      if (joined.includes("--bare")) {
+        return {
+          status: 0,
+          stdout: "Checking MCP server health…\n\nselected: node canary - ✔ Connected\n",
+          stderr: "",
+        };
+      }
+      return {
+        status: 0,
+        stdout: "Checking MCP server health…\n\nglobal: node canary - ✔ Connected\n",
+        stderr: "",
+      };
+    }
+    if (joined.includes("plugin list")) {
+      return {
+        status: 0,
+        stdout: "Session-only plugins\n❯ capsule.selected-plugin@local\n",
+        stderr: "",
+      };
+    }
+    if (joined.includes("stream-json") || joined.includes("isolation canary")) {
+      return { status: 0, stdout: `${lines.join("\n")}\n`, stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: `unexpected: ${joined}` };
+  };
+}
+
+test("canary fixture exposes selected set, nonces, and .claude.json global MCP", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
-    assert.deepEqual(fixture.expected, {
-      skills: ["capsule.selected-skill"],
-      plugins: ["capsule.selected-plugin"],
-      mcp_tools: ["mcp__selected__lookup"],
-      frameworks: ["capsule.selected-framework"],
-    });
+    assert.deepEqual(fixture.expected.skills, ["capsule.selected-skill"]);
+    assert.deepEqual(fixture.expected.plugins, ["capsule.selected-plugin"]);
+    assert.deepEqual(fixture.expected.mcp_tools, ["mcp__selected__lookup"]);
+    assert.deepEqual(fixture.expected.frameworks, ["capsule.selected-framework"]);
+    assert.ok(fixture.expected.nonces?.skill);
+    assert.ok(fixture.expected.nonces?.plugin);
+    assert.ok(fixture.expected.nonces?.framework);
+    assert.ok(fixture.expected.nonces?.mcp);
     assert.equal(fixture.codexExpected, null);
-    assert.equal(
-      fs.existsSync(path.join(fixture.ambientProject, ".mcp.json")),
-      true
+    const claudeJson = JSON.parse(
+      fs.readFileSync(path.join(fixture.globalHome, ".claude.json"), "utf8")
     );
-    assert.equal(
-      fs.existsSync(path.join(fixture.globalHome, ".mcp.json")),
-      true
-    );
+    assert.ok(claudeJson.mcpServers?.global);
     assert.equal(
       fs.existsSync(path.join(fixture.runRoot, "context", "skills", "capsule.selected-skill")),
       true
@@ -45,22 +136,19 @@ test("canary fixture exposes selected set and keeps forbidden canaries out of ca
       fs.existsSync(path.join(fixture.runRoot, "context", "skills", "pool.unselected-skill")),
       false
     );
-    assert.equal(
-      fs.existsSync(path.join(fixture.runRoot, "harness", "mcp", "excluded")),
-      false
-    );
   } finally {
     fixture.cleanup();
   }
 });
 
-test("selected MCP canary tool executes successfully", () => {
+test("selected MCP canary tool executes successfully (diagnostics only)", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const server = fixture.capsule.mcpConfig.mcpServers.selected;
     const result = executeConfiguredMcpCanaryTool(server, {
       spawnSyncFn: spawnSync,
       toolName: "lookup",
+      expectedText: `team-up-canary-ok:${fixture.expected.nonces.mcp}`,
     });
     assert.ok(result);
     assert.equal(result.tool, "lookup");
@@ -69,20 +157,45 @@ test("selected MCP canary tool executes successfully", () => {
   }
 });
 
+test("parseClaudeStreamToolProof requires exact tool and nonce", () => {
+  const nonce = "tu-nonce-deadbeef";
+  const stream = [
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", name: "mcp__selected__lookup", id: "1" }],
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "1",
+          content: `team-up-canary-ok:${nonce}`,
+        }],
+      },
+    }),
+  ].join("\n");
+  assert.ok(parseClaudeStreamToolProof(stream, {
+    toolName: "mcp__selected__lookup",
+    nonce,
+  }));
+  assert.equal(parseClaudeStreamToolProof(stream, {
+    toolName: "mcp__global__canary",
+    nonce,
+  }), null);
+  assert.equal(parseClaudeStreamToolProof(stream, {
+    toolName: "mcp__selected__lookup",
+    nonce: "wrong-nonce",
+  }), null);
+  assert.equal(parseClaudeStreamToolProof("", { toolName: "x", nonce: "y" }), null);
+});
+
 test("launch-surface observation alone does not grant isolation without live probe", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
-    const prepared = claudeAdapter.prepareLaunch({
-      argv: ["claude", "--print", "probe"],
-      runDir: fixture.runRoot,
-      capsule: fixture.capsule,
-      writeFileSync: (file, text) => {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, text);
-      },
-      mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
-      chmodSync: () => {},
-    });
+    const prepared = prepareClaudeLaunch(fixture);
     const surface = collectLaunchIsolationObservation({
       prepared,
       capsule: fixture.capsule,
@@ -105,23 +218,12 @@ test("launch-surface observation alone does not grant isolation without live pro
 test("disk or config-only Claude observation does not grant isolation token", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
-    const prepared = claudeAdapter.prepareLaunch({
-      argv: ["claude", "--print", "probe"],
-      runDir: fixture.runRoot,
-      capsule: fixture.capsule,
-      writeFileSync: (file, text) => {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, text);
-      },
-      mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
-      chmodSync: () => {},
-    });
-    // spawnSync that only answers plugin list — no mcp list control, no model turn
+    const prepared = prepareClaudeLaunch(fixture);
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
       globalHome: fixture.globalHome,
-      ambientProject: fixture.ambientProject,
+      expected: fixture.expected,
       adapterId: "claude",
       spawnSyncFn: (cmd, args) => {
         const joined = [cmd, ...(args || [])].join(" ");
@@ -132,8 +234,49 @@ test("disk or config-only Claude observation does not grant isolation token", ()
             stderr: "",
           };
         }
-        // Deliberately fail mcp list / model turn
         return { status: 1, stdout: "", stderr: "skip" };
+      },
+    });
+    assert.equal(observed, null);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("Node MCP preflight alone does not satisfy live model proof", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      expected: fixture.expected,
+      adapterId: "claude",
+      spawnSyncFn: (cmd, args, opts) => {
+        const joined = [cmd, ...(args || [])].join(" ");
+        if (joined.includes("-e") && String(args?.[0]) === "-e") {
+          return spawnSync(cmd, args, opts);
+        }
+        if (joined.includes("mcp list") && !joined.includes("--bare")) {
+          return {
+            status: 0,
+            stdout: "global: node canary - ✔ Connected\n",
+            stderr: "",
+          };
+        }
+        if (joined.includes("mcp list") && joined.includes("--bare")) {
+          return { status: 0, stdout: "selected: node canary\n", stderr: "" };
+        }
+        if (joined.includes("plugin list")) {
+          return {
+            status: 0,
+            stdout: "Session-only plugins\n❯ capsule.selected-plugin@local\n",
+            stderr: "",
+          };
+        }
+        // No stream-json model turn — must fail
+        return { status: 1, stdout: "", stderr: "no model" };
       },
     });
     assert.equal(observed, null);
@@ -145,61 +288,17 @@ test("disk or config-only Claude observation does not grant isolation token", ()
 test("exact live Claude observation grants isolation capability token", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
-    const prepared = claudeAdapter.prepareLaunch({
-      argv: ["claude", "--print", "probe"],
-      runDir: fixture.runRoot,
-      capsule: fixture.capsule,
-      writeFileSync: (file, text) => {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, text);
-      },
-      mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
-      chmodSync: () => {},
-    });
-    const inventory = {
-      skills: ["capsule.selected-skill"],
-      plugins: ["capsule.selected-plugin"],
-      mcp_tools: ["mcp__selected__lookup"],
-      frameworks: ["capsule.selected-framework"],
-      absent: [...ISOLATION_FORBIDDEN_CANARIES],
-    };
+    const prepared = prepareClaudeLaunch(fixture);
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
       globalHome: fixture.globalHome,
-      ambientProject: fixture.ambientProject,
+      expected: fixture.expected,
       adapterId: "claude",
-      spawnSyncFn: (cmd, args, opts) => {
-        const joined = [cmd, ...(args || [])].join(" ");
-        // Real MCP canary tool execution uses node -e driver.
-        if (joined.includes("-e") && String(args?.[0]) === "-e") {
-          return spawnSync(cmd, args, opts);
-        }
-        if (joined.includes("mcp list")) {
-          return {
-            status: 0,
-            stdout: "Checking MCP server health…\n\nglobal: node canary - ✔ Connected\n",
-            stderr: "",
-          };
-        }
-        if (joined.includes("plugin list")) {
-          return {
-            status: 0,
-            stdout: "Session-only plugins\n❯ capsule.selected-plugin@local\n",
-            stderr: "",
-          };
-        }
-        if (joined.includes("--print") || joined.includes("isolation canary")) {
-          return {
-            status: 0,
-            stdout: `${JSON.stringify(inventory)}\n`,
-            stderr: "",
-          };
-        }
-        return { status: 1, stdout: "", stderr: `unexpected: ${joined}` };
-      },
+      spawnSyncFn: buildHappySpawnSync(fixture),
     });
     assert.ok(observed, "live observation should succeed with full harness probes");
+    assert.deepEqual(observed.content_nonces, fixture.expected.nonces);
     assert.equal(
       decideContextIsolationCapability({ expected: fixture.expected, observed }),
       CONTEXT_ISOLATION_CAPABILITY
@@ -209,33 +308,19 @@ test("exact live Claude observation grants isolation capability token", () => {
   }
 });
 
-test("global MCP positive control requires claude mcp list visibility", () => {
+test("global MCP positive control requires neutral-cwd claude mcp list visibility", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
-    const prepared = claudeAdapter.prepareLaunch({
-      argv: ["claude", "--print", "probe"],
-      runDir: fixture.runRoot,
-      capsule: fixture.capsule,
-      writeFileSync: (file, text) => {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, text);
-      },
-      mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
-      chmodSync: () => {},
-    });
+    const prepared = prepareClaudeLaunch(fixture);
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
       globalHome: fixture.globalHome,
-      ambientProject: fixture.ambientProject,
+      expected: fixture.expected,
       adapterId: "claude",
-      spawnSyncFn: (cmd, args, opts) => {
+      spawnSyncFn: (cmd, args) => {
         const joined = [cmd, ...(args || [])].join(" ");
-        if (joined.includes("-e") && String(args?.[0]) === "-e") {
-          return spawnSync(cmd, args, opts);
-        }
-        if (joined.includes("mcp list")) {
-          // Vacuous control: CLI sees nothing (old bug)
+        if (joined.includes("mcp list") && !joined.includes("--bare")) {
           return { status: 0, stdout: "No MCP servers configured\n", stderr: "" };
         }
         return { status: 0, stdout: "", stderr: "" };
@@ -245,6 +330,216 @@ test("global MCP positive control requires claude mcp list visibility", () => {
   } finally {
     fixture.cleanup();
   }
+});
+
+test("isolated negative control requires global absent under bare strict mcp list", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      expected: fixture.expected,
+      adapterId: "claude",
+      spawnSyncFn: (cmd, args) => {
+        const joined = [cmd, ...(args || [])].join(" ");
+        if (joined.includes("mcp list") && !joined.includes("--bare")) {
+          return { status: 0, stdout: "global: node canary\n", stderr: "" };
+        }
+        if (joined.includes("mcp list") && joined.includes("--bare")) {
+          // Leak: global still visible under isolated launch
+          return { status: 0, stdout: "global: node canary\nselected: node\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+    assert.equal(observed, null);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("adversarial: correct names but empty absent list fails closed", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const inventory = buildHappyInventory(fixture);
+    inventory.absent = [];
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      expected: fixture.expected,
+      adapterId: "claude",
+      spawnSyncFn: buildHappySpawnSync(fixture, { inventory }),
+    });
+    assert.equal(observed, null);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("adversarial: guessed nonce in content_nonces fails closed", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const inventory = buildHappyInventory(fixture);
+    inventory.content_nonces = {
+      skill: "guessed",
+      plugin: "guessed",
+      framework: "guessed",
+      mcp: "guessed",
+    };
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      expected: fixture.expected,
+      adapterId: "claude",
+      spawnSyncFn: buildHappySpawnSync(fixture, { inventory }),
+    });
+    assert.equal(observed, null);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("adversarial: no tool_use in stream fails closed", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const inventory = buildHappyInventory(fixture);
+    const streamLines = [
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: JSON.stringify(inventory) }] },
+      }),
+    ];
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      expected: fixture.expected,
+      adapterId: "claude",
+      spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
+    });
+    assert.equal(observed, null);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("adversarial: wrong tool or result nonce fails closed", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const inventory = buildHappyInventory(fixture);
+    const streamLines = [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", name: "mcp__global__canary", id: "1" }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "1", content: "wrong" }],
+        },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: JSON.stringify(inventory) }] },
+      }),
+    ];
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      expected: fixture.expected,
+      adapterId: "claude",
+      spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
+    });
+    assert.equal(observed, null);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("adversarial: structural-only report without content_nonces fails closed", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const expected = fixture.expected;
+    const observed = {
+      skills: expected.skills,
+      plugins: expected.plugins,
+      mcp_tools: expected.mcp_tools,
+      frameworks: expected.frameworks,
+      absent: [...ISOLATION_FORBIDDEN_CANARIES],
+    };
+    assert.equal(
+      decideContextIsolationCapability({ expected, observed }),
+      null
+    );
+    const validation = validateIsolationObservation({ expected, observed });
+    assert.equal(validation.ok, false);
+    assert.ok(validation.errors.some((e) => /content_nonces/.test(e)));
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("adversarial: partial absent list fails closed without repair", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const expected = fixture.expected;
+    const observed = {
+      skills: expected.skills,
+      plugins: expected.plugins,
+      mcp_tools: expected.mcp_tools,
+      frameworks: expected.frameworks,
+      absent: ["global.canary-skill"],
+      content_nonces: { ...expected.nonces },
+    };
+    assert.equal(
+      decideContextIsolationCapability({ expected, observed }),
+      null
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("detectClaudeUserMcpConfigFormat returns claude.json when probe confirms", () => {
+  const format = detectClaudeUserMcpConfigFormat({
+    spawnSyncFn: (cmd, args, opts) => {
+      const joined = [cmd, ...(args || [])].join(" ");
+      const home = opts?.env?.HOME || "";
+      if (!joined.includes("mcp list")) {
+        return { status: 1, stdout: "", stderr: "fail" };
+      }
+      if (home.includes("tu-claude-json-home")) {
+        return { status: 0, stdout: "format-probe-claude: ok\n", stderr: "" };
+      }
+      if (home.includes("tu-mcp-json-home")) {
+        return { status: 0, stdout: "No MCP servers configured\n", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "fail" };
+    },
+  });
+  assert.equal(format, "claude.json");
+});
+
+test("detectClaudeUserMcpConfigFormat fails closed on format uncertainty", () => {
+  const format = detectClaudeUserMcpConfigFormat({
+    spawnSyncFn: () => ({
+      status: 0,
+      stdout: "format-probe-claude: ok\nformat-probe-mcp: ok\n",
+      stderr: "",
+    }),
+  });
+  assert.equal(format, null);
 });
 
 test("skipped live probe fails closed with null isolation token", () => {
@@ -264,6 +559,12 @@ test("malformed skipped or partial observation withholds isolation token", () =>
     plugins: ["capsule.selected-plugin"],
     mcp_tools: ["mcp__selected__lookup"],
     frameworks: ["capsule.selected-framework"],
+    nonces: {
+      skill: "s1",
+      plugin: "p1",
+      framework: "f1",
+      mcp: "m1",
+    },
   };
   assert.equal(decideContextIsolationCapability({ expected, observed: null }), null);
   assert.equal(parseIsolationObservationJson("not-json"), null);
@@ -286,6 +587,7 @@ test("malformed skipped or partial observation withholds isolation token", () =>
         mcp_tools: ["mcp__selected__lookup"],
         frameworks: ["capsule.selected-framework"],
         absent: ["global.canary-skill"],
+        content_nonces: expected.nonces,
       },
     }),
     null
@@ -347,6 +649,7 @@ test("Codex verify returns context_isolation null until full canary coverage", (
       prepared,
       capsule: fixture.capsule,
       globalHome: fixture.globalHome,
+      expected: fixture.expected,
       adapterId: "codex",
       spawnSyncFn: spawnSync,
     });
@@ -387,8 +690,6 @@ test("verifyHarness codex path verifies from isolation without broker", async ()
     assert.equal(unverified.context_isolation, null);
     assert.equal(unverified.command_broker, null);
 
-    // Even an injected token is stored only when runner returns it — live path
-    // itself must not mint a partial Codex token.
     const verified = await verifyHarness({
       adapter: {
         ...codexAdapter,

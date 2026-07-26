@@ -15,6 +15,8 @@ import {
   CAPSULE_LAUNCH_SCHEMA,
 } from "../../src/supervisor/start.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
+import { getAdapter } from "../../src/harness/registry.mjs";
+import { execFileSync } from "node:child_process";
 
 function withTempEnv(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-cap-desc-"));
@@ -181,7 +183,7 @@ test("prepareArgvFromDescriptor rebuilds Claude bare capsule from persisted desc
   });
 });
 
-test("prepareArgvFromDescriptor rebuilds Codex CODEX_HOME from persisted descriptor", async () => {
+test("prepareArgvFromDescriptor rebuilds Codex without isolation; isolation fails closed", async () => {
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
@@ -200,6 +202,8 @@ test("prepareArgvFromDescriptor rebuilds Codex CODEX_HOME from persisted descrip
     const promptPath = path.join(rd, "mailbox", "PROMPT.md");
     fs.mkdirSync(path.dirname(promptPath), { recursive: true });
     fs.writeFileSync(promptPath, "do work\n");
+
+    // Isolation required + forged Codex token → fail closed (declared null).
     persistLaunchDescriptor(
       run.runId,
       buildLaunchDescriptor({
@@ -213,23 +217,68 @@ test("prepareArgvFromDescriptor rebuilds Codex CODEX_HOME from persisted descrip
         harnessRequirements: { context_isolation: CONTEXT_ISOLATION_CAPABILITY },
         harnessVerification: {
           status: "verified",
+          adapter: "codex",
+          cli_version: "0.145.0",
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
         specialist: { id: "research.hugo", version: "0.1.0" },
       })
     );
-
-    const prepared = prepareArgvFromDescriptor(
-      loadAuthoritativeLaunchDescriptor(run.runId)
+    assert.throws(
+      () => prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(run.runId)),
+      /HARNESS_CONTEXT_ISOLATION_UNVERIFIED|BROKER_VERIFY_FAILED/
     );
-    assert.equal(prepared.argv.includes("--strict-config"), true);
-    assert.equal(prepared.env.CODEX_HOME, capsule.codexHome);
-    assert.ok(
-      prepared.argv.includes(`CODEX_HOME=${capsule.codexHome}`) ||
-        prepared.argv.some((a) => a === `CODEX_HOME=${capsule.codexHome}`) ||
-        (prepared.argv[0] === "env" &&
-          prepared.argv.some((a) => a === `CODEX_HOME=${capsule.codexHome}`))
+  });
+});
+
+test("Claude verification cannot be reused under Codex runtime override", async () => {
+  await withTempEnv(async () => {
+    const run = createRun({
+      cwd: "/tmp",
+      role: "specialist:hugo",
+      parent: { cli: "team-up", attach: "manual" },
+      worker: { cli: "claude", model: "m1" },
+      prompt: "hi",
+    });
+    const rd = runDir(run.runId);
+    const capsule = materializeMiniCapsule(rd);
+    const capsuleLaunch = buildCapsuleLaunchRecord({
+      runRoot: rd,
+      capsule,
+      env: process.env,
+    });
+    const promptPath = path.join(rd, "mailbox", "PROMPT.md");
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, "do work\n");
+    const claudeVersion = getAdapter("claude").version({ execFileSync });
+    persistLaunchDescriptor(
+      run.runId,
+      buildLaunchDescriptor({
+        cli: "claude",
+        model: "m1",
+        promptPath,
+        contextDir: path.join(rd, "context"),
+        project: "/tmp",
+        permissions: { filesystem: "none", writes: false, network: false, commands: [] },
+        callType: "consult",
+        harnessRequirements: { context_isolation: CONTEXT_ISOLATION_CAPABILITY },
+        harnessVerification: {
+          status: "verified",
+          adapter: "claude",
+          cli_version: claudeVersion,
+          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+        },
+        capsuleLaunch,
+        specialist: { id: "research.hugo", version: "0.1.0" },
+      })
+    );
+    assert.throws(
+      () =>
+        prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(run.runId), {
+          runtimeOverride: { cli: "codex", model: "cx" },
+        }),
+      /HARNESS_VERIFICATION_ADAPTER|HARNESS_CONTEXT_ISOLATION|BROKER_VERIFY/
     );
   });
 });
@@ -316,9 +365,278 @@ test("missing or corrupt capsule launch data fails closed", async () => {
       () =>
         reconstructCapsuleFromLaunchRecord({
           ...capsuleLaunch,
+          authoritative_effective_path: capsule.effectivePath,
+          authoritative_content_manifest_path: null,
           effective_checksum: "sha256:nope",
         }),
       /CAPSULE_LAUNCH_CHECKSUM/
     );
+  });
+});
+
+test("reconstruction fails closed when selected SKILL.md content is mutated", async () => {
+  await withTempEnv(async () => {
+    const run = createRun({
+      cwd: "/tmp",
+      role: "specialist:hugo",
+      parent: { cli: "team-up", attach: "manual" },
+      worker: { cli: "claude", model: "m1" },
+      prompt: "hi",
+    });
+    const rd = runDir(run.runId);
+    const capsule = materializeMiniCapsule(rd);
+    const capsuleLaunch = buildCapsuleLaunchRecord({
+      runRoot: rd,
+      capsule,
+      env: process.env,
+    });
+    const promptPath = path.join(rd, "mailbox", "PROMPT.md");
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, "do work\n");
+    persistLaunchDescriptor(
+      run.runId,
+      buildLaunchDescriptor({
+        cli: "claude",
+        model: "m1",
+        promptPath,
+        contextDir: path.join(rd, "context"),
+        project: "/tmp",
+        permissions: { filesystem: "none", writes: false, network: false, commands: [] },
+        callType: "consult",
+        harnessRequirements: { context_isolation: CONTEXT_ISOLATION_CAPABILITY },
+        harnessVerification: {
+          status: "verified",
+          adapter: "claude",
+          cli_version: "2.1.220",
+          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+        },
+        capsuleLaunch,
+        specialist: { id: "research.hugo", version: "0.1.0" },
+      })
+    );
+
+    const skillMd = path.join(
+      rd, "context", "skills", "capsule.selected-skill", "SKILL.md"
+    );
+    fs.writeFileSync(skillMd, "# skill\nMUTATED\n");
+
+    assert.throws(
+      () => prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(run.runId)),
+      /CONTENT_MANIFEST_CHECKSUM|CAPSULE_LAUNCH/
+    );
+  });
+});
+
+test("reconstruction fails closed when selected skill root is deleted (no recreate)", async () => {
+  await withTempEnv(async () => {
+    const run = createRun({
+      cwd: "/tmp",
+      role: "specialist:hugo",
+      parent: { cli: "team-up", attach: "manual" },
+      worker: { cli: "claude", model: "m1" },
+      prompt: "hi",
+    });
+    const rd = runDir(run.runId);
+    const capsule = materializeMiniCapsule(rd);
+    const capsuleLaunch = buildCapsuleLaunchRecord({
+      runRoot: rd,
+      capsule,
+      env: process.env,
+    });
+    const promptPath = path.join(rd, "mailbox", "PROMPT.md");
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, "do work\n");
+    persistLaunchDescriptor(
+      run.runId,
+      buildLaunchDescriptor({
+        cli: "claude",
+        model: "m1",
+        promptPath,
+        contextDir: path.join(rd, "context"),
+        project: "/tmp",
+        permissions: { filesystem: "none", writes: false, network: false, commands: [] },
+        callType: "consult",
+        harnessRequirements: { context_isolation: CONTEXT_ISOLATION_CAPABILITY },
+        harnessVerification: {
+          status: "verified",
+          adapter: "claude",
+          cli_version: "2.1.220",
+          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+        },
+        capsuleLaunch,
+        specialist: { id: "research.hugo", version: "0.1.0" },
+      })
+    );
+
+    const skillRoot = path.join(rd, "context", "skills");
+    fs.rmSync(skillRoot, { recursive: true, force: true });
+
+    assert.throws(
+      () => prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(run.runId)),
+      /CONTENT_MANIFEST_PATH_MISSING|CAPSULE_LAUNCH_PATH_MISSING/
+    );
+    assert.equal(fs.existsSync(skillRoot), false, "must not recreate missing skill root");
+  });
+});
+
+test("reconstruction never falls back to worker-writable EFFECTIVE_CAPABILITIES", async () => {
+  await withTempEnv(async (home) => {
+    const run = createRun({
+      cwd: "/tmp",
+      role: "specialist:hugo",
+      parent: { cli: "team-up", attach: "manual" },
+      worker: { cli: "claude", model: "m1" },
+      prompt: "hi",
+    });
+    const rd = runDir(run.runId);
+    const capsule = materializeMiniCapsule(rd);
+    const capsuleLaunch = buildCapsuleLaunchRecord({
+      runRoot: rd,
+      capsule,
+      env: process.env,
+    });
+    const promptPath = path.join(rd, "mailbox", "PROMPT.md");
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, "do work\n");
+    persistLaunchDescriptor(
+      run.runId,
+      buildLaunchDescriptor({
+        cli: "claude",
+        model: "m1",
+        promptPath,
+        contextDir: path.join(rd, "context"),
+        project: "/tmp",
+        permissions: { filesystem: "none", writes: false, network: false, commands: [] },
+        callType: "consult",
+        harnessRequirements: { context_isolation: CONTEXT_ISOLATION_CAPABILITY },
+        harnessVerification: {
+          status: "verified",
+          adapter: "claude",
+          cli_version: "2.1.220",
+          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+        },
+        capsuleLaunch,
+        specialist: { id: "research.hugo", version: "0.1.0" },
+      })
+    );
+
+    const authEffective = path.join(
+      home, "launch-descriptors", run.runId, "EFFECTIVE_CAPABILITIES.json"
+    );
+    fs.chmodSync(authEffective, 0o644);
+    fs.rmSync(authEffective, { force: true });
+
+    // Worker-writable copy still present and valid — must still fail closed.
+    assert.equal(fs.existsSync(path.join(rd, "EFFECTIVE_CAPABILITIES.json")), true);
+    assert.throws(
+      () => prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(run.runId)),
+      /CAPSULE_LAUNCH_EFFECTIVE_MISSING|CONTENT_MANIFEST/
+    );
+  });
+});
+
+test("reconstruction fails closed when unlisted file is added under skill root", async () => {
+  await withTempEnv(async () => {
+    const run = createRun({
+      cwd: "/tmp",
+      role: "specialist:hugo",
+      parent: { cli: "team-up", attach: "manual" },
+      worker: { cli: "claude", model: "m1" },
+      prompt: "hi",
+    });
+    const rd = runDir(run.runId);
+    const capsule = materializeMiniCapsule(rd);
+    const capsuleLaunch = buildCapsuleLaunchRecord({
+      runRoot: rd,
+      capsule,
+      env: process.env,
+    });
+    const promptPath = path.join(rd, "mailbox", "PROMPT.md");
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, "do work\n");
+    const claudeVersion = getAdapter("claude").version({ execFileSync });
+    persistLaunchDescriptor(
+      run.runId,
+      buildLaunchDescriptor({
+        cli: "claude",
+        model: "m1",
+        promptPath,
+        contextDir: path.join(rd, "context"),
+        project: "/tmp",
+        permissions: { filesystem: "none", writes: false, network: false, commands: [] },
+        callType: "consult",
+        harnessRequirements: { context_isolation: CONTEXT_ISOLATION_CAPABILITY },
+        harnessVerification: {
+          status: "verified",
+          adapter: "claude",
+          cli_version: claudeVersion,
+          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+        },
+        capsuleLaunch,
+        specialist: { id: "research.hugo", version: "0.1.0" },
+      })
+    );
+
+    const evil = path.join(rd, "context", "skills", "evil", "SKILL.md");
+    fs.mkdirSync(path.dirname(evil), { recursive: true });
+    fs.writeFileSync(evil, "# evil injected\n");
+
+    assert.throws(
+      () => prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(run.runId)),
+      /CONTENT_MANIFEST_UNEXPECTED_FILE/
+    );
+  });
+});
+
+test("exact unmodified reconstruction succeeds with content manifest", async () => {
+  await withTempEnv(async () => {
+    const run = createRun({
+      cwd: "/tmp",
+      role: "specialist:hugo",
+      parent: { cli: "team-up", attach: "manual" },
+      worker: { cli: "claude", model: "m1" },
+      prompt: "hi",
+    });
+    const rd = runDir(run.runId);
+    const capsule = materializeMiniCapsule(rd);
+    const capsuleLaunch = buildCapsuleLaunchRecord({
+      runRoot: rd,
+      capsule,
+      env: process.env,
+    });
+    assert.equal(capsuleLaunch.content_manifest?.schema, "team-up.capsule-content/v1");
+    assert.ok(capsuleLaunch.content_root_checksum?.startsWith("sha256:"));
+    assert.ok(capsuleLaunch.content_manifest.files.length >= 4);
+
+    const promptPath = path.join(rd, "mailbox", "PROMPT.md");
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, "do work\n");
+    const claudeVersion = getAdapter("claude").version({ execFileSync });
+    persistLaunchDescriptor(
+      run.runId,
+      buildLaunchDescriptor({
+        cli: "claude",
+        model: "m1",
+        promptPath,
+        contextDir: path.join(rd, "context"),
+        project: "/tmp",
+        permissions: { filesystem: "none", writes: false, network: false, commands: [] },
+        callType: "consult",
+        harnessRequirements: { context_isolation: CONTEXT_ISOLATION_CAPABILITY },
+        harnessVerification: {
+          status: "verified",
+          adapter: "claude",
+          cli_version: claudeVersion,
+          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+        },
+        capsuleLaunch,
+        specialist: { id: "research.hugo", version: "0.1.0" },
+      })
+    );
+
+    const prepared = prepareArgvFromDescriptor(
+      loadAuthoritativeLaunchDescriptor(run.runId)
+    );
+    assert.equal(prepared.argv.includes("--bare"), true);
   });
 });

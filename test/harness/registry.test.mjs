@@ -45,17 +45,83 @@ test("verified Claude advertises the versioned contract", () => {
   }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });
 
-test("Codex isolation is eligible only with a matching verification record", () => {
+test("Codex declared context_isolation null is an absolute deny", () => {
+  assert.equal(declaredHarnessCapabilities("codex").context_isolation, null);
   assert.equal(harnessCapabilities("codex", {
     verification: null,
   }).context_isolation, null);
+  // Even a forged/stale verified token must not pierce declared null.
   assert.equal(harnessCapabilities("codex", {
     verification: {
       status: "verified",
-      version: "0.145.0",
+      adapter: "codex",
+      cli_version: "0.145.0",
       context_isolation: "team-up.context-isolation/v1",
     },
-  }).context_isolation, "team-up.context-isolation/v1");
+  }).context_isolation, null);
+});
+
+test("Claude verification record cannot be reused under Codex runtime", () => {
+  assert.equal(harnessCapabilities("codex", {
+    verification: {
+      status: "verified",
+      adapter: "claude",
+      cli_version: "2.1.220",
+      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      command_broker: "team-up.command-broker/v1",
+    },
+  }).context_isolation, null);
+  assert.throws(() => prepareHarnessLaunch({
+    cli: "codex",
+    argv: ["codex", "exec", "x"],
+    runDir: "/run",
+    capsule: {
+      pluginDirs: [],
+      skillDirs: [],
+      codexHome: "/run/harness/home",
+      mcpConfig: { mcpServers: {} },
+    },
+    verification: {
+      status: "verified",
+      adapter: "claude",
+      cli_version: "2.1.220",
+      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+    },
+  }), /HARNESS_CONTEXT_ISOLATION_UNVERIFIED|HARNESS_VERIFICATION_ADAPTER/);
+});
+
+test("verification adapter/version mismatch fails closed", () => {
+  assert.equal(harnessCapabilities("claude", {
+    verification: {
+      status: "verified",
+      adapter: "claude",
+      cli_version: "2.1.219",
+      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+    },
+    requireExactVersion: "2.1.220",
+  }).context_isolation, null);
+  assert.equal(harnessCapabilities("claude", {
+    verification: {
+      status: "verified",
+      adapter: "claude",
+      cli_version: "2.1.220",
+      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+    },
+    requireExactVersion: "2.1.220",
+  }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
+});
+
+test("exact adapter and version match preserves verified Claude isolation", () => {
+  assert.equal(harnessCapabilities("claude", {
+    verification: {
+      status: "verified",
+      adapter: "claude",
+      cli_version: "2.1.220",
+      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      command_broker: "team-up.command-broker/v1",
+    },
+    requireExactVersion: "2.1.220",
+  }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });
 
 test("Cursor Hermes and OpenCode remain ineligible without adapters", () => {

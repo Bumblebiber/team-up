@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { loadState, saveState, setStatus } from "../runs/runs.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
-import { prepareHarnessLaunch } from "../harness/registry.mjs";
+import { prepareHarnessLaunch, getAdapter } from "../harness/registry.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
 import { launchDescriptorDir } from "../paths.mjs";
 import {
@@ -15,10 +15,16 @@ import {
   createAttempt,
   requireActiveLease,
 } from "./attempts.mjs";
+import {
+  buildCapsuleContentManifest,
+  verifyCapsuleContentManifest,
+  CONTENT_MANIFEST_SCHEMA,
+} from "../capabilities/content-manifest.mjs";
 
 export const LAUNCH_SCHEMA = "team-up.launch/v1";
 export const LAUNCH_REF_SCHEMA = "team-up.launch-ref/v1";
 export const CAPSULE_LAUNCH_SCHEMA = "team-up.capsule-launch/v1";
+export { CONTENT_MANIFEST_SCHEMA };
 
 function resolveCliPath(argv0) {
   if (!argv0) return null;
@@ -76,26 +82,37 @@ export function buildCapsuleLaunchRecord({ runRoot, capsule, env = process.env }
   }
   const effectiveBody = fs.readFileSync(effectivePath);
   const effectiveChecksum = descriptorChecksum(effectiveBody);
-  const authDir = launchDescriptorDir(
-    path.basename(path.resolve(runRoot)),
-    env
-  );
-  // Authoritative copy lives beside descriptor.json when runId is known later;
-  // checksum binds content regardless of worker-writable path mutations.
+  const pluginDirs = [...(capsule.pluginDirs ?? [])].map((p) => path.resolve(p));
+  const skillDirs = [...(capsule.skillDirs ?? [])].map((p) => path.resolve(p));
+  const frameworkDirs = [...(capsule.frameworkDirs ?? [])].map((p) => path.resolve(p));
+  const mcpConfig = capsule.mcpConfig ?? { mcpServers: {} };
+  const contentManifest = buildCapsuleContentManifest({
+    runRoot: path.resolve(runRoot),
+    skillDirs,
+    pluginDirs,
+    frameworkDirs,
+    mcpConfig,
+    effectivePath: path.resolve(effectivePath),
+  });
+  // Authoritative copies live beside descriptor.json when runId is known later;
+  // content manifest binds every selected materialized file (not just JSON meta).
   return {
     schema: CAPSULE_LAUNCH_SCHEMA,
     run_root: path.resolve(runRoot),
-    plugin_dirs: [...(capsule.pluginDirs ?? [])].map((p) => path.resolve(p)),
-    skill_dirs: [...(capsule.skillDirs ?? [])].map((p) => path.resolve(p)),
-    framework_dirs: [...(capsule.frameworkDirs ?? [])].map((p) => path.resolve(p)),
+    plugin_dirs: pluginDirs,
+    skill_dirs: skillDirs,
+    framework_dirs: frameworkDirs,
     codex_home: capsule.codexHome ? path.resolve(capsule.codexHome) : null,
-    mcp_config: capsule.mcpConfig ?? { mcpServers: {} },
+    mcp_config: mcpConfig,
     mcp_tool_names: [...(capsule.mcpToolNames ?? [])],
     mcp_tools_by_server: { ...(capsule.mcpToolsByServer ?? {}) },
     effective_path: path.resolve(effectivePath),
     effective_checksum: effectiveChecksum,
-    // Placeholder filled by persistLaunchDescriptor once runId is known.
+    content_manifest: contentManifest,
+    content_root_checksum: contentManifest.root_checksum,
+    // Placeholders filled by persistLaunchDescriptor once runId is known.
     authoritative_effective_path: null,
+    authoritative_content_manifest_path: null,
   };
 }
 
@@ -108,13 +125,10 @@ export function reconstructCapsuleFromLaunchRecord(record) {
     err.code = "CAPSULE_LAUNCH_SCHEMA";
     throw err;
   }
-  const effectivePath =
-    (record.authoritative_effective_path &&
-      fs.existsSync(record.authoritative_effective_path) &&
-      record.authoritative_effective_path) ||
-    record.effective_path;
+  // Authoritative effective record is mandatory — never fall back to worker copy.
+  const effectivePath = record.authoritative_effective_path;
   if (!effectivePath || !fs.existsSync(effectivePath)) {
-    const err = new Error("CAPSULE_LAUNCH_EFFECTIVE_MISSING: effective capabilities absent");
+    const err = new Error("CAPSULE_LAUNCH_EFFECTIVE_MISSING: authoritative effective capabilities absent");
     err.code = "CAPSULE_LAUNCH_EFFECTIVE_MISSING";
     throw err;
   }
@@ -133,24 +147,55 @@ export function reconstructCapsuleFromLaunchRecord(record) {
     err.code = "CAPSULE_LAUNCH_CORRUPT";
     throw err;
   }
-  for (const dir of [...(record.plugin_dirs ?? [])]) {
+
+  // Authoritative content manifest is mandatory.
+  let manifest = record.content_manifest;
+  if (record.authoritative_content_manifest_path) {
+    if (!fs.existsSync(record.authoritative_content_manifest_path)) {
+      const err = new Error("CONTENT_MANIFEST_MISSING: authoritative content manifest absent");
+      err.code = "CONTENT_MANIFEST_MISSING";
+      throw err;
+    }
+    try {
+      manifest = JSON.parse(
+        fs.readFileSync(record.authoritative_content_manifest_path, "utf8")
+      );
+    } catch {
+      const err = new Error("CONTENT_MANIFEST_CORRUPT: authoritative content manifest unreadable");
+      err.code = "CONTENT_MANIFEST_CORRUPT";
+      throw err;
+    }
+  }
+  if (!manifest) {
+    const err = new Error("CONTENT_MANIFEST_MISSING: content manifest required");
+    err.code = "CONTENT_MANIFEST_MISSING";
+    throw err;
+  }
+  if (
+    record.content_root_checksum &&
+    manifest.root_checksum !== record.content_root_checksum
+  ) {
+    const err = new Error("CONTENT_MANIFEST_ROOT_CHECKSUM: launch record root mismatch");
+    err.code = "CONTENT_MANIFEST_ROOT_CHECKSUM";
+    throw err;
+  }
+  verifyCapsuleContentManifest(manifest, {
+    skillDirs: record.skill_dirs ?? [],
+    pluginDirs: record.plugin_dirs ?? [],
+    frameworkDirs: record.framework_dirs ?? [],
+  });
+
+  // Selected roots/files must already exist — never mkdir missing selected roots.
+  for (const dir of [
+    ...(record.plugin_dirs ?? []),
+    ...(record.skill_dirs ?? []),
+    ...(record.framework_dirs ?? []),
+  ]) {
     if (!fs.existsSync(dir)) {
       const err = new Error(`CAPSULE_LAUNCH_PATH_MISSING: ${dir}`);
       err.code = "CAPSULE_LAUNCH_PATH_MISSING";
       throw err;
     }
-  }
-  // Skill/framework roots may be empty but must exist for --add-dir.
-  for (const dir of [
-    ...(record.skill_dirs ?? []),
-    ...(record.framework_dirs ?? []),
-  ]) {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-  }
-  if (record.codex_home) {
-    fs.mkdirSync(record.codex_home, { recursive: true });
   }
   return {
     pluginDirs: [...(record.plugin_dirs ?? [])],
@@ -162,6 +207,7 @@ export function reconstructCapsuleFromLaunchRecord(record) {
     mcpToolsByServer: { ...(record.mcp_tools_by_server ?? {}) },
     effective,
     effectivePath,
+    contentManifest: manifest,
   };
 }
 
@@ -252,6 +298,7 @@ export function persistLaunchDescriptor(runId, descriptor, env = process.env) {
       throw err;
     }
     const authEffective = path.join(dir, "EFFECTIVE_CAPABILITIES.json");
+    const authManifest = path.join(dir, "CONTENT_MANIFEST.json");
     const sourcePath = next.capsule_launch.effective_path;
     if (!sourcePath || !fs.existsSync(sourcePath)) {
       const err = new Error("CAPSULE_LAUNCH_EFFECTIVE_MISSING: cannot persist capsule");
@@ -265,10 +312,34 @@ export function persistLaunchDescriptor(runId, descriptor, env = process.env) {
       err.code = "CAPSULE_LAUNCH_CHECKSUM";
       throw err;
     }
+    if (!next.capsule_launch.content_manifest) {
+      const err = new Error("CONTENT_MANIFEST_MISSING: cannot persist capsule without content manifest");
+      err.code = "CONTENT_MANIFEST_MISSING";
+      throw err;
+    }
+    verifyCapsuleContentManifest(next.capsule_launch.content_manifest, {
+      skillDirs: next.capsule_launch.skill_dirs ?? [],
+      pluginDirs: next.capsule_launch.plugin_dirs ?? [],
+      frameworkDirs: next.capsule_launch.framework_dirs ?? [],
+    });
+    if (
+      next.capsule_launch.content_root_checksum !==
+      next.capsule_launch.content_manifest.root_checksum
+    ) {
+      const err = new Error("CONTENT_MANIFEST_ROOT_CHECKSUM: content changed before persist");
+      err.code = "CONTENT_MANIFEST_ROOT_CHECKSUM";
+      throw err;
+    }
     atomicWriteText(authEffective, body.toString("utf8"), 0o444);
+    atomicWriteText(
+      authManifest,
+      `${JSON.stringify(next.capsule_launch.content_manifest, null, 2)}\n`,
+      0o444
+    );
     next.capsule_launch = {
       ...next.capsule_launch,
       authoritative_effective_path: authEffective,
+      authoritative_content_manifest_path: authManifest,
     };
   }
 
@@ -419,23 +490,45 @@ export function prepareArgvFromDescriptor(
       err.code = "BROKER_INVALID";
       throw err;
     }
-    const verification =
-      descriptor.harness_verification ||
-      (brokerRequired || isolationRequired
-        ? {
-            status: "verified",
-            ...(brokerRequired
-              ? { command_broker: descriptor.harness_requirements.command_broker }
-              : {}),
-            ...(isolationRequired
-              ? {
-                  context_isolation:
-                    descriptor.harness_requirements.context_isolation,
-                }
-              : {}),
-            cli_version: "launch",
-          }
-        : null);
+    // Never synthesize a verification token from harness_requirements alone.
+    let verification = descriptor.harness_verification || null;
+    if (verification) {
+      if (verification.adapter && verification.adapter !== cli) {
+        const err = new Error(
+          `HARNESS_VERIFICATION_ADAPTER: descriptor adapter ${verification.adapter} != runtime ${cli}`
+        );
+        err.code = "HARNESS_VERIFICATION_ADAPTER";
+        throw err;
+      }
+    } else if (brokerRequired || isolationRequired) {
+      const err = new Error(
+        "HARNESS_VERIFICATION_MISSING: harness requirements set but harness_verification absent"
+      );
+      err.code = "HARNESS_VERIFICATION_MISSING";
+      throw err;
+    }
+
+    let requireExactVersion = verification?.cli_version || undefined;
+    if (verification?.cli_version) {
+      try {
+        const liveVersion = getAdapter(cli).version({
+          execFileSync,
+        });
+        if (liveVersion !== verification.cli_version) {
+          const err = new Error(
+            `HARNESS_VERIFICATION_VERSION: record ${verification.cli_version} != live ${liveVersion}`
+          );
+          err.code = "HARNESS_VERIFICATION_VERSION";
+          throw err;
+        }
+        requireExactVersion = liveVersion;
+      } catch (e) {
+        if (e.code === "HARNESS_VERIFICATION_VERSION") throw e;
+        // If live version cannot be detected, still bind to the recorded version.
+        requireExactVersion = verification.cli_version;
+      }
+    }
+
     let prepared;
     try {
       prepared = prepareHarnessLaunch({
@@ -453,6 +546,7 @@ export function prepareArgvFromDescriptor(
           : null,
         capsule,
         verification,
+        requireExactVersion,
       });
     } catch (e) {
       if (brokerRequired || isolationRequired) {

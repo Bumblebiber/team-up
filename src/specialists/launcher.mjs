@@ -29,6 +29,7 @@ import {
 import {
   defaultHarnessCapabilities,
   prepareHarnessLaunch,
+  getAdapter,
 } from "../harness/registry.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../harness/capabilities.mjs";
 import { loadAssignments } from "../capabilities/assignments.mjs";
@@ -398,6 +399,14 @@ export async function launch({
     env,
     verification: {
       status: "verified",
+      adapter: cell.cli,
+      cli_version: (() => {
+        try {
+          return getAdapter(cell.cli).version({ execFileSync });
+        } catch {
+          return null;
+        }
+      })(),
       command_broker: harnessCaps.command_broker,
       context_isolation: harnessCaps.context_isolation,
     },
@@ -479,6 +488,14 @@ export async function launch({
     harnessRequirements: requirements,
     harnessVerification: {
       status: "verified",
+      adapter: cell.cli,
+      cli_version: (() => {
+        try {
+          return getAdapter(cell.cli).version({ execFileSync });
+        } catch {
+          return null;
+        }
+      })(),
       command_broker: harnessCaps.command_broker,
       context_isolation: harnessCaps.context_isolation,
     },
