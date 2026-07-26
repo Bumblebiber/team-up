@@ -111,3 +111,119 @@ test("unselected pool package does not change capsule bytes", () => {
   assert.equal(fs.existsSync(path.join(firstRoot, "context", "skills", "u")), false);
   void unselected;
 });
+
+test("EFFECTIVE_CAPABILITIES records prompt_token_contribution and mcp_schema_bytes", () => {
+  const selected = fs.mkdtempSync(path.join(os.tmpdir(), "tu-pkg-"));
+  const skillBody = "# Selected skill with measurable prompt weight\n";
+  fs.mkdirSync(path.join(selected, "skills", "s"), { recursive: true });
+  fs.writeFileSync(path.join(selected, "skills", "s", "SKILL.md"), skillBody);
+  const mcpDoc = {
+    mcpServers: {
+      selected: { type: "stdio", command: "node", args: ["s.mjs"] },
+    },
+    tools: ["lookup"],
+  };
+  const mcpBody = `${JSON.stringify(mcpDoc, null, 2)}\n`;
+  fs.writeFileSync(path.join(selected, "mcp.json"), mcpBody);
+  fs.writeFileSync(path.join(selected, "capability.json"), JSON.stringify({
+    schema_version: 1, id: "sel", version: "1", display_name: "Sel",
+    provides: { skills: ["skills/s/SKILL.md"], mcps: ["mcp.json"] },
+    permissions: { network: false, commands: [] },
+  }));
+
+  const inert = fs.mkdtempSync(path.join(os.tmpdir(), "tu-pkg-"));
+  fs.mkdirSync(path.join(inert, "skills", "inert"), { recursive: true });
+  fs.writeFileSync(path.join(inert, "skills", "inert", "SKILL.md"), "# INERT HUGE ".repeat(200));
+  fs.writeFileSync(path.join(inert, "mcp-inert.json"), JSON.stringify({
+    mcpServers: { inert: { type: "stdio", command: "node", args: ["i.mjs"] } },
+    tools: ["noop"],
+  }));
+  fs.writeFileSync(path.join(inert, "capability.json"), JSON.stringify({
+    schema_version: 1, id: "inert", version: "1", display_name: "Inert",
+    provides: {
+      skills: ["skills/inert/SKILL.md"],
+      mcps: ["mcp-inert.json"],
+    },
+    permissions: { network: false, commands: [] },
+  }));
+
+  const packages = [{
+    package: "sel@1", id: "sel", version: "1", checksum: "sha256:s",
+    packageDir: selected, reason: "target:all",
+  }];
+  const firstRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-"));
+  const first = materializeCapabilityCapsule({
+    runRoot: firstRoot, specialistId: "research.hugo", packages,
+  });
+  assert.ok(first.packages[0].prompt_token_contribution > 0);
+  assert.ok(first.packages[0].mcp_schema_bytes > 0);
+  assert.equal(
+    first.totals.prompt_token_contribution,
+    first.packages[0].prompt_token_contribution
+  );
+  assert.equal(first.totals.mcp_schema_bytes, first.packages[0].mcp_schema_bytes);
+  assert.equal(
+    first.packages[0].prompt_token_contribution,
+    Math.ceil(Buffer.byteLength(skillBody) / 4)
+  );
+  assert.equal(first.packages[0].mcp_schema_bytes, Buffer.byteLength(mcpBody));
+
+  // Inert (unselected) pool package must not change either metric.
+  const still = materializeCapabilityCapsule({
+    runRoot: fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-")),
+    specialistId: "research.hugo",
+    packages,
+  });
+  assert.equal(
+    still.totals.prompt_token_contribution,
+    first.totals.prompt_token_contribution
+  );
+  assert.equal(still.totals.mcp_schema_bytes, first.totals.mcp_schema_bytes);
+  void inert;
+
+  // Exclusion removes both contributions on the next capsule.
+  const both = [
+    ...packages,
+    {
+      package: "extra@1", id: "extra", version: "1", checksum: "sha256:e",
+      packageDir: (() => {
+        const d = fs.mkdtempSync(path.join(os.tmpdir(), "tu-pkg-"));
+        fs.mkdirSync(path.join(d, "skills", "extra"), { recursive: true });
+        fs.writeFileSync(path.join(d, "skills", "extra", "SKILL.md"), "# EXTRA WEIGHT\n");
+        fs.writeFileSync(path.join(d, "mcp.json"), JSON.stringify({
+          mcpServers: { extra: { type: "stdio", command: "node", args: ["e.mjs"] } },
+          tools: ["x"],
+        }));
+        fs.writeFileSync(path.join(d, "capability.json"), JSON.stringify({
+          schema_version: 1, id: "extra", version: "1", display_name: "Extra",
+          provides: { skills: ["skills/extra/SKILL.md"], mcps: ["mcp.json"] },
+          permissions: { network: false, commands: [] },
+        }));
+        return d;
+      })(),
+      reason: "target:all",
+    },
+  ];
+  const withExtra = materializeCapabilityCapsule({
+    runRoot: fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-")),
+    specialistId: "research.hugo",
+    packages: both,
+  });
+  assert.ok(
+    withExtra.totals.prompt_token_contribution >
+      first.totals.prompt_token_contribution
+  );
+  assert.ok(withExtra.totals.mcp_schema_bytes > first.totals.mcp_schema_bytes);
+
+  const excluded = materializeCapabilityCapsule({
+    runRoot: fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-")),
+    specialistId: "research.hugo",
+    packages,
+    exclusions: [{ package: "extra@1", reason: "exclude:research.hugo" }],
+  });
+  assert.equal(
+    excluded.totals.prompt_token_contribution,
+    first.totals.prompt_token_contribution
+  );
+  assert.equal(excluded.totals.mcp_schema_bytes, first.totals.mcp_schema_bytes);
+});

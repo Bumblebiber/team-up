@@ -13,8 +13,10 @@ import {
   collectLaunchIsolationObservation,
   collectLiveIsolationObservation,
   decideContextIsolationCapability,
+  executeConfiguredMcpCanaryTool,
   parseIsolationObservationJson,
   observeContextIsolation,
+  ISOLATION_FORBIDDEN_CANARIES,
 } from "../../src/harness/isolation-canary.mjs";
 
 test("canary fixture exposes selected set and keeps forbidden canaries out of capsule", () => {
@@ -26,8 +28,13 @@ test("canary fixture exposes selected set and keeps forbidden canaries out of ca
       mcp_tools: ["mcp__selected__lookup"],
       frameworks: ["capsule.selected-framework"],
     });
+    assert.equal(fixture.codexExpected, null);
     assert.equal(
-      fs.existsSync(path.join(fixture.globalHome, ".claude", "skills", "global.canary-skill", "SKILL.md")),
+      fs.existsSync(path.join(fixture.ambientProject, ".mcp.json")),
+      true
+    );
+    assert.equal(
+      fs.existsSync(path.join(fixture.globalHome, ".mcp.json")),
       true
     );
     assert.equal(
@@ -42,6 +49,21 @@ test("canary fixture exposes selected set and keeps forbidden canaries out of ca
       fs.existsSync(path.join(fixture.runRoot, "harness", "mcp", "excluded")),
       false
     );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("selected MCP canary tool executes successfully", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const server = fixture.capsule.mcpConfig.mcpServers.selected;
+    const result = executeConfiguredMcpCanaryTool(server, {
+      spawnSyncFn: spawnSync,
+      toolName: "lookup",
+    });
+    assert.ok(result);
+    assert.equal(result.tool, "lookup");
   } finally {
     fixture.cleanup();
   }
@@ -67,7 +89,6 @@ test("launch-surface observation alone does not grant isolation without live pro
       adapterId: "claude",
     });
     assert.ok(surface);
-    // No spawnSyncFn → live observation null → no token from observe path.
     const result = observeContextIsolation({
       adapter: claudeAdapter,
       adapterId: "claude",
@@ -76,6 +97,46 @@ test("launch-surface observation alone does not grant isolation without live pro
     });
     assert.equal(result.context_isolation, null);
     assert.match(result.error || "", /missing|skipped|malformed/i);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("disk or config-only Claude observation does not grant isolation token", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = claudeAdapter.prepareLaunch({
+      argv: ["claude", "--print", "probe"],
+      runDir: fixture.runRoot,
+      capsule: fixture.capsule,
+      writeFileSync: (file, text) => {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+      },
+      mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
+      chmodSync: () => {},
+    });
+    // spawnSync that only answers plugin list — no mcp list control, no model turn
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      ambientProject: fixture.ambientProject,
+      adapterId: "claude",
+      spawnSyncFn: (cmd, args) => {
+        const joined = [cmd, ...(args || [])].join(" ");
+        if (joined.includes("plugin list")) {
+          return {
+            status: 0,
+            stdout: "Session-only plugins\n❯ capsule.selected-plugin@local\n",
+            stderr: "",
+          };
+        }
+        // Deliberately fail mcp list / model turn
+        return { status: 1, stdout: "", stderr: "skip" };
+      },
+    });
+    assert.equal(observed, null);
   } finally {
     fixture.cleanup();
   }
@@ -95,18 +156,92 @@ test("exact live Claude observation grants isolation capability token", () => {
       mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
       chmodSync: () => {},
     });
+    const inventory = {
+      skills: ["capsule.selected-skill"],
+      plugins: ["capsule.selected-plugin"],
+      mcp_tools: ["mcp__selected__lookup"],
+      frameworks: ["capsule.selected-framework"],
+      absent: [...ISOLATION_FORBIDDEN_CANARIES],
+    };
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
       globalHome: fixture.globalHome,
+      ambientProject: fixture.ambientProject,
       adapterId: "claude",
-      spawnSyncFn: spawnSync,
+      spawnSyncFn: (cmd, args, opts) => {
+        const joined = [cmd, ...(args || [])].join(" ");
+        // Real MCP canary tool execution uses node -e driver.
+        if (joined.includes("-e") && String(args?.[0]) === "-e") {
+          return spawnSync(cmd, args, opts);
+        }
+        if (joined.includes("mcp list")) {
+          return {
+            status: 0,
+            stdout: "Checking MCP server health…\n\nglobal: node canary - ✔ Connected\n",
+            stderr: "",
+          };
+        }
+        if (joined.includes("plugin list")) {
+          return {
+            status: 0,
+            stdout: "Session-only plugins\n❯ capsule.selected-plugin@local\n",
+            stderr: "",
+          };
+        }
+        if (joined.includes("--print") || joined.includes("isolation canary")) {
+          return {
+            status: 0,
+            stdout: `${JSON.stringify(inventory)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: `unexpected: ${joined}` };
+      },
     });
-    assert.ok(observed, "live observation should succeed with real claude plugin list");
+    assert.ok(observed, "live observation should succeed with full harness probes");
     assert.equal(
       decideContextIsolationCapability({ expected: fixture.expected, observed }),
       CONTEXT_ISOLATION_CAPABILITY
     );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("global MCP positive control requires claude mcp list visibility", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = claudeAdapter.prepareLaunch({
+      argv: ["claude", "--print", "probe"],
+      runDir: fixture.runRoot,
+      capsule: fixture.capsule,
+      writeFileSync: (file, text) => {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+      },
+      mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
+      chmodSync: () => {},
+    });
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      ambientProject: fixture.ambientProject,
+      adapterId: "claude",
+      spawnSyncFn: (cmd, args, opts) => {
+        const joined = [cmd, ...(args || [])].join(" ");
+        if (joined.includes("-e") && String(args?.[0]) === "-e") {
+          return spawnSync(cmd, args, opts);
+        }
+        if (joined.includes("mcp list")) {
+          // Vacuous control: CLI sees nothing (old bug)
+          return { status: 0, stdout: "No MCP servers configured\n", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+    assert.equal(observed, null);
   } finally {
     fixture.cleanup();
   }
@@ -199,7 +334,7 @@ test("verifyHarness stores context_isolation only on exact runner token", async 
   }
 });
 
-test("Codex live observation grants isolation when capsule matches", () => {
+test("Codex verify returns context_isolation null until full canary coverage", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = codexAdapter.prepareLaunch({
@@ -215,19 +350,16 @@ test("Codex live observation grants isolation when capsule matches", () => {
       adapterId: "codex",
       spawnSyncFn: spawnSync,
     });
-    assert.ok(observed);
-    assert.equal(
-      decideContextIsolationCapability({
-        expected: fixture.codexExpected,
-        observed,
-      }),
-      CONTEXT_ISOLATION_CAPABILITY
-    );
+    assert.equal(observed, null);
+    assert.equal(codexAdapter.capabilities.context_isolation, null);
+    const result = observeContextIsolation({
+      adapter: codexAdapter,
+      adapterId: "codex",
+      spawnSyncFn: spawnSync,
+    });
+    assert.equal(result.context_isolation, null);
+    assert.match(result.error || "", /incomplete|partial|null/i);
     assert.equal(prepared.env.CODEX_HOME, fixture.capsule.codexHome);
-    assert.equal(
-      fs.existsSync(path.join(fixture.capsule.codexHome, "skills", "global.canary-skill")),
-      false
-    );
   } finally {
     fixture.cleanup();
   }
@@ -255,6 +387,8 @@ test("verifyHarness codex path verifies from isolation without broker", async ()
     assert.equal(unverified.context_isolation, null);
     assert.equal(unverified.command_broker, null);
 
+    // Even an injected token is stored only when runner returns it — live path
+    // itself must not mint a partial Codex token.
     const verified = await verifyHarness({
       adapter: {
         ...codexAdapter,
@@ -266,14 +400,15 @@ test("verifyHarness codex path verifies from isolation without broker", async ()
         async () => ({
           native_shell: "unverified",
           broker_tool: "unverified",
-          isolation_status: "passed",
-          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          isolation_status: "unverified",
+          context_isolation: null,
+          error: "codex context isolation canary incomplete",
         }),
         { execFileSync: () => "0.145.1" }
       ),
     });
-    assert.equal(verified.status, "verified");
-    assert.equal(verified.context_isolation, CONTEXT_ISOLATION_CAPABILITY);
+    assert.equal(verified.status, "unverified");
+    assert.equal(verified.context_isolation, null);
     assert.equal(verified.command_broker, null);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

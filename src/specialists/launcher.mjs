@@ -41,6 +41,7 @@ import {
 import { atomicWriteJson } from "../json-store.mjs";
 import {
   buildLaunchDescriptor,
+  buildCapsuleLaunchRecord,
   persistLaunchDescriptor,
   startFromLaunchDescriptor,
   prepareArgvFromDescriptor,
@@ -349,6 +350,13 @@ export async function launch({
       effective,
       ...collectCapsuleMcpTools(effective, runDir(state.runId)),
     };
+    for (const dir of [
+      ...capsule.skillDirs,
+      ...capsule.frameworkDirs,
+      capsule.codexHome,
+    ]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
   } catch (e) {
     setStatus(state.runId, "failed");
     throw e;
@@ -441,6 +449,14 @@ export async function launch({
     enforcement: "best_effort",
   });
 
+  const capsuleLaunch = buildCapsuleLaunchRecord({
+    runRoot: runPath,
+    capsule: {
+      ...capsule,
+      effectivePath: path.join(runPath, "EFFECTIVE_CAPABILITIES.json"),
+    },
+    env,
+  });
   const descriptor = buildLaunchDescriptor({
     cli: cell.cli,
     model: cell.model,
@@ -461,6 +477,12 @@ export async function launch({
         }
       : null,
     harnessRequirements: requirements,
+    harnessVerification: {
+      status: "verified",
+      command_broker: harnessCaps.command_broker,
+      context_isolation: harnessCaps.context_isolation,
+    },
+    capsuleLaunch,
     specialistProfile: profileResult.profile,
     limitWindows,
     timeoutSeconds: timeoutSec,

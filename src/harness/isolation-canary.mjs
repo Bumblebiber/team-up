@@ -1,8 +1,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync as realSpawnSync } from "node:child_process";
 import { materializeCapabilityCapsule, buildStrictMcpConfig } from "../capabilities/capsule.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "./capabilities.mjs";
+
+const CANARY_MCP_SERVER = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "canary-mcp-server.mjs"
+);
+const CANARY_TOOL_RESULT = "team-up-canary-ok";
 
 export const ISOLATION_FORBIDDEN_CANARIES = Object.freeze([
   "global.canary-skill",
@@ -75,13 +83,18 @@ function writePackage(root, {
   }
   for (const mcp of mcps) {
     const rel = `mcps/${mcp.server}/mcp.json`;
+    const toolName = mcp.tools[0] || "lookup";
     writeFile(path.join(pkg, rel), JSON.stringify({
       tools: mcp.tools,
       mcpServers: {
         [mcp.server]: {
           type: "stdio",
           command: process.execPath,
-          args: ["-e", `process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:1,result:{tools:[]}}))`],
+          args: [CANARY_MCP_SERVER],
+          env: {
+            TEAM_UP_CANARY_TOOL: toolName,
+            TEAM_UP_CANARY_RESULT: CANARY_TOOL_RESULT,
+          },
           tools: mcp.tools,
         },
       },
@@ -156,9 +169,11 @@ function collectCapsuleMcpTools(effective, runRoot) {
  */
 export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-canary-"))) {
   const globalHome = path.join(root, "global-home");
+  const ambientProject = path.join(root, "ambient-project");
   const pool = path.join(root, "pool");
   const runRoot = path.join(root, "run");
   fs.mkdirSync(runRoot, { recursive: true });
+  fs.mkdirSync(ambientProject, { recursive: true });
 
   writeFile(
     path.join(globalHome, ".claude", "skills", "global.canary-skill", "SKILL.md"),
@@ -190,19 +205,24 @@ export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.t
       },
     }, null, 2) + "\n"
   );
-  writeFile(
-    path.join(globalHome, ".claude", ".mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        global: {
-          type: "stdio",
-          command: process.execPath,
-          args: ["-e", "process.exit(0)"],
-          tools: ["canary"],
+  // Claude loads user-global MCP from <homedir>/.mcp.json (getpwuid), and
+  // project MCP from <cwd>/.mcp.json. Plant both formats; live control uses
+  // the project path which the CLI actually discovers under a fake HOME.
+  const globalMcpDoc = {
+    mcpServers: {
+      global: {
+        type: "stdio",
+        command: process.execPath,
+        args: [CANARY_MCP_SERVER],
+        env: {
+          TEAM_UP_CANARY_TOOL: "canary",
+          TEAM_UP_CANARY_RESULT: CANARY_TOOL_RESULT,
         },
       },
-    }, null, 2) + "\n"
-  );
+    },
+  };
+  writeFile(path.join(globalHome, ".mcp.json"), JSON.stringify(globalMcpDoc, null, 2) + "\n");
+  writeFile(path.join(ambientProject, ".mcp.json"), JSON.stringify(globalMcpDoc, null, 2) + "\n");
   writeFile(
     path.join(globalHome, ".codex", "skills", "global.canary-skill", "SKILL.md"),
     "# global.canary-skill\n"
@@ -262,16 +282,13 @@ export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.t
     mcp_tools: ["mcp__selected__lookup"],
     frameworks: ["capsule.selected-framework"],
   };
-  const codexExpected = {
-    skills: ["capsule.selected-skill"],
-    plugins: [],
-    mcp_tools: ["mcp__selected__lookup"],
-    frameworks: [],
-  };
+  // Codex remains incomplete by design until every capability type is wired.
+  const codexExpected = null;
 
   return {
     root,
     globalHome,
+    ambientProject,
     runRoot,
     capsule,
     expected,
@@ -416,132 +433,255 @@ function parseClaudePluginList(text, { sessionOnly = false } = {}) {
   return [...new Set(names)].sort();
 }
 
-function globalsPlanted(globalHome, adapterId) {
+function globalsPlanted(globalHome, adapterId, ambientProject = null) {
   if (adapterId === "codex") {
     return fs.existsSync(path.join(
       globalHome, ".codex", "skills", "global.canary-skill", "SKILL.md"
     ));
   }
+  const userMcp = path.join(globalHome, ".mcp.json");
+  const ambientMcp = ambientProject
+    ? path.join(ambientProject, ".mcp.json")
+    : null;
+  const mcpPlanted =
+    (fs.existsSync(userMcp) && /"global"\s*:/.test(fs.readFileSync(userMcp, "utf8")))
+    || (ambientMcp
+      && fs.existsSync(ambientMcp)
+      && /"global"\s*:/.test(fs.readFileSync(ambientMcp, "utf8")));
   return (
     fs.existsSync(path.join(globalHome, ".claude", "skills", "global.canary-skill", "SKILL.md"))
     && fs.existsSync(path.join(globalHome, ".claude", "plugins", "installed_plugins.json"))
-    && fs.existsSync(path.join(globalHome, ".claude", ".mcp.json"))
+    && mcpPlanted
   );
 }
 
 /**
- * Live observation against planted global canaries on HOME / global Codex home.
- * Returns null when any required live probe is missing/malformed/skipped.
+ * Speak MCP JSON-RPC to a configured stdio server and execute its canary tool.
+ * Returns null unless tools/list exposes the tool and tools/call succeeds.
+ */
+export function executeConfiguredMcpCanaryTool(server, {
+  spawnSyncFn = realSpawnSync,
+  toolName = "lookup",
+  expectedText = CANARY_TOOL_RESULT,
+} = {}) {
+  if (!server?.command) return null;
+  const args = Array.isArray(server.args) ? server.args : [];
+  const env = { ...process.env, ...(server.env || {}) };
+  const script = `
+const { spawn } = require('node:child_process');
+const child = spawn(${JSON.stringify(server.command)}, ${JSON.stringify(args)}, {
+  stdio: ['pipe', 'pipe', 'pipe'],
+  env: ${JSON.stringify(env)},
+});
+let buf = '';
+const pending = new Map();
+let nextId = 1;
+function send(method, params) {
+  const id = nextId++;
+  child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\\n');
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    setTimeout(() => reject(new Error('timeout ' + method)), 8000);
+  });
+}
+child.stdout.setEncoding('utf8');
+child.stdout.on('data', (chunk) => {
+  buf += chunk;
+  let idx;
+  while ((idx = buf.indexOf('\\n')) >= 0) {
+    const line = buf.slice(0, idx).trim();
+    buf = buf.slice(idx + 1);
+    if (!line) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.id != null && pending.has(msg.id)) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) reject(new Error(JSON.stringify(msg.error)));
+      else resolve(msg.result);
+    }
+  }
+});
+(async () => {
+  try {
+    await send('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'team-up-canary', version: '1.0.0' },
+    });
+    child.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', method: 'notifications/initialized',
+    }) + '\\n');
+    const listed = await send('tools/list', {});
+    const names = (listed.tools || []).map((t) => t.name);
+    if (!names.includes(${JSON.stringify(toolName)})) {
+      throw new Error('tool missing: ' + names.join(','));
+    }
+    const called = await send('tools/call', { name: ${JSON.stringify(toolName)}, arguments: {} });
+    const text = (called.content || []).map((c) => c.text || '').join('');
+    if (!text.includes(${JSON.stringify(expectedText)})) {
+      throw new Error('bad tool result: ' + text);
+    }
+    process.stdout.write('OK\\n');
+    child.kill('SIGTERM');
+    process.exit(0);
+  } catch (e) {
+    process.stderr.write(String(e && e.message || e));
+    child.kill('SIGTERM');
+    process.exit(1);
+  }
+})();
+`;
+  const run = spawnSyncFn(process.execPath, ["-e", script], {
+    encoding: "utf8",
+    timeout: 15_000,
+    env,
+  });
+  if (run.error || run.status !== 0) return null;
+  if (!String(run.stdout || "").includes("OK")) return null;
+  return { tool: toolName, result: expectedText };
+}
+
+function parseClaudeMcpList(text) {
+  const names = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const m = line.match(/^([A-Za-z0-9_.:-]+)\s*:/);
+    if (m) names.push(m[1]);
+  }
+  return [...new Set(names)].sort();
+}
+
+const INVENTORY_PROMPT = [
+  "You are an isolation canary. Reply with ONLY one JSON object and no prose.",
+  'Keys: skills, plugins, mcp_tools, frameworks, absent (all string arrays).',
+  "List only capabilities you can actually use in this session.",
+  "Include mcp__selected__lookup in mcp_tools if that tool is available.",
+  "absent must include every forbidden canary you cannot use.",
+].join(" ");
+
+/**
+ * Live observation against planted ambient canaries.
+ * Never grants from disk/config assertions alone. Codex is fail-closed (null)
+ * until full selected/global/unselected/excluded coverage exists.
  */
 export function collectLiveIsolationObservation({
   prepared,
   capsule,
   globalHome,
+  ambientProject = null,
   adapterId = "claude",
   spawnSyncFn,
 } = {}) {
   if (typeof spawnSyncFn !== "function") return null;
   if (!prepared?.argv || !capsule || !globalHome) return null;
-  if (!globalsPlanted(globalHome, adapterId)) return null;
+  // Codex: incomplete canary coverage — never grant a partial token.
+  if (adapterId === "codex") return null;
+  if (!globalsPlanted(globalHome, adapterId, ambientProject)) return null;
 
   const surface = collectLaunchIsolationObservation({ prepared, capsule, adapterId });
   if (!surface) return null;
 
   try {
-    if (adapterId === "claude") {
-      const pluginDirs = flagValues(prepared.argv, "--plugin-dir");
-      if (!pluginDirs.length) return null;
-
-      // Positive control: planted global must be visible without capsule isolation.
-      const control = spawnSyncFn("claude", ["plugin", "list"], {
-        encoding: "utf8",
-        timeout: 30_000,
-        env: { ...process.env, HOME: globalHome },
-      });
-      if (control.error || control.status !== 0) return null;
-      const controlPlugins = parseClaudePluginList(
-        `${control.stdout || ""}\n${control.stderr || ""}`,
-        { sessionOnly: false }
-      );
-      if (!controlPlugins.includes("global.canary-plugin")) return null;
-
-      const argv = [
-        "claude", "--bare",
-        ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
-        "plugin", "list",
-      ];
-      const run = spawnSyncFn(argv[0], argv.slice(1), {
-        encoding: "utf8",
-        timeout: 30_000,
-        env: { ...process.env, HOME: globalHome },
-      });
-      if (run.error || run.status !== 0) return null;
-      const text = `${run.stdout || ""}\n${run.stderr || ""}`;
-      // Only session-loaded plugins count — installed registry may still list globals.
-      const livePlugins = parseClaudePluginList(text, { sessionOnly: true });
-      if (!livePlugins.includes("capsule.selected-plugin")) return null;
-      if (livePlugins.includes("global.canary-plugin")) return null;
-
-      const addDirs = flagValues(prepared.argv, "--add-dir");
-      const skillRoots = addDirs.filter((d) => (capsule.skillDirs ?? []).includes(d));
-      const frameworkRoots = addDirs.filter((d) => (capsule.frameworkDirs ?? []).includes(d));
-      if (!skillRoots.length || !frameworkRoots.length) return null;
-      const skills = listChildDirs(skillRoots);
-      const frameworks = listChildDirs(frameworkRoots);
-      if (skills.includes("global.canary-skill")) return null;
-      if (frameworks.includes("pool.unselected-framework")) return null;
-
-      const mcpPath = flagValues(prepared.argv, "--mcp-config")[0];
-      const mcpDoc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
-      if (Object.keys(mcpDoc.mcpServers || {}).includes("global")) return null;
-      if (Object.keys(mcpDoc.mcpServers || {}).includes("excluded")) return null;
-      const homeMcp = JSON.parse(fs.readFileSync(
-        path.join(globalHome, ".claude", ".mcp.json"), "utf8"
-      ));
-      if (!homeMcp.mcpServers?.global) return null;
-      if (!prepared.argv.includes("--strict-mcp-config")) return null;
-
-      const present = new Set([
-        ...skills, ...livePlugins, ...surface.mcp_tools, ...frameworks,
-      ]);
-      return {
-        skills: [...skills].sort(),
-        plugins: livePlugins,
-        mcp_tools: [...surface.mcp_tools].sort(),
-        frameworks: [...frameworks].sort(),
-        absent: ISOLATION_FORBIDDEN_CANARIES.filter((name) => !present.has(name)),
-      };
+    const pluginDirs = flagValues(prepared.argv, "--plugin-dir");
+    if (!pluginDirs.length) return null;
+    const mcpPath = flagValues(prepared.argv, "--mcp-config")[0];
+    if (!mcpPath || !fs.existsSync(mcpPath)) return null;
+    if (!prepared.argv.includes("--strict-mcp-config") || !prepared.argv.includes("--bare")) {
+      return null;
     }
 
-    const env = { ...process.env, ...prepared.env, CODEX_HOME: capsule.codexHome };
-    const run = spawnSyncFn("codex", ["mcp", "list"], {
+    const ambientDir = ambientProject && fs.existsSync(ambientProject)
+      ? ambientProject
+      : null;
+    if (!ambientDir) return null;
+
+    // Positive control: planted ambient MCP must be visible to the real CLI.
+    const control = spawnSyncFn("claude", ["mcp", "list"], {
       encoding: "utf8",
       timeout: 30_000,
-      env,
+      cwd: ambientDir,
+      env: { ...process.env, HOME: globalHome },
     });
-    if (run.error) return null;
-    const text = `${run.stdout || ""}\n${run.stderr || ""}`;
-    const noServers = /No MCP servers configured/i.test(text);
-    if (typeof run.status === "number" && run.status !== 0 && !noServers) return null;
-    if (/mcp__global__canary|global\.canary|\[mcp_servers\.global\]/i.test(text)) {
-      return null;
+    if (control.error || control.status !== 0) return null;
+    const controlServers = parseClaudeMcpList(
+      `${control.stdout || ""}\n${control.stderr || ""}`
+    );
+    if (!controlServers.includes("global")) return null;
+
+    // Selected MCP must expose and execute its declared canary tool.
+    const selectedServer = capsule.mcpConfig?.mcpServers?.selected;
+    const toolExec = executeConfiguredMcpCanaryTool(selectedServer, {
+      spawnSyncFn,
+      toolName: "lookup",
+      expectedText: CANARY_TOOL_RESULT,
+    });
+    if (!toolExec) return null;
+
+    // Live plugin inventory under --bare (session-only).
+    const pluginArgv = [
+      "claude", "--bare",
+      ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
+      "plugin", "list",
+    ];
+    const pluginRun = spawnSyncFn(pluginArgv[0], pluginArgv.slice(1), {
+      encoding: "utf8",
+      timeout: 30_000,
+      env: { ...process.env, HOME: globalHome },
+    });
+    if (pluginRun.error || pluginRun.status !== 0) return null;
+    const livePlugins = parseClaudePluginList(
+      `${pluginRun.stdout || ""}\n${pluginRun.stderr || ""}`,
+      { sessionOnly: true }
+    );
+    if (!livePlugins.includes("capsule.selected-plugin")) return null;
+    if (livePlugins.includes("global.canary-plugin")) return null;
+
+    // Harness-visible inventory via --bare model turn. Auth/runtime failure → null.
+    const addDirs = [
+      ...flagValues(prepared.argv, "--add-dir"),
+    ];
+    const inventoryArgv = [
+      "claude",
+      "--bare",
+      "--strict-mcp-config",
+      "--mcp-config", mcpPath,
+      ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
+      ...addDirs.flatMap((dir) => ["--add-dir", dir]),
+      "--print",
+      "--output-format", "text",
+      INVENTORY_PROMPT,
+    ];
+    const inventoryRun = spawnSyncFn(inventoryArgv[0], inventoryArgv.slice(1), {
+      encoding: "utf8",
+      timeout: 120_000,
+      cwd: ambientDir,
+      env: { ...process.env, HOME: globalHome },
+    });
+    if (inventoryRun.error || inventoryRun.status !== 0) return null;
+    const inventoryText = `${inventoryRun.stdout || ""}\n${inventoryRun.stderr || ""}`;
+    if (/not logged in|please run \/login/i.test(inventoryText)) return null;
+    const observed = parseIsolationObservationJson(inventoryText);
+    if (!observed) return null;
+    if (!observed.mcp_tools.includes("mcp__selected__lookup")) return null;
+    if (observed.mcp_tools.includes("mcp__global__canary")) return null;
+    if (observed.mcp_tools.includes("mcp__excluded__lookup")) return null;
+    if (!observed.plugins.includes("capsule.selected-plugin")) return null;
+    if (observed.plugins.includes("global.canary-plugin")) return null;
+    // Ensure forbidden canaries are reported absent (and not present).
+    for (const name of ISOLATION_FORBIDDEN_CANARIES) {
+      if (!observed.absent.includes(name)) {
+        const present = new Set([
+          ...observed.skills,
+          ...observed.plugins,
+          ...observed.mcp_tools,
+          ...observed.frameworks,
+        ]);
+        if (present.has(name)) return null;
+        observed.absent.push(name);
+      }
     }
-    if (fs.existsSync(path.join(capsule.codexHome, "skills", "global.canary-skill"))) {
-      return null;
-    }
-    if (!fs.existsSync(path.join(globalHome, ".codex", "skills", "global.canary-skill", "SKILL.md"))) {
-      return null;
-    }
-    const skills = listChildDirs([path.join(capsule.codexHome, "skills")]);
-    if (!skills.includes("capsule.selected-skill")) return null;
-    const present = new Set([...skills, ...surface.mcp_tools]);
-    return {
-      skills: [...skills].sort(),
-      plugins: [],
-      mcp_tools: [...surface.mcp_tools].sort(),
-      frameworks: [],
-      absent: ISOLATION_FORBIDDEN_CANARIES.filter((name) => !present.has(name)),
-    };
+    observed.absent = [...new Set(observed.absent)].sort();
+    return observed;
   } catch {
     return null;
   }
@@ -576,29 +716,25 @@ export function observeContextIsolation({
     return { ...result, fixture };
   };
   try {
-    const expected = adapterId === "codex" ? fixture.codexExpected : fixture.expected;
+    // Codex canary deliberately incomplete — fail closed, never partial token.
+    if (adapterId === "codex") {
+      return finish({
+        isolation_status: "unverified",
+        context_isolation: null,
+        error: "codex context isolation canary incomplete; refusing partial token",
+      });
+    }
+    const expected = fixture.expected;
     let prepared;
     try {
-      if (adapterId === "claude") {
-        prepared = adapter.prepareLaunch({
-          argv: ["claude", "--print", "--output-format", "text", "isolation-probe"],
-          runDir: fixture.runRoot,
-          capsule: fixture.capsule,
-          writeFileSync: fs.writeFileSync,
-          mkdirSync: fs.mkdirSync,
-          chmodSync: fs.chmodSync,
-        });
-      } else {
-        prepared = adapter.prepareLaunch({
-          argv: ["codex", "exec", "--skip-git-repo-check", "isolation-probe"],
-          runDir: fixture.runRoot,
-          capsule: fixture.capsule,
-          authSource: path.join(
-            process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
-            "auth.json"
-          ),
-        });
-      }
+      prepared = adapter.prepareLaunch({
+        argv: ["claude", "--print", "--output-format", "text", "isolation-probe"],
+        runDir: fixture.runRoot,
+        capsule: fixture.capsule,
+        writeFileSync: fs.writeFileSync,
+        mkdirSync: fs.mkdirSync,
+        chmodSync: fs.chmodSync,
+      });
     } catch (e) {
       return finish({
         isolation_status: "unverified",
@@ -630,6 +766,7 @@ export function observeContextIsolation({
         surface,
         expected,
         globalHome: fixture.globalHome,
+        ambientProject: fixture.ambientProject,
       });
       if (live == null) {
         return finish({
@@ -653,6 +790,7 @@ export function observeContextIsolation({
         prepared,
         capsule: fixture.capsule,
         globalHome: fixture.globalHome,
+        ambientProject: fixture.ambientProject,
         adapterId,
         spawnSyncFn,
       });

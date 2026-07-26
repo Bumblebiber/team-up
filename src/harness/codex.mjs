@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CONTEXT_ISOLATION_CAPABILITY } from "./capabilities.mjs";
 
 export const codexAdapter = {
   id: "codex",
   capabilities: {
     command_broker: null,
-    context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+    // Fail-closed until full selected/global/unselected/excluded canary coverage.
+    context_isolation: null,
     native_shell: "unverified",
     mcp: "stdio",
   },

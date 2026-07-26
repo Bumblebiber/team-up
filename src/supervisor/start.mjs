@@ -18,6 +18,7 @@ import {
 
 export const LAUNCH_SCHEMA = "team-up.launch/v1";
 export const LAUNCH_REF_SCHEMA = "team-up.launch-ref/v1";
+export const CAPSULE_LAUNCH_SCHEMA = "team-up.capsule-launch/v1";
 
 function resolveCliPath(argv0) {
   if (!argv0) return null;
@@ -57,6 +58,122 @@ function descriptorChecksum(body) {
 }
 
 /**
+ * Schema-versioned capsule launch record for successor/resume reconstruction.
+ * Stored inside the checksum-bound launch descriptor (outside worker-writable paths).
+ */
+export function buildCapsuleLaunchRecord({ runRoot, capsule, env = process.env }) {
+  if (!capsule || !runRoot) {
+    const err = new Error("CAPSULE_LAUNCH_REQUIRED: capsule and runRoot required");
+    err.code = "CAPSULE_LAUNCH_REQUIRED";
+    throw err;
+  }
+  const effectivePath =
+    capsule.effectivePath || path.join(runRoot, "EFFECTIVE_CAPABILITIES.json");
+  if (!fs.existsSync(effectivePath)) {
+    const err = new Error(`CAPSULE_LAUNCH_EFFECTIVE_MISSING: ${effectivePath}`);
+    err.code = "CAPSULE_LAUNCH_EFFECTIVE_MISSING";
+    throw err;
+  }
+  const effectiveBody = fs.readFileSync(effectivePath);
+  const effectiveChecksum = descriptorChecksum(effectiveBody);
+  const authDir = launchDescriptorDir(
+    path.basename(path.resolve(runRoot)),
+    env
+  );
+  // Authoritative copy lives beside descriptor.json when runId is known later;
+  // checksum binds content regardless of worker-writable path mutations.
+  return {
+    schema: CAPSULE_LAUNCH_SCHEMA,
+    run_root: path.resolve(runRoot),
+    plugin_dirs: [...(capsule.pluginDirs ?? [])].map((p) => path.resolve(p)),
+    skill_dirs: [...(capsule.skillDirs ?? [])].map((p) => path.resolve(p)),
+    framework_dirs: [...(capsule.frameworkDirs ?? [])].map((p) => path.resolve(p)),
+    codex_home: capsule.codexHome ? path.resolve(capsule.codexHome) : null,
+    mcp_config: capsule.mcpConfig ?? { mcpServers: {} },
+    mcp_tool_names: [...(capsule.mcpToolNames ?? [])],
+    mcp_tools_by_server: { ...(capsule.mcpToolsByServer ?? {}) },
+    effective_path: path.resolve(effectivePath),
+    effective_checksum: effectiveChecksum,
+    // Placeholder filled by persistLaunchDescriptor once runId is known.
+    authoritative_effective_path: null,
+  };
+}
+
+/**
+ * Fail-closed reconstruction of the runtime capsule object from a launch record.
+ */
+export function reconstructCapsuleFromLaunchRecord(record) {
+  if (!record || record.schema !== CAPSULE_LAUNCH_SCHEMA) {
+    const err = new Error("CAPSULE_LAUNCH_SCHEMA: invalid capsule launch record");
+    err.code = "CAPSULE_LAUNCH_SCHEMA";
+    throw err;
+  }
+  const effectivePath =
+    (record.authoritative_effective_path &&
+      fs.existsSync(record.authoritative_effective_path) &&
+      record.authoritative_effective_path) ||
+    record.effective_path;
+  if (!effectivePath || !fs.existsSync(effectivePath)) {
+    const err = new Error("CAPSULE_LAUNCH_EFFECTIVE_MISSING: effective capabilities absent");
+    err.code = "CAPSULE_LAUNCH_EFFECTIVE_MISSING";
+    throw err;
+  }
+  const body = fs.readFileSync(effectivePath);
+  const actual = descriptorChecksum(body);
+  if (actual !== record.effective_checksum) {
+    const err = new Error("CAPSULE_LAUNCH_CHECKSUM: effective capabilities checksum mismatch");
+    err.code = "CAPSULE_LAUNCH_CHECKSUM";
+    throw err;
+  }
+  let effective;
+  try {
+    effective = JSON.parse(body.toString("utf8"));
+  } catch {
+    const err = new Error("CAPSULE_LAUNCH_CORRUPT: effective capabilities unreadable");
+    err.code = "CAPSULE_LAUNCH_CORRUPT";
+    throw err;
+  }
+  for (const dir of [...(record.plugin_dirs ?? [])]) {
+    if (!fs.existsSync(dir)) {
+      const err = new Error(`CAPSULE_LAUNCH_PATH_MISSING: ${dir}`);
+      err.code = "CAPSULE_LAUNCH_PATH_MISSING";
+      throw err;
+    }
+  }
+  // Skill/framework roots may be empty but must exist for --add-dir.
+  for (const dir of [
+    ...(record.skill_dirs ?? []),
+    ...(record.framework_dirs ?? []),
+  ]) {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+  if (record.codex_home) {
+    fs.mkdirSync(record.codex_home, { recursive: true });
+  }
+  return {
+    pluginDirs: [...(record.plugin_dirs ?? [])],
+    skillDirs: [...(record.skill_dirs ?? [])],
+    frameworkDirs: [...(record.framework_dirs ?? [])],
+    codexHome: record.codex_home,
+    mcpConfig: record.mcp_config ?? { mcpServers: {} },
+    mcpToolNames: [...(record.mcp_tool_names ?? [])],
+    mcpToolsByServer: { ...(record.mcp_tools_by_server ?? {}) },
+    effective,
+    effectivePath,
+  };
+}
+
+function injectAdapterEnv(argv, envMap) {
+  const entries = Object.entries(envMap || {}).filter(
+    ([, v]) => v != null && v !== ""
+  );
+  if (!entries.length) return argv;
+  return ["env", ...entries.map(([k, v]) => `${k}=${v}`), ...argv];
+}
+
+/**
  * Persist a complete, rebuildable launch descriptor for successors/resumes.
  */
 export function buildLaunchDescriptor({
@@ -71,6 +188,8 @@ export function buildLaunchDescriptor({
   callType,
   broker = null,
   harnessRequirements = {},
+  harnessVerification = null,
+  capsuleLaunch = null,
   specialistProfile = null,
   limitWindows = [],
   timeoutSeconds = null,
@@ -92,6 +211,8 @@ export function buildLaunchDescriptor({
     call_type: callType,
     broker,
     harness_requirements: harnessRequirements,
+    harness_verification: harnessVerification,
+    capsule_launch: capsuleLaunch,
     specialist_profile: specialistProfile,
     limit_windows: Array.isArray(limitWindows) ? [...limitWindows] : [],
     timeout_seconds: timeoutSeconds,
@@ -122,7 +243,36 @@ export function persistLaunchDescriptor(runId, descriptor, env = process.env) {
   } catch {
     // ignore
   }
-  const body = `${JSON.stringify(descriptor, null, 2)}\n`;
+
+  const next = { ...descriptor };
+  if (next.capsule_launch) {
+    if (next.capsule_launch.schema !== CAPSULE_LAUNCH_SCHEMA) {
+      const err = new Error("CAPSULE_LAUNCH_SCHEMA: invalid capsule_launch on persist");
+      err.code = "CAPSULE_LAUNCH_SCHEMA";
+      throw err;
+    }
+    const authEffective = path.join(dir, "EFFECTIVE_CAPABILITIES.json");
+    const sourcePath = next.capsule_launch.effective_path;
+    if (!sourcePath || !fs.existsSync(sourcePath)) {
+      const err = new Error("CAPSULE_LAUNCH_EFFECTIVE_MISSING: cannot persist capsule");
+      err.code = "CAPSULE_LAUNCH_EFFECTIVE_MISSING";
+      throw err;
+    }
+    const body = fs.readFileSync(sourcePath);
+    const checksum = descriptorChecksum(body);
+    if (checksum !== next.capsule_launch.effective_checksum) {
+      const err = new Error("CAPSULE_LAUNCH_CHECKSUM: effective changed before persist");
+      err.code = "CAPSULE_LAUNCH_CHECKSUM";
+      throw err;
+    }
+    atomicWriteText(authEffective, body.toString("utf8"), 0o444);
+    next.capsule_launch = {
+      ...next.capsule_launch,
+      authoritative_effective_path: authEffective,
+    };
+  }
+
+  const body = `${JSON.stringify(next, null, 2)}\n`;
   const checksum = descriptorChecksum(body);
   atomicWriteText(filePath, body, 0o444);
   atomicWriteText(sumPath, `${checksum}\n`, 0o444);
@@ -133,18 +283,18 @@ export function persistLaunchDescriptor(runId, descriptor, env = process.env) {
     checksum,
     launch_schema: LAUNCH_SCHEMA,
   };
-  st.harness_requirements = descriptor.harness_requirements || {};
-  st.specialist_profile = descriptor.specialist_profile || st.specialist_profile;
+  st.harness_requirements = next.harness_requirements || {};
+  st.specialist_profile = next.specialist_profile || st.specialist_profile;
   st.runtime = {
     ...(st.runtime || {}),
-    cli: descriptor.cli,
-    model: descriptor.model,
-    effort: descriptor.effort,
-    limit_windows: descriptor.limit_windows || [],
+    cli: next.cli,
+    model: next.model,
+    effort: next.effort,
+    limit_windows: next.limit_windows || [],
   };
-  if (descriptor.specialist) st.specialist = descriptor.specialist;
+  if (next.specialist) st.specialist = next.specialist;
   saveState(st);
-  return descriptor;
+  return next;
 }
 
 /**
@@ -223,6 +373,9 @@ export function prepareArgvFromDescriptor(
   let argv = buildCommand({ roster: r, model, cli, prompt, effort });
 
   const brokerRequired = Boolean(descriptor.harness_requirements?.command_broker);
+  const isolationRequired = Boolean(
+    descriptor.harness_requirements?.context_isolation
+  );
   const broker = descriptor.broker;
   if (brokerRequired) {
     if (!broker?.policySnapshot || !broker?.policyChecksum) {
@@ -234,50 +387,91 @@ export function prepareArgvFromDescriptor(
     }
   }
 
+  let capsule = null;
+  if (isolationRequired) {
+    if (!descriptor.capsule_launch) {
+      const err = new Error(
+        "CAPSULE_LAUNCH_MISSING: context isolation required but capsule_launch absent"
+      );
+      err.code = "CAPSULE_LAUNCH_MISSING";
+      throw err;
+    }
+    capsule = reconstructCapsuleFromLaunchRecord(descriptor.capsule_launch);
+  } else if (descriptor.capsule_launch) {
+    capsule = reconstructCapsuleFromLaunchRecord(descriptor.capsule_launch);
+  }
+
   const harnessRunDir =
     broker?.runDir ||
+    descriptor.capsule_launch?.run_root ||
     (descriptor.context_dir ? path.dirname(descriptor.context_dir) : null) ||
     path.dirname(descriptor.prompt_path || ".");
 
-  if (brokerRequired || (broker?.policySnapshot && broker?.policyChecksum)) {
-    if (!broker?.policySnapshot || !broker?.policyChecksum) {
+  const needsHarnessPrepare =
+    Boolean(capsule) ||
+    brokerRequired ||
+    Boolean(broker?.policySnapshot && broker?.policyChecksum);
+
+  let adapterEnv = {};
+  if (needsHarnessPrepare) {
+    if (broker && (!broker.policySnapshot || !broker.policyChecksum)) {
       const err = new Error("BROKER_INVALID: incomplete broker fields");
       err.code = "BROKER_INVALID";
       throw err;
     }
+    const verification =
+      descriptor.harness_verification ||
+      (brokerRequired || isolationRequired
+        ? {
+            status: "verified",
+            ...(brokerRequired
+              ? { command_broker: descriptor.harness_requirements.command_broker }
+              : {}),
+            ...(isolationRequired
+              ? {
+                  context_isolation:
+                    descriptor.harness_requirements.context_isolation,
+                }
+              : {}),
+            cli_version: "launch",
+          }
+        : null);
     let prepared;
     try {
       prepared = prepareHarnessLaunch({
         cli,
         argv,
         runDir: harnessRunDir,
-        broker: {
-          policySnapshot: broker.policySnapshot,
-          policyChecksum: broker.policyChecksum,
-          project: broker.project || descriptor.project,
-          runDir: broker.runDir || harnessRunDir,
-          actionIds: broker.actionIds || descriptor.permissions?.commands || [],
-        },
-        verification: brokerRequired
-          ? { status: "verified", cli_version: "launch" }
+        broker: broker
+          ? {
+              policySnapshot: broker.policySnapshot,
+              policyChecksum: broker.policyChecksum,
+              project: broker.project || descriptor.project,
+              runDir: broker.runDir || harnessRunDir,
+              actionIds: broker.actionIds || descriptor.permissions?.commands || [],
+            }
           : null,
+        capsule,
+        verification,
       });
     } catch (e) {
-      if (brokerRequired) {
+      if (brokerRequired || isolationRequired) {
         const err = new Error(
           `BROKER_VERIFY_FAILED: ${e.message || e}`
         );
-        err.code = "BROKER_VERIFY_FAILED";
+        err.code = e.code || "BROKER_VERIFY_FAILED";
         err.cause = e;
         throw err;
       }
       throw e;
     }
     argv = prepared.argv;
+    adapterEnv = { ...(prepared.env || {}) };
+    argv = injectAdapterEnv(argv, adapterEnv);
   }
 
   const runPath = broker?.runDir || harnessRunDir;
-  const cliPath = resolveCliPath(argv[0]);
+  const cliPath = resolveCliPath(argv.find((a) => !String(a).includes("=") && a !== "env") || argv[0]);
   const timeoutSec = descriptor.timeout_seconds;
   const readOnlyPaths = [];
   if (cliPath) readOnlyPaths.push(cliPath);
@@ -289,6 +483,10 @@ export function prepareArgvFromDescriptor(
       ? path.dirname(path.dirname(descriptor.prompt_path))
       : null;
     // Prefer explicit launch-descriptors path via env TEAM_UP_HOME layout.
+    void promptDir;
+  }
+  if (descriptor.capsule_launch?.authoritative_effective_path) {
+    readOnlyPaths.push(descriptor.capsule_launch.authoritative_effective_path);
   }
 
   const workerWritable = [
@@ -322,6 +520,7 @@ export function prepareArgvFromDescriptor(
 
   return {
     argv: wrapped.argv,
+    env: adapterEnv,
     sandbox: wrapped.sandbox,
     enforced: wrapped.enforced === true,
     warning: wrapped.warning ?? null,
