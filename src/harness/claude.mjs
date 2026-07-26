@@ -1,4 +1,4 @@
-import { CLAUDE_DECLARED_CAPABILITIES, UNVERIFIED_CAPABILITIES } from "./capabilities.mjs";
+import { CLAUDE_DECLARED_CAPABILITIES } from "./capabilities.mjs";
 
 export const claudeAdapter = {
   id: "claude",
@@ -45,7 +45,8 @@ export const claudeAdapter = {
   prepareLaunch({
     argv,
     runDir,
-    broker,
+    broker = null,
+    capsule = null,
     allowedBuiltins = ["Read", "Edit", "Write", "Glob", "Grep"],
     nodePath = process.execPath,
     brokerBin,
@@ -80,8 +81,10 @@ export const claudeAdapter = {
     } catch {
       // first write — file may not exist
     }
-    const mcpConfig = {
-      mcpServers: {
+
+    const mcpServers = {
+      ...(capsule?.mcpConfig?.mcpServers ?? {}),
+      ...(broker ? {
         team_up_command_broker: {
           type: "stdio",
           command: nodePath,
@@ -93,8 +96,9 @@ export const claudeAdapter = {
             TEAM_UP_RUN_DIR: broker.runDir,
           },
         },
-      },
+      } : {}),
     };
+    const mcpConfig = { mcpServers };
     writeFileSync(mcpPath, `${JSON.stringify(mcpConfig, null, 2)}\n`, { mode: 0o644 });
     try {
       chmodSync(mcpPath, 0o444);
@@ -102,17 +106,26 @@ export const claudeAdapter = {
       // best-effort immutable mode
     }
 
-    const brokerTools = (broker.actionIds || []).map(
-      (id) => `mcp__team_up_command_broker__${String(id).replace(/-/g, "_")}`
-    );
-    const tools = [...allowedBuiltins, ...brokerTools].join(",");
+    const brokerTools = broker
+      ? (broker.actionIds || []).map(
+        (id) => `mcp__team_up_command_broker__${String(id).replace(/-/g, "_")}`
+      )
+      : [];
+    const mcpTools = capsule?.mcpToolNames ?? Object.keys(mcpServers)
+      .filter((name) => name !== "team_up_command_broker")
+      .flatMap((name) => (capsule?.mcpToolsByServer?.[name] ?? []).map(
+        (tool) => `mcp__${name}__${String(tool).replace(/-/g, "_")}`
+      ));
+    const tools = [...allowedBuiltins, ...brokerTools, ...mcpTools].join(",");
 
     const next = [...argv];
+    if (capsule && !next.includes("--bare")) next.push("--bare");
+    for (const pluginDir of capsule?.pluginDirs ?? []) {
+      next.push("--plugin-dir", pluginDir);
+    }
     if (!next.includes("--strict-mcp-config")) next.push("--strict-mcp-config");
     next.push("--mcp-config", mcpPath);
     next.push("--tools", tools);
-    // Pre-approve the allowlisted tools so live verify/MCP calls do not stall
-    // on interactive permission prompts — without bypassing all permissions.
     next.push("--allowedTools", tools);
     next.push("--disallowedTools", "Bash");
 

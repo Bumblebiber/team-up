@@ -96,3 +96,28 @@ test("brokered Claude launch strips legacy roster bypass before enforcing policy
   assert.equal(prepared.argv.includes("--effort"), true);
   assert.equal(prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1], "Bash");
 });
+
+test("capsule launch uses bare mode and only explicit plugin and MCP paths", () => {
+  const writes = new Map();
+  const prepared = claudeAdapter.prepareLaunch({
+    argv: ["claude", "-p", "work"],
+    runDir: "/run",
+    capsule: {
+      pluginDirs: ["/run/harness/plugins/x"],
+      mcpConfig: { mcpServers: { selected: {
+        type: "stdio", command: "node", args: ["/run/harness/mcp/x/server.mjs"],
+      } } },
+      codexHome: "/run/harness/home",
+    },
+    writeFileSync: (file, text) => writes.set(file, text),
+    mkdirSync: () => {},
+    chmodSync: () => {},
+  });
+  assert.equal(prepared.argv.includes("--bare"), true);
+  assert.deepEqual(prepared.argv.slice(
+    prepared.argv.indexOf("--plugin-dir"),
+    prepared.argv.indexOf("--plugin-dir") + 2
+  ), ["--plugin-dir", "/run/harness/plugins/x"]);
+  assert.equal(prepared.argv.includes("--strict-mcp-config"), true);
+  assert.match(writes.get("/run/harness/claude-mcp.json"), /"selected"/);
+});
