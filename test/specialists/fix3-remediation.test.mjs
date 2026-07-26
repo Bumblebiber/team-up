@@ -210,6 +210,15 @@ test("max_tokens is advisory and does not block launch", async () => {
       project,
       env,
       dryRun: true,
+      dependencyOverrides: {
+        harnessCapabilities: () => ({
+          command_broker: null,
+          context_isolation: "team-up.context-isolation/v1",
+          native_shell: "unverified",
+          mcp: "unverified",
+        }),
+        prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
+      },
       sandbox: { available: true, probe: () => true },
     });
     assert.equal(result.budget.tokens.target, 80000);
