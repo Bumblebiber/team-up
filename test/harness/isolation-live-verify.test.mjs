@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { claudeAdapter } from "../../src/harness/claude.mjs";
 import { codexAdapter } from "../../src/harness/codex.mjs";
 import { verifyHarness } from "../../src/harness/verify.mjs";
@@ -10,8 +11,10 @@ import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs
 import {
   buildIsolationCanaryFixture,
   collectLaunchIsolationObservation,
+  collectLiveIsolationObservation,
   decideContextIsolationCapability,
   parseIsolationObservationJson,
+  observeContextIsolation,
 } from "../../src/harness/isolation-canary.mjs";
 
 test("canary fixture exposes selected set and keeps forbidden canaries out of capsule", () => {
@@ -44,9 +47,8 @@ test("canary fixture exposes selected set and keeps forbidden canaries out of ca
   }
 });
 
-test("exact Claude launch observation grants isolation capability token", () => {
+test("launch-surface observation alone does not grant isolation without live probe", () => {
   const fixture = buildIsolationCanaryFixture();
-  const writes = new Map();
   try {
     const prepared = claudeAdapter.prepareLaunch({
       argv: ["claude", "--print", "probe"],
@@ -55,17 +57,52 @@ test("exact Claude launch observation grants isolation capability token", () => 
       writeFileSync: (file, text) => {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, text);
-        writes.set(file, text);
       },
       mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
       chmodSync: () => {},
     });
-    const observed = collectLaunchIsolationObservation({
+    const surface = collectLaunchIsolationObservation({
       prepared,
       capsule: fixture.capsule,
       adapterId: "claude",
     });
-    assert.ok(observed);
+    assert.ok(surface);
+    // No spawnSyncFn → live observation null → no token from observe path.
+    const result = observeContextIsolation({
+      adapter: claudeAdapter,
+      adapterId: "claude",
+      spawnSyncFn: null,
+      liveProbe: null,
+    });
+    assert.equal(result.context_isolation, null);
+    assert.match(result.error || "", /missing|skipped|malformed/i);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("exact live Claude observation grants isolation capability token", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = claudeAdapter.prepareLaunch({
+      argv: ["claude", "--print", "probe"],
+      runDir: fixture.runRoot,
+      capsule: fixture.capsule,
+      writeFileSync: (file, text) => {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+      },
+      mkdirSync: (dir, opts) => fs.mkdirSync(dir, opts),
+      chmodSync: () => {},
+    });
+    const observed = collectLiveIsolationObservation({
+      prepared,
+      capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
+      adapterId: "claude",
+      spawnSyncFn: spawnSync,
+    });
+    assert.ok(observed, "live observation should succeed with real claude plugin list");
     assert.equal(
       decideContextIsolationCapability({ expected: fixture.expected, observed }),
       CONTEXT_ISOLATION_CAPABILITY
@@ -73,6 +110,17 @@ test("exact Claude launch observation grants isolation capability token", () => 
   } finally {
     fixture.cleanup();
   }
+});
+
+test("skipped live probe fails closed with null isolation token", () => {
+  const result = observeContextIsolation({
+    adapter: claudeAdapter,
+    adapterId: "claude",
+    spawnSyncFn: spawnSync,
+    liveProbe: () => null,
+  });
+  assert.equal(result.context_isolation, null);
+  assert.match(result.error || "", /skipped|incomplete/i);
 });
 
 test("malformed skipped or partial observation withholds isolation token", () => {
@@ -90,7 +138,6 @@ test("malformed skipped or partial observation withholds isolation token", () =>
       expected,
       observed: parseIsolationObservationJson(JSON.stringify({
         skills: ["capsule.selected-skill"],
-        // missing plugins/mcp_tools/frameworks/absent
       })),
     }),
     null
@@ -103,7 +150,7 @@ test("malformed skipped or partial observation withholds isolation token", () =>
         plugins: ["capsule.selected-plugin"],
         mcp_tools: ["mcp__selected__lookup"],
         frameworks: ["capsule.selected-framework"],
-        absent: ["global.canary-skill"], // partial absences
+        absent: ["global.canary-skill"],
       },
     }),
     null
@@ -152,7 +199,7 @@ test("verifyHarness stores context_isolation only on exact runner token", async 
   }
 });
 
-test("Codex launch observation grants isolation when capsule matches", () => {
+test("Codex live observation grants isolation when capsule matches", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = codexAdapter.prepareLaunch({
@@ -161,10 +208,12 @@ test("Codex launch observation grants isolation when capsule matches", () => {
       capsule: fixture.capsule,
       authSource: null,
     });
-    const observed = collectLaunchIsolationObservation({
+    const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
+      globalHome: fixture.globalHome,
       adapterId: "codex",
+      spawnSyncFn: spawnSync,
     });
     assert.ok(observed);
     assert.equal(

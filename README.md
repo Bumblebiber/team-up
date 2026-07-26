@@ -51,14 +51,14 @@ start unselected.
 This isolates model context, not Unix files. Workers run as the same trusted
 user. A harness must have a version-keyed verification record that explicitly
 stores `context_isolation: "team-up.context-isolation/v1"` before it is
-eligible for specialist work. Live `team-up harness verify` builds a full
-canary capsule (selected vs global/unselected/excluded) and stores that token
-only when the prepared launch observation exactly matches. Missing, malformed,
-or partial observations stay fail-closed at `context_isolation: null`. When
-`ANTHROPIC_API_KEY` is set, Claude also spawns the capsule argv under `--bare`
-and withholds the token on auth/runtime failure. Codex uses a run-specific
-`CODEX_HOME` and returns explicit unverified results when auth/runtime is
-missing instead of "adapter not ready".
+eligible for specialist work. Live `team-up harness verify` plants global
+canaries on a fake HOME, prepares a capsule launch, and collects a live CLI
+observation (Claude `plugin list` under `--bare`/`--plugin-dir`, Codex
+`mcp list` under run-specific `CODEX_HOME`). The token is stored only on an
+exact match with every forbidden canary absent. Missing, malformed, or skipped
+live observations stay fail-closed at `context_isolation: null`. Codex returns
+explicit unverified results when auth/runtime is missing instead of
+"adapter not ready".
 
 ## Docs
 

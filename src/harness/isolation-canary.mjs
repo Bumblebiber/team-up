@@ -290,9 +290,10 @@ export function parseIsolationObservationJson(text) {
   };
 }
 
+
 /**
- * Deterministic observation of what a prepared capsule launch exposes.
- * Returns null when the launch surface is incomplete/malformed.
+ * Launch-surface precondition only. Live token grant requires
+ * collectLiveIsolationObservation (or an injected liveProbe.observed).
  */
 export function collectLaunchIsolationObservation({
   prepared,
@@ -358,7 +359,6 @@ export function collectLaunchIsolationObservation({
       || !Array.isArray(mcp_tools) || !Array.isArray(frameworks)) {
       return null;
     }
-    // Selected MCP tool must be present for a complete observation.
     if (!mcp_tools.includes("mcp__selected__lookup")) return null;
 
     const present = new Set([...skills, ...plugins, ...mcp_tools, ...frameworks]);
@@ -375,6 +375,130 @@ export function collectLaunchIsolationObservation({
   }
 }
 
+function parseClaudePluginList(text) {
+  const names = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const m = line.match(/❯\s+([^\s@]+)@/);
+    if (m) names.push(m[1]);
+  }
+  return [...new Set(names)].sort();
+}
+
+function globalsPlanted(globalHome, adapterId) {
+  if (adapterId === "codex") {
+    return fs.existsSync(path.join(
+      globalHome, ".codex", "skills", "global.canary-skill", "SKILL.md"
+    ));
+  }
+  return (
+    fs.existsSync(path.join(globalHome, ".claude", "skills", "global.canary-skill", "SKILL.md"))
+    && fs.existsSync(path.join(globalHome, ".claude", "plugins", "global.canary-plugin", "plugin.json"))
+    && fs.existsSync(path.join(globalHome, ".claude", ".mcp.json"))
+  );
+}
+
+/**
+ * Live observation against planted global canaries on HOME / global Codex home.
+ * Returns null when any required live probe is missing/malformed/skipped.
+ */
+export function collectLiveIsolationObservation({
+  prepared,
+  capsule,
+  globalHome,
+  adapterId = "claude",
+  spawnSyncFn,
+} = {}) {
+  if (typeof spawnSyncFn !== "function") return null;
+  if (!prepared?.argv || !capsule || !globalHome) return null;
+  if (!globalsPlanted(globalHome, adapterId)) return null;
+
+  const surface = collectLaunchIsolationObservation({ prepared, capsule, adapterId });
+  if (!surface) return null;
+
+  try {
+    if (adapterId === "claude") {
+      const pluginDirs = flagValues(prepared.argv, "--plugin-dir");
+      if (!pluginDirs.length) return null;
+      const argv = [
+        "claude", "--bare",
+        ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
+        "plugin", "list",
+      ];
+      const run = spawnSyncFn(argv[0], argv.slice(1), {
+        encoding: "utf8",
+        timeout: 30_000,
+        env: { ...process.env, HOME: globalHome },
+      });
+      if (run.error || run.status !== 0) return null;
+      const text = `${run.stdout || ""}\n${run.stderr || ""}`;
+      const livePlugins = parseClaudePluginList(text);
+      if (!livePlugins.includes("capsule.selected-plugin")) return null;
+      if (livePlugins.includes("global.canary-plugin")) return null;
+
+      const addDirs = flagValues(prepared.argv, "--add-dir");
+      const skillRoots = addDirs.filter((d) => (capsule.skillDirs ?? []).includes(d));
+      const frameworkRoots = addDirs.filter((d) => (capsule.frameworkDirs ?? []).includes(d));
+      if (!skillRoots.length || !frameworkRoots.length) return null;
+      const skills = listChildDirs(skillRoots);
+      const frameworks = listChildDirs(frameworkRoots);
+      if (skills.includes("global.canary-skill")) return null;
+      if (frameworks.includes("pool.unselected-framework")) return null;
+
+      const mcpPath = flagValues(prepared.argv, "--mcp-config")[0];
+      const mcpDoc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+      if (Object.keys(mcpDoc.mcpServers || {}).includes("global")) return null;
+      if (Object.keys(mcpDoc.mcpServers || {}).includes("excluded")) return null;
+      const homeMcp = JSON.parse(fs.readFileSync(
+        path.join(globalHome, ".claude", ".mcp.json"), "utf8"
+      ));
+      if (!homeMcp.mcpServers?.global) return null;
+      if (!prepared.argv.includes("--strict-mcp-config")) return null;
+
+      const present = new Set([
+        ...skills, ...livePlugins, ...surface.mcp_tools, ...frameworks,
+      ]);
+      return {
+        skills: [...skills].sort(),
+        plugins: livePlugins,
+        mcp_tools: [...surface.mcp_tools].sort(),
+        frameworks: [...frameworks].sort(),
+        absent: ISOLATION_FORBIDDEN_CANARIES.filter((name) => !present.has(name)),
+      };
+    }
+
+    const env = { ...process.env, ...prepared.env, CODEX_HOME: capsule.codexHome };
+    const run = spawnSyncFn("codex", ["mcp", "list"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      env,
+    });
+    if (run.error) return null;
+    const text = `${run.stdout || ""}\n${run.stderr || ""}`;
+    if (/mcp__global__canary|global\.canary|\[mcp_servers\.global\]/i.test(text)) {
+      return null;
+    }
+    if (fs.existsSync(path.join(capsule.codexHome, "skills", "global.canary-skill"))) {
+      return null;
+    }
+    // Global canary exists outside the capsule home.
+    if (!fs.existsSync(path.join(globalHome, ".codex", "skills", "global.canary-skill", "SKILL.md"))) {
+      return null;
+    }
+    const skills = listChildDirs([path.join(capsule.codexHome, "skills")]);
+    if (!skills.includes("capsule.selected-skill")) return null;
+    const present = new Set([...skills, ...surface.mcp_tools]);
+    return {
+      skills: [...skills].sort(),
+      plugins: [],
+      mcp_tools: [...surface.mcp_tools].sort(),
+      frameworks: [],
+      absent: ISOLATION_FORBIDDEN_CANARIES.filter((name) => !present.has(name)),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function decideContextIsolationCapability({ expected, observed } = {}) {
   if (!expected || !observed) return null;
   for (const key of ["skills", "plugins", "mcp_tools", "frameworks", "absent"]) {
@@ -385,8 +509,8 @@ export function decideContextIsolationCapability({ expected, observed } = {}) {
 }
 
 /**
- * Run capsule prepareLaunch + observation. Optional liveProbe may further
- * reject isolation when the executable reports a conflicting inventory.
+ * prepareLaunch + live CLI observation. Token only when live report matches.
+ * liveProbe may supply observed; null/error/missing observed fails closed.
  */
 export function observeContextIsolation({
   adapter,
@@ -398,11 +522,7 @@ export function observeContextIsolation({
   const fixture = buildIsolationCanaryFixture();
   const finish = (result) => {
     if (cleanup) {
-      try {
-        fixture.cleanup();
-      } catch {
-        // ignore
-      }
+      try { fixture.cleanup(); } catch { /* ignore */ }
       return { ...result, fixture: undefined };
     }
     return { ...result, fixture };
@@ -439,28 +559,35 @@ export function observeContextIsolation({
       });
     }
 
-    let observed = collectLaunchIsolationObservation({
+    const surface = collectLaunchIsolationObservation({
       prepared,
       capsule: fixture.capsule,
       adapterId,
     });
-    if (!observed) {
+    if (!surface) {
       return finish({
         isolation_status: "unverified",
         context_isolation: null,
-        error: "isolation observation incomplete or malformed",
+        error: "isolation launch surface incomplete or malformed",
         prepared,
       });
     }
 
+    let observed = null;
     if (typeof liveProbe === "function") {
-      const live = liveProbe({ prepared, fixture, spawnSyncFn, observed, expected });
+      const live = liveProbe({
+        prepared,
+        fixture,
+        spawnSyncFn,
+        surface,
+        expected,
+        globalHome: fixture.globalHome,
+      });
       if (live == null) {
         return finish({
           isolation_status: "unverified",
           context_isolation: null,
           error: "live isolation probe skipped or incomplete",
-          observed,
           prepared,
         });
       }
@@ -469,11 +596,27 @@ export function observeContextIsolation({
           isolation_status: live.isolation_status || "unverified",
           context_isolation: null,
           error: live.error,
-          observed,
           prepared,
         });
       }
-      if (live.observed) observed = live.observed;
+      observed = live.observed ?? null;
+    } else if (typeof spawnSyncFn === "function") {
+      observed = collectLiveIsolationObservation({
+        prepared,
+        capsule: fixture.capsule,
+        globalHome: fixture.globalHome,
+        adapterId,
+        spawnSyncFn,
+      });
+    }
+
+    if (!observed) {
+      return finish({
+        isolation_status: "unverified",
+        context_isolation: null,
+        error: "live isolation observation missing, malformed, or skipped",
+        prepared,
+      });
     }
 
     const token = decideContextIsolationCapability({ expected, observed });

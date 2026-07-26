@@ -458,36 +458,6 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       adapter,
       adapterId: "claude",
       spawnSyncFn: spawnSync,
-      liveProbe: ({ prepared, spawnSyncFn }) => {
-        // Capsule launches use --bare (OAuth disabled). When an API key is
-        // present, confirm the executable accepts the capsule argv. Without a
-        // key, keep the deterministic launch-surface observation — skipping the
-        // optional spawn must not fabricate a pass from a partial report, but
-        // an exact prepareLaunch observation remains valid.
-        if (!process.env.ANTHROPIC_API_KEY) {
-          return {};
-        }
-        const run = spawnSyncFn(prepared.argv[0], prepared.argv.slice(1), {
-          encoding: "utf8",
-          timeout: 90_000,
-          env: { ...process.env },
-          cwd: fixtureProject,
-        });
-        const text = `${run.stdout || ""}\n${run.stderr || ""}`;
-        if (run.error && /ENOENT/.test(String(run.error))) {
-          return {
-            isolation_status: "unverified",
-            error: `claude executable unavailable: ${run.error.message}`,
-          };
-        }
-        if (claudeLoginOrQuotaFailure(text)) {
-          return {
-            isolation_status: "unverified",
-            error: text.trim().slice(0, 500) || "claude login/quota failure during isolation probe",
-          };
-        }
-        return {};
-      },
     });
 
     return {
@@ -559,29 +529,6 @@ export async function liveCodexVerifyRunner({ adapter, fixtureProject, cliVersio
     adapter,
     adapterId: "codex",
     spawnSyncFn: spawnSync,
-    liveProbe: ({ prepared, spawnSyncFn }) => {
-      const run = spawnSyncFn(prepared.argv[0], prepared.argv.slice(1), {
-        encoding: "utf8",
-        timeout: 90_000,
-        env: { ...process.env, ...prepared.env },
-        cwd: fixtureProject,
-      });
-      const text = `${run.stdout || ""}\n${run.stderr || ""}`;
-      if (run.error && /ENOENT/.test(String(run.error))) {
-        return {
-          isolation_status: "unverified",
-          error: `codex executable unavailable: ${run.error.message}`,
-        };
-      }
-      if (/not logged in|authentication|unauthorized|login required/i.test(text)) {
-        return {
-          isolation_status: "unverified",
-          error: text.trim().slice(0, 500) || "codex authentication failure",
-        };
-      }
-      // Capsule home was used; keep structural observation when process started.
-      return {};
-    },
   });
 
   return {
