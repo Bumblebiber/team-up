@@ -87,7 +87,12 @@ test("brokered Claude launch strips legacy roster bypass before enforcing policy
       runDir: "/abs/run",
       actionIds: ["project-test"],
     },
-    verification: { status: "verified", cli_version: "test" },
+    verification: {
+      status: "verified",
+      cli_version: "test",
+      command_broker: "team-up.command-broker/v1",
+      context_isolation: "team-up.context-isolation/v1",
+    },
     brokerBin: "/abs/bin/team-up-command-broker.mjs",
     nodePath: "/abs/node",
   });
@@ -107,6 +112,8 @@ test("capsule launch uses bare mode and only explicit plugin and MCP paths", () 
       mcpConfig: { mcpServers: { selected: {
         type: "stdio", command: "node", args: ["/run/harness/mcp/x/server.mjs"],
       } } },
+      mcpToolNames: ["mcp__selected__lookup"],
+      mcpToolsByServer: { selected: ["lookup"] },
       codexHome: "/run/harness/home",
     },
     writeFileSync: (file, text) => writes.set(file, text),
@@ -120,4 +127,5 @@ test("capsule launch uses bare mode and only explicit plugin and MCP paths", () 
   ), ["--plugin-dir", "/run/harness/plugins/x"]);
   assert.equal(prepared.argv.includes("--strict-mcp-config"), true);
   assert.match(writes.get("/run/harness/claude-mcp.json"), /"selected"/);
+  assert.match(prepared.argv.join(" "), /mcp__selected__lookup/);
 });

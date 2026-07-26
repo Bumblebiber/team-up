@@ -49,8 +49,11 @@ Use the supervisor-only `/team-up-manage` skill or deterministic
 start unselected.
 
 This isolates model context, not Unix files. Workers run as the same trusted
-user. A harness must pass `team-up.context-isolation/v1` conformance before it
-is eligible for specialist work.
+user. A harness must have a version-keyed verification record that explicitly
+stores `context_isolation: "team-up.context-isolation/v1"` before it is
+eligible for specialist work. Live `team-up harness verify` currently proves
+command-broker mediation; isolation canary observation is validated by unit
+tests and must be present on the record before specialist launches.
 
 ## Docs
 

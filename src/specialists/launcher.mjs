@@ -102,6 +102,27 @@ function needsCommandMediation(effectivePerms, manifest) {
   return tools.some((t) => /^(command|shell|exec)([.]|$)/i.test(String(t)));
 }
 
+function collectCapsuleMcpTools(effective, runRoot) {
+  const mcpToolsByServer = {};
+  const mcpToolNames = [];
+  for (const item of effective.packages ?? []) {
+    for (const rel of item.resolved?.mcps ?? []) {
+      const document = JSON.parse(fs.readFileSync(path.join(runRoot, rel), "utf8"));
+      const sharedTools = Array.isArray(document.tools) ? document.tools : [];
+      for (const [name, server] of Object.entries(document.mcpServers ?? {})) {
+        const tools = Array.isArray(server?.tools) ? server.tools : sharedTools;
+        mcpToolsByServer[name] = tools;
+        for (const tool of tools) {
+          mcpToolNames.push(
+            `mcp__${name}__${String(tool).replace(/-/g, "_")}`
+          );
+        }
+      }
+    }
+  }
+  return { mcpToolNames, mcpToolsByServer };
+}
+
 /**
  * Launch API used by tests and CLI.
  */
@@ -326,6 +347,7 @@ export async function launch({
       frameworkDirs: [path.join(runDir(state.runId), "context", "framework")],
       codexHome: path.join(runDir(state.runId), "harness", "home"),
       effective,
+      ...collectCapsuleMcpTools(effective, runDir(state.runId)),
     };
   } catch (e) {
     setStatus(state.runId, "failed");
@@ -365,12 +387,12 @@ export async function launch({
     runDir: runPath,
     broker,
     capsule,
-    verification: (
-      harnessCaps.context_isolation === CONTEXT_ISOLATION_CAPABILITY ||
-      harnessCaps.command_broker
-    )
-      ? { status: "verified", cli_version: "launch" }
-      : null,
+    env,
+    verification: {
+      status: "verified",
+      command_broker: harnessCaps.command_broker,
+      context_isolation: harnessCaps.context_isolation,
+    },
   });
   let cliArgv = prepared.argv;
 

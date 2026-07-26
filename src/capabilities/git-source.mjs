@@ -12,10 +12,10 @@ export function importGitCapability({ url, ref = "HEAD" }, {
   try {
     exec("git", ["clone", "--no-checkout", "--filter=blob:none", "--", url, repo],
       { stdio: "pipe" });
-    exec("git", ["checkout", "--detach", ref], { cwd: repo, stdio: "pipe" });
-    const commit = String(exec("git", ["rev-parse", "HEAD"], {
+    const commit = String(exec("git", ["rev-parse", "--verify", `${ref}^{commit}`], {
       cwd: repo, encoding: "utf8",
     })).trim();
+    exec("git", ["checkout", "--detach", commit], { cwd: repo, stdio: "pipe" });
     return importLocalCapability(repo, {
       env,
       sourceMetadata: { type: "git", url, ref, commit },

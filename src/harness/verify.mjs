@@ -2,7 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { teamUpHome } from "../paths.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
-import { COMMAND_BROKER_CAPABILITY } from "./capabilities.mjs";
+import {
+  COMMAND_BROKER_CAPABILITY,
+  CONTEXT_ISOLATION_CAPABILITY,
+} from "./capabilities.mjs";
 
 export function verificationRecordPath(adapterId, cliVersion, env = process.env) {
   return path.join(
@@ -73,6 +76,10 @@ export async function verifyHarness({
     native_shell: checks.native_shell,
     broker_tool: checks.broker_tool,
     command_broker: status === "verified" ? COMMAND_BROKER_CAPABILITY : null,
+    context_isolation:
+      checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY
+        ? CONTEXT_ISOLATION_CAPABILITY
+        : null,
     status,
   };
   saveVerificationRecord(record, env);

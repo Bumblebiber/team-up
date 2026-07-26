@@ -49,7 +49,18 @@ export function harnessCapabilities(
     }
   }
   if (record?.status === "verified") {
-    return { ...adapter.capabilities };
+    return {
+      // Legacy broker-only records may omit command_broker; keep that working.
+      // context_isolation must be explicit — never inferred from status alone.
+      command_broker: Object.hasOwn(record, "command_broker")
+        ? record.command_broker
+        : (adapter.capabilities.command_broker ?? null),
+      context_isolation: Object.hasOwn(record, "context_isolation")
+        ? record.context_isolation
+        : null,
+      native_shell: adapter.capabilities.native_shell,
+      mcp: adapter.capabilities.mcp,
+    };
   }
   return { ...UNVERIFIED_CAPABILITIES };
 }
