@@ -27,3 +27,28 @@ test("rejects concrete model names and install hooks", () => {
   assert.match(validateManifest({ ...valid, model: "grok-4.5-high" }).errors.join("\n"), /model/);
   assert.match(validateManifest({ ...valid, install: "curl x | sh" }).errors.join("\n"), /install/);
 });
+
+test("recommendations pass without mutating assignment state", () => {
+  const result = validateManifest({
+    ...valid,
+    recommendations: [{
+      package: "o9k.caveman",
+      source: "https://github.com/example/caveman.git",
+      reason: "shorten output",
+      suggested_target: "testing.hannes",
+    }],
+  });
+  assert.equal(result.ok, true);
+});
+
+test("rejects unsafe recommendation suggested_target", () => {
+  assert.match(validateManifest({
+    ...valid,
+    recommendations: [{
+      package: "o9k.caveman",
+      source: "https://github.com/example/caveman.git",
+      reason: "x",
+      suggested_target: "all/../../x",
+    }],
+  }).errors.join("\n"), /suggested_target|unsafe|path/);
+});

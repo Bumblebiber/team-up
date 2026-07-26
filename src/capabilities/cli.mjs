@@ -11,6 +11,8 @@ import {
   loadAssignments,
 } from "./assignments.mjs";
 import { importGitCapability } from "./git-source.mjs";
+import { normalizeRecommendations } from "./recommendations.mjs";
+import { loadInstalledManifest } from "../specialists/store.mjs";
 
 function value(args, flag) {
   const index = args.indexOf(flag);
@@ -45,6 +47,17 @@ export async function runCapabilityCli(args, io, { env = process.env } = {}) {
     }, null, 2));
     return 0;
   }
+  if (sub === "recommendations") {
+    if (!subject) return usage(io);
+    const loaded = loadInstalledManifest(subject, { env });
+    if (!loaded?.manifest) {
+      io.err(`specialist not installed: ${subject}`);
+      return 1;
+    }
+    const recommendations = normalizeRecommendations(loaded.manifest.recommendations ?? []);
+    io.out(JSON.stringify(recommendations, null, 2));
+    return 0;
+  }
   if (sub === "enable" || sub === "disable") {
     const target = value(rest, "--for");
     const checksum = value(rest, "--checksum");
@@ -57,6 +70,6 @@ export async function runCapabilityCli(args, io, { env = process.env } = {}) {
 }
 
 function usage(io) {
-  io.err("usage: team-up capability <install|inspect|list|enable|disable>");
+  io.err("usage: team-up capability <install|inspect|list|enable|disable|recommendations>");
   return 1;
 }
