@@ -16,5 +16,12 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
     "zod": "4.4.3"
-  }
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ]
 }
