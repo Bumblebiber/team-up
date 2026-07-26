@@ -123,6 +123,12 @@ export const claudeAdapter = {
     for (const pluginDir of capsule?.pluginDirs ?? []) {
       next.push("--plugin-dir", pluginDir);
     }
+    for (const dir of [
+      ...(capsule?.skillDirs ?? []),
+      ...(capsule?.frameworkDirs ?? []),
+    ]) {
+      if (dir) next.push("--add-dir", dir);
+    }
     if (!next.includes("--strict-mcp-config")) next.push("--strict-mcp-config");
     next.push("--mcp-config", mcpPath);
     next.push("--tools", tools);

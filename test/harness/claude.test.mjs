@@ -129,3 +129,23 @@ test("capsule launch uses bare mode and only explicit plugin and MCP paths", () 
   assert.match(writes.get("/run/harness/claude-mcp.json"), /"selected"/);
   assert.match(prepared.argv.join(" "), /mcp__selected__lookup/);
 });
+
+test("capsule launch adds skill and framework dirs via --add-dir", () => {
+  const prepared = claudeAdapter.prepareLaunch({
+    argv: ["claude", "-p", "work"],
+    runDir: "/run",
+    capsule: {
+      pluginDirs: [],
+      skillDirs: ["/run/context/skills"],
+      frameworkDirs: ["/run/context/framework"],
+      mcpConfig: { mcpServers: {} },
+      mcpToolNames: [],
+    },
+    writeFileSync: () => {},
+    mkdirSync: () => {},
+    chmodSync: () => {},
+  });
+  assert.equal(prepared.argv.includes("--add-dir"), true);
+  assert.equal(prepared.argv.includes("/run/context/skills"), true);
+  assert.equal(prepared.argv.includes("/run/context/framework"), true);
+});

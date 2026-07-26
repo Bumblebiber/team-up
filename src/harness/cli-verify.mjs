@@ -8,6 +8,12 @@ import { getAdapter } from "./registry.mjs";
 import { verifyHarness } from "./verify.mjs";
 import { snapshotCommandPolicy } from "../commands/policy.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
+import {
+  observeContextIsolation,
+  validateIsolationObservation,
+} from "./isolation-canary.mjs";
+
+export { validateIsolationObservation };
 
 function claudeLoginOrQuotaFailure(text) {
   // Prefer result/assistant/error stream events — SessionStart hooks dump skills
@@ -208,28 +214,6 @@ export function decideBrokerToolFromEvidence({
   const exactOk = String(stdout || "").trim() === "ok";
   if (exactOk && freshAudit && auditOk) return "passed";
   return "unverified";
-}
-
-export function validateIsolationObservation({ expected, observed }) {
-  const errors = [];
-  for (const key of ["skills", "plugins", "mcp_tools", "frameworks"]) {
-    const want = [...(expected[key] ?? [])].sort();
-    const got = [...(observed[key] ?? [])].sort();
-    if (JSON.stringify(want) !== JSON.stringify(got)) {
-      errors.push(`${key} mismatch: expected ${want.join(",")} got ${got.join(",")}`);
-    }
-  }
-  const forbidden = [
-    "global.canary-skill", "global.canary-plugin", "mcp__global__canary",
-    "pool.unselected-skill", "mcp__excluded__lookup",
-    "pool.unselected-framework",
-  ];
-  for (const name of forbidden) {
-    if (!(observed.absent ?? []).includes(name)) {
-      errors.push(`forbidden capability visible: ${name}`);
-    }
-  }
-  return { ok: errors.length === 0, errors };
 }
 
 /**
@@ -470,12 +454,51 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       }
     }
 
+    const isolation = observeContextIsolation({
+      adapter,
+      adapterId: "claude",
+      spawnSyncFn: spawnSync,
+      liveProbe: ({ prepared, spawnSyncFn }) => {
+        // Capsule launches use --bare (OAuth disabled). When an API key is
+        // present, confirm the executable accepts the capsule argv. Without a
+        // key, keep the deterministic launch-surface observation — skipping the
+        // optional spawn must not fabricate a pass from a partial report, but
+        // an exact prepareLaunch observation remains valid.
+        if (!process.env.ANTHROPIC_API_KEY) {
+          return {};
+        }
+        const run = spawnSyncFn(prepared.argv[0], prepared.argv.slice(1), {
+          encoding: "utf8",
+          timeout: 90_000,
+          env: { ...process.env },
+          cwd: fixtureProject,
+        });
+        const text = `${run.stdout || ""}\n${run.stderr || ""}`;
+        if (run.error && /ENOENT/.test(String(run.error))) {
+          return {
+            isolation_status: "unverified",
+            error: `claude executable unavailable: ${run.error.message}`,
+          };
+        }
+        if (claudeLoginOrQuotaFailure(text)) {
+          return {
+            isolation_status: "unverified",
+            error: text.trim().slice(0, 500) || "claude login/quota failure during isolation probe",
+          };
+        }
+        return {};
+      },
+    });
+
     return {
       native_shell,
       broker_tool,
       broker_preflight,
       cli_version: cliVersion || String(versionOut).trim(),
       argv_sample: shellPrepared.argv.slice(0, 12),
+      isolation_status: isolation.isolation_status,
+      context_isolation: isolation.context_isolation ?? null,
+      ...(isolation.error ? { isolation_error: isolation.error } : {}),
     };
   } finally {
     if (prevHome === undefined) delete process.env.TEAM_UP_HOME;
@@ -493,16 +516,94 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
   }
 }
 
+/**
+ * Live Codex conformance: run-specific CODEX_HOME capsule + exact isolation
+ * observation. Never reports "adapter not ready"; credential/runtime gaps are
+ * explicit unverified results.
+ */
+export async function liveCodexVerifyRunner({ adapter, fixtureProject, cliVersion }) {
+  void fixtureProject;
+  let versionOut = "";
+  try {
+    versionOut = execFileSync("codex", ["--version"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+  } catch (e) {
+    return {
+      native_shell: "unverified",
+      broker_tool: "unverified",
+      isolation_status: "unverified",
+      context_isolation: null,
+      error: `codex executable unavailable: ${e.message}`,
+      cli_version: cliVersion,
+    };
+  }
+
+  const authPath = path.join(
+    process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
+    "auth.json"
+  );
+  if (!fs.existsSync(authPath)) {
+    return {
+      native_shell: "unverified",
+      broker_tool: "unverified",
+      isolation_status: "unverified",
+      context_isolation: null,
+      error: "codex auth.json unavailable; isolation not verified",
+      cli_version: cliVersion || String(versionOut).trim(),
+    };
+  }
+
+  const isolation = observeContextIsolation({
+    adapter,
+    adapterId: "codex",
+    spawnSyncFn: spawnSync,
+    liveProbe: ({ prepared, spawnSyncFn }) => {
+      const run = spawnSyncFn(prepared.argv[0], prepared.argv.slice(1), {
+        encoding: "utf8",
+        timeout: 90_000,
+        env: { ...process.env, ...prepared.env },
+        cwd: fixtureProject,
+      });
+      const text = `${run.stdout || ""}\n${run.stderr || ""}`;
+      if (run.error && /ENOENT/.test(String(run.error))) {
+        return {
+          isolation_status: "unverified",
+          error: `codex executable unavailable: ${run.error.message}`,
+        };
+      }
+      if (/not logged in|authentication|unauthorized|login required/i.test(text)) {
+        return {
+          isolation_status: "unverified",
+          error: text.trim().slice(0, 500) || "codex authentication failure",
+        };
+      }
+      // Capsule home was used; keep structural observation when process started.
+      return {};
+    },
+  });
+
+  return {
+    native_shell: "unverified",
+    broker_tool: "unverified",
+    isolation_status: isolation.isolation_status,
+    context_isolation: isolation.context_isolation ?? null,
+    cli_version: cliVersion || String(versionOut).trim(),
+    ...(isolation.error ? { error: isolation.error } : {}),
+  };
+}
+
 export async function runHarnessVerify(args, io = { out: console.log, err: console.error }) {
   const [cli, ...rest] = args;
   if (!cli) {
-    io.err("usage: team-up harness verify <claude> --fixture-project <path>");
+    io.err("usage: team-up harness verify <claude|codex> --fixture-project <path>");
     return 1;
   }
   const fixtureIdx = rest.indexOf("--fixture-project");
   const fixtureProject = fixtureIdx === -1 ? null : rest[fixtureIdx + 1];
   if (!fixtureProject) {
-    io.err("usage: team-up harness verify <claude> --fixture-project <path>");
+    io.err("usage: team-up harness verify <claude|codex> --fixture-project <path>");
     return 1;
   }
   if (!fs.existsSync(fixtureProject)) {
@@ -516,22 +617,29 @@ export async function runHarnessVerify(args, io = { out: console.log, err: conso
     io.err(String(e.message || e));
     return 1;
   }
-  if (cli !== "claude") {
-    io.err(`adapter ${cli} not ready for live verify in this revision`);
+  if (cli !== "claude" && cli !== "codex") {
+    io.err(`harness verify unsupported for ${cli}`);
     return 2;
   }
+  const runners = io.runners || {};
+  const runner = runners[cli]
+    || (cli === "codex" ? liveCodexVerifyRunner : liveClaudeVerifyRunner);
+  const env = io.env || process.env;
   try {
     const record = await verifyHarness({
       adapter,
       fixtureProject,
-      runner: Object.assign(liveClaudeVerifyRunner, {
-        execFileSync,
+      env,
+      runner: Object.assign(runner, {
+        execFileSync: runner.execFileSync || execFileSync,
       }),
     });
     io.out(`native_shell: ${record.native_shell}`);
     io.out(`broker_tool: ${record.broker_tool}`);
     io.out(`status: ${record.status}`);
     io.out(`cli_version: ${record.cli_version}`);
+    io.out(`context_isolation: ${record.context_isolation}`);
+    io.out(`command_broker: ${record.command_broker}`);
     return record.status === "verified" ? 0 : 2;
   } catch (e) {
     io.err(`BLOCKED: ${e.message}`);

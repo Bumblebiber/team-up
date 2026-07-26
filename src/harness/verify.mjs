@@ -59,7 +59,18 @@ export async function verifyHarness({
     cliVersion,
   });
   let status;
-  if (checks.native_shell === "denied" && checks.broker_tool === "passed") {
+  const isolationOnly = adapter.capabilities?.command_broker == null;
+  if (isolationOnly) {
+    if (checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY) {
+      status = "verified";
+    } else if (
+      checks.isolation_status === "failed"
+    ) {
+      status = "failed";
+    } else {
+      status = "unverified";
+    }
+  } else if (checks.native_shell === "denied" && checks.broker_tool === "passed") {
     status = "verified";
   } else if (
     checks.native_shell === "unverified" ||
@@ -75,7 +86,8 @@ export async function verifyHarness({
     checked_at: now,
     native_shell: checks.native_shell,
     broker_tool: checks.broker_tool,
-    command_broker: status === "verified" ? COMMAND_BROKER_CAPABILITY : null,
+    command_broker:
+      !isolationOnly && status === "verified" ? COMMAND_BROKER_CAPABILITY : null,
     context_isolation:
       checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY
         ? CONTEXT_ISOLATION_CAPABILITY
