@@ -13,6 +13,7 @@ import {
 import { approveSpecialist, listApprovals } from "./specialists/approvals.mjs";
 import { runSpecialist } from "./specialists/launcher.mjs";
 import { runHarnessVerify } from "./harness/cli-verify.mjs";
+import { runCapabilityCli } from "./capabilities/cli.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -123,8 +124,6 @@ async function cmdSpecialist(args, io) {
   io.err("usage: team-up specialist <inspect|install|approve|list|run>");
   return 1;
 }
-
-import { runCapabilityCli } from "./capabilities/cli.mjs";
 
 export async function runCli(args, io = { out: console.log, err: console.error }) {
   const [cmd, ...rest] = args;

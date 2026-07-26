@@ -10,6 +10,7 @@ import {
   disableCapability,
   loadAssignments,
 } from "./assignments.mjs";
+import { importGitCapability } from "./git-source.mjs";
 
 function value(args, flag) {
   const index = args.indexOf(flag);
@@ -20,7 +21,11 @@ export async function runCapabilityCli(args, io, { env = process.env } = {}) {
   const [sub, subject, ...rest] = args;
   if (sub === "install") {
     if (!subject) return usage(io);
-    io.out(JSON.stringify(importLocalCapability(subject, { env }), null, 2));
+    const gitRef = value(rest, "--git-ref");
+    const record = gitRef
+      ? importGitCapability({ url: subject, ref: gitRef }, { env })
+      : importLocalCapability(subject, { env });
+    io.out(JSON.stringify(record, null, 2));
     return 0;
   }
   if (sub === "inspect") {
