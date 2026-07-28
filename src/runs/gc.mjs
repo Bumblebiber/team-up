@@ -3,9 +3,11 @@ import path from "node:path";
 import {
   atomicWriteJson,
   atomicWriteText,
+  classifyMailbox,
   listAllStates,
   loadState,
   mailboxDir,
+  resolveRunState,
   updateState,
 } from "./runs.mjs";
 import { inspectTmuxSession, stopTmuxSession } from "./tmux.mjs";
@@ -14,6 +16,7 @@ import { readLease, releaseAttemptLease } from "../supervisor/attempts.mjs";
 export const IDLE_MS = 30 * 60 * 1000;
 export const GRACE_MS = 10 * 60 * 1000;
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
+const TERMINAL_MAILBOX = new Set(["done", "failed", "cancelled"]);
 const ACTIVE = new Set(["starting", "watching"]);
 const PROTECTED = new Set([
   "waiting_human",
@@ -93,7 +96,9 @@ function resolveActiveAttemptId(runId, state) {
 
 function isLeaseReleaseComplete(result) {
   if (!result || result.ok !== false) return true;
-  return result.reason === "no_lease" || result.reason === "already_released";
+  return result.reason === "no_lease"
+    || result.reason === "already_released"
+    || result.reason === "superseded";
 }
 
 function isRetryableLeaseFailure(result) {
@@ -122,13 +127,43 @@ function writeStaleFailureArtifacts(state, nowIso) {
   atomicWriteText(path.join(mb, "STATUS"), "failed\n");
 }
 
-function compareAndPersistStaleFailure(runId, { inspectedTmux, expectedStaleDetectedAt, nowIso }) {
-  let applied = false;
+function createPendingLeaseClaim(state, { worker_tmux, attempt_id, nowIso }) {
+  return {
+    token: `${state.runId}.${Date.now()}.${Math.random().toString(36).slice(2)}`,
+    worker_tmux,
+    attempt_id,
+    generation: state.supervision?.generation ?? 0,
+    recorded_at: nowIso,
+    stale_reason: "worker_stale_timeout",
+  };
+}
+
+function reconcileTerminalMailboxState(state, classified) {
+  const resolution = resolveRunState(state, classified);
+  state.status = resolution.state.status;
+  if (state.cleanup?.stale_detected_at) delete state.cleanup.stale_detected_at;
+  return state;
+}
+
+function transitionStaleFailure(runId, { inspectedTmux, expectedStaleDetectedAt, nowIso }) {
+  let outcome = { kind: "aborted" };
   updateState(runId, latest => {
+    const classified = classifyMailbox(runId);
+    if (TERMINAL_MAILBOX.has(classified?.status)) {
+      reconcileTerminalMailboxState(latest, classified);
+      outcome = { kind: "reconciled", classified };
+      return latest;
+    }
     if (!staleConfirmationMatches(latest, inspectedTmux, expectedStaleDetectedAt)) {
       return undefined;
     }
-    applied = true;
+    const classifiedAgain = classifyMailbox(runId);
+    if (TERMINAL_MAILBOX.has(classifiedAgain?.status)) {
+      reconcileTerminalMailboxState(latest, classifiedAgain);
+      outcome = { kind: "reconciled", classified: classifiedAgain };
+      return latest;
+    }
+    writeStaleFailureArtifacts(latest, nowIso);
     latest.status = "failed";
     latest.cleanup = {
       ...(latest.cleanup || {}),
@@ -136,29 +171,70 @@ function compareAndPersistStaleFailure(runId, { inspectedTmux, expectedStaleDete
       stale_reason: "worker_stale_timeout",
     };
     delete latest.cleanup.stale_detected_at;
+    const attemptId = resolveActiveAttemptId(runId, latest);
+    if (attemptId) {
+      latest.cleanup.pending_lease_release = createPendingLeaseClaim(latest, {
+        worker_tmux: inspectedTmux,
+        attempt_id: attemptId,
+        nowIso,
+      });
+    }
+    outcome = { kind: "failed" };
     return latest;
   });
-  if (!applied) return false;
-  writeStaleFailureArtifacts(loadState(runId), nowIso);
-  return true;
+  return outcome;
 }
 
-function setPendingLeaseRelease(runId, pending) {
-  return updateState(runId, state => {
-    state.cleanup = {
-      ...(state.cleanup || {}),
-      pending_lease_release: pending,
-    };
-    return state;
-  });
+function resolveNotHolderRelease(result, runId, pending) {
+  if (!result || result.ok !== false || result.reason !== "not_holder") return result;
+  if (result.current && result.current !== pending.attempt_id) {
+    return { ok: true, reason: "superseded" };
+  }
+  const lease = readLease(runId);
+  if (!lease) return { ok: true, reason: "no_lease" };
+  if (lease.released_at != null) return { ok: true, reason: "already_released" };
+  if (lease.attempt_id !== pending.attempt_id) return { ok: true, reason: "superseded" };
+  return result;
 }
 
-function clearPendingLeaseRelease(runId) {
-  return updateState(runId, state => {
-    if (!state.cleanup?.pending_lease_release) return undefined;
-    delete state.cleanup.pending_lease_release;
-    return state;
+function authorizePendingTmuxStop(runId, pending) {
+  if (!pending?.token || !pending.worker_tmux) {
+    return { authorized: false, obsolete: true };
+  }
+  let outcome = { authorized: false, obsolete: false };
+  updateState(runId, latest => {
+    const currentPending = latest.cleanup?.pending_lease_release;
+    if (!currentPending || currentPending.token !== pending.token) {
+      outcome = { authorized: false, obsolete: true };
+      return undefined;
+    }
+    if (
+      latest.status !== "failed"
+      || latest.cleanup?.stale_reason !== "worker_stale_timeout"
+      || latest.worker?.tmux !== pending.worker_tmux
+      || (latest.supervision?.generation ?? 0) !== (pending.generation ?? 0)
+    ) {
+      delete latest.cleanup.pending_lease_release;
+      outcome = { authorized: false, obsolete: true };
+      return latest;
+    }
+    const lease = readLease(runId);
+    if (
+      lease
+      && lease.released_at == null
+      && lease.attempt_id
+      && pending.attempt_id
+      && lease.attempt_id !== pending.attempt_id
+    ) {
+      delete latest.cleanup.pending_lease_release;
+      outcome = { authorized: false, obsolete: true };
+      return latest;
+    }
+    delete latest.cleanup.pending_lease_release;
+    outcome = { authorized: true, obsolete: false };
+    return latest;
   });
+  return outcome;
 }
 
 function tryCompletePendingLeaseRelease({
@@ -172,14 +248,21 @@ function tryCompletePendingLeaseRelease({
   const pending = state?.cleanup?.pending_lease_release;
   if (!pending?.worker_tmux) return null;
 
-  const releaseResult = pending.attempt_id
-    ? releaseLease({
-      runId,
-      attemptId: pending.attempt_id,
-      reason: "worker_stale_timeout",
-      now: nowIso,
-    })
-    : { ok: true };
+  let releaseResult;
+  try {
+    releaseResult = pending.attempt_id
+      ? releaseLease({
+        runId,
+        attemptId: pending.attempt_id,
+        reason: "worker_stale_timeout",
+        now: nowIso,
+      })
+      : { ok: true };
+    releaseResult = resolveNotHolderRelease(releaseResult, runId, pending);
+  } catch (error) {
+    reportEntry.leaseError = String(error.message || error);
+    return { action: "pending_lease", retry: true };
+  }
 
   if (isRetryableLeaseFailure(releaseResult)) {
     reportEntry.leaseError = releaseResult.reason;
@@ -190,12 +273,23 @@ function tryCompletePendingLeaseRelease({
     return { action: "pending_lease", retry: true };
   }
 
-  try {
-    stopTmux(pending.worker_tmux);
-  } catch (error) {
-    reportEntry.tmuxError = String(error.message || error);
+  if (releaseResult?.reason === "superseded") {
+    updateState(runId, latest => {
+      if (latest.cleanup?.pending_lease_release?.token !== pending.token) return undefined;
+      delete latest.cleanup.pending_lease_release;
+      return latest;
+    });
+    return { action: "completed_pending_lease", retry: false };
   }
-  clearPendingLeaseRelease(runId);
+
+  const auth = authorizePendingTmuxStop(runId, pending);
+  if (auth.authorized) {
+    try {
+      stopTmux(pending.worker_tmux);
+    } catch (error) {
+      reportEntry.tmuxError = String(error.message || error);
+    }
+  }
   return { action: "completed_pending_lease", retry: false };
 }
 
@@ -249,33 +343,62 @@ function executeFailStale({
     return;
   }
 
-  if (!compareAndPersistStaleFailure(state.runId, {
+  const transition = transitionStaleFailure(state.runId, {
     inspectedTmux,
     expectedStaleDetectedAt,
     nowIso,
-  })) {
+  });
+  if (transition.kind === "reconciled") {
+    reportEntry.action = "reconcile_mailbox";
+    return;
+  }
+  if (transition.kind !== "failed") {
     reportEntry.staleFailureAborted = true;
     return;
   }
 
-  const attemptId = resolveActiveAttemptId(state.runId, loadState(state.runId));
-  if (attemptId) {
-    const releaseResult = releaseLease({
-      runId: state.runId,
-      attemptId,
-      reason: "worker_stale_timeout",
-      now: nowIso,
-    });
-    if (isRetryableLeaseFailure(releaseResult) || !isLeaseReleaseComplete(releaseResult)) {
-      setPendingLeaseRelease(state.runId, {
-        attempt_id: attemptId,
-        worker_tmux: inspectedTmux,
-        recorded_at: nowIso,
+  const afterTransition = loadState(state.runId);
+  const pending = afterTransition?.cleanup?.pending_lease_release;
+  if (pending?.attempt_id) {
+    let releaseResult;
+    try {
+      releaseResult = releaseLease({
+        runId: state.runId,
+        attemptId: pending.attempt_id,
+        reason: "worker_stale_timeout",
+        now: nowIso,
       });
+      releaseResult = resolveNotHolderRelease(releaseResult, state.runId, pending);
+    } catch (error) {
+      reportEntry.action = "pending_lease";
+      reportEntry.leaseError = String(error.message || error);
+      return;
+    }
+    if (isRetryableLeaseFailure(releaseResult) || !isLeaseReleaseComplete(releaseResult)) {
       reportEntry.action = "pending_lease";
       reportEntry.leaseError = releaseResult?.reason || "lease_release_failed";
       return;
     }
+    if (releaseResult?.reason === "superseded") {
+      updateState(state.runId, latest => {
+        if (latest.cleanup?.pending_lease_release?.token !== pending.token) return undefined;
+        delete latest.cleanup.pending_lease_release;
+        return latest;
+      });
+      return;
+    }
+  }
+
+  if (pending?.worker_tmux) {
+    const auth = authorizePendingTmuxStop(state.runId, pending);
+    if (auth.authorized) {
+      try {
+        stopTmux(pending.worker_tmux);
+      } catch (error) {
+        reportEntry.tmuxError = String(error.message || error);
+      }
+    }
+    return;
   }
 
   try {
@@ -283,7 +406,6 @@ function executeFailStale({
   } catch (error) {
     reportEntry.tmuxError = String(error.message || error);
   }
-  clearPendingLeaseRelease(state.runId);
 }
 
 export function gcRuns({

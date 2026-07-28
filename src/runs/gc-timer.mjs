@@ -4,18 +4,28 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+function sanitizeExecutablePath(value) {
+  const str = String(value);
+  if (/[\0\n\r]/.test(str)) {
+    throw new Error("executable path must not contain control characters");
+  }
+  return str.replaceAll("%", "%%");
+}
+
 function unitQuote(value) {
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 export function renderGcUnits({ nodePath, cliPath }) {
+  const node = sanitizeExecutablePath(nodePath);
+  const cli = sanitizeExecutablePath(cliPath);
   return {
     service: `[Unit]
 Description=team-up terminal and stale worker cleanup
 
 [Service]
 Type=oneshot
-ExecStart=${unitQuote(nodePath)} ${unitQuote(cliPath)} runs gc
+ExecStart=${unitQuote(node)} ${unitQuote(cli)} runs gc
 `,
     timer: `[Unit]
 Description=Run team-up worker cleanup every five minutes

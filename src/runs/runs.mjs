@@ -780,6 +780,13 @@ export function resumeAll({
 function cleanupTerminalWorker(state, classified, stopTmux) {
   const status = classified?.status || state?.status;
   if (!TERMINAL_RUN_STATUSES.has(status)) return false;
+  const pending = state?.cleanup?.pending_lease_release;
+  if (
+    pending?.worker_tmux
+    && state?.cleanup?.stale_reason === "worker_stale_timeout"
+  ) {
+    return false;
+  }
   const session = state?.worker?.tmux;
   if (!session) return false;
   stopTmux(session);

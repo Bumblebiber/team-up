@@ -16,6 +16,23 @@ test("renderGcUnits uses absolute executables and five minute cadence", () => {
   assert.match(units.timer, /Persistent=true/);
 });
 
+test("renderGcUnits escapes percent specifiers in executable paths", () => {
+  const units = renderGcUnits({
+    nodePath: "/opt/node%i/bin/node",
+    cliPath: "/opt/team-up/bin/team-up%U.mjs",
+  });
+  assert.match(units.service, /ExecStart="\/opt\/node%%i\/bin\/node" "\/opt\/team-up\/bin\/team-up%%U\.mjs" runs gc/);
+});
+
+test("renderGcUnits rejects control characters in executable paths", () => {
+  for (const bad of ["/opt/node\n/bin", "/opt/cli\r/cli.mjs", "/opt/cli\x00/cli.mjs"]) {
+    assert.throws(
+      () => renderGcUnits({ nodePath: bad, cliPath: "/opt/cli/cli.mjs" }),
+      /control character/i,
+    );
+  }
+});
+
 test("installGcTimer writes units then enables timer", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-gc-timer-"));
   const calls = [];
