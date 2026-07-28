@@ -1,0 +1,40 @@
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                          ▄                                             
+                                         █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█                                        
+                                         █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀                                        
+                                         ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀                                        
+                                                                                                                        
+                                                                                                                        
+                       ┃                                                                                                
+                       ┃  Ask anything... "Fix a TODO in the codebase"                                                  
+                       ┃                                                                                                
+                       ┃  Build · MiniMax-M3 MiniMax (minimax.io)                                                       
+                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      
+                                                                       tab agents  ctrl+p commands                      
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+  ~/projects/team-up/.worktrees/pane-fixtures:chore/pane-fixtures  ⊙ 1 MCP /status                             1.15.13  
+                                                                                                                        

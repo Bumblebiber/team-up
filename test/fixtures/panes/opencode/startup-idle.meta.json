@@ -1,0 +1,38 @@
+{
+  "cli": "opencode",
+  "cliVersion": "1.15.13",
+  "state": "startup-idle",
+  "command": [
+    "opencode"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    3,
+    5,
+    8
+  ],
+  "sessionStart": "2026-07-28T14:29:15Z",
+  "input": null,
+  "captures": [
+    {
+      "offsetSec": 3,
+      "timestamp": "2026-07-28T14:29:18Z",
+      "file": "opencode/startup-idle-3s.txt"
+    },
+    {
+      "offsetSec": 5,
+      "timestamp": "2026-07-28T14:29:20Z",
+      "file": "opencode/startup-idle-5s.txt"
+    },
+    {
+      "offsetSec": 8,
+      "timestamp": "2026-07-28T14:29:23Z",
+      "file": "opencode/startup-idle-8s.txt"
+    }
+  ]
+}
