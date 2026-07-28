@@ -294,7 +294,7 @@ export function mailboxDir(runId) {
   return path.join(runDir(runId), "mailbox");
 }
 
-function readMaybe(filePath) {
+export function readMaybe(filePath) {
   try {
     return fs.readFileSync(filePath, "utf8");
   } catch (e) {
@@ -426,7 +426,7 @@ export function isSyntheticStaleFailureState(state) {
 export function isUnresolvedStalePublicationClaim(state) {
   const claim = state?.cleanup?.stale_publication_claim;
   if (!claim || claim.aborted_at) return false;
-  return claim.phase !== "finalized";
+  return !["finalized"].includes(claim.phase);
 }
 
 export function readMailboxStatusIdentity(runId) {
@@ -499,11 +499,7 @@ export function resolveRunState(state, classified = { status: "watching" }) {
       effectiveClassified = { status: currentStatus };
     }
   } else if (TERMINAL_RUN_STATUSES.has(classified?.status)) {
-    if (
-      isUnresolvedStalePublicationClaim(state)
-      && classified.status === "failed"
-      && isMixedLegitimateCloseout(state, state.runId)
-    ) {
+    if (isUnresolvedStalePublicationClaim(state)) {
       nextStatus = currentStatus;
       effectiveClassified = { status: "watching" };
     } else {
@@ -876,20 +872,7 @@ export function resumeAll({
 function cleanupTerminalWorker(state, classified, stopTmux) {
   const status = classified?.status || state?.status;
   if (!TERMINAL_RUN_STATUSES.has(status)) return false;
-  if (
-    isUnresolvedStalePublicationClaim(state)
-    && (
-      isMixedLegitimateCloseout(state, state?.runId)
-      || !TERMINAL_RUN_STATUSES.has(state?.status)
-    )
-  ) {
-    return false;
-  }
-  const pending = state?.cleanup?.pending_lease_release;
-  if (
-    pending?.worker_tmux
-    && state?.cleanup?.stale_reason === "worker_stale_timeout"
-  ) {
+  if (isUnresolvedStalePublicationClaim(state)) {
     return false;
   }
   const session = state?.worker?.tmux;

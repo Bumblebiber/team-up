@@ -466,7 +466,7 @@ test("waitMailbox stops worker tmux for every terminal outcome", withTempRuns(as
   }
 }));
 
-test("waitMailbox defers tmux stop while stale lease release is pending", withTempRuns(async () => {
+test("waitMailbox defers tmux stop while stale cleanup claim is unresolved", withTempRuns(async () => {
   const state = createRun({
     cwd: "/tmp/p",
     role: "implementer",
@@ -475,16 +475,16 @@ test("waitMailbox defers tmux stop while stale lease release is pending", withTe
     prompt: "x",
   });
   const stalled = loadState(state.runId);
-  stalled.status = "failed";
+  stalled.status = "watching";
   stalled.cleanup = {
-    stale_reason: "worker_stale_timeout",
-    pending_lease_release: {
+    stale_publication_claim: {
       token: `${state.runId}.pending`,
       worker_tmux: "worker-stale",
+      worker_tmux_id: "$gc",
       attempt_id: "attempt-1",
-      generation: 0,
-      recorded_at: "2026-07-28T13:00:00.000Z",
-      stale_reason: "worker_stale_timeout",
+      phase: "lease_released",
+      claimed_at: "2026-07-28T13:00:00.000Z",
+      lease_released_at: "2026-07-28T13:00:00.000Z",
     },
   };
   saveState(stalled);
@@ -499,7 +499,7 @@ test("waitMailbox defers tmux stop while stale lease release is pending", withTe
     },
   });
 
-  assert.equal(result.classified.status, "failed");
+  assert.equal(result.classified.status, "watching");
   assert.deepEqual(stopped, []);
 }));
 

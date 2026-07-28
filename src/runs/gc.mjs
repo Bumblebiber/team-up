@@ -3,8 +3,6 @@ import path from "node:path";
 import {
   atomicWriteText,
   classifyMailbox,
-  isGcOwnedStaleFailedStatus,
-  isMixedLegitimateCloseout,
   isSyntheticStaleFailureState,
   isSyntheticStaleMailboxResult,
   isUnresolvedStalePublicationClaim,
@@ -12,11 +10,11 @@ import {
   loadState,
   mailboxDir,
   publishFileNoReplace,
-  readMailboxStatusIdentity,
+  readMaybe,
   resolveRunState,
   updateState,
 } from "./runs.mjs";
-import { inspectTmuxSession, stopTmuxSession } from "./tmux.mjs";
+import { inspectTmuxSession, stopTmuxSession, tmuxSessionExists } from "./tmux.mjs";
 import { readLease, releaseAttemptLease } from "../supervisor/attempts.mjs";
 
 export const IDLE_MS = 30 * 60 * 1000;
@@ -123,10 +121,12 @@ function isRetryableLeaseFailure(result) {
 }
 
 function staleConfirmationMatches(latest, tmuxName, expectedStaleDetectedAt) {
+  const claimStaleAt = latest.cleanup?.stale_publication_claim?.stale_detected_at;
+  const candidateAt = latest.cleanup?.stale_detected_at || claimStaleAt;
   return (
     ACTIVE.has(latest.status)
     && latest.worker?.tmux === tmuxName
-    && latest.cleanup?.stale_detected_at === expectedStaleDetectedAt
+    && candidateAt === expectedStaleDetectedAt
   );
 }
 
@@ -138,10 +138,12 @@ function sessionIdentityMatches(latest, inspectedTmuxId) {
 
 function reconcileTerminalMailboxState(state, classified) {
   const wasSyntheticStaleFailure = isSyntheticStaleFailureState(state);
+  if (state.cleanup?.stale_publication_claim) {
+    delete state.cleanup.stale_publication_claim;
+  }
   const resolution = resolveRunState(state, classified);
   state.status = resolution.state.status;
   if (state.cleanup?.stale_detected_at) delete state.cleanup.stale_detected_at;
-  if (state.cleanup?.stale_publication_claim) delete state.cleanup.stale_publication_claim;
   if (wasSyntheticStaleFailure && TERMINAL_MAILBOX.has(classified?.status)) {
     delete state.cleanup.stale_reason;
     delete state.cleanup.stale_failed_at;
@@ -160,32 +162,6 @@ function staleFailureResultContent(state) {
   return "worker_stale_timeout\n";
 }
 
-function shouldReconcileTerminalMailbox(state, classified) {
-  if (!TERMINAL_MAILBOX.has(classified?.status)) return false;
-  if (classified.status !== "failed") return true;
-  if (isUnresolvedStalePublicationClaim(state)) {
-    if (isMixedLegitimateCloseout(state, state.runId)) return false;
-    return false;
-  }
-  return !isSyntheticStaleMailboxResult(state, state.runId);
-}
-
-function createStalePublicationClaim(state, {
-  worker_tmux,
-  worker_tmux_id,
-  stale_detected_at,
-  nowIso,
-}) {
-  return {
-    token: `${state.runId}.${Date.now()}.${Math.random().toString(36).slice(2)}`,
-    worker_tmux,
-    worker_tmux_id: worker_tmux_id || null,
-    stale_detected_at,
-    phase: "claimed",
-    claimed_at: nowIso,
-  };
-}
-
 function publishStaleResult(state) {
   const mb = mailboxDir(state.runId);
   const resultPath = state.result_protocol === "RESULT.json"
@@ -197,134 +173,378 @@ function publishStaleResult(state) {
 function publishStaleStatus(runId) {
   const statusPath = path.join(mailboxDir(runId), "STATUS");
   atomicWriteText(statusPath, "failed\n");
-  const stat = fs.statSync(statusPath);
-  return { inode: stat.ino, mtimeMs: stat.mtimeMs };
 }
 
-function syncClaimResultPhase(claim, state, nowIso) {
-  if (claim.phase !== "claimed") return;
-  if (isSyntheticStaleMailboxResult(state, state.runId)) {
-    claim.phase = "result_published";
-    claim.result_published_at = claim.result_published_at || nowIso;
+function hasLegitimateTerminalMailbox(classified, state, runId) {
+  if (!TERMINAL_MAILBOX.has(classified?.status)) return false;
+  if (classified.status === "failed" && isSyntheticStaleMailboxResult(state, runId)) {
+    return false;
   }
+  return true;
 }
 
-function syncClaimStatusPhase(claim, runId, nowIso) {
-  if (claim.phase !== "result_published") return;
-  if (isGcOwnedStaleFailedStatus(runId, claim)) return;
-  const statusIdentity = publishStaleStatus(runId);
-  claim.phase = "status_published";
-  claim.status_published_at = nowIso;
-  claim.status_inode = statusIdentity.inode;
-  claim.status_mtime_ms = statusIdentity.mtimeMs;
+function deriveStatusFromCanonicalResult(state, runId) {
+  if (state.result_protocol === "RESULT.json") {
+    const raw = readMaybe(path.join(mailboxDir(runId), "RESULT.json"));
+    if (!raw || isSyntheticStaleMailboxResult(state, runId)) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.status === "success" || parsed?.status === "partial") return "done";
+      if (parsed?.status === "failed") return "failed";
+      if (parsed?.status === "blocked") return "question";
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  const md = readMaybe(path.join(mailboxDir(runId), "RESULT.md"));
+  if (!md || isSyntheticStaleMailboxResult(state, runId)) return null;
+  return "done";
 }
 
-function advanceStalePublicationInState(latest, runId, nowIso, hooks = {}) {
+function ensureMailboxStatus(runId, status) {
+  const statusPath = path.join(mailboxDir(runId), "STATUS");
+  try {
+    const existing = fs.readFileSync(statusPath, "utf8").trim();
+    if (TERMINAL_MAILBOX.has(existing)) return;
+  } catch {
+    /* missing STATUS */
+  }
+  atomicWriteText(statusPath, `${status}\n`);
+}
+
+function createStalePublicationClaim(state, {
+  worker_tmux,
+  worker_tmux_id,
+  stale_detected_at,
+  attempt_id,
+  nowIso,
+}) {
+  return {
+    token: `${state.runId}.${Date.now()}.${Math.random().toString(36).slice(2)}`,
+    worker_tmux,
+    worker_tmux_id: worker_tmux_id || null,
+    stale_detected_at,
+    attempt_id: attempt_id || null,
+    phase: "claimed",
+    claimed_at: nowIso,
+  };
+}
+
+function resolveNotHolderRelease(result, runId, claim) {
+  if (!result || result.ok !== false || result.reason !== "not_holder") return result;
+  if (result.current && result.current !== claim.attempt_id) {
+    return { ok: true, reason: "superseded" };
+  }
+  const lease = readLease(runId);
+  if (!lease) return { ok: true, reason: "no_lease" };
+  if (lease.released_at != null) return { ok: true, reason: "already_released" };
+  if (claim.attempt_id && lease.attempt_id !== claim.attempt_id) {
+    return { ok: true, reason: "superseded" };
+  }
+  return result;
+}
+
+function releaseClaimLease(runId, claim, nowIso, releaseLease, reportEntry) {
+  if (!claim.attempt_id) return { ok: true };
+  let releaseResult;
+  try {
+    releaseResult = releaseLease({
+      runId,
+      attemptId: claim.attempt_id,
+      reason: "worker_stale_timeout",
+      now: nowIso,
+    });
+    releaseResult = resolveNotHolderRelease(releaseResult, runId, claim);
+  } catch (error) {
+    reportEntry.leaseError = String(error.message || error);
+    return { ok: false, reason: "exception" };
+  }
+  if (isRetryableLeaseFailure(releaseResult) || !isLeaseReleaseComplete(releaseResult)) {
+    reportEntry.leaseError = releaseResult?.reason || "lease_release_failed";
+    return releaseResult || { ok: false, reason: "lease_release_failed" };
+  }
+  return releaseResult;
+}
+
+function stopClaimedTmuxSession(claim, { tmuxExists, stopTmux, reportEntry }) {
+  const sessionId = claim.worker_tmux_id;
+  if (!sessionId) {
+    return { ok: false, reason: "no_immutable_id" };
+  }
+  if (!tmuxExists(sessionId)) {
+    return { ok: true, reason: "already_gone" };
+  }
+  try {
+    stopTmux(sessionId);
+  } catch (error) {
+    reportEntry.tmuxError = String(error.message || error);
+    return { ok: false, reason: "stop_threw" };
+  }
+  if (tmuxExists(sessionId)) {
+    return { ok: false, reason: "still_exists" };
+  }
+  return { ok: true };
+}
+
+function finalizeStaleCleanup(latest, runId, nowIso, hooks = {}) {
+  if (typeof hooks.onBeforeStaleArtifactPublish === "function") {
+    hooks.onBeforeStaleArtifactPublish({ runId });
+  }
+
+  const classified = classifyMailbox(runId);
+  if (hasLegitimateTerminalMailbox(classified, latest, runId)) {
+    reconcileTerminalMailboxState(latest, classified);
+    return { kind: "finalized", reconciled: true };
+  }
+
+  const derivedStatus = deriveStatusFromCanonicalResult(latest, runId);
+  if (derivedStatus) {
+    ensureMailboxStatus(runId, derivedStatus);
+    const derivedClassified = classifyMailbox(runId);
+    if (hasLegitimateTerminalMailbox(derivedClassified, latest, runId)) {
+      reconcileTerminalMailboxState(latest, derivedClassified);
+      return { kind: "finalized", reconciled: true, derived: true };
+    }
+  }
+
+  publishStaleResult(latest);
+  publishStaleStatus(runId);
+  latest.status = "failed";
+  latest.cleanup = {
+    ...(latest.cleanup || {}),
+    stale_failed_at: nowIso,
+    stale_reason: "worker_stale_timeout",
+  };
+  return { kind: "finalized", reconciled: false };
+}
+
+function advanceStaleCleanupClaim(latest, runId, nowIso, {
+  releaseLease,
+  tmuxExists,
+  stopTmux,
+  reportEntry,
+  hooks = {},
+}) {
   const claim = latest.cleanup?.stale_publication_claim;
   if (!claim || claim.phase === "finalized" || claim.aborted_at) {
     return { kind: "none" };
   }
 
-  const classified = classifyMailbox(runId);
-  if (shouldReconcileTerminalMailbox(latest, classified)) {
-    reconcileTerminalMailboxState(latest, classified);
-    return { kind: "reconciled", classified };
-  }
-
-  if (isMixedLegitimateCloseout(latest, runId)) {
-    return { kind: "waiting" };
-  }
-
-  syncClaimResultPhase(claim, latest, nowIso);
-  syncClaimStatusPhase(claim, runId, nowIso);
-
   if (claim.phase === "claimed") {
-    if (typeof hooks.onBeforeStaleArtifactPublish === "function") {
-      hooks.onBeforeStaleArtifactPublish({ runId });
+    const releaseResult = releaseClaimLease(runId, claim, nowIso, releaseLease, reportEntry);
+    if (!isLeaseReleaseComplete(releaseResult)) {
+      return { kind: "retry_lease" };
     }
-    const classifiedAfterHook = classifyMailbox(runId);
-    if (shouldReconcileTerminalMailbox(latest, classifiedAfterHook)) {
-      reconcileTerminalMailboxState(latest, classifiedAfterHook);
-      return { kind: "reconciled", classified: classifiedAfterHook };
+    if (releaseResult?.reason === "superseded") {
+      delete latest.cleanup.stale_publication_claim;
+      return { kind: "aborted", reason: "superseded" };
     }
-    const publish = publishStaleResult(latest);
-    if (!publish.published) {
-      const classifiedAfterPublish = classifyMailbox(runId);
-      if (shouldReconcileTerminalMailbox(latest, classifiedAfterPublish)) {
-        reconcileTerminalMailboxState(latest, classifiedAfterPublish);
-        return { kind: "reconciled", classified: classifiedAfterPublish };
-      }
-      if (!isSyntheticStaleMailboxResult(latest, runId)) {
-        return { kind: "waiting" };
-      }
+    claim.phase = "lease_released";
+    claim.lease_released_at = nowIso;
+  }
+
+  if (claim.phase === "lease_released") {
+    if (
+      !ACTIVE.has(latest.status)
+      || latest.worker?.tmux !== claim.worker_tmux
+    ) {
+      delete latest.cleanup.stale_publication_claim;
+      return { kind: "aborted", reason: "worker_recovered" };
     }
-    claim.phase = "result_published";
-    claim.result_published_at = nowIso;
-    if (typeof hooks.onAfterStaleResultPublish === "function") {
-      hooks.onAfterStaleResultPublish({ runId });
+    if (!claim.worker_tmux_id) {
+      claim.aborted_at = nowIso;
+      claim.abort_reason = "no_immutable_id";
+      delete latest.cleanup.stale_publication_claim;
+      return { kind: "aborted", reason: "no_immutable_id" };
+    }
+    const stopResult = stopClaimedTmuxSession(claim, { tmuxExists, stopTmux, reportEntry });
+    if (!stopResult.ok) {
+      return { kind: "retry_stop" };
+    }
+    claim.phase = "tmux_stopped";
+    claim.tmux_stopped_at = nowIso;
+    if (typeof hooks.onAfterTmuxStopped === "function") {
+      hooks.onAfterTmuxStopped({ runId });
     }
   }
 
-  if (claim.phase === "result_published" && !isGcOwnedStaleFailedStatus(runId, claim)) {
-    const statusIdentity = publishStaleStatus(runId);
-    claim.phase = "status_published";
-    claim.status_published_at = nowIso;
-    claim.status_inode = statusIdentity.inode;
-    claim.status_mtime_ms = statusIdentity.mtimeMs;
-    if (typeof hooks.onAfterStaleStatusPublish === "function") {
-      hooks.onAfterStaleStatusPublish({ runId });
-    }
-  }
-
-  if (typeof hooks.onAfterStaleArtifactPublish === "function") {
-    hooks.onAfterStaleArtifactPublish({
-      runId,
-      publish: { published: claim.phase === "status_published" || claim.phase === "finalized" },
-    });
-  }
-
-  if (claim.phase === "status_published") {
-    if (isMixedLegitimateCloseout(latest, runId)) {
-      return { kind: "waiting" };
-    }
-    const classifiedAfter = classifyMailbox(runId);
-    if (shouldReconcileTerminalMailbox(latest, classifiedAfter)) {
-      reconcileTerminalMailboxState(latest, classifiedAfter);
-      return { kind: "reconciled", classified: classifiedAfter };
-    }
-    latest.status = "failed";
-    latest.cleanup = {
-      ...(latest.cleanup || {}),
-      stale_failed_at: nowIso,
-      stale_reason: "worker_stale_timeout",
-    };
+  if (claim.phase === "tmux_stopped") {
+    const finalize = finalizeStaleCleanup(latest, runId, nowIso, hooks);
     claim.phase = "finalized";
     claim.finalized_at = nowIso;
-    return { kind: "finalized" };
-  }
-
-  if (claim.phase === "result_published") {
-    return { kind: "in_progress" };
+    delete latest.cleanup.stale_publication_claim;
+    if (typeof hooks.onAfterStaleArtifactPublish === "function") {
+      hooks.onAfterStaleArtifactPublish({ runId, publish: { published: true } });
+    }
+    return finalize;
   }
 
   return { kind: "in_progress" };
 }
 
-function createPendingLeaseClaim(state, { worker_tmux, worker_tmux_id, attempt_id, nowIso }) {
-  return {
-    token: `${state.runId}.${Date.now()}.${Math.random().toString(36).slice(2)}`,
-    worker_tmux,
-    worker_tmux_id: worker_tmux_id || null,
-    attempt_id,
-    recorded_at: nowIso,
-    stale_reason: "worker_stale_timeout",
-  };
+function transitionStaleFailure(runId, {
+  inspectedTmux,
+  inspectedTmuxId,
+  expectedStaleDetectedAt,
+  nowIso,
+  releaseLease,
+  tmuxExists,
+  stopTmux,
+  reportEntry,
+  hooks = {},
+}) {
+  if (!inspectedTmuxId) {
+    reportEntry.staleFailureAborted = true;
+    reportEntry.staleFailureReason = "no_immutable_id";
+    return { kind: "aborted" };
+  }
+
+  let outcome = { kind: "aborted" };
+
+  const preClaim = loadState(runId);
+  if (
+    preClaim
+    && staleConfirmationMatches(preClaim, inspectedTmux, expectedStaleDetectedAt)
+    && !preClaim.cleanup?.stale_publication_claim
+  ) {
+    const classifiedBeforeClaim = classifyMailbox(runId);
+    if (hasLegitimateTerminalMailbox(classifiedBeforeClaim, preClaim, runId)) {
+      updateState(runId, latest => {
+        if (!staleConfirmationMatches(latest, inspectedTmux, expectedStaleDetectedAt)) {
+          return undefined;
+        }
+        reconcileTerminalMailboxState(latest, classifiedBeforeClaim);
+        return latest;
+      });
+      return { kind: "reconciled", classified: classifiedBeforeClaim };
+    }
+
+    updateState(runId, latest => {
+      if (!staleConfirmationMatches(latest, inspectedTmux, expectedStaleDetectedAt)) {
+        return undefined;
+      }
+      if (latest.cleanup?.stale_publication_claim) return undefined;
+      const attemptId = resolveActiveAttemptId(runId, latest);
+      latest.cleanup = {
+        ...(latest.cleanup || {}),
+        stale_publication_claim: createStalePublicationClaim(latest, {
+          worker_tmux: inspectedTmux,
+          worker_tmux_id: inspectedTmuxId,
+          stale_detected_at: expectedStaleDetectedAt,
+          attempt_id: attemptId,
+          nowIso,
+        }),
+      };
+      delete latest.cleanup.stale_detected_at;
+      return latest;
+    });
+
+    if (typeof hooks.onAfterClaim === "function") {
+      hooks.onAfterClaim({ runId });
+    }
+
+    const classifiedAfterClaim = classifyMailbox(runId);
+    const afterClaim = loadState(runId);
+    if (afterClaim && hasLegitimateTerminalMailbox(classifiedAfterClaim, afterClaim, runId)) {
+      updateState(runId, latest => {
+        reconcileTerminalMailboxState(latest, classifiedAfterClaim);
+        delete latest.cleanup.stale_publication_claim;
+        return latest;
+      });
+      return { kind: "reconciled", classified: classifiedAfterClaim };
+    }
+  }
+
+  updateState(runId, latest => {
+    const classified = classifyMailbox(runId);
+    if (hasLegitimateTerminalMailbox(classified, latest, runId)) {
+      reconcileTerminalMailboxState(latest, classified);
+      outcome = { kind: "reconciled", classified };
+      return latest;
+    }
+
+    if (!staleConfirmationMatches(latest, inspectedTmux, expectedStaleDetectedAt)) {
+      return undefined;
+    }
+
+    if (!latest.cleanup?.stale_publication_claim) {
+      return undefined;
+    }
+
+    const advance = advanceStaleCleanupClaim(latest, runId, nowIso, {
+      releaseLease,
+      tmuxExists,
+      stopTmux,
+      reportEntry,
+      hooks,
+    });
+
+    if (advance.kind === "finalized") {
+      outcome = advance.reconciled
+        ? { kind: "reconciled", classified: classifyMailbox(runId) }
+        : { kind: "failed" };
+      return latest;
+    }
+    if (advance.kind === "aborted") {
+      outcome = { kind: "aborted", reason: advance.reason };
+      return latest;
+    }
+    if (advance.kind === "retry_lease") {
+      outcome = { kind: "pending_claim" };
+      return latest;
+    }
+    if (advance.kind === "retry_stop") {
+      outcome = { kind: "pending_claim" };
+      return latest;
+    }
+    outcome = { kind: "pending_claim" };
+    return latest;
+  });
+
+  return outcome;
 }
 
-function stopAuthorizedTmuxSession(pending, stopTmux) {
-  const target = pending?.worker_tmux_id || pending?.worker_tmux;
-  if (!target) return;
-  stopTmux(target);
+function resumeStaleCleanupClaim(runId, {
+  nowIso,
+  releaseLease,
+  tmuxExists,
+  stopTmux,
+  reportEntry,
+  hooks = {},
+}) {
+  const state = loadState(runId);
+  if (!isUnresolvedStalePublicationClaim(state)) return null;
+
+  let advanceOutcome = null;
+  updateState(runId, latest => {
+    if (!isUnresolvedStalePublicationClaim(latest)) return undefined;
+    advanceOutcome = advanceStaleCleanupClaim(latest, runId, nowIso, {
+      releaseLease,
+      tmuxExists,
+      stopTmux,
+      reportEntry,
+      hooks,
+    });
+    return latest;
+  });
+
+  if (!advanceOutcome) return null;
+  if (advanceOutcome.kind === "finalized") {
+    return {
+      action: advanceOutcome.reconciled ? "reconcile_mailbox" : "fail_stale",
+    };
+  }
+  if (advanceOutcome.kind === "retry_lease") {
+    return { action: "pending_lease", retry: true };
+  }
+  if (advanceOutcome.kind === "retry_stop") {
+    return { action: "pending_claim", retry: true };
+  }
+  if (advanceOutcome.kind === "aborted") {
+    return { action: "stale_failure_aborted", reason: advanceOutcome.reason };
+  }
+  return { action: "pending_claim" };
 }
 
 function tryReconcileSyntheticStaleFailure(runId) {
@@ -347,294 +567,6 @@ function tryReconcileSyntheticStaleFailure(runId) {
   return outcome;
 }
 
-function attachPendingLeaseRelease(latest, runId, {
-  inspectedTmux,
-  inspectedTmuxId,
-  nowIso,
-}) {
-  const attemptId = resolveActiveAttemptId(runId, latest);
-  const claim = latest.cleanup?.stale_publication_claim;
-  const boundTmuxId = claim?.worker_tmux_id || inspectedTmuxId || latest.cleanup?.worker_tmux_id || null;
-  if (attemptId) {
-    latest.cleanup.pending_lease_release = createPendingLeaseClaim(latest, {
-      worker_tmux: inspectedTmux,
-      worker_tmux_id: boundTmuxId,
-      attempt_id: attemptId,
-      nowIso,
-    });
-  }
-}
-
-function transitionStaleFailure(runId, {
-  inspectedTmux,
-  inspectedTmuxId,
-  expectedStaleDetectedAt,
-  nowIso,
-  onBeforeStaleArtifactPublish = null,
-  onAfterStaleArtifactPublish = null,
-  onAfterStaleResultPublish = null,
-  onAfterStaleStatusPublish = null,
-}) {
-  let outcome = { kind: "aborted" };
-  const hooks = {
-    onBeforeStaleArtifactPublish,
-    onAfterStaleArtifactPublish,
-    onAfterStaleResultPublish,
-    onAfterStaleStatusPublish,
-  };
-
-  updateState(runId, latest => {
-    const classified = classifyMailbox(runId);
-    if (shouldReconcileTerminalMailbox(latest, classified)) {
-      reconcileTerminalMailboxState(latest, classified);
-      outcome = { kind: "reconciled", classified };
-      return latest;
-    }
-    if (!staleConfirmationMatches(latest, inspectedTmux, expectedStaleDetectedAt)) {
-      return undefined;
-    }
-    const classifiedAgain = classifyMailbox(runId);
-    if (shouldReconcileTerminalMailbox(latest, classifiedAgain)) {
-      reconcileTerminalMailboxState(latest, classifiedAgain);
-      outcome = { kind: "reconciled", classified: classifiedAgain };
-      return latest;
-    }
-
-    if (!latest.cleanup?.stale_publication_claim) {
-      latest.cleanup = {
-        ...(latest.cleanup || {}),
-        stale_publication_claim: createStalePublicationClaim(latest, {
-          worker_tmux: inspectedTmux,
-          worker_tmux_id: inspectedTmuxId || latest.cleanup?.worker_tmux_id || null,
-          stale_detected_at: expectedStaleDetectedAt,
-          nowIso,
-        }),
-      };
-      delete latest.cleanup.stale_detected_at;
-    }
-
-    const advance = advanceStalePublicationInState(latest, runId, nowIso, hooks);
-    if (advance.kind === "reconciled") {
-      outcome = { kind: "reconciled", classified: advance.classified };
-      return latest;
-    }
-    if (advance.kind === "waiting") {
-      outcome = { kind: "waiting" };
-      return latest;
-    }
-    if (advance.kind === "finalized") {
-      attachPendingLeaseRelease(latest, runId, {
-        inspectedTmux,
-        inspectedTmuxId,
-        nowIso,
-      });
-      outcome = { kind: "failed" };
-      return latest;
-    }
-    outcome = { kind: "in_progress", reason: advance.kind };
-    return latest;
-  });
-  return outcome;
-}
-
-function resolveNotHolderRelease(result, runId, pending) {
-  if (!result || result.ok !== false || result.reason !== "not_holder") return result;
-  if (result.current && result.current !== pending.attempt_id) {
-    return { ok: true, reason: "superseded" };
-  }
-  const lease = readLease(runId);
-  if (!lease) return { ok: true, reason: "no_lease" };
-  if (lease.released_at != null) return { ok: true, reason: "already_released" };
-  if (lease.attempt_id !== pending.attempt_id) return { ok: true, reason: "superseded" };
-  return result;
-}
-
-function authorizePendingTmuxStop(runId, pending) {
-  if (!pending?.token || (!pending.worker_tmux && !pending.worker_tmux_id)) {
-    return { authorized: false, obsolete: true };
-  }
-  let outcome = { authorized: false, obsolete: true };
-  updateState(runId, latest => {
-    const currentPending = latest.cleanup?.pending_lease_release;
-    if (!currentPending || currentPending.token !== pending.token) {
-      outcome = { authorized: false, obsolete: true };
-      return undefined;
-    }
-    if (
-      latest.status !== "failed"
-      || latest.cleanup?.stale_reason !== "worker_stale_timeout"
-    ) {
-      delete latest.cleanup.pending_lease_release;
-      outcome = { authorized: false, obsolete: true };
-      return latest;
-    }
-    const lease = readLease(runId);
-    if (
-      lease
-      && lease.released_at == null
-      && lease.attempt_id
-      && pending.attempt_id
-      && lease.attempt_id !== pending.attempt_id
-    ) {
-      delete latest.cleanup.pending_lease_release;
-      outcome = { authorized: false, obsolete: true };
-      return latest;
-    }
-    delete latest.cleanup.pending_lease_release;
-    outcome = { authorized: true, obsolete: false };
-    return latest;
-  });
-  return outcome;
-}
-
-function tryCompletePendingLeaseRelease({
-  runId,
-  nowIso,
-  releaseLease,
-  stopTmux,
-  reportEntry,
-}) {
-  const state = loadState(runId);
-  const pending = state?.cleanup?.pending_lease_release;
-  if (!pending?.worker_tmux) return null;
-
-  let releaseResult;
-  try {
-    releaseResult = pending.attempt_id
-      ? releaseLease({
-        runId,
-        attemptId: pending.attempt_id,
-        reason: "worker_stale_timeout",
-        now: nowIso,
-      })
-      : { ok: true };
-    releaseResult = resolveNotHolderRelease(releaseResult, runId, pending);
-  } catch (error) {
-    reportEntry.leaseError = String(error.message || error);
-    return { action: "pending_lease", retry: true };
-  }
-
-  if (isRetryableLeaseFailure(releaseResult)) {
-    reportEntry.leaseError = releaseResult.reason;
-    return { action: "pending_lease", retry: true };
-  }
-  if (!isLeaseReleaseComplete(releaseResult)) {
-    reportEntry.leaseError = releaseResult?.reason || "lease_release_failed";
-    return { action: "pending_lease", retry: true };
-  }
-
-  if (releaseResult?.reason === "superseded") {
-    updateState(runId, latest => {
-      if (latest.cleanup?.pending_lease_release?.token !== pending.token) return undefined;
-      delete latest.cleanup.pending_lease_release;
-      return latest;
-    });
-    return { action: "completed_pending_lease", retry: false };
-  }
-
-  const auth = authorizePendingTmuxStop(runId, pending);
-  if (auth.authorized) {
-    try {
-      stopAuthorizedTmuxSession(pending, stopTmux);
-    } catch (error) {
-      reportEntry.tmuxError = String(error.message || error);
-    }
-  }
-  return { action: "completed_pending_lease", retry: false };
-}
-
-function resumeStalePublicationClaim(runId, {
-  nowIso,
-  releaseLease,
-  stopTmux,
-  reportEntry,
-  onBeforeStaleArtifactPublish = null,
-  onAfterStaleArtifactPublish = null,
-  onAfterStaleResultPublish = null,
-  onAfterStaleStatusPublish = null,
-}) {
-  const state = loadState(runId);
-  if (!isUnresolvedStalePublicationClaim(state)) return null;
-
-  let advanceOutcome = null;
-  updateState(runId, latest => {
-    if (!isUnresolvedStalePublicationClaim(latest)) return undefined;
-    advanceOutcome = advanceStalePublicationInState(latest, runId, nowIso, {
-      onBeforeStaleArtifactPublish,
-      onAfterStaleArtifactPublish,
-      onAfterStaleResultPublish,
-      onAfterStaleStatusPublish,
-    });
-    if (advanceOutcome.kind === "finalized") {
-      const claim = latest.cleanup?.stale_publication_claim;
-      attachPendingLeaseRelease(latest, runId, {
-        inspectedTmux: claim?.worker_tmux || latest.worker?.tmux,
-        inspectedTmuxId: claim?.worker_tmux_id,
-        nowIso,
-      });
-    }
-    return latest;
-  });
-
-  if (!advanceOutcome) return null;
-  if (advanceOutcome.kind === "reconciled") {
-    return { action: "reconcile_mailbox" };
-  }
-  if (advanceOutcome.kind === "waiting" || advanceOutcome.kind === "in_progress") {
-    return { action: "pending_publication_claim" };
-  }
-  if (advanceOutcome.kind === "finalized") {
-    const after = loadState(runId);
-    const pending = after?.cleanup?.pending_lease_release;
-    if (pending?.attempt_id) {
-      let releaseResult;
-      try {
-        releaseResult = releaseLease({
-          runId,
-          attemptId: pending.attempt_id,
-          reason: "worker_stale_timeout",
-          now: nowIso,
-        });
-        releaseResult = resolveNotHolderRelease(releaseResult, runId, pending);
-      } catch (error) {
-        reportEntry.leaseError = String(error.message || error);
-        return { action: "pending_lease", retry: true };
-      }
-      if (isRetryableLeaseFailure(releaseResult) || !isLeaseReleaseComplete(releaseResult)) {
-        reportEntry.leaseError = releaseResult?.reason || "lease_release_failed";
-        return { action: "pending_lease", retry: true };
-      }
-      if (releaseResult?.reason === "superseded") {
-        updateState(runId, latest => {
-          if (latest.cleanup?.pending_lease_release?.token !== pending.token) return undefined;
-          delete latest.cleanup.pending_lease_release;
-          return latest;
-        });
-        return { action: "completed_pending_lease", retry: false };
-      }
-    }
-    if (pending?.worker_tmux || pending?.worker_tmux_id) {
-      const auth = authorizePendingTmuxStop(runId, pending);
-      if (auth.authorized) {
-        try {
-          stopAuthorizedTmuxSession(pending, stopTmux);
-        } catch (error) {
-          reportEntry.tmuxError = String(error.message || error);
-        }
-      }
-      return { action: "completed_pending_lease", retry: false };
-    }
-    const claim = after?.cleanup?.stale_publication_claim;
-    try {
-      stopTmux(claim?.worker_tmux_id || claim?.worker_tmux || after?.worker?.tmux);
-    } catch (error) {
-      reportEntry.tmuxError = String(error.message || error);
-    }
-    return { action: "fail_stale" };
-  }
-  return null;
-}
-
 function executeFailStale({
   state,
   nowIso,
@@ -642,12 +574,13 @@ function executeFailStale({
   heartbeatFor,
   inspectTmux,
   releaseLease,
+  tmuxExists,
   stopTmux,
   onBeforeStaleConfirmation,
   onBeforeStaleArtifactPublish,
   onAfterStaleArtifactPublish,
-  onAfterStaleResultPublish,
-  onAfterStaleStatusPublish,
+  onAfterClaim,
+  onAfterTmuxStopped,
   beforeStaleFailureConfirm,
   reportEntry,
 }) {
@@ -671,6 +604,12 @@ function executeFailStale({
 
   const heartbeatMs = heartbeatFor(state.runId);
   const tmux = inspectTmux(tmuxName);
+  const boundTmuxId = tmux.sessionId || latest.cleanup?.worker_tmux_id || null;
+  if (!boundTmuxId) {
+    reportEntry.staleFailureAborted = true;
+    reportEntry.staleFailureReason = "no_immutable_id";
+    return;
+  }
   if (!sessionIdentityMatches(latest, tmux.sessionId)) {
     clearStaleCandidate(state.runId);
     reportEntry.staleFailureAborted = true;
@@ -696,81 +635,48 @@ function executeFailStale({
     return;
   }
 
-  const transition = transitionStaleFailure(state.runId, {
-    inspectedTmux: tmuxName,
-    inspectedTmuxId: tmux.sessionId,
-    expectedStaleDetectedAt,
-    nowIso,
+  const hooks = {
     onBeforeStaleArtifactPublish,
     onAfterStaleArtifactPublish,
-    onAfterStaleResultPublish,
-    onAfterStaleStatusPublish,
+    onAfterClaim,
+    onAfterTmuxStopped,
+  };
+
+  const transition = transitionStaleFailure(state.runId, {
+    inspectedTmux: tmuxName,
+    inspectedTmuxId: boundTmuxId,
+    expectedStaleDetectedAt,
+    nowIso,
+    releaseLease,
+    tmuxExists,
+    stopTmux,
+    reportEntry,
+    hooks,
   });
+
   if (transition.kind === "reconciled") {
     reportEntry.action = "reconcile_mailbox";
     return;
   }
-  if (transition.kind === "waiting" || transition.kind === "in_progress") {
-    reportEntry.action = "pending_publication_claim";
-    return;
-  }
-  if (transition.kind !== "failed") {
+  if (transition.kind === "aborted") {
     reportEntry.staleFailureAborted = true;
+    reportEntry.staleFailureReason = transition.reason || "aborted";
+    return;
+  }
+  if (transition.kind === "pending_claim") {
+    reportEntry.action = isUnresolvedStalePublicationClaim(loadState(state.runId))
+      && loadState(state.runId)?.cleanup?.stale_publication_claim?.phase === "claimed"
+      && reportEntry.leaseError
+      ? "pending_lease"
+      : "pending_claim";
+    return;
+  }
+  if (transition.kind === "failed") {
+    reportEntry.action = "fail_stale";
     return;
   }
 
-  const afterTransition = loadState(state.runId);
-  const pending = afterTransition?.cleanup?.pending_lease_release;
-  if (pending?.attempt_id) {
-    let releaseResult;
-    try {
-      releaseResult = releaseLease({
-        runId: state.runId,
-        attemptId: pending.attempt_id,
-        reason: "worker_stale_timeout",
-        now: nowIso,
-      });
-      releaseResult = resolveNotHolderRelease(releaseResult, state.runId, pending);
-    } catch (error) {
-      reportEntry.action = "pending_lease";
-      reportEntry.leaseError = String(error.message || error);
-      return;
-    }
-    if (isRetryableLeaseFailure(releaseResult) || !isLeaseReleaseComplete(releaseResult)) {
-      reportEntry.action = "pending_lease";
-      reportEntry.leaseError = releaseResult?.reason || "lease_release_failed";
-      return;
-    }
-    if (releaseResult?.reason === "superseded") {
-      updateState(state.runId, latest => {
-        if (latest.cleanup?.pending_lease_release?.token !== pending.token) return undefined;
-        delete latest.cleanup.pending_lease_release;
-        return latest;
-      });
-      return;
-    }
-  }
-
-  if (pending?.worker_tmux || pending?.worker_tmux_id) {
-    const auth = authorizePendingTmuxStop(state.runId, pending);
-    if (auth.authorized) {
-      try {
-        stopAuthorizedTmuxSession(pending, stopTmux);
-      } catch (error) {
-        reportEntry.tmuxError = String(error.message || error);
-      }
-    }
-    return;
-  }
-
-  try {
-    const boundTmuxId = afterTransition?.cleanup?.stale_publication_claim?.worker_tmux_id
-      || afterTransition?.cleanup?.worker_tmux_id
-      || tmux.sessionId;
-    stopTmux(boundTmuxId || tmuxName);
-  } catch (error) {
-    reportEntry.tmuxError = String(error.message || error);
-  }
+  reportEntry.staleFailureAborted = true;
 }
 
 export function gcRuns({
@@ -778,13 +684,14 @@ export function gcRuns({
   states = null,
   heartbeatFor = heartbeatForRun,
   inspectTmux = inspectTmuxSession,
+  tmuxExists = tmuxSessionExists,
   stopTmux = stopTmuxSession,
   releaseLease = releaseAttemptLease,
   onBeforeStaleConfirmation = null,
   onBeforeStaleArtifactPublish = null,
   onAfterStaleArtifactPublish = null,
-  onAfterStaleResultPublish = null,
-  onAfterStaleStatusPublish = null,
+  onAfterClaim = null,
+  onAfterTmuxStopped = null,
   beforeStaleFailureConfirm = null,
   dryRun = false,
 } = {}) {
@@ -806,31 +713,20 @@ export function gcRuns({
         continue;
       }
 
-      const resumed = resumeStalePublicationClaim(state.runId, {
+      const resumed = resumeStaleCleanupClaim(state.runId, {
         nowIso,
         releaseLease,
+        tmuxExists,
         stopTmux,
         reportEntry,
-        onBeforeStaleArtifactPublish,
-        onAfterStaleArtifactPublish,
-        onAfterStaleResultPublish,
-        onAfterStaleStatusPublish,
+        hooks: {
+          onBeforeStaleArtifactPublish,
+          onAfterStaleArtifactPublish,
+          onAfterTmuxStopped,
+        },
       });
       if (resumed) {
         reportEntry.action = resumed.action;
-        report.runs.push(reportEntry);
-        continue;
-      }
-
-      const pendingResult = tryCompletePendingLeaseRelease({
-        runId: state.runId,
-        nowIso,
-        releaseLease,
-        stopTmux,
-        reportEntry,
-      });
-      if (pendingResult) {
-        reportEntry.action = pendingResult.action;
         report.runs.push(reportEntry);
         continue;
       }
@@ -848,9 +744,8 @@ export function gcRuns({
     if (dryRun) continue;
 
     if (decision.kind === "kill_terminal") {
-      const pendingAfterFailure = loadState(state.runId)?.cleanup?.pending_lease_release;
-      if (pendingAfterFailure) {
-        reportEntry.action = "pending_lease";
+      if (isUnresolvedStalePublicationClaim(loadState(state.runId))) {
+        reportEntry.action = "pending_claim";
         continue;
       }
       stopTmux(state.worker.tmux);
@@ -873,12 +768,13 @@ export function gcRuns({
       heartbeatFor,
       inspectTmux,
       releaseLease,
+      tmuxExists,
       stopTmux,
       onBeforeStaleConfirmation,
       onBeforeStaleArtifactPublish,
       onAfterStaleArtifactPublish,
-      onAfterStaleResultPublish,
-      onAfterStaleStatusPublish,
+      onAfterClaim,
+      onAfterTmuxStopped,
       beforeStaleFailureConfirm,
       reportEntry,
     });
