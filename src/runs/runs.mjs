@@ -774,7 +774,7 @@ export function resumeAll({
   return report;
 }
 
-export function waitMailbox(runId, { ceilingSec = 3600 } = {}) {
+export function waitMailbox(runId, { ceilingSec = 3600, observe = true, spawnObserver: spawnObserverFn } = {}) {
   let resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
   if (resolved.changed) {
     resolved = persistResolvedRunStatus(runId, resolved.classified);
@@ -786,13 +786,34 @@ export function waitMailbox(runId, { ceilingSec = 3600 } = {}) {
     return { waitExit: 0, classified: resolved.classified };
   }
 
-  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
-  const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
-  resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
-  if (resolved.changed) {
-    resolved = persistResolvedRunStatus(runId, resolved.classified);
+  let observerChild = null;
+  try {
+    if (observe) {
+      if (spawnObserverFn) {
+        observerChild = spawnObserverFn(runId);
+      } else {
+        // Lazy import avoided — spawn node child directly to keep waitMailbox sync.
+        const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "observe.mjs");
+        observerChild = spawn(process.execPath, [script, runId], {
+          stdio: "ignore",
+          detached: false,
+          env: { ...process.env },
+        });
+      }
+    }
+
+    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
+    const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
+    resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
+    if (resolved.changed) {
+      resolved = persistResolvedRunStatus(runId, resolved.classified);
+    }
+    return { waitExit: r.status ?? 1, classified: resolved.classified };
+  } finally {
+    if (observerChild && observerChild.exitCode === null) {
+      observerChild.kill("SIGTERM");
+    }
   }
-  return { waitExit: r.status ?? 1, classified: resolved.classified };
 }
 
 function argValue(args, flag) {
