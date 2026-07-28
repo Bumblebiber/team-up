@@ -326,6 +326,18 @@ test("escalateRun writes QUESTIONS.md and waiting_human status", withTempRuns(as
   assert.equal(runs.loadState(state.runId).status, "waiting_human");
 }));
 
+test("parseJudgeJson unwraps cursor-agent result envelope", () => {
+  const envelope = JSON.stringify({
+    type: "result",
+    subtype: "success",
+    result: '{"state":"waiting_input","reason":"trust","action":"answer","keys":["Enter"],"evidence":"trust"}',
+  });
+  const r = parseJudgeJson(envelope);
+  assert.equal(r.ok, true);
+  assert.equal(r.verdict.action, "answer");
+  assert.deepEqual(r.verdict.keys, ["Enter"]);
+});
+
 test("parseJudgeJson extracts JSON from surrounding text", () => {
   const wrapped = 'Here is my verdict:\n{"state":"working","reason":"ok","action":"wait","evidence":"x"}\nDone.';
   const r = parseJudgeJson(wrapped);

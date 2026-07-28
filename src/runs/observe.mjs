@@ -73,17 +73,47 @@ export function matchesDenyPattern(pane) {
 export function parseJudgeJson(text) {
   const raw = String(text || "").trim();
   if (!raw) return { ok: false, error: "empty judge output" };
+
+  const tryParse = (slice) => {
+    try {
+      return JSON.parse(slice);
+    } catch {
+      return null;
+    }
+  };
+
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start === -1 || end <= start) {
     return { ok: false, error: "no JSON object in judge output" };
   }
-  try {
-    const parsed = JSON.parse(raw.slice(start, end + 1));
-    return { ok: true, verdict: parsed };
-  } catch (e) {
-    return { ok: false, error: `malformed JSON: ${e.message}` };
+
+  const outer = tryParse(raw.slice(start, end + 1));
+  if (!outer) {
+    return { ok: false, error: "malformed JSON in judge output" };
   }
+
+  // cursor-agent --output-format json wraps the model text in { type, result }.
+  if (outer.type === "result" && typeof outer.result === "string") {
+    const innerStart = outer.result.indexOf("{");
+    const innerEnd = outer.result.lastIndexOf("}");
+    if (innerStart !== -1 && innerEnd > innerStart) {
+      const inner = tryParse(outer.result.slice(innerStart, innerEnd + 1));
+      if (inner && typeof inner.state === "string") {
+        return { ok: true, verdict: inner };
+      }
+    }
+    const innerDirect = tryParse(outer.result.trim());
+    if (innerDirect && typeof innerDirect.state === "string") {
+      return { ok: true, verdict: innerDirect };
+    }
+  }
+
+  if (typeof outer.state === "string") {
+    return { ok: true, verdict: outer };
+  }
+
+  return { ok: false, error: "no verdict object in judge output" };
 }
 
 export function validateVerdictShape(verdict) {
