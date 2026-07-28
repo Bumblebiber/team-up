@@ -10,19 +10,19 @@
     "cols": 120,
     "rows": 40
   },
-  "settleSec": 5,
+  "settleSec": 8,
   "offsets": [
-    100
+    110
   ],
-  "sessionStart": "2026-07-28T14:13:22Z",
+  "sessionStart": "2026-07-28T14:17:51Z",
   "input": {
     "text": "Run exactly this shell command: sleep 75. After it completes, reply with only the word done.",
-    "sentAtSec": 8
+    "sentAtSec": 12
   },
   "captures": [
     {
-      "offsetSec": 100,
-      "timestamp": "2026-07-28T14:15:02Z",
+      "offsetSec": 110,
+      "timestamp": "2026-07-28T14:19:41Z",
       "file": "claude/finished.txt"
     }
   ]
