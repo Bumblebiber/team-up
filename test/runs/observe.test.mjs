@@ -197,7 +197,6 @@ test("hermes ticking footer never pane-stalls but silence trigger fires", () => 
   assert.equal(freshEvents.filter((e) => e === "stall_detected").length, 0);
 
   const silentLoop = createObserverLoop();
-  silentLoop.prevFingerprint = paneFingerprint(panes[0]);
   const silent = observerTick(silentLoop, panes[0], {
     mailboxAgeSec: DEFAULT_SILENCE_SEC,
     silenceSec: DEFAULT_SILENCE_SEC,

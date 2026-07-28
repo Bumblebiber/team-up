@@ -478,20 +478,21 @@ export function observerTick(loop, capture, deps = {}) {
   const silenceSec = deps.silenceSec ?? DEFAULT_SILENCE_SEC;
   const mailboxAgeSec = deps.mailboxAgeSec ?? Infinity;
   const fp = paneFingerprint(capture);
+  const silenceStalled = mailboxAgeSec >= silenceSec;
 
+  let paneChanged = false;
   if (fp !== loop.prevFingerprint) {
-    const hadPrior = loop.prevFingerprint != null;
+    paneChanged = loop.prevFingerprint != null;
     loop.prevFingerprint = fp;
     loop.identicalCount = 0;
-    if (hadPrior) {
+    if (paneChanged) {
       loop.awaitingPostAnswer = false;
       loop.postAnswerTicks = 0;
+      loop.judgeCalledThisEpisode = false;
     }
-    loop.judgeCalledThisEpisode = false;
-    return { ...loop, event: "changed" };
+  } else {
+    loop.identicalCount += 1;
   }
-
-  loop.identicalCount += 1;
 
   if (loop.awaitingPostAnswer) {
     loop.postAnswerTicks += 1;
@@ -502,17 +503,23 @@ export function observerTick(loop, capture, deps = {}) {
   }
 
   const paneStalled = loop.identicalCount >= stallTicks;
-  const silenceStalled = mailboxAgeSec >= silenceSec;
+  const shouldStall = paneStalled || silenceStalled;
 
-  if (!paneStalled && !silenceStalled) {
+  if (!shouldStall) {
+    if (paneChanged || loop.identicalCount === 0) {
+      return { ...loop, event: "changed" };
+    }
     return { ...loop, event: "identical" };
   }
+
   if (loop.judgeCalledThisEpisode) {
     return { ...loop, event: "stall_ongoing" };
   }
 
   loop.judgeCalledThisEpisode = true;
-  const trigger = silenceStalled && !paneStalled ? "silence" : "pane";
+  let trigger = "pane";
+  if (silenceStalled && !paneStalled) trigger = "silence";
+  else if (silenceStalled && paneStalled) trigger = "both";
   return { ...loop, event: "stall_detected", capture, trigger };
 }
 
