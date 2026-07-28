@@ -18,9 +18,11 @@ import { loadJson, requireRoster, usagePath } from "../roster/config.mjs";
 
 export const DEFAULT_POLL_SEC = 5;
 export const DEFAULT_STALL_TICKS = 3;
+export const DEFAULT_SILENCE_SEC = 120;
 export const JUDGE_TIMEOUT_MS = 60_000;
 export const MAX_AUTO_ANSWERS = 3;
 export const PANE_TAIL_BYTES = 8 * 1024;
+export const OBSERVER_PID_FILE = "OBSERVER.pid";
 
 export const ALLOWED_KEYS = new Set([
   "Enter", "Escape", "Up", "Down", "Left", "Right", "Tab", "Space",
@@ -158,6 +160,15 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
     };
   }
 
+  if (verdict.state === "login_required") {
+    return {
+      action: "escalate",
+      reason: "login_required state",
+      question: verdict.question || "Login or authentication required.",
+      verdict,
+    };
+  }
+
   if (matchesDenyPattern(pane)) {
     return {
       action: "escalate",
@@ -181,6 +192,16 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
   }
 
   // action === "answer"
+  const silenceSec = ctx.silenceSec ?? DEFAULT_SILENCE_SEC;
+  const mailboxAgeSec = ctx.mailboxAgeSec ?? Infinity;
+  if (mailboxAgeSec < silenceSec) {
+    return {
+      action: "wait",
+      reason: "mailbox fresh; worker likely alive despite frozen pane",
+      verdict,
+    };
+  }
+
   const fp = paneFingerprint(pane);
   if (ctx.answeredPanes?.has(fp)) {
     return {
@@ -214,7 +235,15 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
   return { action: "answer", reason: "verified answer", verdict, keys: verdict.keys };
 }
 
-export function buildJudgePrompt({ pane, cli, runId, role, elapsedSec }) {
+export function buildJudgePrompt({
+  pane,
+  cli,
+  runId,
+  role,
+  elapsedSec,
+  mailboxAgeSec = Infinity,
+  silenceSec = DEFAULT_SILENCE_SEC,
+}) {
   return [
     "You are an observer judging a frozen terminal pane from a coding CLI worker.",
     "Return ONLY a single JSON object, no markdown fences.",
@@ -231,6 +260,11 @@ export function buildJudgePrompt({ pane, cli, runId, role, elapsedSec }) {
     `cli: ${cli}`,
     `role: ${role}`,
     `elapsed_sec: ${elapsedSec}`,
+    `mailbox_age_sec: ${mailboxAgeSec}`,
+    `silence_sec: ${silenceSec}`,
+    "",
+    "Important: A frozen terminal screen is NOT evidence of idleness.",
+    "If mailbox_age_sec is less than silence_sec, the worker is likely alive.",
     "",
     "Pane (last ~8KiB):",
     tailPane(pane),
@@ -299,14 +333,108 @@ function defaultAppend(filePath, line) {
   fs.appendFileSync(filePath, line);
 }
 
+function readMaybe(filePath) {
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+export function isProcessAlive(pid) {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Seconds since the newest mtime in the mailbox directory. */
+export function getMailboxAge(runId, { now = () => Date.now(), stat = fs.statSync } = {}) {
+  const mb = mailboxDir(runId);
+  if (!fs.existsSync(mb)) return Infinity;
+  let latest = 0;
+  for (const name of fs.readdirSync(mb)) {
+    try {
+      const st = stat(path.join(mb, name));
+      if (st.mtimeMs > latest) latest = st.mtimeMs;
+    } catch {
+      // skip unreadable entries
+    }
+  }
+  if (latest === 0) return Infinity;
+  return Math.floor((now() - latest) / 1000);
+}
+
+export function observerPidPath(runId) {
+  return path.join(mailboxDir(runId), OBSERVER_PID_FILE);
+}
+
+/** Acquire exclusive observer lock; second live observer must not run. */
+export function tryAcquireObserverLock(runId, { pid = process.pid, writeFile = fs.writeFileSync } = {}) {
+  const lockPath = observerPidPath(runId);
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  try {
+    const fd = fs.openSync(lockPath, "wx");
+    fs.writeFileSync(fd, `${pid}\n`);
+    fs.closeSync(fd);
+    return { ok: true, lockPath };
+  } catch (e) {
+    if (e.code !== "EEXIST") throw e;
+    const existing = Number(String(readMaybe(lockPath) || "").trim());
+    if (existing && isProcessAlive(existing) && existing !== pid) {
+      return { ok: false, reason: "another observer is running", existingPid: existing };
+    }
+    writeFile(lockPath, `${pid}\n`);
+    return { ok: true, lockPath, replacedStale: true };
+  }
+}
+
+export function releaseObserverLock(runId) {
+  const lockPath = observerPidPath(runId);
+  try {
+    fs.unlinkSync(lockPath);
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+  }
+}
+
+/** Restore per-run caps from OBSERVATION.log. */
+export function hydrateLoopFromLog(runId, loop = createObserverLoop()) {
+  const logPath = observationLogPath(runId);
+  if (!fs.existsSync(logPath)) return loop;
+  for (const line of fs.readFileSync(logPath, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry.kind === "action" && entry.action === "answer") {
+      loop.autoAnswerCount = Math.max(loop.autoAnswerCount, entry.auto_answer_count ?? 0);
+      if (entry.pane_fp) loop.answeredPanes.add(entry.pane_fp);
+    }
+  }
+  return loop;
+}
+
 export function escalateRun(runId, question, { source = "observer" } = {}) {
-  const body = [
+  const questionsPath = path.join(mailboxDir(runId), "QUESTIONS.md");
+  const existing = readMaybe(questionsPath);
+  const newBlock = [
     `<!-- source: ${source} -->`,
     "",
     String(question || "Worker pane needs human attention.").trim(),
     "",
   ].join("\n");
-  atomicWriteText(path.join(mailboxDir(runId), "QUESTIONS.md"), body);
+  const body = existing?.trim()
+    ? `${existing.trimEnd()}\n\n---\n\n${newBlock}`
+    : newBlock;
+  atomicWriteText(questionsPath, body);
   setStatus(runId, "waiting_human");
 }
 
@@ -316,9 +444,9 @@ export function sendTmuxKeys(session, keys, { execFile = execFileSync } = {}) {
   }
 }
 
-export function defaultCapture(session) {
+export function defaultCapture(session, { execFile = execFileSync } = {}) {
   try {
-    return execFileSync("tmux", ["capture-pane", "-t", session, "-pJ"], { encoding: "utf8" });
+    return execFile("tmux", ["capture-pane", "-t", session, "-pJ"], { encoding: "utf8" });
   } catch {
     return "";
   }
@@ -347,17 +475,36 @@ function defaultJudgeCall({ argv, timeoutMs = JUDGE_TIMEOUT_MS }) {
 /** Pure tick for tests — advances observer state machine one step. */
 export function observerTick(loop, capture, deps = {}) {
   const stallTicks = deps.stallTicks ?? DEFAULT_STALL_TICKS;
+  const silenceSec = deps.silenceSec ?? DEFAULT_SILENCE_SEC;
+  const mailboxAgeSec = deps.mailboxAgeSec ?? Infinity;
   const fp = paneFingerprint(capture);
 
   if (fp !== loop.prevFingerprint) {
+    const hadPrior = loop.prevFingerprint != null;
     loop.prevFingerprint = fp;
-    loop.identicalCount = 1;
+    loop.identicalCount = 0;
+    if (hadPrior) {
+      loop.awaitingPostAnswer = false;
+      loop.postAnswerTicks = 0;
+    }
     loop.judgeCalledThisEpisode = false;
     return { ...loop, event: "changed" };
   }
 
   loop.identicalCount += 1;
-  if (loop.identicalCount < stallTicks) {
+
+  if (loop.awaitingPostAnswer) {
+    loop.postAnswerTicks += 1;
+    if (loop.postAnswerTicks >= stallTicks) {
+      return { ...loop, event: "post_answer_stall", capture };
+    }
+    return { ...loop, event: "post_answer_wait" };
+  }
+
+  const paneStalled = loop.identicalCount >= stallTicks;
+  const silenceStalled = mailboxAgeSec >= silenceSec;
+
+  if (!paneStalled && !silenceStalled) {
     return { ...loop, event: "identical" };
   }
   if (loop.judgeCalledThisEpisode) {
@@ -365,7 +512,8 @@ export function observerTick(loop, capture, deps = {}) {
   }
 
   loop.judgeCalledThisEpisode = true;
-  return { ...loop, event: "stall_detected", capture };
+  const trigger = silenceStalled && !paneStalled ? "silence" : "pane";
+  return { ...loop, event: "stall_detected", capture, trigger };
 }
 
 export function createObserverLoop() {
@@ -377,6 +525,8 @@ export function createObserverLoop() {
     answeredPanes: new Set(),
     judgeFailedEscalated: false,
     escalated: false,
+    postAnswerTicks: 0,
+    awaitingPostAnswer: false,
   };
 }
 
@@ -400,6 +550,8 @@ export function handleStall({
     escalate = (q) => escalateRun(runId, q, deps),
     sendKeys = (keys) => sendTmuxKeys(state.worker.tmux, keys, deps),
     dispatchStart = state.createdAt ? Date.parse(state.createdAt) : Date.now(),
+    silenceSec = DEFAULT_SILENCE_SEC,
+    mailboxAgeSec = getMailboxAge(runId, { now }),
   } = deps;
 
   const elapsedSec = Math.round((now() - dispatchStart) / 1000);
@@ -412,6 +564,8 @@ export function handleStall({
     runId,
     role,
     elapsedSec,
+    mailboxAgeSec,
+    silenceSec,
   });
 
   let judgeResult;
@@ -465,7 +619,11 @@ export function handleStall({
     return { loop, stop: true };
   }
 
-  const verified = verifyVerdict(verdict, capture, loop);
+  const verified = verifyVerdict(verdict, capture, {
+    ...loop,
+    silenceSec,
+    mailboxAgeSec,
+  });
   log({
     kind: "decision",
     proposed_action: verdict.action,
@@ -489,16 +647,50 @@ export function handleStall({
   sendKeys(verified.keys);
   loop.answeredPanes.add(fp);
   loop.autoAnswerCount += 1;
-  log({ kind: "action", action: "answer", keys: verified.keys, auto_answer_count: loop.autoAnswerCount });
+  loop.awaitingPostAnswer = true;
+  loop.postAnswerTicks = 0;
+  log({
+    kind: "action",
+    action: "answer",
+    keys: verified.keys,
+    auto_answer_count: loop.autoAnswerCount,
+    pane_fp: fp,
+  });
   return { loop, stop: false };
+}
+
+export function handlePostAnswerStall({
+  runId,
+  loop,
+  deps = {},
+}) {
+  const {
+    log = (entry) => appendObservationLog(runId, entry, deps),
+    escalate = (q) => escalateRun(runId, q, deps),
+  } = deps;
+  const question = "Pane unchanged after auto-answer; escalating.";
+  log({ kind: "decision", action: "escalate", reason: "post-answer stall", question });
+  escalate(question);
+  loop.escalated = true;
+  loop.awaitingPostAnswer = false;
+  return { loop, stop: true };
 }
 
 export async function runObserver(runId, deps = {}) {
   const pollSec = (deps.pollSec ?? DEFAULT_POLL_SEC) * 1000;
+  const silenceSec = deps.silenceSec ?? DEFAULT_SILENCE_SEC;
   const sleep = deps.sleep ?? defaultSleep;
   const now = deps.now ?? (() => Date.now());
   const shouldStop = deps.shouldStop ?? (() => false);
   const captureFn = deps.capture ?? ((session) => defaultCapture(session));
+  const parentPid = deps.parentPid ?? process.ppid;
+  const isParentAlive = deps.isParentAlive ?? ((pid) => isProcessAlive(pid));
+
+  const lock = deps.acquireLock ?? (() => tryAcquireObserverLock(runId, deps));
+  const lockResult = lock();
+  if (!lockResult.ok) {
+    return;
+  }
 
   let roster = deps.roster;
   let usage = deps.usage;
@@ -511,36 +703,51 @@ export async function runObserver(runId, deps = {}) {
     }
   }
 
-  const loop = createObserverLoop();
+  const loop = hydrateLoopFromLog(runId, createObserverLoop());
 
-  while (!shouldStop() && !loop.escalated) {
-    const state = loadState(runId);
-    if (!state) break;
-    const session = state.worker?.tmux;
-    if (!session) break;
+  try {
+    while (!shouldStop() && !loop.escalated) {
+      if (!isParentAlive(parentPid)) break;
 
-    const status = fs.existsSync(path.join(mailboxDir(runId), "STATUS"))
-      ? fs.readFileSync(path.join(mailboxDir(runId), "STATUS"), "utf8").trim()
-      : "";
-    if (["done", "failed", "cancelled", "waiting_human"].includes(status)) break;
+      const state = loadState(runId);
+      if (!state) break;
+      const session = state.worker?.tmux;
+      if (!session) break;
 
-    const capture = captureFn(session);
-    const next = observerTick(loop, capture, deps);
-    Object.assign(loop, next);
+      const status = fs.existsSync(path.join(mailboxDir(runId), "STATUS"))
+        ? fs.readFileSync(path.join(mailboxDir(runId), "STATUS"), "utf8").trim()
+        : "";
+      if (["done", "failed", "cancelled", "waiting_human"].includes(status)) break;
 
-    if (next.event === "stall_detected") {
-      const result = handleStall({
-        runId,
-        state,
-        loop,
-        capture: next.capture,
-        deps: { ...deps, roster, usage, now },
-      });
-      Object.assign(loop, result.loop);
-      if (result.stop) break;
+      const capture = captureFn(session);
+      const mailboxAgeSec = deps.mailboxAgeSec ?? getMailboxAge(runId, { now });
+      const next = observerTick(loop, capture, { ...deps, silenceSec, mailboxAgeSec });
+      Object.assign(loop, next);
+
+      if (next.event === "stall_detected") {
+        const result = handleStall({
+          runId,
+          state,
+          loop,
+          capture: next.capture,
+          deps: { ...deps, roster, usage, now, silenceSec, mailboxAgeSec },
+        });
+        Object.assign(loop, result.loop);
+        if (result.stop) break;
+      } else if (next.event === "post_answer_stall") {
+        const result = handlePostAnswerStall({
+          runId,
+          loop,
+          deps,
+        });
+        Object.assign(loop, result.loop);
+        if (result.stop) break;
+      }
+
+      await sleep(pollSec);
     }
-
-    await sleep(pollSec);
+  } finally {
+    if (!deps.keepLock) releaseObserverLock(runId);
   }
 }
 
