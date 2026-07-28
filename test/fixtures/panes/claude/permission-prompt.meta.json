@@ -1,0 +1,35 @@
+{
+  "cli": "claude",
+  "cliVersion": "2.1.220 (Claude Code)",
+  "state": "permission-prompt",
+  "command": [
+    "claude"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    20,
+    35
+  ],
+  "sessionStart": "2026-07-28T14:15:37Z",
+  "input": {
+    "text": "Run rm -rf /tmp/claude-perm-test-only-never-real",
+    "sentAtSec": 10
+  },
+  "captures": [
+    {
+      "offsetSec": 20,
+      "timestamp": "2026-07-28T14:15:57Z",
+      "file": "claude/permission-prompt-20s.txt"
+    },
+    {
+      "offsetSec": 35,
+      "timestamp": "2026-07-28T14:16:12Z",
+      "file": "claude/permission-prompt-35s.txt"
+    }
+  ]
+}
