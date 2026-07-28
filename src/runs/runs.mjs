@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { stopTmuxSession } from "./tmux.mjs";
 
 const FLOCK_BIN = "/usr/bin/flock";
 
@@ -774,7 +775,19 @@ export function resumeAll({
   return report;
 }
 
-export function waitMailbox(runId, { ceilingSec = 3600 } = {}) {
+function cleanupTerminalWorker(state, classified, stopTmux) {
+  const status = classified?.status || state?.status;
+  if (!TERMINAL_RUN_STATUSES.has(status)) return false;
+  const session = state?.worker?.tmux;
+  if (!session) return false;
+  stopTmux(session);
+  return true;
+}
+
+export function waitMailbox(runId, {
+  ceilingSec = 3600,
+  stopTmux = stopTmuxSession,
+} = {}) {
   let resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
   if (resolved.changed) {
     resolved = persistResolvedRunStatus(runId, resolved.classified);
@@ -783,6 +796,7 @@ export function waitMailbox(runId, { ceilingSec = 3600 } = {}) {
     TERMINAL_RUN_STATUSES.has(resolved.state.status) ||
     ["done", "failed", "cancelled", "question"].includes(resolved.classified?.status)
   ) {
+    cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
     return { waitExit: 0, classified: resolved.classified };
   }
 
@@ -792,6 +806,7 @@ export function waitMailbox(runId, { ceilingSec = 3600 } = {}) {
   if (resolved.changed) {
     resolved = persistResolvedRunStatus(runId, resolved.classified);
   }
+  cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
   return { waitExit: r.status ?? 1, classified: resolved.classified };
 }
 

@@ -10,7 +10,7 @@ import {
   classifyMailbox, writeAnswer, buildResumePlan, INJECT, buildCliArgv,
   setStatus, resumeAll, linkDispatchToRun, listActiveStates,
   buildColdStartArgv, acquireResumeLock, resumeLockPath, waitTmuxReady,
-  wrapPromptWithMailboxProtocol, promptHasMailboxProtocol,
+  wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox,
 } from "../../src/runs/runs.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
@@ -436,3 +436,53 @@ test("wrapPromptWithMailboxProtocol is idempotent on already-wrapped prompts", (
   const twice = wrapPromptWithMailboxProtocol(once, { runId: "r2", runDirectory: "/tmp/r2" });
   assert.equal(twice, once.endsWith("\n") ? once : `${once}\n`);
 });
+
+test("waitMailbox stops worker tmux for every terminal outcome", withTempRuns(async () => {
+  for (const status of ["done", "failed", "cancelled"]) {
+    const state = createRun({
+      cwd: "/tmp/p",
+      role: "implementer",
+      parent: { cli: "claude", attach: "manual" },
+      worker: { cli: "codex", tmux: `worker-${status}` },
+      prompt: "x",
+    });
+    setStatus(state.runId, "watching");
+    if (status === "done") {
+      atomicWriteText(path.join(runDir(state.runId), "mailbox", "RESULT.md"), "complete\n");
+    }
+    atomicWriteText(path.join(runDir(state.runId), "mailbox", "STATUS"), `${status}\n`);
+    const stopped = [];
+
+    const result = waitMailbox(state.runId, {
+      ceilingSec: 1,
+      stopTmux: session => {
+        stopped.push(session);
+        return true;
+      },
+    });
+
+    assert.equal(result.classified.status, status);
+    assert.deepEqual(stopped, [`worker-${status}`]);
+  }
+}));
+
+test("waitMailbox keeps worker tmux for a human question", withTempRuns(async () => {
+  const state = createRun({
+    cwd: "/tmp/p",
+    role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex", tmux: "worker-question" },
+    prompt: "x",
+  });
+  setStatus(state.runId, "waiting_human");
+  atomicWriteText(path.join(runDir(state.runId), "mailbox", "QUESTIONS.md"), "Need input\n");
+  const stopped = [];
+
+  const result = waitMailbox(state.runId, {
+    ceilingSec: 1,
+    stopTmux: session => stopped.push(session),
+  });
+
+  assert.equal(result.classified.status, "question");
+  assert.deepEqual(stopped, []);
+}));
