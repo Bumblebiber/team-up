@@ -194,8 +194,8 @@ wait_until "$KILL_AFTER"
 
 # Write sidecar metadata via node (bash + tmux + node only).
 META_PATH="$OUT_DIR/${STATE}.meta.json"
-CAPTURE_FILES="$(printf '%s\0' "${CAPTURE_FILES[@]}")"
-CAPTURE_TIMESTAMPS="$(printf '%s\0' "${CAPTURE_TIMESTAMPS[@]}")"
+CAPTURE_FILES="$(printf '%s\n' "${CAPTURE_FILES[@]}")"
+CAPTURE_TIMESTAMPS="$(printf '%s\n' "${CAPTURE_TIMESTAMPS[@]}")"
 export CAPTURE_FILES CAPTURE_TIMESTAMPS INPUT_TEXT INPUT_AT FIXTURE_ROOT
 node --input-type=module - "$META_PATH" <<'NODE' \
   "$CLI" "$CLI_VERSION" "$STATE" "$CWD" "$COLS" "$ROWS" "$SETTLE" "$OFFSETS" "$START_ISO" \
@@ -216,8 +216,8 @@ const [
   ...command
 ] = process.argv.slice(2);
 
-const captureFiles = process.env.CAPTURE_FILES?.split("\0").filter(Boolean) ?? [];
-const captureTimestamps = process.env.CAPTURE_TIMESTAMPS?.split("\0").filter(Boolean) ?? [];
+const captureFiles = process.env.CAPTURE_FILES?.split("\n").filter(Boolean) ?? [];
+const captureTimestamps = process.env.CAPTURE_TIMESTAMPS?.split("\n").filter(Boolean) ?? [];
 const offsetList = offsets.split(",").map((s) => Number(s.trim()));
 
 const fixtureRoot = process.env.FIXTURE_ROOT ?? "";
