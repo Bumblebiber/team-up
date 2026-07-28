@@ -161,7 +161,7 @@ wait_until() {
 capture_to_file() {
   local offset="$1"
   local outfile="$2"
-  tmux capture-pane -pJ -t "$SESSION" 2>/dev/null | tail -c "$MAX_BYTES" > "$outfile"
+  tmux capture-pane -pJ -t "$SESSION" 2>/dev/null | tail -c "$MAX_BYTES" > "$outfile" || true
   CAPTURE_FILES+=("$outfile")
   CAPTURE_TIMESTAMPS+=("$(date -u +%Y-%m-%dT%H:%M:%SZ)")
 }

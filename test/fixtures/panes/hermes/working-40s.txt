@@ -1,0 +1,40 @@
+ ███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║                    │
+ ██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║                    │
+ ██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║                    │
+ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝      ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝                    ┃
+ ⚕ Nous Research · Messenger of the Digital Gods                                                                      ┃ 
+                                                                                                                       ┃
+ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ┃
+ │                                                                                                                     ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀⠀⢀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀                        Hermes Agent v0.18.2 (2026.7.7.2)                            ┃
+ │  ⠀⠀⠀⠀⠀⠀⢀⣠⣴⣾⣿⣿⣇⠸⣿⣿⠇⣸⣿⣿⣷⣦⣄⡀⠀⠀⠀⠀⠀⠀                                                                                     ┃
+ │  ⠀⢀⣠⣴⣶⠿⠋⣩⡿⣿⡿⠻⣿⡇⢠⡄⢸⣿⠟⢿⣿⢿⣍⠙⠿⣶⣦⣄⡀⠀                                                                                     ┃
+ │  ⠀⠀⠉⠉⠁⠶⠟⠋⠀⠉⠀⢀⣈⣁⡈⢁⣈⣁⡀⠀⠉⠀⠙⠻⠶⠈⠉⠉⠀⠀      ▾ Available Tools                                                              ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⡿⠛⢁⡈⠛⢿⣿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      browser: browser_back, browser_click, browser_console, …+7                     ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠿⣿⣦⣤⣈⠁⢠⣴⣿⠿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      clarify: clarify                                                               ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠻⢿⣿⣦⡉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      code_execution: execute_code                                                   ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢷⣦⣈⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      cronjob: cronjob                                                               ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⠦⠈⠙⠿⣦⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      delegation: delegate_task                                                      ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⣤⡈⠁⢤⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      file: patch, read_file, search_files, write_file                               ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      image_gen: image_generate                                                      ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⠑⢶⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      mcp-brain-mesh: mcp__brain_mesh__brain_mesh_consult, …+1                       ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠁⢰⡆⠈⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      (and 9 more toolsets…)                                                         ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⠈⣡⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀                                                                                     ┃
+ │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      ▸ Available Skills (125) in 20 categories                                      ┃
+ │  deepseek-v4-pro · Nous Research                                                                                    ┃
+ │  /home/bbbee/projects/team-up/.wor…  ▸ System Prompt — 28,706 chars                                                 ┃
+ │  Session: 9c33107b                                                                                                  ┃
+ │                                      ▸ MCP Servers (2) connected                                                    ┃
+ │                                      76 tools · 125 skills · 2 MCP · /help for commands                             ┃
+ │                                      ! 2720 commits behind - run hermes update to update                            ┃
+ │                                                                                                                     ┃
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ┃
+                                                                                                                       ┃
+                                                                                                                       ┃
+ ❯ Run exactly: sleep 75 in shell, then reply done.                                                                    ┃
+                                                                                                                       ┃
+ ┊  HTTP 402: Insufficient Balance                                                                                     ┃
+
+
+ ─ ready │ deepseek v4 pro │ 37s │ ✓ 18s │ voice off │ 1 session                         ─ …fixtures (…e/pane-fixtures)
+ ❯ Run exactly: sleep 75 in shell, then reply done.
