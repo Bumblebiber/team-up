@@ -16,6 +16,10 @@ import {
   saveState,
   setStatus,
 } from "../../src/runs/runs.mjs";
+import {
+  acquireAttemptLease,
+  createAttempt,
+} from "../../src/supervisor/attempts.mjs";
 
 const NOW = Date.parse("2026-07-28T13:00:00.000Z");
 
@@ -185,6 +189,141 @@ test("gc fails typed worker after 30+10 and cleans lease before tmux", withTempR
     ["release", {
       runId: state.runId,
       attemptId: "attempt-1",
+      reason: "worker_stale_timeout",
+      now: new Date(NOW).toISOString(),
+    }],
+    ["stop", "worker-gc"],
+  ]);
+}));
+
+function staleCandidateFixture({ typed = false } = {}) {
+  const state = createGcFixture({ typed });
+  const candidate = loadState(state.runId);
+  candidate.cleanup = {
+    stale_detected_at: new Date(NOW - GRACE_MS).toISOString(),
+  };
+  saveState(candidate);
+  return loadState(state.runId);
+}
+
+test("gc aborts stale failure when state becomes protected during confirmation", withTempRuns(async () => {
+  const state = staleCandidateFixture();
+  const stopped = [];
+
+  gcRuns({
+    ...staleDeps,
+    states: [state],
+    onBeforeStaleConfirmation: ({ runId }) => {
+      const latest = loadState(runId);
+      latest.status = "waiting_human";
+      latest.worker = { ...latest.worker, tmux: "worker-replacement" };
+      saveState(latest);
+    },
+    stopTmux: session => stopped.push(session),
+    releaseLease: () => assert.fail("must not release when stale failure aborts"),
+  });
+
+  assert.equal(loadState(state.runId).status, "waiting_human");
+  assert.equal(loadState(state.runId).worker.tmux, "worker-replacement");
+  assert.deepEqual(stopped, []);
+}));
+
+test("gc clears stale candidacy when activity becomes fresh during confirmation", withTempRuns(async () => {
+  const state = staleCandidateFixture();
+  const stopped = [];
+  let heartbeatReads = 0;
+
+  gcRuns({
+    ...staleDeps,
+    states: [state],
+    heartbeatFor: () => {
+      heartbeatReads += 1;
+      return heartbeatReads === 1 ? NOW - IDLE_MS - 1 : NOW;
+    },
+    stopTmux: session => stopped.push(session),
+    releaseLease: () => assert.fail("must not release when activity is fresh"),
+  });
+
+  assert.equal(loadState(state.runId).status, "watching");
+  assert.equal(loadState(state.runId).cleanup.stale_detected_at, undefined);
+  assert.deepEqual(stopped, []);
+}));
+
+test("gc defers tmux stop when lease release is busy and retries next sweep", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const candidate = loadState(state.runId);
+  candidate.current_attempt_id = "attempt-1";
+  saveState(candidate);
+  const stopped = [];
+  let releaseCalls = 0;
+
+  const first = gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    releaseLease: input => {
+      releaseCalls += 1;
+      return { ok: false, reason: "lock_busy" };
+    },
+    stopTmux: session => stopped.push(session),
+  });
+
+  assert.equal(first.runs[0].action, "pending_lease");
+  assert.equal(first.runs[0].leaseError, "lock_busy");
+  assert.equal(loadState(state.runId).status, "failed");
+  assert.equal(loadState(state.runId).cleanup.pending_lease_release?.worker_tmux, "worker-gc");
+  assert.equal(loadState(state.runId).cleanup.pending_lease_release?.attempt_id, "attempt-1");
+  assert.deepEqual(stopped, []);
+
+  const second = gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    releaseLease: input => {
+      releaseCalls += 1;
+      assert.deepEqual(input, {
+        runId: state.runId,
+        attemptId: "attempt-1",
+        reason: "worker_stale_timeout",
+        now: new Date(NOW).toISOString(),
+      });
+      return { ok: true };
+    },
+    stopTmux: session => stopped.push(session),
+  });
+
+  assert.equal(second.runs[0].action, "completed_pending_lease");
+  assert.equal(loadState(state.runId).cleanup.pending_lease_release, undefined);
+  assert.deepEqual(stopped, ["worker-gc"]);
+  assert.equal(releaseCalls, 2);
+}));
+
+test("gc releases active lease from lease reader when state omits current_attempt_id", withTempRuns(async () => {
+  const state = staleCandidateFixture();
+  const attempt = createAttempt({ runId: state.runId, runtime: { cli: "codex" } });
+  assert.equal(
+    acquireAttemptLease({
+      runId: state.runId,
+      attemptId: attempt.id,
+      expectedPrevious: null,
+      now: new Date(NOW).toISOString(),
+    }).ok,
+    true,
+  );
+  const candidate = loadState(state.runId);
+  delete candidate.current_attempt_id;
+  saveState(candidate);
+  const effects = [];
+
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    releaseLease: input => effects.push(["release", input]),
+    stopTmux: session => effects.push(["stop", session]),
+  });
+
+  assert.deepEqual(effects, [
+    ["release", {
+      runId: state.runId,
+      attemptId: attempt.id,
       reason: "worker_stale_timeout",
       now: new Date(NOW).toISOString(),
     }],
