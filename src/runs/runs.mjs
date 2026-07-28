@@ -423,6 +423,56 @@ export function isSyntheticStaleFailureState(state) {
     && state?.cleanup?.stale_reason === "worker_stale_timeout";
 }
 
+export function isUnresolvedStalePublicationClaim(state) {
+  const claim = state?.cleanup?.stale_publication_claim;
+  if (!claim || claim.aborted_at) return false;
+  return claim.phase !== "finalized";
+}
+
+export function readMailboxStatusIdentity(runId) {
+  const statusPath = path.join(mailboxDir(runId), "STATUS");
+  try {
+    const stat = fs.statSync(statusPath);
+    const line = fs.readFileSync(statusPath, "utf8").trim();
+    return { line, inode: stat.ino, mtimeMs: stat.mtimeMs };
+  } catch {
+    return { line: "", inode: null, mtimeMs: null };
+  }
+}
+
+export function isGcOwnedStaleFailedStatus(runId, claim) {
+  if (!claim?.status_published_at) return false;
+  const status = readMailboxStatusIdentity(runId);
+  if (status.line !== "failed") return false;
+  if (claim.status_inode != null && claim.status_mtime_ms != null) {
+    return status.inode === claim.status_inode && status.mtimeMs === claim.status_mtime_ms;
+  }
+  return true;
+}
+
+export function isSyntheticStaleMailboxResult(state, runId = state?.runId) {
+  if (!runId) return false;
+  if (state?.result_protocol === "RESULT.json") {
+    const raw = readMaybe(path.join(mailboxDir(runId), "RESULT.json"));
+    if (!raw) return false;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed?.status === "failed" && parsed?.summary === "worker_stale_timeout";
+    } catch {
+      return false;
+    }
+  }
+  const md = readMaybe(path.join(mailboxDir(runId), "RESULT.md"));
+  return md?.trim() === "worker_stale_timeout";
+}
+
+export function isMixedLegitimateCloseout(state, runId = state?.runId) {
+  if (!isUnresolvedStalePublicationClaim(state) || !runId) return false;
+  const claim = state.cleanup.stale_publication_claim;
+  if (!isGcOwnedStaleFailedStatus(runId, claim)) return false;
+  return !isSyntheticStaleMailboxResult(state, runId);
+}
+
 /**
  * Purely reconcile durable STATE with a mailbox observation.
  * Terminal STATE is irreversible here; otherwise terminal mailbox outcomes
@@ -449,7 +499,16 @@ export function resolveRunState(state, classified = { status: "watching" }) {
       effectiveClassified = { status: currentStatus };
     }
   } else if (TERMINAL_RUN_STATUSES.has(classified?.status)) {
-    nextStatus = classified.status;
+    if (
+      isUnresolvedStalePublicationClaim(state)
+      && classified.status === "failed"
+      && isMixedLegitimateCloseout(state, state.runId)
+    ) {
+      nextStatus = currentStatus;
+      effectiveClassified = { status: "watching" };
+    } else {
+      nextStatus = classified.status;
+    }
   } else if (
     classified?.status === "question" &&
     !CAPACITY_RUN_STATUSES.has(currentStatus)
@@ -817,6 +876,15 @@ export function resumeAll({
 function cleanupTerminalWorker(state, classified, stopTmux) {
   const status = classified?.status || state?.status;
   if (!TERMINAL_RUN_STATUSES.has(status)) return false;
+  if (
+    isUnresolvedStalePublicationClaim(state)
+    && (
+      isMixedLegitimateCloseout(state, state?.runId)
+      || !TERMINAL_RUN_STATUSES.has(state?.status)
+    )
+  ) {
+    return false;
+  }
   const pending = state?.cleanup?.pending_lease_release;
   if (
     pending?.worker_tmux

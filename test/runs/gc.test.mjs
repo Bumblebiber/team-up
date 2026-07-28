@@ -17,6 +17,7 @@ import {
   runDir,
   saveState,
   setStatus,
+  waitMailbox,
 } from "../../src/runs/runs.mjs";
 import {
   acquireAttemptLease,
@@ -603,7 +604,7 @@ test("stale tmux stop targets immutable session id when name is reused", withTem
     inspectTmux: session => {
       inspectCalls += 1;
       const staleActivity = NOW - IDLE_MS - 1;
-      if (inspectCalls === 1) {
+      if (inspectCalls <= 2) {
         return { exists: true, activityMs: staleActivity, sessionId: "$old" };
       }
       return { exists: true, activityMs: staleActivity, sessionId: "$new" };
@@ -668,4 +669,262 @@ test("gc terminal cleanup is idempotent and dry-run never mutates", withTempRuns
   });
   assert.equal(report.runs[0].action, "mark_stale");
   assert.equal(JSON.stringify(loadState(active.runId)), before);
+}));
+
+test("typed mixed window defers failure until worker done STATUS arrives", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const mb = path.join(runDir(state.runId), "mailbox");
+  const legitimate = {
+    schema: "team-up.result/v1",
+    status: "success",
+    summary: "worker completed after gc status",
+  };
+  const stopped = [];
+  let releaseCalls = 0;
+
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    onAfterStaleResultPublish: ({ runId }) => {
+      atomicWriteJson(path.join(runDir(runId), "mailbox", "RESULT.json"), legitimate);
+    },
+    releaseLease: () => {
+      releaseCalls += 1;
+      assert.fail("must not release during mixed mailbox window");
+    },
+    stopTmux: session => stopped.push(session),
+  });
+
+  const mid = loadState(state.runId);
+  assert.equal(mid.status, "watching");
+  assert.equal(mid.cleanup?.stale_publication_claim?.phase, "status_published");
+  assert.equal(fs.readFileSync(path.join(mb, "STATUS"), "utf8").trim(), "failed");
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(mb, "RESULT.json"), "utf8")), legitimate);
+  assert.deepEqual(stopped, []);
+  assert.equal(releaseCalls, 0);
+
+  atomicWriteText(path.join(mb, "STATUS"), "done\n");
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    releaseLease: () => ({ ok: true }),
+    stopTmux: session => stopped.push(session),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "done");
+  assert.equal(latest.cleanup?.stale_publication_claim, undefined);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(mb, "RESULT.json"), "utf8")), legitimate);
+}));
+
+test("legacy mixed window defers failure until worker done STATUS arrives", withTempRuns(async () => {
+  const state = staleCandidateFixture();
+  const mb = path.join(runDir(state.runId), "mailbox");
+  const stopped = [];
+
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    onAfterStaleResultPublish: ({ runId }) => {
+      atomicWriteText(path.join(runDir(runId), "mailbox", "RESULT.md"), "worker completed after gc status\n");
+    },
+    releaseLease: () => assert.fail("must not release during mixed mailbox window"),
+    stopTmux: session => stopped.push(session),
+  });
+
+  const mid = loadState(state.runId);
+  assert.equal(mid.status, "watching");
+  assert.equal(fs.readFileSync(path.join(mb, "STATUS"), "utf8").trim(), "failed");
+  assert.equal(fs.readFileSync(path.join(mb, "RESULT.md"), "utf8").trim(), "worker completed after gc status");
+  assert.deepEqual(stopped, []);
+
+  atomicWriteText(path.join(mb, "STATUS"), "done\n");
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    releaseLease: () => ({ ok: true }),
+    stopTmux: session => stopped.push(session),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "done");
+  assert.equal(latest.cleanup?.stale_publication_claim, undefined);
+  assert.equal(fs.readFileSync(path.join(mb, "RESULT.md"), "utf8").trim(), "worker completed after gc status");
+}));
+
+test("crash after synthetic RESULT resumes and finalizes stale failure", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const candidate = loadState(state.runId);
+  const detectedAt = candidate.cleanup.stale_detected_at;
+  candidate.cleanup = {
+    stale_publication_claim: {
+      token: `${state.runId}.crash-result`,
+      worker_tmux: "worker-gc",
+      worker_tmux_id: "$old",
+      stale_detected_at: detectedAt,
+      phase: "result_published",
+      claimed_at: new Date(NOW).toISOString(),
+      result_published_at: new Date(NOW).toISOString(),
+    },
+  };
+  delete candidate.cleanup.stale_detected_at;
+  saveState(candidate);
+  atomicWriteJson(path.join(runDir(state.runId), "mailbox", "RESULT.json"), {
+    schema: "team-up.result/v1",
+    status: "failed",
+    summary: "worker_stale_timeout",
+  });
+
+  const stopped = [];
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    releaseLease: () => ({ ok: true }),
+    stopTmux: session => stopped.push(session),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "failed");
+  assert.equal(latest.cleanup?.stale_publication_claim?.phase, "finalized");
+  assert.equal(fs.readFileSync(path.join(runDir(state.runId), "mailbox", "STATUS"), "utf8").trim(), "failed");
+  assert.deepEqual(stopped, ["$old"]);
+}));
+
+test("crash after GC STATUS resumes and finalizes stale failure STATE", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const mb = path.join(runDir(state.runId), "mailbox");
+  atomicWriteJson(path.join(mb, "RESULT.json"), {
+    schema: "team-up.result/v1",
+    status: "failed",
+    summary: "worker_stale_timeout",
+  });
+  atomicWriteText(path.join(mb, "STATUS"), "failed\n");
+  const statusStat = fs.statSync(path.join(mb, "STATUS"));
+  const candidate = loadState(state.runId);
+  const detectedAt = candidate.cleanup.stale_detected_at;
+  candidate.status = "watching";
+  candidate.cleanup = {
+    stale_publication_claim: {
+      token: `${state.runId}.crash-status`,
+      worker_tmux: "worker-gc",
+      worker_tmux_id: "$old",
+      stale_detected_at: detectedAt,
+      phase: "status_published",
+      claimed_at: new Date(NOW).toISOString(),
+      result_published_at: new Date(NOW).toISOString(),
+      status_published_at: new Date(NOW).toISOString(),
+      status_inode: statusStat.ino,
+      status_mtime_ms: statusStat.mtimeMs,
+    },
+  };
+  delete candidate.cleanup.stale_detected_at;
+  saveState(candidate);
+
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    releaseLease: () => ({ ok: true }),
+    stopTmux: () => {},
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "failed");
+  assert.equal(latest.cleanup?.stale_publication_claim?.phase, "finalized");
+  assert.equal(latest.cleanup?.stale_reason, "worker_stale_timeout");
+}));
+
+test("watcher defers failed reconciliation and tmux stop during unresolved claim", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const mb = path.join(runDir(state.runId), "mailbox");
+  const legitimate = {
+    schema: "team-up.result/v1",
+    status: "success",
+    summary: "worker still closing out",
+  };
+  atomicWriteJson(path.join(mb, "RESULT.json"), legitimate);
+  atomicWriteText(path.join(mb, "STATUS"), "failed\n");
+  const statusStat = fs.statSync(path.join(mb, "STATUS"));
+  const candidate = loadState(state.runId);
+  candidate.cleanup = {
+    stale_publication_claim: {
+      token: `${state.runId}.watcher`,
+      worker_tmux: "worker-gc",
+      worker_tmux_id: "$old",
+      stale_detected_at: candidate.cleanup.stale_detected_at,
+      phase: "status_published",
+      claimed_at: new Date(NOW).toISOString(),
+      result_published_at: new Date(NOW).toISOString(),
+      status_published_at: new Date(NOW).toISOString(),
+      status_inode: statusStat.ino,
+      status_mtime_ms: statusStat.mtimeMs,
+    },
+  };
+  delete candidate.cleanup.stale_detected_at;
+  saveState(candidate);
+  const stopped = [];
+
+  const result = waitMailbox(state.runId, {
+    ceilingSec: 1,
+    stopTmux: session => stopped.push(session),
+  });
+
+  assert.equal(result.classified.status, "watching");
+  assert.equal(loadState(state.runId).status, "watching");
+  assert.deepEqual(stopped, []);
+}));
+
+test("mark_stale stores tmux session id from first inspection without second lookup", withTempRuns(async () => {
+  const state = createGcFixture({ typed: true });
+  let inspectCalls = 0;
+
+  gcRuns({
+    now: new Date(NOW),
+    states: [loadState(state.runId)],
+    heartbeatFor: () => NOW - IDLE_MS - 1,
+    inspectTmux: session => {
+      inspectCalls += 1;
+      const staleActivity = NOW - IDLE_MS - 1;
+      if (inspectCalls === 1) {
+        return { exists: true, activityMs: staleActivity, sessionId: "$old" };
+      }
+      return { exists: true, activityMs: staleActivity, sessionId: "$replacement" };
+    },
+    stopTmux: () => assert.fail("mark_stale must not stop"),
+    releaseLease: () => assert.fail("mark_stale must not release"),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.cleanup?.worker_tmux_id, "$old");
+  assert.equal(latest.cleanup?.stale_detected_at, new Date(NOW).toISOString());
+  assert.equal(inspectCalls, 1);
+}));
+
+test("identity mismatch at final confirmation clears candidate and never stops replacement", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const candidate = loadState(state.runId);
+  candidate.cleanup.worker_tmux_id = "$old";
+  saveState(candidate);
+  const stopped = [];
+  let inspectCalls = 0;
+
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    inspectTmux: session => {
+      inspectCalls += 1;
+      const staleActivity = NOW - IDLE_MS - 1;
+      if (inspectCalls === 1) {
+        return { exists: true, activityMs: staleActivity, sessionId: "$old" };
+      }
+      return { exists: true, activityMs: staleActivity, sessionId: "$replacement" };
+    },
+    releaseLease: () => assert.fail("identity mismatch must not release"),
+    stopTmux: session => stopped.push(session),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "watching");
+  assert.equal(latest.cleanup?.stale_detected_at, undefined);
+  assert.equal(latest.cleanup?.stale_publication_claim, undefined);
+  assert.deepEqual(stopped, []);
 }));
