@@ -152,6 +152,7 @@ async function withEntrypointEnv(fn) {
     TEAM_UP_RUNS: path.join(home, "runs"),
     TEAM_UP_ROSTER: path.join(home, "roster.json"),
     TEAM_UP_USAGE: path.join(home, "usage.json"),
+    TEAM_UP_PTY_LOCK: path.join(home, ".usage-pty.lock"),
     TEAM_UP_SANDBOX_FORCE_NONE: "1",
   };
   Object.assign(process.env, env);
