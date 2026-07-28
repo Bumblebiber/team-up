@@ -4,9 +4,11 @@ import {
   atomicWriteJson,
   atomicWriteText,
   classifyMailbox,
+  isSyntheticStaleFailureState,
   listAllStates,
   loadState,
   mailboxDir,
+  publishFileNoReplace,
   resolveRunState,
   updateState,
 } from "./runs.mjs";
@@ -70,9 +72,14 @@ function heartbeatForRun(runId) {
   }
 }
 
-function setStaleDetected(runId, nowIso) {
+function setStaleDetected(runId, nowIso, inspectTmux = inspectTmuxSession) {
   return updateState(runId, state => {
-    state.cleanup = { ...(state.cleanup || {}), stale_detected_at: nowIso };
+    const inspected = inspectTmux(state.worker?.tmux || null);
+    state.cleanup = {
+      ...(state.cleanup || {}),
+      stale_detected_at: nowIso,
+      worker_tmux_id: inspected.sessionId || null,
+    };
     return state;
   });
 }
@@ -113,43 +120,132 @@ function staleConfirmationMatches(latest, inspectedTmux, expectedStaleDetectedAt
   );
 }
 
-function writeStaleFailureArtifacts(state, nowIso) {
-  const mb = mailboxDir(state.runId);
+function reconcileTerminalMailboxState(state, classified) {
+  const wasSyntheticStaleFailure = isSyntheticStaleFailureState(state);
+  const resolution = resolveRunState(state, classified);
+  state.status = resolution.state.status;
+  if (state.cleanup?.stale_detected_at) delete state.cleanup.stale_detected_at;
+  if (wasSyntheticStaleFailure && TERMINAL_MAILBOX.has(classified?.status)) {
+    delete state.cleanup.stale_reason;
+    delete state.cleanup.stale_failed_at;
+  }
+  return state;
+}
+
+function staleFailureResultContent(state) {
   if (state.result_protocol === "RESULT.json") {
-    atomicWriteJson(path.join(mb, "RESULT.json"), {
+    return `${JSON.stringify({
       schema: "team-up.result/v1",
       status: "failed",
       summary: "worker_stale_timeout",
-    });
-  } else {
-    atomicWriteText(path.join(mb, "RESULT.md"), "worker_stale_timeout\n");
+    }, null, 2)}\n`;
   }
-  atomicWriteText(path.join(mb, "STATUS"), "failed\n");
+  return "worker_stale_timeout\n";
 }
 
-function createPendingLeaseClaim(state, { worker_tmux, attempt_id, nowIso }) {
+function readMailboxFile(runId, name) {
+  try {
+    return fs.readFileSync(path.join(mailboxDir(runId), name), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function isSyntheticStaleMailboxFailure(state) {
+  if (state.result_protocol === "RESULT.json") {
+    const raw = readMailboxFile(state.runId, "RESULT.json");
+    if (!raw) return false;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed?.status === "failed" && parsed?.summary === "worker_stale_timeout";
+    } catch {
+      return false;
+    }
+  }
+  const md = readMailboxFile(state.runId, "RESULT.md");
+  return md?.trim() === "worker_stale_timeout";
+}
+
+function shouldReconcileTerminalMailbox(state, classified) {
+  if (!TERMINAL_MAILBOX.has(classified?.status)) return false;
+  if (classified.status !== "failed") return true;
+  return !isSyntheticStaleMailboxFailure(state);
+}
+
+function readMailboxStatusLine(runId) {
+  try {
+    return fs.readFileSync(path.join(mailboxDir(runId), "STATUS"), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function tryPublishStaleFailureArtifacts(state) {
+  const mb = mailboxDir(state.runId);
+  const statusLine = readMailboxStatusLine(state.runId);
+  if (["done", "failed", "cancelled"].includes(statusLine)) {
+    return { published: false, reason: "status_terminal" };
+  }
+  const resultPath = state.result_protocol === "RESULT.json"
+    ? path.join(mb, "RESULT.json")
+    : path.join(mb, "RESULT.md");
+  const resultPublish = publishFileNoReplace(resultPath, staleFailureResultContent(state));
+  if (!resultPublish.published) {
+    return { published: false, reason: "result_exists" };
+  }
+  atomicWriteText(path.join(mb, "STATUS"), "failed\n");
+  return { published: true };
+}
+
+function createPendingLeaseClaim(state, { worker_tmux, worker_tmux_id, attempt_id, nowIso }) {
   return {
     token: `${state.runId}.${Date.now()}.${Math.random().toString(36).slice(2)}`,
     worker_tmux,
+    worker_tmux_id: worker_tmux_id || null,
     attempt_id,
-    generation: state.supervision?.generation ?? 0,
     recorded_at: nowIso,
     stale_reason: "worker_stale_timeout",
   };
 }
 
-function reconcileTerminalMailboxState(state, classified) {
-  const resolution = resolveRunState(state, classified);
-  state.status = resolution.state.status;
-  if (state.cleanup?.stale_detected_at) delete state.cleanup.stale_detected_at;
-  return state;
+function stopAuthorizedTmuxSession(pending, stopTmux) {
+  const target = pending?.worker_tmux_id || pending?.worker_tmux;
+  if (!target) return;
+  stopTmux(target);
 }
 
-function transitionStaleFailure(runId, { inspectedTmux, expectedStaleDetectedAt, nowIso }) {
+function tryReconcileSyntheticStaleFailure(runId) {
+  const state = loadState(runId);
+  if (!isSyntheticStaleFailureState(state)) return null;
+  const classified = classifyMailbox(runId);
+  if (!TERMINAL_MAILBOX.has(classified?.status) || classified.status === "failed") {
+    return null;
+  }
+  let outcome = null;
+  updateState(runId, latest => {
+    const latestClassified = classifyMailbox(runId);
+    if (!TERMINAL_MAILBOX.has(latestClassified?.status) || latestClassified.status === "failed") {
+      return undefined;
+    }
+    reconcileTerminalMailboxState(latest, latestClassified);
+    outcome = { kind: "reconciled", classified: latestClassified };
+    return latest;
+  });
+  return outcome;
+}
+
+function transitionStaleFailure(runId, {
+  inspectedTmux,
+  inspectedTmuxId,
+  expectedStaleDetectedAt,
+  nowIso,
+  onBeforeStaleArtifactPublish = null,
+  onAfterStaleArtifactPublish = null,
+}) {
   let outcome = { kind: "aborted" };
   updateState(runId, latest => {
     const classified = classifyMailbox(runId);
-    if (TERMINAL_MAILBOX.has(classified?.status)) {
+    if (shouldReconcileTerminalMailbox(latest, classified)) {
       reconcileTerminalMailboxState(latest, classified);
       outcome = { kind: "reconciled", classified };
       return latest;
@@ -158,12 +254,34 @@ function transitionStaleFailure(runId, { inspectedTmux, expectedStaleDetectedAt,
       return undefined;
     }
     const classifiedAgain = classifyMailbox(runId);
-    if (TERMINAL_MAILBOX.has(classifiedAgain?.status)) {
+    if (shouldReconcileTerminalMailbox(latest, classifiedAgain)) {
       reconcileTerminalMailboxState(latest, classifiedAgain);
       outcome = { kind: "reconciled", classified: classifiedAgain };
       return latest;
     }
-    writeStaleFailureArtifacts(latest, nowIso);
+    if (typeof onBeforeStaleArtifactPublish === "function") {
+      onBeforeStaleArtifactPublish({ runId });
+    }
+    const publish = tryPublishStaleFailureArtifacts(latest);
+    if (typeof onAfterStaleArtifactPublish === "function") {
+      onAfterStaleArtifactPublish({ runId, publish });
+    }
+    const classifiedAfterPublish = classifyMailbox(runId);
+    if (shouldReconcileTerminalMailbox(latest, classifiedAfterPublish)) {
+      reconcileTerminalMailboxState(latest, classifiedAfterPublish);
+      outcome = { kind: "reconciled", classified: classifiedAfterPublish };
+      return latest;
+    }
+    if (!publish.published) {
+      const classifiedExisting = classifyMailbox(runId);
+      if (shouldReconcileTerminalMailbox(latest, classifiedExisting)) {
+        reconcileTerminalMailboxState(latest, classifiedExisting);
+        outcome = { kind: "reconciled", classified: classifiedExisting };
+        return latest;
+      }
+      outcome = { kind: "aborted", reason: publish.reason };
+      return undefined;
+    }
     latest.status = "failed";
     latest.cleanup = {
       ...(latest.cleanup || {}),
@@ -172,9 +290,11 @@ function transitionStaleFailure(runId, { inspectedTmux, expectedStaleDetectedAt,
     };
     delete latest.cleanup.stale_detected_at;
     const attemptId = resolveActiveAttemptId(runId, latest);
+    const boundTmuxId = latest.cleanup?.worker_tmux_id || inspectedTmuxId || null;
     if (attemptId) {
       latest.cleanup.pending_lease_release = createPendingLeaseClaim(latest, {
         worker_tmux: inspectedTmux,
+        worker_tmux_id: boundTmuxId,
         attempt_id: attemptId,
         nowIso,
       });
@@ -198,7 +318,7 @@ function resolveNotHolderRelease(result, runId, pending) {
 }
 
 function authorizePendingTmuxStop(runId, pending) {
-  if (!pending?.token || !pending.worker_tmux) {
+  if (!pending?.token || (!pending.worker_tmux && !pending.worker_tmux_id)) {
     return { authorized: false, obsolete: true };
   }
   let outcome = { authorized: false, obsolete: false };
@@ -211,8 +331,6 @@ function authorizePendingTmuxStop(runId, pending) {
     if (
       latest.status !== "failed"
       || latest.cleanup?.stale_reason !== "worker_stale_timeout"
-      || latest.worker?.tmux !== pending.worker_tmux
-      || (latest.supervision?.generation ?? 0) !== (pending.generation ?? 0)
     ) {
       delete latest.cleanup.pending_lease_release;
       outcome = { authorized: false, obsolete: true };
@@ -285,7 +403,7 @@ function tryCompletePendingLeaseRelease({
   const auth = authorizePendingTmuxStop(runId, pending);
   if (auth.authorized) {
     try {
-      stopTmux(pending.worker_tmux);
+      stopAuthorizedTmuxSession(pending, stopTmux);
     } catch (error) {
       reportEntry.tmuxError = String(error.message || error);
     }
@@ -302,6 +420,8 @@ function executeFailStale({
   releaseLease,
   stopTmux,
   onBeforeStaleConfirmation,
+  onBeforeStaleArtifactPublish,
+  onAfterStaleArtifactPublish,
   beforeStaleFailureConfirm,
   reportEntry,
 }) {
@@ -345,8 +465,11 @@ function executeFailStale({
 
   const transition = transitionStaleFailure(state.runId, {
     inspectedTmux,
+    inspectedTmuxId: tmux.sessionId,
     expectedStaleDetectedAt,
     nowIso,
+    onBeforeStaleArtifactPublish,
+    onAfterStaleArtifactPublish,
   });
   if (transition.kind === "reconciled") {
     reportEntry.action = "reconcile_mailbox";
@@ -389,11 +512,11 @@ function executeFailStale({
     }
   }
 
-  if (pending?.worker_tmux) {
+  if (pending?.worker_tmux || pending?.worker_tmux_id) {
     const auth = authorizePendingTmuxStop(state.runId, pending);
     if (auth.authorized) {
       try {
-        stopTmux(pending.worker_tmux);
+        stopAuthorizedTmuxSession(pending, stopTmux);
       } catch (error) {
         reportEntry.tmuxError = String(error.message || error);
       }
@@ -402,7 +525,8 @@ function executeFailStale({
   }
 
   try {
-    stopTmux(inspectedTmux);
+    const boundTmuxId = afterTransition?.cleanup?.worker_tmux_id || tmux.sessionId;
+    stopTmux(boundTmuxId || inspectedTmux);
   } catch (error) {
     reportEntry.tmuxError = String(error.message || error);
   }
@@ -416,6 +540,8 @@ export function gcRuns({
   stopTmux = stopTmuxSession,
   releaseLease = releaseAttemptLease,
   onBeforeStaleConfirmation = null,
+  onBeforeStaleArtifactPublish = null,
+  onAfterStaleArtifactPublish = null,
   beforeStaleFailureConfirm = null,
   dryRun = false,
 } = {}) {
@@ -430,6 +556,13 @@ export function gcRuns({
     const reportEntry = { runId: state.runId, action: "skip" };
 
     if (!dryRun) {
+      const reconciled = tryReconcileSyntheticStaleFailure(state.runId);
+      if (reconciled) {
+        reportEntry.action = "reconcile_stale_failure";
+        report.runs.push(reportEntry);
+        continue;
+      }
+
       const pendingResult = tryCompletePendingLeaseRelease({
         runId: state.runId,
         nowIso,
@@ -465,7 +598,7 @@ export function gcRuns({
       continue;
     }
     if (decision.kind === "mark_stale") {
-      setStaleDetected(state.runId, nowIso);
+      setStaleDetected(state.runId, nowIso, inspectTmux);
       continue;
     }
     if (decision.kind === "clear_stale") {
@@ -483,6 +616,8 @@ export function gcRuns({
       releaseLease,
       stopTmux,
       onBeforeStaleConfirmation,
+      onBeforeStaleArtifactPublish,
+      onAfterStaleArtifactPublish,
       beforeStaleFailureConfirm,
       reportEntry,
     });

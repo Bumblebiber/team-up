@@ -33,6 +33,29 @@ export function atomicWriteText(filePath, text) {
   fs.renameSync(tmp, filePath);
 }
 
+/** Publish content at destPath only when dest does not exist yet (hard link). */
+export function publishFileNoReplace(destPath, content) {
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  const tmp = path.join(
+    path.dirname(destPath),
+    `.publish.${process.pid}.${Date.now()}.tmp`,
+  );
+  fs.writeFileSync(tmp, content);
+  try {
+    fs.linkSync(tmp, destPath);
+    fs.unlinkSync(tmp);
+    return { published: true };
+  } catch (error) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* */
+    }
+    if (error.code === "EEXIST") return { published: false };
+    throw error;
+  }
+}
+
 function newRunId(now = new Date()) {
   const iso = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
   const short = Math.random().toString(36).slice(2, 6);
@@ -395,11 +418,18 @@ export function classifyMailbox(runId) {
 const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
 const CAPACITY_RUN_STATUSES = new Set(["waiting_capacity", "waiting_decision"]);
 
+export function isSyntheticStaleFailureState(state) {
+  return state?.status === "failed"
+    && state?.cleanup?.stale_reason === "worker_stale_timeout";
+}
+
 /**
  * Purely reconcile durable STATE with a mailbox observation.
  * Terminal STATE is irreversible here; otherwise terminal mailbox outcomes
  * and pending questions override stale active STATE. A watching mailbox does
  * not erase richer controller states such as waiting_capacity.
+ * Synthetic stale-timeout failures may be superseded by legitimate mailbox
+ * terminal outcomes on a later pass.
  */
 export function resolveRunState(state, classified = { status: "watching" }) {
   if (!state) throw new Error("state required");
@@ -408,7 +438,14 @@ export function resolveRunState(state, classified = { status: "watching" }) {
   let effectiveClassified = classified;
 
   if (TERMINAL_RUN_STATUSES.has(currentStatus)) {
-    if (classified?.status !== currentStatus) {
+    if (
+      isSyntheticStaleFailureState(state)
+      && TERMINAL_RUN_STATUSES.has(classified?.status)
+      && classified.status !== "failed"
+    ) {
+      nextStatus = classified.status;
+      effectiveClassified = classified;
+    } else if (classified?.status !== currentStatus) {
       effectiveClassified = { status: currentStatus };
     }
   } else if (TERMINAL_RUN_STATUSES.has(classified?.status)) {

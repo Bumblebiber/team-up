@@ -492,6 +492,159 @@ test("gc continues other runs when pending lease release throws", withTempRuns(a
   assert.deepEqual(stopped, ["worker-gc"]);
 }));
 
+test("gc preserves legitimate result at stale artifact publish boundary", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const mb = path.join(runDir(state.runId), "mailbox");
+  const legitimate = {
+    schema: "team-up.result/v1",
+    status: "success",
+    summary: "worker won the race",
+  };
+
+  gcRuns({
+    ...staleDeps,
+    states: [state],
+    onBeforeStaleArtifactPublish: ({ runId }) => {
+      atomicWriteJson(path.join(runDir(runId), "mailbox", "RESULT.json"), legitimate);
+      atomicWriteText(path.join(runDir(runId), "mailbox", "STATUS"), "done\n");
+    },
+    releaseLease: () => assert.fail("must not release when legitimate result wins"),
+    stopTmux: () => assert.fail("must not stop when legitimate result wins"),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "done");
+  assert.equal(latest.cleanup?.stale_reason, undefined);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(mb, "RESULT.json"), "utf8")), legitimate);
+  assert.equal(fs.readFileSync(path.join(mb, "STATUS"), "utf8").trim(), "done");
+}));
+
+test("gc reconciles legitimate result written after stale artifact claim", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const mb = path.join(runDir(state.runId), "mailbox");
+  const legitimate = {
+    schema: "team-up.result/v1",
+    status: "success",
+    summary: "worker won after claim",
+  };
+
+  gcRuns({
+    ...staleDeps,
+    states: [state],
+    onAfterStaleArtifactPublish: ({ runId }) => {
+      atomicWriteJson(path.join(runDir(runId), "mailbox", "RESULT.json"), legitimate);
+      atomicWriteText(path.join(runDir(runId), "mailbox", "STATUS"), "done\n");
+    },
+    releaseLease: () => assert.fail("must not release when legitimate result wins"),
+    stopTmux: () => assert.fail("must not stop when legitimate result wins"),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "done");
+  assert.equal(latest.cleanup?.stale_reason, undefined);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(mb, "RESULT.json"), "utf8")), legitimate);
+}));
+
+test("gc later sweep reconciles legitimate result over synthetic stale failure", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const mb = path.join(runDir(state.runId), "mailbox");
+  const legitimate = {
+    schema: "team-up.result/v1",
+    status: "success",
+    summary: "late legitimate completion",
+  };
+  const stopped = [];
+
+  gcRuns({
+    ...staleDeps,
+    states: [state],
+    releaseLease: () => ({ ok: true }),
+    stopTmux: session => stopped.push(session),
+    inspectTmux: () => ({
+      exists: true,
+      activityMs: NOW - IDLE_MS - 1,
+      sessionId: "$111",
+    }),
+  });
+
+  assert.equal(loadState(state.runId).status, "failed");
+  assert.equal(loadState(state.runId).cleanup?.stale_reason, "worker_stale_timeout");
+
+  atomicWriteJson(path.join(mb, "RESULT.json"), legitimate);
+  atomicWriteText(path.join(mb, "STATUS"), "done\n");
+
+  const second = gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    releaseLease: () => assert.fail("must not release on reconciliation sweep"),
+    stopTmux: session => stopped.push(session),
+    inspectTmux: () => ({ exists: false, activityMs: null, sessionId: null }),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "done");
+  assert.equal(latest.cleanup?.stale_reason, undefined);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(mb, "RESULT.json"), "utf8")), legitimate);
+  assert.equal(second.runs[0].action, "reconcile_stale_failure");
+}));
+
+test("stale tmux stop targets immutable session id when name is reused", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const candidate = loadState(state.runId);
+  candidate.current_attempt_id = "attempt-1";
+  candidate.cleanup.worker_tmux_id = "$old";
+  saveState(candidate);
+  const stopped = [];
+  let inspectCalls = 0;
+
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    inspectTmux: session => {
+      inspectCalls += 1;
+      const staleActivity = NOW - IDLE_MS - 1;
+      if (inspectCalls === 1) {
+        return { exists: true, activityMs: staleActivity, sessionId: "$old" };
+      }
+      return { exists: true, activityMs: staleActivity, sessionId: "$new" };
+    },
+    releaseLease: () => ({ ok: true }),
+    stopTmux: session => stopped.push(session),
+  });
+
+  assert.deepEqual(stopped, ["$old"]);
+  assert.equal(stopped.includes("worker-gc"), false);
+}));
+
+test("stale tmux stop is no-op when immutable session id is gone", withTempRuns(async () => {
+  const state = staleCandidateFixture();
+  const candidate = loadState(state.runId);
+  candidate.status = "failed";
+  candidate.cleanup = {
+    stale_reason: "worker_stale_timeout",
+    pending_lease_release: {
+      token: `${state.runId}.pending`,
+      worker_tmux: "worker-gc",
+      worker_tmux_id: "$gone",
+      attempt_id: "attempt-1",
+      recorded_at: new Date(NOW).toISOString(),
+      stale_reason: "worker_stale_timeout",
+    },
+  };
+  saveState(candidate);
+  const stopped = [];
+
+  gcRuns({
+    ...staleDeps,
+    states: [loadState(state.runId)],
+    inspectTmux: () => ({ exists: true, activityMs: NOW, sessionId: "$replacement" }),
+    releaseLease: () => ({ ok: true }),
+    stopTmux: session => stopped.push(session),
+  });
+
+  assert.deepEqual(stopped, ["$gone"]);
+}));
+
 test("gc terminal cleanup is idempotent and dry-run never mutates", withTempRuns(async () => {
   const terminal = createGcFixture({ status: "done" });
   const stopped = [];
