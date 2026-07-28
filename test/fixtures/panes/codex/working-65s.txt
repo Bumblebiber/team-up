@@ -1,0 +1,40 @@
+⚠ Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox
+  prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled
+  bubblewrap in the meantime.
+
+╭────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.145.0)                             │
+│                                                        │
+│ model:     gpt-5.5 medium   /model to change           │
+│ directory: ~/projects/team-up/.worktrees/pane-fixtures │
+╰────────────────────────────────────────────────────────╯
+
+  Tip: Start a fresh idea with /new; the previous session stays in history.
+
+
+› Run exactly: sleep 75 in shell, then reply done.
+
+
+  gpt-5.5 medium · ~/projects/team-up/.worktrees/pane-fixtures
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
