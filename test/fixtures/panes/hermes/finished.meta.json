@@ -1,0 +1,31 @@
+{
+  "cli": "hermes",
+  "cliVersion": "Hermes Agent v0.18.2 (2026.7.7.2) · upstream 689b51be",
+  "state": "finished",
+  "command": [
+    "hermes",
+    "chat",
+    "--tui"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 8,
+  "offsets": [
+    110
+  ],
+  "sessionStart": "2026-07-28T14:26:26Z",
+  "input": {
+    "text": "Run exactly: sleep 75 in shell, then reply done.",
+    "sentAtSec": 12
+  },
+  "captures": [
+    {
+      "offsetSec": 110,
+      "timestamp": "2026-07-28T14:28:16Z",
+      "file": "hermes/finished.txt"
+    }
+  ]
+}
