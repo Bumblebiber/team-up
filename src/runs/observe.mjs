@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   atomicWriteText,
@@ -23,6 +23,15 @@ export const JUDGE_TIMEOUT_MS = 60_000;
 export const MAX_AUTO_ANSWERS = 3;
 export const PANE_TAIL_BYTES = 8 * 1024;
 export const OBSERVER_PID_FILE = "OBSERVER.pid";
+export const OBSERVATION_LOG_FILE = "OBSERVATION.log";
+export const MAX_KEYS_PER_ANSWER = 8;
+export const MAX_SILENCE_JUDGE_CALLS = 2;
+
+/** Mailbox files written by the observer — excluded from worker-silence age. */
+export const OBSERVER_OWNED_MAILBOX_FILES = new Set([
+  OBSERVER_PID_FILE,
+  OBSERVATION_LOG_FILE,
+]);
 
 export const ALLOWED_KEYS = new Set([
   "Enter", "Escape", "Up", "Down", "Left", "Right", "Tab", "Space",
@@ -169,15 +178,6 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
     };
   }
 
-  if (matchesDenyPattern(pane)) {
-    return {
-      action: "escalate",
-      reason: "deny pattern matched in pane",
-      question: verdict.question || "Pane contains credential or billing wording; human required.",
-      verdict,
-    };
-  }
-
   if (verdict.action === "wait") {
     return { action: "wait", reason: "judge said wait", verdict };
   }
@@ -191,7 +191,16 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
     };
   }
 
-  // action === "answer"
+  // action === "answer" — deny patterns block auto-answer only, not wait/escalate.
+  if (matchesDenyPattern(pane)) {
+    return {
+      action: "escalate",
+      reason: "deny pattern matched in pane",
+      question: verdict.question || "Pane contains credential or billing wording; human required.",
+      verdict,
+    };
+  }
+
   const silenceSec = ctx.silenceSec ?? DEFAULT_SILENCE_SEC;
   const mailboxAgeSec = ctx.mailboxAgeSec ?? Infinity;
   if (mailboxAgeSec < silenceSec) {
@@ -217,6 +226,15 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
       action: "escalate",
       reason: "auto-answer cap reached",
       question: verdict.question || `Auto-answer cap (${MAX_AUTO_ANSWERS}) reached.`,
+      verdict,
+    };
+  }
+
+  if (verdict.keys.length > MAX_KEYS_PER_ANSWER) {
+    return {
+      action: "escalate",
+      reason: `too many keys: ${verdict.keys.length} (max ${MAX_KEYS_PER_ANSWER})`,
+      question: `Judge proposed ${verdict.keys.length} keys; max is ${MAX_KEYS_PER_ANSWER}.`,
       verdict,
     };
   }
@@ -352,12 +370,13 @@ export function isProcessAlive(pid) {
   }
 }
 
-/** Seconds since the newest mtime in the mailbox directory. */
+/** Seconds since the newest worker-owned mtime in the mailbox directory. */
 export function getMailboxAge(runId, { now = () => Date.now(), stat = fs.statSync } = {}) {
   const mb = mailboxDir(runId);
   if (!fs.existsSync(mb)) return Infinity;
   let latest = 0;
   for (const name of fs.readdirSync(mb)) {
+    if (OBSERVER_OWNED_MAILBOX_FILES.has(name)) continue;
     try {
       const st = stat(path.join(mb, name));
       if (st.mtimeMs > latest) latest = st.mtimeMs;
@@ -366,7 +385,7 @@ export function getMailboxAge(runId, { now = () => Date.now(), stat = fs.statSyn
     }
   }
   if (latest === 0) return Infinity;
-  return Math.floor((now() - latest) / 1000);
+  return Math.max(0, Math.floor((now() - latest) / 1000));
 }
 
 export function observerPidPath(runId) {
@@ -412,10 +431,12 @@ export function hydrateLoopFromLog(runId, loop = createObserverLoop()) {
     try {
       entry = JSON.parse(line);
     } catch {
+      // Truncated/malformed line — assume an answer happened (power-cycle damage).
+      loop.autoAnswerCount += 1;
       continue;
     }
     if (entry.kind === "action" && entry.action === "answer") {
-      loop.autoAnswerCount = Math.max(loop.autoAnswerCount, entry.auto_answer_count ?? 0);
+      loop.autoAnswerCount += 1;
       if (entry.pane_fp) loop.answeredPanes.add(entry.pane_fp);
     }
   }
@@ -477,6 +498,7 @@ export function observerTick(loop, capture, deps = {}) {
   const stallTicks = deps.stallTicks ?? DEFAULT_STALL_TICKS;
   const silenceSec = deps.silenceSec ?? DEFAULT_SILENCE_SEC;
   const mailboxAgeSec = deps.mailboxAgeSec ?? Infinity;
+  const nowMs = typeof deps.now === "function" ? deps.now() : Date.now();
   const fp = paneFingerprint(capture);
   const silenceStalled = mailboxAgeSec >= silenceSec;
 
@@ -489,6 +511,7 @@ export function observerTick(loop, capture, deps = {}) {
       loop.awaitingPostAnswer = false;
       loop.postAnswerTicks = 0;
       loop.judgeCalledThisEpisode = false;
+      loop.lastEpisodeKey = null;
     }
   } else {
     loop.identicalCount += 1;
@@ -506,10 +529,34 @@ export function observerTick(loop, capture, deps = {}) {
   const shouldStall = paneStalled || silenceStalled;
 
   if (!shouldStall) {
+    loop.lastEpisodeKey = null;
     if (paneChanged || loop.identicalCount === 0) {
       return { ...loop, event: "changed" };
     }
     return { ...loop, event: "identical" };
+  }
+
+  let trigger = "pane";
+  if (silenceStalled && !paneStalled) trigger = "silence";
+  else if (silenceStalled && paneStalled) trigger = "both";
+
+  const mailboxFresh = mailboxAgeSec < silenceSec;
+  const episodeKey = `${trigger}:${mailboxFresh ? "fresh" : "stale"}`;
+  if (loop.lastEpisodeKey != null && episodeKey !== loop.lastEpisodeKey) {
+    loop.judgeCalledThisEpisode = false;
+  }
+  loop.lastEpisodeKey = episodeKey;
+
+  if (trigger === "silence") {
+    if (loop.silenceJudgeCount >= MAX_SILENCE_JUDGE_CALLS) {
+      return { ...loop, event: "silence_escalate", capture, trigger };
+    }
+    if (
+      loop.lastSilenceJudgeAt != null
+      && (nowMs - loop.lastSilenceJudgeAt) < silenceSec * 1000
+    ) {
+      return { ...loop, event: "stall_ongoing" };
+    }
   }
 
   if (loop.judgeCalledThisEpisode) {
@@ -517,9 +564,6 @@ export function observerTick(loop, capture, deps = {}) {
   }
 
   loop.judgeCalledThisEpisode = true;
-  let trigger = "pane";
-  if (silenceStalled && !paneStalled) trigger = "silence";
-  else if (silenceStalled && paneStalled) trigger = "both";
   return { ...loop, event: "stall_detected", capture, trigger };
 }
 
@@ -528,6 +572,9 @@ export function createObserverLoop() {
     prevFingerprint: null,
     identicalCount: 0,
     judgeCalledThisEpisode: false,
+    lastEpisodeKey: null,
+    silenceJudgeCount: 0,
+    lastSilenceJudgeAt: null,
     autoAnswerCount: 0,
     answeredPanes: new Set(),
     judgeFailedEscalated: false,
@@ -571,6 +618,11 @@ export function handleStall({
     mailbox_age_sec: mailboxAgeSec,
     silence_sec: silenceSec,
   });
+
+  if (deps.stallTrigger === "silence") {
+    loop.silenceJudgeCount += 1;
+    loop.lastSilenceJudgeAt = now();
+  }
 
   const prompt = buildJudgePrompt({
     pane: capture,
@@ -690,6 +742,22 @@ export function handlePostAnswerStall({
   return { loop, stop: true };
 }
 
+export function handleSilenceEscalate({
+  runId,
+  loop,
+  deps = {},
+}) {
+  const {
+    log = (entry) => appendObservationLog(runId, entry, deps),
+    escalate = (q) => escalateRun(runId, q, deps),
+  } = deps;
+  const question = "Worker mailbox silent beyond threshold; human attention required.";
+  log({ kind: "decision", action: "escalate", reason: "silence cap", question });
+  escalate(question);
+  loop.escalated = true;
+  return { loop, stop: true };
+}
+
 export async function runObserver(runId, deps = {}) {
   const pollSec = (deps.pollSec ?? DEFAULT_POLL_SEC) * 1000;
   const silenceSec = deps.silenceSec ?? DEFAULT_SILENCE_SEC;
@@ -703,8 +771,17 @@ export async function runObserver(runId, deps = {}) {
   const lock = deps.acquireLock ?? (() => tryAcquireObserverLock(runId, deps));
   const lockResult = lock();
   if (!lockResult.ok) {
+    const msg = `observer: lock not acquired for ${runId}: ${lockResult.reason || "unknown"}`;
+    if (deps.logLockFailure) deps.logLockFailure(msg);
+    else console.error(msg);
     return;
   }
+
+  const onSigterm = () => {
+    if (!deps.keepLock) releaseObserverLock(runId);
+    process.exit(0);
+  };
+  process.once("SIGTERM", onSigterm);
 
   let roster = deps.roster;
   let usage = deps.usage;
@@ -756,27 +833,26 @@ export async function runObserver(runId, deps = {}) {
         });
         Object.assign(loop, result.loop);
         if (result.stop) break;
+      } else if (next.event === "silence_escalate") {
+        const result = handleSilenceEscalate({
+          runId,
+          loop,
+          deps,
+        });
+        Object.assign(loop, result.loop);
+        if (result.stop) break;
       }
 
       await sleep(pollSec);
     }
   } finally {
+    process.off("SIGTERM", onSigterm);
     if (!deps.keepLock) releaseObserverLock(runId);
   }
 }
 
 function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export function spawnObserver(runId, deps = {}) {
-  const script = fileURLToPath(import.meta.url);
-  const child = spawn(process.execPath, [script, runId], {
-    stdio: "ignore",
-    detached: false,
-    env: { ...process.env },
-  });
-  return child;
 }
 
 function main() {

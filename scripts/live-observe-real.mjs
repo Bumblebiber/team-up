@@ -91,10 +91,14 @@ async function proveSilenceTrigger(dir, roster, usage) {
   const hermesTry = tryStartHermes(session);
   let workerCli = "hermes";
   let hermesNote = null;
+  let syntheticPane = false;
+  let paneSource = "live:hermes";
 
   if (!hermesTry.ok) {
     hermesNote = hermesTry.error;
-    workerCli = "cursor-agent";
+    workerCli = "hermes";
+    syntheticPane = true;
+    paneSource = "fixture:hermes/trust-prompt-6s (animated fallback; cli label matches fixture)";
     startAnimatedPane(session);
   }
 
@@ -139,6 +143,8 @@ async function proveSilenceTrigger(dir, roster, usage) {
 
   return {
     case: "A-silence-trigger",
+    syntheticPane,
+    paneSource,
     runId: state.runId,
     workerCli,
     hermesNote,
@@ -201,6 +207,8 @@ async function proveFreshMailboxRefusal(dir, roster, usage) {
 
   return {
     case: "B-fresh-mailbox-refusal",
+    syntheticPane: true,
+    paneSource: "fixture:cursor-agent/trust-prompt-6s (tmux cat)",
     runId: state.runId,
     workerCli: "cursor-agent",
     judgeModel: roster.roles?.observer?.chain?.[0] || "cursor:grok-4.5-high",

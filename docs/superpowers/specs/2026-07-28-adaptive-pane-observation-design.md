@@ -76,11 +76,15 @@ proposal because it came back well-formed.
 1. `action: "answer"` is only honoured when every element of `keys` is in a
    fixed allowlist of navigation and confirmation keys: `Enter`, `Escape`,
    `Up`, `Down`, `Left`, `Right`, `Tab`, `Space`, `y`, `n`, and single digits
-   `1`–`9`. **No free text ever.** Anything else → downgrade to `escalate`.
+   `1`–`9`, and when `keys` has at most **8** elements. **No free text ever.**
+   Anything else → downgrade to `escalate`.
 2. If the pane matches a deny pattern — login, sign in, authenticate, device
    code, verification code, API key, token, password, billing, payment,
-   subscribe, upgrade plan — → `escalate`, whatever the model said. Credentials
-   and money are never answered automatically.
+   subscribe, upgrade plan — and the judge proposes `action: "answer"`, downgrade
+   to `escalate`. Credentials and money are never **answered** automatically.
+   Deny patterns do **not** override a `wait` or `escalate` verdict; a help
+   screen that mentions "login" while the judge says the worker is still
+   `working` must not force escalation.
 3. Never answer the same normalized pane twice in one run: keeps a mistaken
    answer from becoming a loop.
 4. At most **3** auto-answers per run; the fourth stall escalates.

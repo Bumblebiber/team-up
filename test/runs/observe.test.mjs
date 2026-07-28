@@ -15,6 +15,7 @@ import {
   createObserverLoop,
   handleStall,
   handlePostAnswerStall,
+  handleSilenceEscalate,
   appendObservationLog,
   observationLogPath,
   escalateRun,
@@ -32,10 +33,14 @@ import {
   defaultCapture,
   runObserver,
   MAX_AUTO_ANSWERS,
+  MAX_KEYS_PER_ANSWER,
+  MAX_SILENCE_JUDGE_CALLS,
   ALLOWED_KEYS,
   DEFAULT_SILENCE_SEC,
   DEFAULT_STALL_TICKS,
   PANE_TAIL_BYTES,
+  OBSERVER_PID_FILE,
+  OBSERVATION_LOG_FILE,
 } from "../../src/runs/observe.mjs";
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/panes");
@@ -205,30 +210,32 @@ test("hermes ticking footer never pane-stalls but silence trigger fires", () => 
   assert.equal(silent.trigger, "silence");
 });
 
-test("claude frozen working pane stalls but fresh mailbox blocks answer", () => {
-  const working = readFixture("claude/working-40s.txt");
+test("frozen pane with fresh mailbox re-opens episode when mailbox goes stale", () => {
+  const frozen = readFixture("cursor-agent/trust-prompt-6s.txt");
   const loop = createObserverLoop();
-  const events = [];
-  for (let i = 0; i < 5; i++) {
-    const next = observerTick(loop, working, { mailboxAgeSec: 5 });
-    Object.assign(loop, next);
-    events.push(next.event);
-  }
-  assert.ok(events.includes("stall_detected"));
+  const silenceSec = 120;
 
-  const verdict = {
-    state: "waiting_input",
-    reason: "looks idle",
-    action: "answer",
-    keys: ["Enter"],
-    evidence: "prompt",
-  };
-  const blocked = verifyVerdict(verdict, working, {
-    mailboxAgeSec: 5,
-    silenceSec: DEFAULT_SILENCE_SEC,
-  });
-  assert.equal(blocked.action, "wait");
-  assert.match(blocked.reason, /mailbox fresh/);
+  // Episode 1: pane stalled, mailbox fresh -> judge once, then stall_ongoing
+  for (let i = 0; i < 3; i++) {
+    const next = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec });
+    Object.assign(loop, next);
+  }
+  assert.equal(loop.judgeCalledThisEpisode, false);
+  const ep1 = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec });
+  Object.assign(loop, ep1);
+  assert.equal(ep1.event, "stall_detected");
+
+  loop.judgeCalledThisEpisode = true; // simulate handleStall wait downgrade
+
+  const ongoing = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec });
+  Object.assign(loop, ongoing);
+  assert.equal(ongoing.event, "stall_ongoing");
+
+  // Episode 2: same frozen pane, mailbox now stale -> latch clears, judge again
+  const ep2 = observerTick(loop, frozen, { mailboxAgeSec: silenceSec, silenceSec });
+  Object.assign(loop, ep2);
+  assert.equal(ep2.event, "stall_detected");
+  assert.equal(ep2.trigger, "both");
 });
 
 test("trust-prompt verdict with allowlisted keys is honoured when mailbox stale", () => {
@@ -246,6 +253,27 @@ test("trust-prompt verdict with allowlisted keys is honoured when mailbox stale"
     silenceSec: DEFAULT_SILENCE_SEC,
   });
   assert.equal(result.action, "answer");
+});
+
+test("deny pattern in help text does not escalate a wait verdict", () => {
+  const pane = "opencode stats               show token usage and cost statistics\n> working...";
+  const result = verifyVerdict(
+    { state: "working", action: "wait", reason: "still working" },
+    pane,
+    { autoAnswerCount: 0, answeredPanes: new Set(), mailboxAgeSec: 1, silenceSec: 120 },
+  );
+  assert.equal(result.action, "wait");
+});
+
+test("verdict with too many keys is downgraded to escalate", () => {
+  const keys = Array(MAX_KEYS_PER_ANSWER + 1).fill("Enter");
+  const result = verifyVerdict(
+    { state: "waiting_input", reason: "spam", action: "answer", keys },
+    "plain pane",
+    { autoAnswerCount: 0, answeredPanes: new Set(), mailboxAgeSec: 999, silenceSec: 120 },
+  );
+  assert.equal(result.action, "escalate");
+  assert.match(result.reason, /too many keys/);
 });
 
 test("verdict with free-text keys is downgraded to escalate", () => {
@@ -277,18 +305,27 @@ test("login_required always escalates even without deny pattern in pane", () => 
   assert.ok(!matchesDenyPattern(pane));
 });
 
-test("credential pane escalates via deny pattern", () => {
+test("credential pane escalates via deny pattern only on answer proposals", () => {
   const pane = "Please enter your API key to continue\n> ";
-  const verdict = {
+  const answerVerdict = {
     state: "waiting_input",
     reason: "needs key",
     action: "answer",
     keys: ["Enter"],
     evidence: "API key",
   };
-  const result = verifyVerdict(verdict, pane, createObserverLoop());
-  assert.equal(result.action, "escalate");
-  assert.match(result.reason, /deny pattern/);
+  const answerResult = verifyVerdict(answerVerdict, pane, createObserverLoop());
+  assert.equal(answerResult.action, "escalate");
+  assert.match(answerResult.reason, /deny pattern/);
+
+  const waitVerdict = {
+    state: "working",
+    reason: "still working",
+    action: "wait",
+    evidence: "API key prompt visible but worker active",
+  };
+  const waitResult = verifyVerdict(waitVerdict, pane, createObserverLoop());
+  assert.equal(waitResult.action, "wait");
 });
 
 test("dangerous keys are not on the allowlist", () => {
@@ -408,7 +445,7 @@ test("hydrateLoopFromLog restores caps across re-wait", withTempRuns(async () =>
     pane_fp: fp,
   });
   const loop = hydrateLoopFromLog(state.runId);
-  assert.equal(loop.autoAnswerCount, 2);
+  assert.equal(loop.autoAnswerCount, 1);
   assert.ok(loop.answeredPanes.has(fp));
 }));
 
@@ -423,7 +460,26 @@ test("escalateRun appends QUESTIONS.md instead of clobbering", withTempRuns(asyn
   assert.match(body, /---/);
 }));
 
-test("getMailboxAge reflects newest file mtime", withTempRuns(async () => {
+test("getMailboxAge ignores observer-owned files and clamps negative", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const mb = runs.mailboxDir(state.runId);
+  touchMailbox(state.runId, "HEARTBEAT", "fresh");
+  const heartbeatPath = path.join(mb, "HEARTBEAT");
+  const fileMtimeMs = fs.statSync(heartbeatPath).mtimeMs;
+  const nowMs = fileMtimeMs + 45_000;
+  const age = getMailboxAge(state.runId, { now: () => nowMs });
+  assert.equal(age, 45);
+
+  fs.writeFileSync(path.join(mb, OBSERVER_PID_FILE), `${process.pid}\n`);
+  fs.writeFileSync(path.join(mb, OBSERVATION_LOG_FILE), '{"kind":"decision"}\n');
+  const ageAfterObserver = getMailboxAge(state.runId, { now: () => nowMs });
+  assert.equal(ageAfterObserver, 45);
+
+  const futureNow = fileMtimeMs - 500;
+  assert.equal(getMailboxAge(state.runId, { now: () => futureNow }), 0);
+}));
+
+test("getMailboxAge reflects newest worker file mtime", withTempRuns(async () => {
   const state = createRunWithTmux();
   touchMailbox(state.runId, "HEARTBEAT", "fresh");
   const heartbeatPath = path.join(runs.mailboxDir(state.runId), "HEARTBEAT");
@@ -431,6 +487,17 @@ test("getMailboxAge reflects newest file mtime", withTempRuns(async () => {
   const nowMs = fileMtimeMs + 45_000;
   const age = getMailboxAge(state.runId, { now: () => nowMs });
   assert.equal(age, 45);
+}));
+
+test("stale observer pid lock is replaced on takeover", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const lockPath = path.join(runs.mailboxDir(state.runId), OBSERVER_PID_FILE);
+  fs.writeFileSync(lockPath, "999999\n");
+  const takeover = tryAcquireObserverLock(state.runId, { pid: process.pid });
+  assert.equal(takeover.ok, true);
+  assert.equal(takeover.replacedStale, true);
+  assert.equal(fs.readFileSync(lockPath, "utf8").trim(), String(process.pid));
+  releaseObserverLock(state.runId);
 }));
 
 test("second observer exits when lock held by live pid", withTempRuns(async () => {
@@ -448,23 +515,146 @@ test("runObserver exits when parent dies", withTempRuns(async () => {
   let iterations = 0;
   await runObserver(state.runId, {
     pollSec: 0.001,
-    sleep: async () => {},
+    sleep: async () => { iterations += 1; },
     capture: () => readFixture("cursor-agent/startup-idle-3s.txt"),
     parentPid: 1,
-    isParentAlive: () => false,
+    isParentAlive: () => iterations < 1,
     acquireLock: () => ({ ok: true }),
     keepLock: true,
     roster: TEST_ROSTER,
     usage: {},
   });
-  assert.ok(true);
+  assert.equal(iterations, 1);
 }));
 
 test("runObserver second instance acquireLock failure exits immediately", withTempRuns(async () => {
   const state = createRunWithTmux();
+  const failures = [];
   await runObserver(state.runId, {
     acquireLock: () => ({ ok: false, reason: "another observer is running" }),
+    logLockFailure: (msg) => failures.push(msg),
   });
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /lock not acquired/);
+}));
+
+test("hydrateLoopFromLog counts answers and treats malformed line as answer", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const p = observationLogPath(state.runId);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const good = JSON.stringify({ kind: "action", action: "answer", pane_fp: "A" });
+  const good2 = JSON.stringify({ kind: "action", action: "answer", pane_fp: "B" });
+  const good3 = JSON.stringify({ kind: "action", action: "answer", pane_fp: "C" });
+  fs.writeFileSync(p, `${good}\n${good2}\n${good3.slice(0, 40)}`);
+  const loop = hydrateLoopFromLog(state.runId);
+  assert.equal(loop.autoAnswerCount, 3);
+  assert.equal(loop.answeredPanes.size, 2);
+  const v = verifyVerdict(
+    { state: "waiting_input", action: "answer", keys: ["Enter"] },
+    "some pane",
+    { ...loop, mailboxAgeSec: 999, silenceSec: 120 },
+  );
+  assert.equal(v.action, "escalate");
+  assert.match(v.reason, /auto-answer cap/);
+}));
+
+test("silence path allows two judge calls then escalates unconditionally", () => {
+  const pane = readFixture("hermes/trust-prompt-6s.txt");
+  const loop = createObserverLoop();
+  const silenceSec = 10;
+  const t0 = 1_000_000;
+  loop.silenceJudgeCount = MAX_SILENCE_JUDGE_CALLS;
+  loop.judgeCalledThisEpisode = true;
+
+  const third = observerTick(loop, `${pane}\nmore`, {
+    mailboxAgeSec: silenceSec,
+    silenceSec,
+    now: () => t0 + 30_000,
+  });
+  assert.equal(third.event, "silence_escalate");
+});
+
+test("silence judge calls respect minimum interval", () => {
+  const pane = readFixture("hermes/trust-prompt-6s.txt");
+  const loop = createObserverLoop();
+  const silenceSec = 10;
+  const t0 = 1_000_000;
+
+  const first = observerTick(loop, `${pane}\na`, {
+    mailboxAgeSec: silenceSec,
+    silenceSec,
+    now: () => t0,
+  });
+  Object.assign(loop, first);
+  loop.silenceJudgeCount = 1;
+  loop.lastSilenceJudgeAt = t0;
+  loop.judgeCalledThisEpisode = true;
+
+  const tooSoon = observerTick(loop, `${pane}\nb`, {
+    mailboxAgeSec: silenceSec,
+    silenceSec,
+    now: () => t0 + 5000,
+  });
+  assert.equal(tooSoon.event, "stall_ongoing");
+
+  loop.judgeCalledThisEpisode = true;
+  const ready = observerTick(loop, `${pane}\nc`, {
+    mailboxAgeSec: silenceSec,
+    silenceSec,
+    now: () => t0 + 11_000,
+  });
+  assert.equal(ready.event, "stall_detected");
+});
+
+test("post-answer escalation via real auto-answer path", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const pane = readFixture("cursor-agent/trust-prompt-6s.txt");
+  let loop = createObserverLoop();
+  const sent = [];
+  const stall = handleStall({
+    runId: state.runId,
+    state,
+    loop,
+    capture: pane,
+    deps: {
+      roster: TEST_ROSTER,
+      usage: {},
+      judge: () => ({
+        ok: true,
+        stdout: JSON.stringify({
+          state: "waiting_input",
+          reason: "trust",
+          action: "answer",
+          keys: ["Enter"],
+        }),
+      }),
+      sendKeys: (keys) => sent.push(...keys),
+      now: () => Date.now(),
+      mailboxAgeSec: DEFAULT_SILENCE_SEC,
+    },
+  });
+  loop = stall.loop;
+  assert.deepEqual(sent, ["Enter"]);
+  assert.ok(loop.awaitingPostAnswer);
+
+  for (let i = 0; i < DEFAULT_STALL_TICKS - 1; i++) {
+    const next = observerTick(loop, pane);
+    Object.assign(loop, next);
+    assert.notEqual(next.event, "post_answer_stall");
+  }
+  const final = observerTick(loop, pane);
+  assert.equal(final.event, "post_answer_stall");
+  const result = handlePostAnswerStall({ runId: state.runId, loop, deps: {} });
+  assert.equal(result.stop, true);
+  assert.equal(runs.loadState(state.runId).status, "waiting_human");
+}));
+
+test("handleSilenceEscalate sets waiting_human", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const loop = createObserverLoop();
+  const result = handleSilenceEscalate({ runId: state.runId, loop, deps: {} });
+  assert.equal(result.stop, true);
+  assert.equal(runs.loadState(state.runId).status, "waiting_human");
 }));
 
 test("parseJudgeJson unwraps cursor-agent result envelope", () => {

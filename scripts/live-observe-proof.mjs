@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Unit-level observer harness with mocked judge — NOT a live proof.
+// Output is explicitly synthetic; do not treat as evidence of live CLI behaviour.
 // For real tmux + roster judge proof, run scripts/live-observe-real.mjs.
 import fs from "node:fs";
 import os from "node:os";
@@ -104,7 +105,15 @@ async function proveHermesSilence(dir) {
     ? fs.readFileSync(path.join(mb, "QUESTIONS.md"), "utf8")
     : "";
   const status = fs.readFileSync(path.join(mb, "STATUS"), "utf8").trim();
-  return { case: "hermes-silence", runId: state.runId, status, log, questions };
+  return {
+    case: "hermes-silence",
+    synthetic: true,
+    paneSource: "fixture:hermes/trust-prompt",
+    runId: state.runId,
+    status,
+    log,
+    questions,
+  };
 }
 
 async function proveCursorFrozen(dir) {
@@ -163,7 +172,15 @@ async function proveCursorFrozen(dir) {
     ? fs.readFileSync(path.join(mb, "QUESTIONS.md"), "utf8")
     : "";
   const status = fs.readFileSync(path.join(mb, "STATUS"), "utf8").trim();
-  return { case: "cursor-frozen", runId: state.runId, status, log, questions };
+  return {
+    case: "cursor-frozen",
+    synthetic: true,
+    paneSource: "fixture:cursor-agent/startup-idle-3s",
+    runId: state.runId,
+    status,
+    log,
+    questions,
+  };
 }
 
 async function main() {
@@ -173,7 +190,7 @@ async function main() {
   try {
     const hermes = await proveHermesSilence(dir);
     const cursor = await proveCursorFrozen(dir);
-    console.log(JSON.stringify({ hermes, cursor }, null, 2));
+    console.log(JSON.stringify({ synthetic: true, hermes, cursor }, null, 2));
   } finally {
     if (prev === undefined) delete process.env.TEAM_UP_RUNS;
     else process.env.TEAM_UP_RUNS = prev;
