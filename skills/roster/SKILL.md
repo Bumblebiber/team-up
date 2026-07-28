@@ -149,7 +149,22 @@ that to the user verbatim and stop — never substitute your own model choice.
    - Return the printed `status` (`question|done|failed|watching`) to the parent; then exit.
 4. Parent on `question`: answer or ask human → `team-up runs answer <runId> --text "…"` → **respawn** the watcher (step 3).
 5. Parent on `done`/`failed`: read `mailbox/RESULT.md`; TIM/memory closeout only if semantically useful (no run-event spam).
+   Terminal worker cleanup is automatic: `runs wait` stops worker TMUX after
+   `done|failed|cancelled`, and the five-minute `runs gc` timer catches missed
+   cleanup. Active `starting|watching` workers become stale candidates only when
+   both mailbox HEARTBEAT and TMUX window activity are older than 30 minutes; they
+   are failed and stopped only after another 10 minutes without either signal.
+   Human questions, capacity/decision waits, and handoff states are never
+   stale-killed.
 6. After host reboot: `team-up runs resume` (systemd `o9k-resume.service`). If `REATTACH_WATCHER` exists, respawn watcher; do not double-dispatch if worker tmux lives.
+
+Terminal worker cleanup is automatic: `runs wait` stops worker TMUX after
+`done|failed|cancelled`, and the five-minute `runs gc` timer catches missed
+cleanup. Active `starting|watching` workers become stale candidates only when
+both mailbox HEARTBEAT and TMUX window activity are older than 30 minutes; they
+are failed and stopped only after another 10 minutes without either signal.
+Human questions, capacity/decision waits, and handoff states are never
+stale-killed.
 
 **Stuck recovery:** task-dir has `PLAN.md` but `team-up runs classify <id>` still says
 `watching` → worker skipped mailbox closeout. Write `mailbox/RESULT.md`, then
