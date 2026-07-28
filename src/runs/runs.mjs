@@ -566,25 +566,27 @@ export function resumeLockPath() {
   return path.join(runsRoot(), ".resume.lock");
 }
 
-export function listActiveStates({ onCorrupt } = {}) {
+export function listAllStates({ onCorrupt } = {}) {
   const root = runsRoot();
   if (!fs.existsSync(root)) return [];
   const out = [];
   for (const name of fs.readdirSync(root)) {
     if (name.startsWith(".")) continue;
-    let st;
     try {
-      st = loadState(name);
-    } catch (e) {
-      if (typeof onCorrupt === "function") onCorrupt(name, e);
-      else console.error(`skip corrupt run ${name}: ${e.message}`);
-      continue;
+      const state = loadState(name);
+      if (state) out.push(state);
+    } catch (error) {
+      if (typeof onCorrupt === "function") onCorrupt(name, error);
+      else console.error(`skip corrupt run ${name}: ${error.message}`);
     }
-    if (!st) continue;
-    if (["done", "failed", "cancelled"].includes(st.status)) continue;
-    out.push(st);
   }
   return out;
+}
+
+export function listActiveStates(options = {}) {
+  return listAllStates(options).filter(
+    state => !["done", "failed", "cancelled"].includes(state.status),
+  );
 }
 
 export function shellQuote(s) {
