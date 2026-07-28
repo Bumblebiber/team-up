@@ -69,13 +69,11 @@ export function planCollect({
     if (due === null || now >= due) collect.add(cli);
   }
 
-  if (state === "idle") {
-    const hbMs = DEFAULT_CONFIG.intervals.idle_heartbeat_hours * 3_600_000;
-    for (const cli of subscriptions) {
-      if (collecting?.[cli]) continue;
-      const t = parseIso(lastCollect[cli]);
-      if (t === null || now - t >= hbMs) collect.add(cli);
-    }
+  const hbMs = DEFAULT_CONFIG.intervals.idle_heartbeat_hours * 3_600_000;
+  for (const cli of subscriptions) {
+    if (collecting?.[cli]) continue;
+    const t = parseIso(lastCollect[cli]);
+    if (t === null || now - t >= hbMs) collect.add(cli);
   }
 
   return { collect: [...collect], state };
@@ -147,7 +145,7 @@ function runCollect(cli) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "usage-collect.mjs");
   execFileSync(process.execPath, [script, "--cli", cli], {
     stdio: "inherit",
-    timeout: 120_000,
+    timeout: cli === "codex" ? 300_000 : 120_000,
   });
 }
 

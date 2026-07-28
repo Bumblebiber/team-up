@@ -12,6 +12,7 @@ export const WINDOW_MAX_AGE_MS = {
   "claude:week": 7 * 86_400_000,
   "claude:fable-week": 7 * 86_400_000,
   "codex:weekly": 7 * 86_400_000,
+  "codex:5h": 5 * 3_600_000,
   "cursor:included": 30 * 86_400_000,
   "cursor:auto": 30 * 86_400_000,
   "cursor:api": 30 * 86_400_000,

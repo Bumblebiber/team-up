@@ -28,6 +28,22 @@ test("parseCodexStatus derives used from percent left", () => {
   assert.equal(w["codex:weekly"].reset_confidence, "provider");
 });
 
+test("parseCodexStatus parses multiple limit lines including 5h above weekly", () => {
+  const text = fs.readFileSync(path.join(FIX, "codex-status-with-5h.txt"), "utf8");
+  const w = parseCodexStatus(text, { now: "2026-07-28T12:00:00Z" });
+  assert.ok(Math.abs(w["codex:5h"].used - 0.58) < 1e-9);
+  assert.match(w["codex:5h"].resets_at_raw, /28 Jul/);
+  assert.ok(Math.abs(w["codex:weekly"].used - 0.01) < 1e-9);
+  assert.match(w["codex:weekly"].resets_at_raw, /4 Aug/);
+});
+
+test("parseCodexStatus hit-limit fallback still works", () => {
+  const text = "You have hit your usage limit for this period. Please try again at 3pm on 5 Aug.";
+  const w = parseCodexStatus(text);
+  assert.equal(w["codex:weekly"].used, 1);
+  assert.match(w["codex:weekly"].resets_at_raw, /5 Aug/);
+});
+
 test("parseCursorUsage reads included/auto/api", () => {
   const text = fs.readFileSync(path.join(FIX, "cursor-usage.txt"), "utf8");
   const w = parseCursorUsage(text);

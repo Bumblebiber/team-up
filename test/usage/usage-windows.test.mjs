@@ -104,6 +104,12 @@ test("modelUsageGate blocks only this model's windows when present", () => {
   assert.equal(cool.blocked, false);
 });
 
+test("codex:5h uses burst handoff threshold via isBurstWindow pattern", () => {
+  const limits = { handoff_at: 0.95, handoff_at_burst: 0.8 };
+  assert.equal(resolveHandoffAt("codex:5h", limits), 0.8);
+  assert.equal(WINDOW_MAX_AGE_MS["codex:5h"], 5 * 3_600_000);
+});
+
 test("resolveHandoffAt uses handoff_at_burst for 5h/session windows, handoff_at otherwise", () => {
   const limits = { handoff_at: 0.95, handoff_at_burst: 0.8 };
   assert.equal(resolveHandoffAt("claude:5h", limits), 0.8);
