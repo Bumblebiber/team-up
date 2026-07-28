@@ -10,32 +10,32 @@
     "cols": 120,
     "rows": 40
   },
-  "settleSec": 5,
+  "settleSec": 8,
   "offsets": [
-    10,
-    30,
-    60
+    20,
+    40,
+    70
   ],
-  "sessionStart": "2026-07-28T14:12:11Z",
+  "sessionStart": "2026-07-28T14:16:28Z",
   "input": {
     "text": "Run exactly this shell command: sleep 75. After it completes, reply with only the word done.",
-    "sentAtSec": 8
+    "sentAtSec": 12
   },
   "captures": [
     {
-      "offsetSec": 10,
-      "timestamp": "2026-07-28T14:12:21Z",
-      "file": "claude/working-10s.txt"
+      "offsetSec": 20,
+      "timestamp": "2026-07-28T14:16:48Z",
+      "file": "claude/working-20s.txt"
     },
     {
-      "offsetSec": 30,
-      "timestamp": "2026-07-28T14:12:41Z",
-      "file": "claude/working-30s.txt"
+      "offsetSec": 40,
+      "timestamp": "2026-07-28T14:17:08Z",
+      "file": "claude/working-40s.txt"
     },
     {
-      "offsetSec": 60,
-      "timestamp": "2026-07-28T14:13:11Z",
-      "file": "claude/working-60s.txt"
+      "offsetSec": 70,
+      "timestamp": "2026-07-28T14:17:38Z",
+      "file": "claude/working-70s.txt"
     }
   ]
 }
