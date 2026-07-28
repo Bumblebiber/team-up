@@ -27,17 +27,31 @@ export function windowMaxAgeMs(wkey) {
   return 7 * 86_400_000;
 }
 
-function parseCodexResetUtc(str, now) {
+function localTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+/** Codex renders "HH:MM on D Mon" in the machine's local wall time (not UTC). */
+function parseCodexResetLocal(str, now, timeZone = localTimeZone()) {
   const m = /^(\d{1,2}):(\d{2})\s+on\s+(\d{1,2})\s+([A-Za-z]+)/i.exec(str.trim());
   if (!m) return null;
   const hour = Number(m[1]);
-  const min = Number(m[2]);
+  const minute = Number(m[2]);
   const day = Number(m[3]);
   const month = MONTH[m[4].toLowerCase().slice(0, 3)];
   if (month === undefined) return null;
-  const year = new Date(now).getUTCFullYear();
-  let ts = Date.UTC(year, month, day, hour, min, 0);
-  if (ts < now) ts = Date.UTC(year + 1, month, day, hour, min, 0);
+  const baseYear = new Date(now).getUTCFullYear();
+  for (const year of [baseYear, baseYear + 1, baseYear - 1]) {
+    try {
+      const ts = zonedWallTimeToUtc({ year, month, day, hour, minute }, timeZone);
+      if (Number.isFinite(ts) && ts >= now - 60_000) return ts;
+      if (Number.isFinite(ts) && year === baseYear + 1) return ts;
+    } catch {
+      // invalid IANA zone → fall through
+    }
+  }
+  let ts = Date.UTC(baseYear, month, day, hour, minute, 0);
+  if (ts < now) ts = Date.UTC(baseYear + 1, month, day, hour, minute, 0);
   return ts;
 }
 
@@ -105,12 +119,15 @@ function parseClaudeResetLocal(str, now) {
 }
 
 /** Best-effort parse of CLI /usage reset strings. null = unknown (no timed expiry). */
-export function parseResetAt(str, now = Date.now()) {
+export function parseResetAt(str, now = Date.now(), opts = {}) {
   if (!str || typeof str !== "string") return null;
   const trimmed = str.trim();
   const direct = Date.parse(trimmed);
   if (Number.isFinite(direct)) return direct;
-  return parseClaudeResetLocal(trimmed, now) ?? parseCodexResetUtc(trimmed, now);
+  const timeZone = opts.timeZone ?? localTimeZone();
+  return (
+    parseClaudeResetLocal(trimmed, now) ?? parseCodexResetLocal(trimmed, now, timeZone)
+  );
 }
 
 /** Convert raw reset string to ISO-8601 or null. Inject `now` for year rollover tests. */

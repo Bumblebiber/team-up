@@ -17,9 +17,17 @@ test("buildExpectScript codex waits for Tip, uses sized PTY from HOME, sleeps af
   assert.ok(tipIdx < cmdIdx, "readiness before command");
 });
 
-test("buildExpectScript uses result marker for cursor after command", () => {
-  const script = buildExpectScript("cursor");
-  const cmdIdx = script.indexOf('send "/usage\\r"');
+test("buildExpectScript cursor slow-types /usage, waits for autocomplete accept, then Included", () => {
+  const script = buildExpectScript("cursor", 180);
+  const tipIdx = script.indexOf('-re "Tip:"');
+  const slashIdx = script.indexOf('send "/"');
+  const usageIdx = script.indexOf('send "usage"');
+  const acceptIdx = script.indexOf('-re "Show plan"');
   const includedIdx = script.lastIndexOf('-re "Included"');
-  assert.ok(cmdIdx < includedIdx, "cursor sends /usage before waiting for Included");
+  const sttyIdx = script.indexOf("stty cols 120 rows 40");
+  assert.ok(sttyIdx >= 0, "sets terminal size");
+  assert.ok(tipIdx >= 0, "waits for Tip readiness");
+  assert.ok(slashIdx >= 0 && usageIdx > slashIdx, "slow-types /usage");
+  assert.ok(acceptIdx > usageIdx, "waits for slash autocomplete");
+  assert.ok(includedIdx > acceptIdx, "waits for Included after command runs");
 });
