@@ -1,0 +1,37 @@
+{
+  "cli": "hermes",
+  "cliVersion": "Hermes Agent v0.18.2 (2026.7.7.2) · upstream 689b51be",
+  "state": "permission-prompt",
+  "command": [
+    "hermes",
+    "chat",
+    "--tui"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 8,
+  "offsets": [
+    20,
+    35
+  ],
+  "sessionStart": "2026-07-28T14:28:28Z",
+  "input": {
+    "text": "Delete package.json with rm",
+    "sentAtSec": 12
+  },
+  "captures": [
+    {
+      "offsetSec": 20,
+      "timestamp": "2026-07-28T14:28:48Z",
+      "file": "hermes/permission-prompt-20s.txt"
+    },
+    {
+      "offsetSec": 35,
+      "timestamp": "2026-07-28T14:29:03Z",
+      "file": "hermes/permission-prompt-35s.txt"
+    }
+  ]
+}

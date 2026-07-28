@@ -1,0 +1,34 @@
+{
+  "cli": "hermes",
+  "cliVersion": "Hermes Agent v0.18.2 (2026.7.7.2) · upstream 689b51be",
+  "state": "trust-prompt",
+  "command": [
+    "hermes",
+    "chat",
+    "--tui"
+  ],
+  "cwd": "/tmp/pane-fixture-trust-ZABorr",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 8,
+  "offsets": [
+    6,
+    10
+  ],
+  "sessionStart": "2026-07-28T14:28:27Z",
+  "input": null,
+  "captures": [
+    {
+      "offsetSec": 6,
+      "timestamp": "2026-07-28T14:28:33Z",
+      "file": "hermes/trust-prompt-6s.txt"
+    },
+    {
+      "offsetSec": 10,
+      "timestamp": "2026-07-28T14:28:37Z",
+      "file": "hermes/trust-prompt-10s.txt"
+    }
+  ]
+}
