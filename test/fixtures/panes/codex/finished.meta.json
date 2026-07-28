@@ -1,0 +1,29 @@
+{
+  "cli": "codex",
+  "cliVersion": "codex-cli 0.145.0",
+  "state": "finished",
+  "command": [
+    "codex"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    100
+  ],
+  "sessionStart": "2026-07-28T14:21:25Z",
+  "input": {
+    "text": "Run exactly: sleep 75 in shell, then reply done.",
+    "sentAtSec": 10
+  },
+  "captures": [
+    {
+      "offsetSec": 100,
+      "timestamp": "2026-07-28T14:23:05Z",
+      "file": "codex/finished.txt"
+    }
+  ]
+}
