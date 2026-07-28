@@ -1,0 +1,35 @@
+{
+  "cli": "opencode",
+  "cliVersion": "1.15.13",
+  "state": "permission-prompt",
+  "command": [
+    "opencode"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 8,
+  "offsets": [
+    20,
+    35
+  ],
+  "sessionStart": "2026-07-28T14:33:03Z",
+  "input": {
+    "text": "Delete package.json with rm",
+    "sentAtSec": 12
+  },
+  "captures": [
+    {
+      "offsetSec": 20,
+      "timestamp": "2026-07-28T14:33:23Z",
+      "file": "opencode/permission-prompt-20s.txt"
+    },
+    {
+      "offsetSec": 35,
+      "timestamp": "2026-07-28T14:33:38Z",
+      "file": "opencode/permission-prompt-35s.txt"
+    }
+  ]
+}

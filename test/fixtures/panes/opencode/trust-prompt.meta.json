@@ -1,0 +1,32 @@
+{
+  "cli": "opencode",
+  "cliVersion": "1.15.13",
+  "state": "trust-prompt",
+  "command": [
+    "opencode"
+  ],
+  "cwd": "/tmp/pane-fixture-trust-NZJGdb",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 8,
+  "offsets": [
+    6,
+    10
+  ],
+  "sessionStart": "2026-07-28T14:33:02Z",
+  "input": null,
+  "captures": [
+    {
+      "offsetSec": 6,
+      "timestamp": "2026-07-28T14:33:08Z",
+      "file": "opencode/trust-prompt-6s.txt"
+    },
+    {
+      "offsetSec": 10,
+      "timestamp": "2026-07-28T14:33:12Z",
+      "file": "opencode/trust-prompt-10s.txt"
+    }
+  ]
+}
