@@ -425,9 +425,11 @@ test("escalateRun appends QUESTIONS.md instead of clobbering", withTempRuns(asyn
 
 test("getMailboxAge reflects newest file mtime", withTempRuns(async () => {
   const state = createRunWithTmux();
-  const now = Date.now();
   touchMailbox(state.runId, "HEARTBEAT", "fresh");
-  const age = getMailboxAge(state.runId, { now: () => now + 45_000 });
+  const heartbeatPath = path.join(runs.mailboxDir(state.runId), "HEARTBEAT");
+  const fileMtimeMs = fs.statSync(heartbeatPath).mtimeMs;
+  const nowMs = fileMtimeMs + 45_000;
+  const age = getMailboxAge(state.runId, { now: () => nowMs });
   assert.equal(age, 45);
 }));
 

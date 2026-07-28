@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Live proof for adaptive pane observer — hermes silence + cursor-agent pane stall.
+// Unit-level observer harness with mocked judge — NOT a live proof.
+// For real tmux + roster judge proof, run scripts/live-observe-real.mjs.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

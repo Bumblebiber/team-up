@@ -565,6 +565,13 @@ export function handleStall({
   const cli = state.worker?.cli || "unknown";
   const role = state.role || "worker";
 
+  log({
+    kind: "stall_detected",
+    trigger: deps.stallTrigger ?? "unknown",
+    mailbox_age_sec: mailboxAgeSec,
+    silence_sec: silenceSec,
+  });
+
   const prompt = buildJudgePrompt({
     pane: capture,
     cli,
@@ -737,7 +744,7 @@ export async function runObserver(runId, deps = {}) {
           state,
           loop,
           capture: next.capture,
-          deps: { ...deps, roster, usage, now, silenceSec, mailboxAgeSec },
+          deps: { ...deps, roster, usage, now, silenceSec, mailboxAgeSec, stallTrigger: next.trigger },
         });
         Object.assign(loop, result.loop);
         if (result.stop) break;
