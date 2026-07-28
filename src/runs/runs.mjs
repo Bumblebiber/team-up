@@ -1060,6 +1060,22 @@ function cmdCancel(args) {
   console.log(`cancelled ${runId}`);
 }
 
+async function cmdGc(args) {
+  const dryRun = args.includes("--dry-run");
+  const { gcRuns } = await import("./gc.mjs");
+  const report = gcRuns({ dryRun });
+  for (const item of report.runs) {
+    console.log(`runId: ${item.runId} action: ${item.action}`);
+  }
+}
+
+async function cmdGcInstall() {
+  const { installGcTimer } = await import("./gc-timer.mjs");
+  const result = installGcTimer();
+  console.log(`service: ${result.servicePath}`);
+  console.log(`timer: ${result.timerPath}`);
+}
+
 const HANDLERS = {
   create: cmdCreate,
   classify: cmdClassify,
@@ -1078,20 +1094,26 @@ const HANDLERS = {
     cmdRecheckCapacity(args);
   },
   cancel: cmdCancel,
+  gc: cmdGc,
+  "gc-install": cmdGcInstall,
 };
 
-function main() {
+async function main() {
   const [cmd, ...args] = process.argv.slice(2);
   const handler = HANDLERS[cmd];
   if (!handler) {
     console.error(`usage: runs.mjs <${Object.keys(HANDLERS).join("|")}> [options]`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
-  handler(args);
+  await handler(args);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }
 
 
