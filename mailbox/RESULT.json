@@ -1,0 +1,15 @@
+{
+  "schema": "team-up.result/v1",
+  "status": "success",
+  "summary": "Closed GC publication race and immutable TMUX identity race for terminal worker stale cleanup",
+  "commit": "1ef84f4",
+  "tests": {
+    "focused": "59/59 (gc.test.mjs, runs.test.mjs, gc-timer.test.mjs)",
+    "full": "338/338 (npm test)"
+  },
+  "risks": [
+    "Synthetic stale RESULT uses no-replace publish; STATUS still overwrites non-terminal values — worker must publish RESULT first for typed runs to win races reliably",
+    "worker_tmux_id is captured at mark_stale; if TMUX session is replaced before grace elapses, stop may target a session that already exited (harmless no-op via kill-session)",
+    "resolveRunState now allows synthetic worker_stale_timeout failed STATE to upgrade to done/cancelled; ordinary terminal irreversibility is unchanged for non-synthetic failures"
+  ]
+}
