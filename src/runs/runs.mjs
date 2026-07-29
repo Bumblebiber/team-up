@@ -8,6 +8,9 @@ import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stopTmuxSession } from "./tmux.mjs";
+import { parseVerifyCommand, runParentVerification } from "./verification.mjs";
+
+export { parseVerifyCommand, parseNodeTestCounts, runParentVerification } from "./verification.mjs";
 
 const FLOCK_BIN = "/usr/bin/flock";
 
@@ -106,6 +109,7 @@ export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory, r
 export function createRun({
   cwd, project, role, parent, worker, prompt, now = new Date(),
   result_protocol,
+  verify,
 }) {
   const runId = newRunId(now);
   const attach = parent.attach || (parent.tmux ? "tmux" : "manual");
@@ -135,6 +139,12 @@ export function createRun({
     mailbox: "mailbox/",
   };
   if (result_protocol) state.result_protocol = result_protocol;
+  if (verify?.command?.length) {
+    state.verify = {
+      command: verify.command,
+      runs: verify.runs ?? 5,
+    };
+  }
   const rd = runDir(runId);
   const mb = path.join(rd, "mailbox");
   fs.mkdirSync(mb, { recursive: true });
@@ -869,6 +879,28 @@ export function resumeAll({
   return report;
 }
 
+function reconcileMailbox(runId) {
+  const state = loadState(runId);
+  let classified = classifyMailbox(runId);
+
+  if (classified.status === "done" && state?.verify?.command?.length) {
+    const report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson });
+    if (report.verdict === "fail") {
+      classified = {
+        status: "failed",
+        error: "parent verification failed",
+        resultPath: classified.resultPath,
+      };
+    }
+  }
+
+  let resolved = resolveRunState(state, classified);
+  if (resolved.changed) {
+    resolved = persistResolvedRunStatus(runId, resolved.classified);
+  }
+  return resolved;
+}
+
 function cleanupTerminalWorker(state, classified, stopTmux) {
   const status = classified?.status || state?.status;
   if (!TERMINAL_RUN_STATUSES.has(status)) return false;
@@ -889,10 +921,7 @@ export function waitMailbox(runId, {
   silenceSec,
   spawnObserver: spawnObserverFn,
 } = {}) {
-  let resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
-  if (resolved.changed) {
-    resolved = persistResolvedRunStatus(runId, resolved.classified);
-  }
+  let resolved = reconcileMailbox(runId);
   if (
     TERMINAL_RUN_STATUSES.has(resolved.state.status) ||
     ["done", "failed", "cancelled", "question"].includes(resolved.classified?.status)
@@ -926,10 +955,7 @@ export function waitMailbox(runId, {
 
     const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
     const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
-    resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
-    if (resolved.changed) {
-      resolved = persistResolvedRunStatus(runId, resolved.classified);
-    }
+    resolved = reconcileMailbox(runId);
     cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
     return { waitExit: r.status ?? 1, classified: resolved.classified };
   } finally {
@@ -961,11 +987,19 @@ function cmdCreate(args) {
     console.error(
       "usage: runs.mjs create --cwd <dir> --role <role> --parent-cli <cli> --parent-attach <mode>"
       + " [--parent-session <id>] [--parent-tmux <name>] --worker-cli <cli>"
-      + " [--worker-model <model>] [--worker-tmux <name>] --prompt-file <file> [--project <id>]",
+      + " [--worker-model <model>] [--worker-tmux <name>] --prompt-file <file> [--project <id>]"
+      + " [--verify-command <shell words>] [--verify-runs N]",
     );
     process.exit(1);
   }
   const prompt = fs.readFileSync(promptFile, "utf8");
+  const verifyCommandRaw = argValue(args, "--verify-command");
+  const verifyRunsRaw = argValue(args, "--verify-runs");
+  let verify;
+  if (verifyCommandRaw) {
+    verify = { command: parseVerifyCommand(verifyCommandRaw) };
+    if (verifyRunsRaw) verify.runs = Number(verifyRunsRaw);
+  }
   const state = createRun({
     cwd,
     project: argValue(args, "--project"),
@@ -982,6 +1016,7 @@ function cmdCreate(args) {
       tmux: argValue(args, "--worker-tmux"),
     },
     prompt,
+    verify,
   });
   console.log(`runId: ${state.runId}`);
   console.log(`dir: ${runDir(state.runId)}`);
