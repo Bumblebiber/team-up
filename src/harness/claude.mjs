@@ -1,4 +1,132 @@
-import { CLAUDE_DECLARED_CAPABILITIES, UNVERIFIED_CAPABILITIES } from "./capabilities.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+import { CLAUDE_DECLARED_CAPABILITIES } from "./capabilities.mjs";
+
+function homeChecksum(homePath) {
+  const hash = crypto.createHash("sha256");
+  const stack = [homePath];
+  const files = [];
+  while (stack.length) {
+    const current = stack.pop();
+    let st;
+    try {
+      st = fs.lstatSync(current);
+    } catch {
+      continue;
+    }
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      for (const entry of fs.readdirSync(current).sort()) {
+        stack.push(path.join(current, entry));
+      }
+      continue;
+    }
+    if (st.isFile()) files.push(current);
+  }
+  for (const file of files.sort()) {
+    hash.update(path.relative(homePath, file));
+    hash.update("\0");
+    hash.update(fs.readFileSync(file));
+    hash.update("\0");
+  }
+  return `sha256:${hash.digest("hex")}`;
+}
+
+function cleanAbandonedStaging(runDir, keepName) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(runDir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith(".claude-home-staging-")) continue;
+    if (entry === keepName) continue;
+    try {
+      fs.rmSync(path.join(runDir, entry), { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup of abandoned staging
+    }
+  }
+}
+
+/**
+ * Fresh attempt-specific Claude HOME built atomically from empty staging.
+ * Contains only minimal auth plus selected skill surfaces. Never reuses a prior
+ * mutable home directory in place.
+ */
+export function materializeClaudeAuthHome(runDir, {
+  authSourceHome = process.env.HOME || os.homedir(),
+  skillDirs = [],
+  generationId = crypto.randomBytes(8).toString("hex"),
+} = {}) {
+  const stagingName = `.claude-home-staging-${generationId}`;
+  const staging = path.join(runDir, stagingName);
+  const finalHome = path.join(runDir, "claude-home");
+  fs.rmSync(staging, { recursive: true, force: true });
+  const claudeDir = path.join(staging, ".claude");
+  fs.mkdirSync(claudeDir, { recursive: true, mode: 0o700 });
+
+  const credSrc = path.join(authSourceHome, ".claude", ".credentials.json");
+  const credDest = path.join(claudeDir, ".credentials.json");
+  try {
+    if (fs.existsSync(credSrc)) {
+      const st = fs.lstatSync(credSrc);
+      if (!st.isSymbolicLink() && st.isFile()) {
+        fs.copyFileSync(credSrc, credDest);
+      } else {
+        fs.writeFileSync(credDest, "{}\n", { mode: 0o600 });
+      }
+    } else {
+      fs.writeFileSync(credDest, "{}\n", { mode: 0o600 });
+    }
+    fs.chmodSync(credDest, 0o600);
+  } catch {
+    try {
+      fs.writeFileSync(credDest, "{}\n", { mode: 0o600 });
+      fs.chmodSync(credDest, 0o600);
+    } catch {
+      // best-effort; live verify fails closed without usable auth
+    }
+  }
+
+  // Selected skills must appear on the sanitized HOME surface Claude discovers.
+  const skillsDest = path.join(claudeDir, "skills");
+  fs.mkdirSync(skillsDest, { recursive: true, mode: 0o700 });
+  for (const skillRoot of skillDirs) {
+    if (!skillRoot || !fs.existsSync(skillRoot)) continue;
+    for (const entry of fs.readdirSync(skillRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      const src = path.join(skillRoot, entry.name);
+      const dest = path.join(skillsDest, entry.name);
+      fs.cpSync(src, dest, { recursive: true, dereference: false, errorOnExist: true });
+    }
+  }
+
+  // Reject unexpected top-level entries beyond .claude in staging.
+  for (const entry of fs.readdirSync(staging)) {
+    if (entry !== ".claude") {
+      const err = new Error(`CLAUDE_HOME_UNEXPECTED: ${entry}`);
+      err.code = "CLAUDE_HOME_UNEXPECTED";
+      fs.rmSync(staging, { recursive: true, force: true });
+      throw err;
+    }
+  }
+
+  fs.rmSync(finalHome, { recursive: true, force: true });
+  fs.renameSync(staging, finalHome);
+  cleanAbandonedStaging(runDir, null);
+
+  const checksum = homeChecksum(finalHome);
+  return {
+    home: finalHome,
+    generationId,
+    home_generation: generationId,
+    checksum,
+  };
+}
 
 export const claudeAdapter = {
   id: "claude",
@@ -45,8 +173,9 @@ export const claudeAdapter = {
   prepareLaunch({
     argv,
     runDir,
-    broker,
-    allowedBuiltins = ["Read", "Edit", "Write", "Glob", "Grep"],
+    broker = null,
+    capsule = null,
+    allowedBuiltins = ["Read", "Edit", "Write", "Glob", "Grep", "ToolSearch", "Skill"],
     nodePath = process.execPath,
     brokerBin,
     writeFileSync,
@@ -80,8 +209,10 @@ export const claudeAdapter = {
     } catch {
       // first write — file may not exist
     }
-    const mcpConfig = {
-      mcpServers: {
+
+    const mcpServers = {
+      ...(capsule?.mcpConfig?.mcpServers ?? {}),
+      ...(broker ? {
         team_up_command_broker: {
           type: "stdio",
           command: nodePath,
@@ -93,8 +224,9 @@ export const claudeAdapter = {
             TEAM_UP_RUN_DIR: broker.runDir,
           },
         },
-      },
+      } : {}),
     };
+    const mcpConfig = { mcpServers };
     writeFileSync(mcpPath, `${JSON.stringify(mcpConfig, null, 2)}\n`, { mode: 0o644 });
     try {
       chmodSync(mcpPath, 0o444);
@@ -102,24 +234,59 @@ export const claudeAdapter = {
       // best-effort immutable mode
     }
 
-    const brokerTools = (broker.actionIds || []).map(
-      (id) => `mcp__team_up_command_broker__${String(id).replace(/-/g, "_")}`
-    );
-    const tools = [...allowedBuiltins, ...brokerTools].join(",");
+    const brokerTools = broker
+      ? (broker.actionIds || []).map(
+        (id) => `mcp__team_up_command_broker__${String(id).replace(/-/g, "_")}`
+      )
+      : [];
+    const mcpTools = capsule?.mcpToolNames ?? Object.keys(mcpServers)
+      .filter((name) => name !== "team_up_command_broker")
+      .flatMap((name) => (capsule?.mcpToolsByServer?.[name] ?? []).map(
+        (tool) => `mcp__${name}__${String(tool).replace(/-/g, "_")}`
+      ));
+    const tools = [...allowedBuiltins, ...brokerTools, ...mcpTools].join(",");
 
     const next = [...argv];
+    // Do not inject --bare: on Claude 2.1.220 it breaks authentication.
+    // Capsule isolation uses a run-specific auth-only HOME instead.
+    while (next.includes("--bare")) {
+      next.splice(next.indexOf("--bare"), 1);
+    }
+    for (const pluginDir of capsule?.pluginDirs ?? []) {
+      next.push("--plugin-dir", pluginDir);
+    }
+    // Frameworks stay on --add-dir for prompt/instruction integration.
+    // Skills are materialized into sanitized HOME/.claude/skills for native discovery.
+    for (const dir of capsule?.frameworkDirs ?? []) {
+      if (dir) next.push("--add-dir", dir);
+    }
     if (!next.includes("--strict-mcp-config")) next.push("--strict-mcp-config");
     next.push("--mcp-config", mcpPath);
     next.push("--tools", tools);
-    // Pre-approve the allowlisted tools so live verify/MCP calls do not stall
-    // on interactive permission prompts — without bypassing all permissions.
     next.push("--allowedTools", tools);
     next.push("--disallowedTools", "Bash");
 
+    const env = {};
+    const files = [mcpPath];
+    let home_generation = null;
+    let home_checksum = null;
+    if (capsule) {
+      const materialized = materializeClaudeAuthHome(runDir, {
+        skillDirs: capsule.skillDirs ?? [],
+      });
+      env.HOME = materialized.home;
+      home_generation = materialized.home_generation;
+      home_checksum = materialized.checksum;
+      files.push(path.join(materialized.home, ".claude", ".credentials.json"));
+    }
+
     return {
       argv: next,
-      env: {},
-      files: [mcpPath],
+      env,
+      files,
+      home_generation,
+      generationId: home_generation,
+      home_checksum,
     };
   },
 };

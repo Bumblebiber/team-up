@@ -2,7 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { teamUpHome } from "../paths.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
-import { COMMAND_BROKER_CAPABILITY } from "./capabilities.mjs";
+import {
+  COMMAND_BROKER_CAPABILITY,
+  CONTEXT_ISOLATION_CAPABILITY,
+} from "./capabilities.mjs";
 
 export function verificationRecordPath(adapterId, cliVersion, env = process.env) {
   return path.join(
@@ -56,8 +59,30 @@ export async function verifyHarness({
     cliVersion,
   });
   let status;
-  if (checks.native_shell === "denied" && checks.broker_tool === "passed") {
-    status = "verified";
+  const isolationOnly = adapter.capabilities?.command_broker == null;
+  const declaresIsolation =
+    adapter.capabilities?.context_isolation === CONTEXT_ISOLATION_CAPABILITY;
+  if (isolationOnly) {
+    if (declaresIsolation && checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY) {
+      status = "verified";
+    } else if (checks.isolation_status === "failed") {
+      status = "failed";
+    } else {
+      status = "unverified";
+    }
+  } else if (checks.native_shell === "denied" && checks.broker_tool === "passed") {
+    // Declared context_isolation must also be proven — broker alone is not verified.
+    if (declaresIsolation) {
+      if (checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY) {
+        status = "verified";
+      } else if (checks.isolation_status === "failed") {
+        status = "failed";
+      } else {
+        status = "unverified";
+      }
+    } else {
+      status = "verified";
+    }
   } else if (
     checks.native_shell === "unverified" ||
     checks.broker_tool === "unverified"
@@ -72,7 +97,12 @@ export async function verifyHarness({
     checked_at: now,
     native_shell: checks.native_shell,
     broker_tool: checks.broker_tool,
-    command_broker: status === "verified" ? COMMAND_BROKER_CAPABILITY : null,
+    command_broker:
+      !isolationOnly && status === "verified" ? COMMAND_BROKER_CAPABILITY : null,
+    context_isolation:
+      declaresIsolation && checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY
+        ? CONTEXT_ISOLATION_CAPABILITY
+        : null,
     status,
   };
   saveVerificationRecord(record, env);

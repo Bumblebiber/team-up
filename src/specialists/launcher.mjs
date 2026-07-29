@@ -29,10 +29,20 @@ import {
 import {
   defaultHarnessCapabilities,
   prepareHarnessLaunch,
+  getAdapter,
 } from "../harness/registry.mjs";
+import { CONTEXT_ISOLATION_CAPABILITY } from "../harness/capabilities.mjs";
+import { loadAssignments } from "../capabilities/assignments.mjs";
+import { listInstalledCapabilities } from "../capabilities/store.mjs";
+import { resolveCapabilities } from "../capabilities/resolve.mjs";
+import {
+  materializeCapabilityCapsule,
+  buildStrictMcpConfig,
+} from "../capabilities/capsule.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import {
   buildLaunchDescriptor,
+  buildCapsuleLaunchRecord,
   persistLaunchDescriptor,
   startFromLaunchDescriptor,
   prepareArgvFromDescriptor,
@@ -94,6 +104,27 @@ function needsCommandMediation(effectivePerms, manifest) {
   return tools.some((t) => /^(command|shell|exec)([.]|$)/i.test(String(t)));
 }
 
+function collectCapsuleMcpTools(effective, runRoot) {
+  const mcpToolsByServer = {};
+  const mcpToolNames = [];
+  for (const item of effective.packages ?? []) {
+    for (const rel of item.resolved?.mcps ?? []) {
+      const document = JSON.parse(fs.readFileSync(path.join(runRoot, rel), "utf8"));
+      const sharedTools = Array.isArray(document.tools) ? document.tools : [];
+      for (const [name, server] of Object.entries(document.mcpServers ?? {})) {
+        const tools = Array.isArray(server?.tools) ? server.tools : sharedTools;
+        mcpToolsByServer[name] = tools;
+        for (const tool of tools) {
+          mcpToolNames.push(
+            `mcp__${name}__${String(tool).replace(/-/g, "_")}`
+          );
+        }
+      }
+    }
+  }
+  return { mcpToolNames, mcpToolsByServer };
+}
+
 /**
  * Launch API used by tests and CLI.
  */
@@ -107,7 +138,24 @@ export async function launch({
   permissions,
   env = process.env,
   dryRun = false,
+  dependencyOverrides = {},
 }) {
+  const resolveEffectiveCapabilities =
+    dependencyOverrides.resolveEffectiveCapabilities ??
+    (() => resolveCapabilities({
+      specialistId,
+      assignments: loadAssignments({ env }).assignments,
+      installed: listInstalledCapabilities({ env }),
+    }));
+  const materializeCapabilityCapsuleFn =
+    dependencyOverrides.materializeCapabilityCapsule ?? materializeCapabilityCapsule;
+  const createRunFn = dependencyOverrides.createRun ?? createRun;
+  const startFromLaunchDescriptorFn =
+    dependencyOverrides.startFromLaunchDescriptor ?? startFromLaunchDescriptor;
+  const harnessCapabilitiesFn =
+    dependencyOverrides.harnessCapabilities ?? defaultHarnessCapabilities;
+  const prepareHarnessLaunchFn =
+    dependencyOverrides.prepareHarnessLaunch ?? prepareHarnessLaunch;
   const installed = loadInstalledManifest(specialistId, { project, env });
   if (!installed) {
     const err = new Error(`specialist not installed: ${specialistId}`);
@@ -180,10 +228,12 @@ export async function launch({
 
   const roster = requireRoster();
   const usage = loadJson(usagePath());
-  const requirements =
-    (manifest.permissions?.commands || []).length > 0
-      ? { command_broker: "team-up.command-broker/v1" }
-      : {};
+  const capabilityResolution = resolveEffectiveCapabilities();
+  const requirements = {
+    context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+    ...((manifest.permissions?.commands || []).length > 0
+      ? { command_broker: "team-up.command-broker/v1" } : {}),
+  };
   const profileResult = resolveProfile({
     roster,
     usage,
@@ -191,7 +241,7 @@ export async function launch({
     specialistId,
     callType,
     requirements,
-    harnessCapabilities: defaultHarnessCapabilities,
+    harnessCapabilities: harnessCapabilitiesFn,
   });
   if (profileResult.code !== "OK") {
     const err = new Error(`PROFILE_UNAVAILABLE: ${JSON.stringify(profileResult.skipped.slice(0, 5))}`);
@@ -200,7 +250,7 @@ export async function launch({
     throw err;
   }
   const cell = profileResult.chain[0];
-  const harnessCaps = defaultHarnessCapabilities(cell.cli);
+  const harnessCaps = harnessCapabilitiesFn(cell.cli);
   const cliCfg = cliSandboxConfig(roster, cell.cli, { harnessCapabilities: harnessCaps });
 
   const budgetNorm = normalizeBudget(manifest.budget ?? {});
@@ -213,6 +263,7 @@ export async function launch({
     "",
     `Objective: ${objective}`,
     "",
+    "Read context/specialist and selected skill/framework directories under context/.",
     "Read REQUEST.json and instructions.md in the context directory. Follow remit/anti-remit.",
     "Write mailbox/RESULT.json conforming to schema team-up.result/v1 when done.",
     "RESULT.md is optional human-readable detail and does not count as success by itself.",
@@ -224,7 +275,7 @@ export async function launch({
       : null,
   ].filter(Boolean).join("\n");
 
-  const state = createRun({
+  const state = createRunFn({
     cwd: runCwd || undefined,
     project: fsMode === "none" ? null : project,
     role: `specialist:${specialistId}`,
@@ -281,6 +332,37 @@ export async function launch({
     filesystem: fsMode,
   });
 
+  let effective;
+  let capsule;
+  try {
+    effective = materializeCapabilityCapsuleFn({
+      runRoot: runDir(state.runId),
+      specialistId,
+      packages: capabilityResolution.packages,
+      exclusions: capabilityResolution.exclusions,
+    });
+    capsule = {
+      pluginDirs: effective.packages.flatMap((item) =>
+        item.resolved.plugins.map((rel) => path.join(runDir(state.runId), rel))),
+      mcpConfig: buildStrictMcpConfig(effective, runDir(state.runId)),
+      skillDirs: [path.join(runDir(state.runId), "context", "skills")],
+      frameworkDirs: [path.join(runDir(state.runId), "context", "framework")],
+      codexHome: path.join(runDir(state.runId), "harness", "home"),
+      effective,
+      ...collectCapsuleMcpTools(effective, runDir(state.runId)),
+    };
+    for (const dir of [
+      ...capsule.skillDirs,
+      ...capsule.frameworkDirs,
+      capsule.codexHome,
+    ]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  } catch (e) {
+    setStatus(state.runId, "failed");
+    throw e;
+  }
+
   atomicWriteJson(path.join(runDir(state.runId), "mailbox", "REQUEST.json"), request);
 
   const workerPrompt = wrapPromptWithMailboxProtocol(barePrompt, {
@@ -299,25 +381,37 @@ export async function launch({
   });
 
   const runPath = runDir(state.runId);
-  let cliArgv = cliArgvRaw;
-  if (policySnapshot) {
-    const prepared = prepareHarnessLaunch({
-      cli: cell.cli,
-      argv: cliArgvRaw,
-      runDir: runPath,
-      broker: {
+  const broker = policySnapshot
+    ? {
         policySnapshot: policySnapshot.path,
         policyChecksum: policySnapshot.checksum,
         project: path.resolve(project),
         runDir: runPath,
         actionIds: effectivePerms.commands || [],
-      },
-      verification: harnessCaps.command_broker
-        ? { status: "verified", cli_version: "launch" }
-        : null,
-    });
-    cliArgv = prepared.argv;
-  }
+      }
+    : null;
+  const prepared = prepareHarnessLaunchFn({
+    cli: cell.cli,
+    argv: cliArgvRaw,
+    runDir: runPath,
+    broker,
+    capsule,
+    env,
+    verification: {
+      status: "verified",
+      adapter: cell.cli,
+      cli_version: (() => {
+        try {
+          return getAdapter(cell.cli).version({ execFileSync });
+        } catch {
+          return null;
+        }
+      })(),
+      command_broker: harnessCaps.command_broker,
+      context_isolation: harnessCaps.context_isolation,
+    },
+  });
+  let cliArgv = prepared.argv;
 
   const cliPath = resolveCliPath(cliArgv[0]);
   const timeoutSec = budgetNorm.timeout_seconds;
@@ -364,6 +458,14 @@ export async function launch({
     enforcement: "best_effort",
   });
 
+  const capsuleLaunch = buildCapsuleLaunchRecord({
+    runRoot: runPath,
+    capsule: {
+      ...capsule,
+      effectivePath: path.join(runPath, "EFFECTIVE_CAPABILITIES.json"),
+    },
+    env,
+  });
   const descriptor = buildLaunchDescriptor({
     cli: cell.cli,
     model: cell.model,
@@ -384,6 +486,20 @@ export async function launch({
         }
       : null,
     harnessRequirements: requirements,
+    harnessVerification: {
+      status: "verified",
+      adapter: cell.cli,
+      cli_version: (() => {
+        try {
+          return getAdapter(cell.cli).version({ execFileSync });
+        } catch {
+          return null;
+        }
+      })(),
+      command_broker: harnessCaps.command_broker,
+      context_isolation: harnessCaps.context_isolation,
+    },
+    capsuleLaunch,
     specialistProfile: profileResult.profile,
     limitWindows,
     timeoutSeconds: timeoutSec,
@@ -433,7 +549,7 @@ export async function launch({
         });
       });
     try {
-      startFromLaunchDescriptor({
+      startFromLaunchDescriptorFn({
         runId: state.runId,
         sessionName: session,
         probe,

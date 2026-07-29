@@ -87,7 +87,13 @@ test("brokered Claude launch strips legacy roster bypass before enforcing policy
       runDir: "/abs/run",
       actionIds: ["project-test"],
     },
-    verification: { status: "verified", cli_version: "test" },
+    verification: {
+      status: "verified",
+      adapter: "claude",
+      cli_version: "test",
+      command_broker: "team-up.command-broker/v1",
+      context_isolation: "team-up.context-isolation/v1",
+    },
     brokerBin: "/abs/bin/team-up-command-broker.mjs",
     nodePath: "/abs/node",
   });
@@ -95,4 +101,73 @@ test("brokered Claude launch strips legacy roster bypass before enforcing policy
   assert.equal(prepared.argv.includes("--dangerously-skip-permissions"), false);
   assert.equal(prepared.argv.includes("--effort"), true);
   assert.equal(prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1], "Bash");
+});
+
+test("capsule launch uses auth-only HOME and only explicit plugin and MCP paths", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-launch-"));
+  try {
+    const writes = new Map();
+    const prepared = claudeAdapter.prepareLaunch({
+      argv: ["claude", "-p", "work"],
+      runDir,
+      capsule: {
+        pluginDirs: [`${runDir}/harness/plugins/x`],
+        mcpConfig: { mcpServers: { selected: {
+          type: "stdio", command: process.execPath, args: [`${runDir}/harness/mcp/x/server.mjs`],
+        } } },
+        mcpToolNames: ["mcp__selected__lookup"],
+        mcpToolsByServer: { selected: ["lookup"] },
+        codexHome: `${runDir}/harness/home`,
+      },
+      writeFileSync: (file, text) => writes.set(file, text),
+      mkdirSync: (d, o) => fs.mkdirSync(d, o),
+      chmodSync: () => {},
+    });
+    assert.equal(prepared.argv.includes("--bare"), false);
+    assert.ok(prepared.env.HOME);
+    assert.match(prepared.env.HOME, /claude-home$/);
+    assert.deepEqual(prepared.argv.slice(
+      prepared.argv.indexOf("--plugin-dir"),
+      prepared.argv.indexOf("--plugin-dir") + 2
+    ), ["--plugin-dir", `${runDir}/harness/plugins/x`]);
+    assert.equal(prepared.argv.includes("--strict-mcp-config"), true);
+    assert.match(writes.get(`${runDir}/harness/claude-mcp.json`), /"selected"/);
+    assert.match(prepared.argv.join(" "), /mcp__selected__lookup/);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("capsule launch materializes skills into HOME and frameworks via --add-dir", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-add-dir-"));
+  try {
+    const skillDir = path.join(runDir, "context", "skills", "capsule.selected-skill");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "# skill\n");
+    const prepared = claudeAdapter.prepareLaunch({
+      argv: ["claude", "-p", "work"],
+      runDir,
+      capsule: {
+        pluginDirs: [],
+        skillDirs: [path.join(runDir, "context", "skills")],
+        frameworkDirs: [`${runDir}/context/framework`],
+        mcpConfig: { mcpServers: {} },
+        mcpToolNames: [],
+      },
+      writeFileSync: () => {},
+      mkdirSync: (d, o) => fs.mkdirSync(d, o),
+      chmodSync: () => {},
+    });
+    assert.equal(prepared.argv.includes("--add-dir"), true);
+    assert.equal(prepared.argv.includes(`${runDir}/context/skills`), false);
+    assert.equal(prepared.argv.includes(`${runDir}/context/framework`), true);
+    assert.ok(prepared.env.HOME);
+    assert.equal(
+      fs.existsSync(path.join(prepared.env.HOME, ".claude", "skills", "capsule.selected-skill", "SKILL.md")),
+      true
+    );
+    assert.ok(prepared.home_generation);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
 });

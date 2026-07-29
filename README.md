@@ -37,6 +37,32 @@ node bin/team-up.mjs runs wait <run-id>
 State lives under `~/.team-up` (override with `TEAM_UP_HOME`). Reads may fall
 back to `~/.o9k` during migration; writes never touch `~/.o9k`.
 
+## Capability isolation
+
+`team-up` keeps shared skills, plugins, MCPs, frameworks, and bundles inert in
+a content-addressed pool. Installation does not activate a package. The human
+enables an exact checksum for `all` or named specialists; an explicit
+exclusion wins over `all`.
+
+Use the supervisor-only `/team-up-manage` skill or deterministic
+`team-up capability` commands. Specialist recommendations are opt-in and
+start unselected.
+
+This isolates model context, not Unix files. Workers run as the same trusted
+user. A harness must have a version-keyed verification record that explicitly
+stores `context_isolation: "team-up.context-isolation/v1"` before it is
+eligible for specialist work. Live `team-up harness verify` plants global
+canaries on a fake HOME, prepares a capsule launch, and collects a live CLI
+observation proving the full selected skill/plugin/MCP/framework matrix with
+fresh content nonces (Claude stream-json init + tool proof). The token is
+stored only on an exact match with every forbidden canary absent. Missing,
+malformed, or skipped live observations stay fail-closed at
+`context_isolation: null`. Codex 0.145.0 declares `context_isolation: null`
+because it lacks native plugin/framework isolation surfaces for the full
+generic matrix — partial MCP/skill proof must not grant v1. Closed-world
+content manifests require Linux `/proc` fd-based directory walks; other
+platforms fail closed rather than using a weaker path-based fallback.
+
 ## Docs
 
 - [configuration.md](docs/configuration.md)

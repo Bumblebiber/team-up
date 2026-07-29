@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { loadState, saveState, setStatus } from "../runs/runs.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
-import { prepareHarnessLaunch } from "../harness/registry.mjs";
+import { prepareHarnessLaunch, getAdapter } from "../harness/registry.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
 import { launchDescriptorDir } from "../paths.mjs";
 import {
@@ -15,9 +15,17 @@ import {
   createAttempt,
   requireActiveLease,
 } from "./attempts.mjs";
+import {
+  buildCapsuleContentManifest,
+  verifyCapsuleContentManifest,
+  CONTENT_MANIFEST_SCHEMA,
+  readFileNoFollow,
+} from "../capabilities/content-manifest.mjs";
 
 export const LAUNCH_SCHEMA = "team-up.launch/v1";
 export const LAUNCH_REF_SCHEMA = "team-up.launch-ref/v1";
+export const CAPSULE_LAUNCH_SCHEMA = "team-up.capsule-launch/v1";
+export { CONTENT_MANIFEST_SCHEMA };
 
 function resolveCliPath(argv0) {
   if (!argv0) return null;
@@ -57,6 +65,175 @@ function descriptorChecksum(body) {
 }
 
 /**
+ * Schema-versioned capsule launch record for successor/resume reconstruction.
+ * Stored inside the checksum-bound launch descriptor (outside worker-writable paths).
+ */
+export function buildCapsuleLaunchRecord({ runRoot, capsule, env = process.env }) {
+  if (!capsule || !runRoot) {
+    const err = new Error("CAPSULE_LAUNCH_REQUIRED: capsule and runRoot required");
+    err.code = "CAPSULE_LAUNCH_REQUIRED";
+    throw err;
+  }
+  const effectivePath =
+    capsule.effectivePath || path.join(runRoot, "EFFECTIVE_CAPABILITIES.json");
+  if (!fs.existsSync(effectivePath)) {
+    const err = new Error(`CAPSULE_LAUNCH_EFFECTIVE_MISSING: ${effectivePath}`);
+    err.code = "CAPSULE_LAUNCH_EFFECTIVE_MISSING";
+    throw err;
+  }
+  const effectiveBody = fs.readFileSync(effectivePath);
+  const effectiveChecksum = descriptorChecksum(effectiveBody);
+  const pluginDirs = [...(capsule.pluginDirs ?? [])].map((p) => path.resolve(p));
+  const skillDirs = [...(capsule.skillDirs ?? [])].map((p) => path.resolve(p));
+  const frameworkDirs = [...(capsule.frameworkDirs ?? [])].map((p) => path.resolve(p));
+  const mcpConfig = capsule.mcpConfig ?? { mcpServers: {} };
+  const contentManifest = buildCapsuleContentManifest({
+    runRoot: path.resolve(runRoot),
+    skillDirs,
+    pluginDirs,
+    frameworkDirs,
+    mcpConfig,
+    effectivePath: path.resolve(effectivePath),
+  });
+  // Authoritative copies live beside descriptor.json when runId is known later;
+  // content manifest binds every selected materialized file (not just JSON meta).
+  return {
+    schema: CAPSULE_LAUNCH_SCHEMA,
+    run_root: path.resolve(runRoot),
+    plugin_dirs: pluginDirs,
+    skill_dirs: skillDirs,
+    framework_dirs: frameworkDirs,
+    codex_home: capsule.codexHome ? path.resolve(capsule.codexHome) : null,
+    mcp_config: mcpConfig,
+    mcp_tool_names: [...(capsule.mcpToolNames ?? [])],
+    mcp_tools_by_server: { ...(capsule.mcpToolsByServer ?? {}) },
+    effective_path: path.resolve(effectivePath),
+    effective_checksum: effectiveChecksum,
+    content_manifest: contentManifest,
+    content_root_checksum: contentManifest.root_checksum,
+    // Attempt-specific HOME/CODEX_HOME generation bound at prepareLaunch time.
+    home_generation: capsule.home_generation ?? null,
+    home_checksum: capsule.home_checksum ?? null,
+    claude_home: capsule.claudeHome ? path.resolve(capsule.claudeHome) : null,
+    // Placeholders filled by persistLaunchDescriptor once runId is known.
+    authoritative_effective_path: null,
+    authoritative_content_manifest_path: null,
+  };
+}
+
+/**
+ * Fail-closed reconstruction of the runtime capsule object from a launch record.
+ */
+export function reconstructCapsuleFromLaunchRecord(record) {
+  if (!record || record.schema !== CAPSULE_LAUNCH_SCHEMA) {
+    const err = new Error("CAPSULE_LAUNCH_SCHEMA: invalid capsule launch record");
+    err.code = "CAPSULE_LAUNCH_SCHEMA";
+    throw err;
+  }
+  // Authoritative effective record is mandatory — never fall back to worker copy.
+  const effectivePath = record.authoritative_effective_path;
+  if (!effectivePath || !fs.existsSync(effectivePath)) {
+    const err = new Error("CAPSULE_LAUNCH_EFFECTIVE_MISSING: authoritative effective capabilities absent");
+    err.code = "CAPSULE_LAUNCH_EFFECTIVE_MISSING";
+    throw err;
+  }
+  const body = readFileNoFollow(effectivePath);
+  const actual = descriptorChecksum(body);
+  if (actual !== record.effective_checksum) {
+    const err = new Error("CAPSULE_LAUNCH_CHECKSUM: effective capabilities checksum mismatch");
+    err.code = "CAPSULE_LAUNCH_CHECKSUM";
+    throw err;
+  }
+  let effective;
+  try {
+    effective = JSON.parse(body.toString("utf8"));
+  } catch {
+    const err = new Error("CAPSULE_LAUNCH_CORRUPT: effective capabilities unreadable");
+    err.code = "CAPSULE_LAUNCH_CORRUPT";
+    throw err;
+  }
+
+  // Authoritative on-disk content manifest is mandatory — never use embedded fallback.
+  if (!record.authoritative_content_manifest_path) {
+    const err = new Error(
+      "CONTENT_MANIFEST_MISSING: authoritative_content_manifest_path required"
+    );
+    err.code = "CONTENT_MANIFEST_MISSING";
+    throw err;
+  }
+  if (!fs.existsSync(record.authoritative_content_manifest_path)) {
+    const err = new Error("CONTENT_MANIFEST_MISSING: authoritative content manifest absent");
+    err.code = "CONTENT_MANIFEST_MISSING";
+    throw err;
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(
+      readFileNoFollow(record.authoritative_content_manifest_path).toString("utf8")
+    );
+  } catch {
+    const err = new Error("CONTENT_MANIFEST_CORRUPT: authoritative content manifest unreadable");
+    err.code = "CONTENT_MANIFEST_CORRUPT";
+    throw err;
+  }
+  if (!manifest) {
+    const err = new Error("CONTENT_MANIFEST_MISSING: content manifest required");
+    err.code = "CONTENT_MANIFEST_MISSING";
+    throw err;
+  }
+  if (
+    record.content_root_checksum &&
+    manifest.root_checksum !== record.content_root_checksum
+  ) {
+    const err = new Error("CONTENT_MANIFEST_ROOT_CHECKSUM: launch record root mismatch");
+    err.code = "CONTENT_MANIFEST_ROOT_CHECKSUM";
+    throw err;
+  }
+  verifyCapsuleContentManifest(manifest, {
+    runRoot: record.run_root,
+    skillDirs: record.skill_dirs ?? [],
+    pluginDirs: record.plugin_dirs ?? [],
+    frameworkDirs: record.framework_dirs ?? [],
+  });
+
+  // Selected roots/files must already exist — never mkdir missing selected roots.
+  for (const dir of [
+    ...(record.plugin_dirs ?? []),
+    ...(record.skill_dirs ?? []),
+    ...(record.framework_dirs ?? []),
+  ]) {
+    if (!fs.existsSync(dir)) {
+      const err = new Error(`CAPSULE_LAUNCH_PATH_MISSING: ${dir}`);
+      err.code = "CAPSULE_LAUNCH_PATH_MISSING";
+      throw err;
+    }
+  }
+  return {
+    pluginDirs: [...(record.plugin_dirs ?? [])],
+    skillDirs: [...(record.skill_dirs ?? [])],
+    frameworkDirs: [...(record.framework_dirs ?? [])],
+    codexHome: record.codex_home,
+    claudeHome: record.claude_home ?? null,
+    home_generation: record.home_generation ?? null,
+    home_checksum: record.home_checksum ?? null,
+    mcpConfig: record.mcp_config ?? { mcpServers: {} },
+    mcpToolNames: [...(record.mcp_tool_names ?? [])],
+    mcpToolsByServer: { ...(record.mcp_tools_by_server ?? {}) },
+    effective,
+    effectivePath,
+    contentManifest: manifest,
+  };
+}
+
+function injectAdapterEnv(argv, envMap) {
+  const entries = Object.entries(envMap || {}).filter(
+    ([, v]) => v != null && v !== ""
+  );
+  if (!entries.length) return argv;
+  return ["env", ...entries.map(([k, v]) => `${k}=${v}`), ...argv];
+}
+
+/**
  * Persist a complete, rebuildable launch descriptor for successors/resumes.
  */
 export function buildLaunchDescriptor({
@@ -71,6 +248,8 @@ export function buildLaunchDescriptor({
   callType,
   broker = null,
   harnessRequirements = {},
+  harnessVerification = null,
+  capsuleLaunch = null,
   specialistProfile = null,
   limitWindows = [],
   timeoutSeconds = null,
@@ -92,6 +271,8 @@ export function buildLaunchDescriptor({
     call_type: callType,
     broker,
     harness_requirements: harnessRequirements,
+    harness_verification: harnessVerification,
+    capsule_launch: capsuleLaunch,
     specialist_profile: specialistProfile,
     limit_windows: Array.isArray(limitWindows) ? [...limitWindows] : [],
     timeout_seconds: timeoutSeconds,
@@ -122,7 +303,62 @@ export function persistLaunchDescriptor(runId, descriptor, env = process.env) {
   } catch {
     // ignore
   }
-  const body = `${JSON.stringify(descriptor, null, 2)}\n`;
+
+  const next = { ...descriptor };
+  if (next.capsule_launch) {
+    if (next.capsule_launch.schema !== CAPSULE_LAUNCH_SCHEMA) {
+      const err = new Error("CAPSULE_LAUNCH_SCHEMA: invalid capsule_launch on persist");
+      err.code = "CAPSULE_LAUNCH_SCHEMA";
+      throw err;
+    }
+    const authEffective = path.join(dir, "EFFECTIVE_CAPABILITIES.json");
+    const authManifest = path.join(dir, "CONTENT_MANIFEST.json");
+    const sourcePath = next.capsule_launch.effective_path;
+    if (!sourcePath || !fs.existsSync(sourcePath)) {
+      const err = new Error("CAPSULE_LAUNCH_EFFECTIVE_MISSING: cannot persist capsule");
+      err.code = "CAPSULE_LAUNCH_EFFECTIVE_MISSING";
+      throw err;
+    }
+    const body = fs.readFileSync(sourcePath);
+    const checksum = descriptorChecksum(body);
+    if (checksum !== next.capsule_launch.effective_checksum) {
+      const err = new Error("CAPSULE_LAUNCH_CHECKSUM: effective changed before persist");
+      err.code = "CAPSULE_LAUNCH_CHECKSUM";
+      throw err;
+    }
+    if (!next.capsule_launch.content_manifest) {
+      const err = new Error("CONTENT_MANIFEST_MISSING: cannot persist capsule without content manifest");
+      err.code = "CONTENT_MANIFEST_MISSING";
+      throw err;
+    }
+    verifyCapsuleContentManifest(next.capsule_launch.content_manifest, {
+      runRoot: next.capsule_launch.run_root,
+      skillDirs: next.capsule_launch.skill_dirs ?? [],
+      pluginDirs: next.capsule_launch.plugin_dirs ?? [],
+      frameworkDirs: next.capsule_launch.framework_dirs ?? [],
+    });
+    if (
+      next.capsule_launch.content_root_checksum !==
+      next.capsule_launch.content_manifest.root_checksum
+    ) {
+      const err = new Error("CONTENT_MANIFEST_ROOT_CHECKSUM: content changed before persist");
+      err.code = "CONTENT_MANIFEST_ROOT_CHECKSUM";
+      throw err;
+    }
+    atomicWriteText(authEffective, body.toString("utf8"), 0o444);
+    atomicWriteText(
+      authManifest,
+      `${JSON.stringify(next.capsule_launch.content_manifest, null, 2)}\n`,
+      0o444
+    );
+    next.capsule_launch = {
+      ...next.capsule_launch,
+      authoritative_effective_path: authEffective,
+      authoritative_content_manifest_path: authManifest,
+    };
+  }
+
+  const body = `${JSON.stringify(next, null, 2)}\n`;
   const checksum = descriptorChecksum(body);
   atomicWriteText(filePath, body, 0o444);
   atomicWriteText(sumPath, `${checksum}\n`, 0o444);
@@ -133,18 +369,18 @@ export function persistLaunchDescriptor(runId, descriptor, env = process.env) {
     checksum,
     launch_schema: LAUNCH_SCHEMA,
   };
-  st.harness_requirements = descriptor.harness_requirements || {};
-  st.specialist_profile = descriptor.specialist_profile || st.specialist_profile;
+  st.harness_requirements = next.harness_requirements || {};
+  st.specialist_profile = next.specialist_profile || st.specialist_profile;
   st.runtime = {
     ...(st.runtime || {}),
-    cli: descriptor.cli,
-    model: descriptor.model,
-    effort: descriptor.effort,
-    limit_windows: descriptor.limit_windows || [],
+    cli: next.cli,
+    model: next.model,
+    effort: next.effort,
+    limit_windows: next.limit_windows || [],
   };
-  if (descriptor.specialist) st.specialist = descriptor.specialist;
+  if (next.specialist) st.specialist = next.specialist;
   saveState(st);
-  return descriptor;
+  return next;
 }
 
 /**
@@ -213,7 +449,13 @@ function resolveSandboxProbe(probe) {
  */
 export function prepareArgvFromDescriptor(
   descriptor,
-  { roster = null, runtimeOverride = null, probe = systemdAvailable, descriptorPath = null } = {}
+  {
+    roster = null,
+    runtimeOverride = null,
+    probe = systemdAvailable,
+    descriptorPath = null,
+    execFileSync: execFileSyncFn = execFileSync,
+  } = {}
 ) {
   const r = roster || requireRoster();
   const cli = runtimeOverride?.cli || descriptor.cli;
@@ -223,6 +465,9 @@ export function prepareArgvFromDescriptor(
   let argv = buildCommand({ roster: r, model, cli, prompt, effort });
 
   const brokerRequired = Boolean(descriptor.harness_requirements?.command_broker);
+  const isolationRequired = Boolean(
+    descriptor.harness_requirements?.context_isolation
+  );
   const broker = descriptor.broker;
   if (brokerRequired) {
     if (!broker?.policySnapshot || !broker?.policyChecksum) {
@@ -234,50 +479,137 @@ export function prepareArgvFromDescriptor(
     }
   }
 
+  let capsule = null;
+  if (isolationRequired) {
+    if (!descriptor.capsule_launch) {
+      const err = new Error(
+        "CAPSULE_LAUNCH_MISSING: context isolation required but capsule_launch absent"
+      );
+      err.code = "CAPSULE_LAUNCH_MISSING";
+      throw err;
+    }
+    capsule = reconstructCapsuleFromLaunchRecord(descriptor.capsule_launch);
+  } else if (descriptor.capsule_launch) {
+    capsule = reconstructCapsuleFromLaunchRecord(descriptor.capsule_launch);
+  }
+
   const harnessRunDir =
     broker?.runDir ||
+    descriptor.capsule_launch?.run_root ||
     (descriptor.context_dir ? path.dirname(descriptor.context_dir) : null) ||
     path.dirname(descriptor.prompt_path || ".");
 
-  if (brokerRequired || (broker?.policySnapshot && broker?.policyChecksum)) {
-    if (!broker?.policySnapshot || !broker?.policyChecksum) {
+  const needsHarnessPrepare =
+    Boolean(capsule) ||
+    brokerRequired ||
+    Boolean(broker?.policySnapshot && broker?.policyChecksum);
+
+  let adapterEnv = {};
+  let home_generation = null;
+  let home_checksum = null;
+  if (needsHarnessPrepare) {
+    if (broker && (!broker.policySnapshot || !broker.policyChecksum)) {
       const err = new Error("BROKER_INVALID: incomplete broker fields");
       err.code = "BROKER_INVALID";
       throw err;
     }
+    // Never synthesize a verification token from harness_requirements alone.
+    let verification = descriptor.harness_verification || null;
+    if (verification) {
+      if (!verification.adapter) {
+        const err = new Error(
+          "HARNESS_VERIFICATION_ADAPTER: verified record missing adapter"
+        );
+        err.code = "HARNESS_VERIFICATION_ADAPTER";
+        throw err;
+      }
+      if (verification.adapter !== cli) {
+        const err = new Error(
+          `HARNESS_VERIFICATION_ADAPTER: descriptor adapter ${verification.adapter} != runtime ${cli}`
+        );
+        err.code = "HARNESS_VERIFICATION_ADAPTER";
+        throw err;
+      }
+      if (!verification.cli_version) {
+        const err = new Error(
+          "HARNESS_VERIFICATION_VERSION: verified record missing cli_version"
+        );
+        err.code = "HARNESS_VERIFICATION_VERSION";
+        throw err;
+      }
+    } else if (brokerRequired || isolationRequired) {
+      const err = new Error(
+        "HARNESS_VERIFICATION_MISSING: harness requirements set but harness_verification absent"
+      );
+      err.code = "HARNESS_VERIFICATION_MISSING";
+      throw err;
+    }
+
+    let requireExactVersion = verification?.cli_version || undefined;
+    if (verification?.cli_version) {
+      let liveVersion;
+      try {
+        liveVersion = getAdapter(cli).version({
+          execFileSync: execFileSyncFn,
+        });
+      } catch (e) {
+        const err = new Error(
+          `HARNESS_VERIFICATION_VERSION: live CLI version unavailable (${e.message || e})`
+        );
+        err.code = "HARNESS_VERIFICATION_VERSION";
+        err.cause = e;
+        throw err;
+      }
+      if (liveVersion !== verification.cli_version) {
+        const err = new Error(
+          `HARNESS_VERIFICATION_VERSION: record ${verification.cli_version} != live ${liveVersion}`
+        );
+        err.code = "HARNESS_VERIFICATION_VERSION";
+        throw err;
+      }
+      requireExactVersion = liveVersion;
+    }
+
     let prepared;
     try {
       prepared = prepareHarnessLaunch({
         cli,
         argv,
         runDir: harnessRunDir,
-        broker: {
-          policySnapshot: broker.policySnapshot,
-          policyChecksum: broker.policyChecksum,
-          project: broker.project || descriptor.project,
-          runDir: broker.runDir || harnessRunDir,
-          actionIds: broker.actionIds || descriptor.permissions?.commands || [],
-        },
-        verification: brokerRequired
-          ? { status: "verified", cli_version: "launch" }
+        broker: broker
+          ? {
+              policySnapshot: broker.policySnapshot,
+              policyChecksum: broker.policyChecksum,
+              project: broker.project || descriptor.project,
+              runDir: broker.runDir || harnessRunDir,
+              actionIds: broker.actionIds || descriptor.permissions?.commands || [],
+            }
           : null,
+        capsule,
+        verification,
+        requireExactVersion,
+        execFileSync: execFileSyncFn,
       });
     } catch (e) {
-      if (brokerRequired) {
+      if (brokerRequired || isolationRequired) {
         const err = new Error(
           `BROKER_VERIFY_FAILED: ${e.message || e}`
         );
-        err.code = "BROKER_VERIFY_FAILED";
+        err.code = e.code || "BROKER_VERIFY_FAILED";
         err.cause = e;
         throw err;
       }
       throw e;
     }
     argv = prepared.argv;
+    adapterEnv = { ...(prepared.env || {}) };
+    home_generation = prepared.home_generation ?? prepared.generationId ?? null;
+    home_checksum = prepared.home_checksum ?? null;
+    argv = injectAdapterEnv(argv, adapterEnv);
   }
 
   const runPath = broker?.runDir || harnessRunDir;
-  const cliPath = resolveCliPath(argv[0]);
+  const cliPath = resolveCliPath(argv.find((a) => !String(a).includes("=") && a !== "env") || argv[0]);
   const timeoutSec = descriptor.timeout_seconds;
   const readOnlyPaths = [];
   if (cliPath) readOnlyPaths.push(cliPath);
@@ -289,6 +621,10 @@ export function prepareArgvFromDescriptor(
       ? path.dirname(path.dirname(descriptor.prompt_path))
       : null;
     // Prefer explicit launch-descriptors path via env TEAM_UP_HOME layout.
+    void promptDir;
+  }
+  if (descriptor.capsule_launch?.authoritative_effective_path) {
+    readOnlyPaths.push(descriptor.capsule_launch.authoritative_effective_path);
   }
 
   const workerWritable = [
@@ -322,6 +658,7 @@ export function prepareArgvFromDescriptor(
 
   return {
     argv: wrapped.argv,
+    env: adapterEnv,
     sandbox: wrapped.sandbox,
     enforced: wrapped.enforced === true,
     warning: wrapped.warning ?? null,
@@ -329,6 +666,8 @@ export function prepareArgvFromDescriptor(
     model,
     effort,
     dir: descriptor.context_dir || runPath,
+    home_generation,
+    home_checksum,
   };
 }
 
@@ -363,7 +702,10 @@ export function startFromLaunchDescriptor({
   env = process.env,
 } = {}) {
   let descriptor = loadAuthoritativeLaunchDescriptor(runId, env);
+  const descriptorPath = path.join(launchDescriptorDir(runId, env), "descriptor.json");
 
+  // Validate (and only then atomically persist) any runtime override. A rejected
+  // override must leave the prior authoritative descriptor byte-for-byte unchanged.
   if (runtimeOverride) {
     const nextDesc = {
       ...descriptor,
@@ -376,11 +718,16 @@ export function startFromLaunchDescriptor({
     } else {
       nextDesc.limit_windows = resolveLimitWindowsForCell(runtimeOverride);
     }
+    // Fully validate the proposed descriptor before touching disk.
+    prepareArgvFromDescriptor(nextDesc, {
+      runtimeOverride,
+      probe,
+      descriptorPath,
+    });
     persistLaunchDescriptor(runId, nextDesc, env);
-    descriptor = nextDesc;
+    descriptor = loadAuthoritativeLaunchDescriptor(runId, env);
   }
 
-  const descriptorPath = path.join(launchDescriptorDir(runId, env), "descriptor.json");
   const prepared = prepareArgvFromDescriptor(descriptor, {
     runtimeOverride,
     probe,

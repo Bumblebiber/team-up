@@ -138,6 +138,15 @@ test("specialist launch proceeds with best-effort when probe fails", async () =>
       project,
       env,
       dryRun: true,
+      dependencyOverrides: {
+        harnessCapabilities: () => ({
+          command_broker: null,
+          context_isolation: "team-up.context-isolation/v1",
+          native_shell: "unverified",
+          mcp: "unverified",
+        }),
+        prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
+      },
       sandbox: { probe: () => false },
     });
     assert.equal(result.sandbox, "none");

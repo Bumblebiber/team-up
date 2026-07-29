@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assertSafeSpecialistSegment, assertSafeRelPath, assertPathInsideRoot } from "./safe-id.mjs";
 import { normalizeBudget } from "./budget.mjs";
+import { normalizeRecommendations } from "../capabilities/recommendations.mjs";
 
 export const REQUIRED = [
   "schema_version",
@@ -205,6 +206,14 @@ export function validateManifest(manifest, { packageDir } = {}) {
 
   if (manifest.output_contract && manifest.output_contract !== "team-up.result/v1") {
     errors.push(`unsupported output_contract: ${manifest.output_contract}`);
+  }
+
+  if (manifest.recommendations != null) {
+    try {
+      normalizeRecommendations(manifest.recommendations);
+    } catch (e) {
+      errors.push(e.message);
+    }
   }
 
   if (packageDir) {

@@ -91,7 +91,8 @@ export function resolveProfile({
   const chain = [];
   const skipped = [];
   const quota_blocked = [];
-  const requiredBroker = requirements?.command_broker || null;
+  const requiredCaps = Object.entries(requirements || {})
+    .filter(([, value]) => value != null);
 
   for (const [model, spec] of Object.entries(roster?.models || {})) {
     const modelTier = (() => {
@@ -141,17 +142,24 @@ export function resolveProfile({
         continue;
       }
 
-      if (requiredBroker) {
+      if (requiredCaps.length > 0) {
         let caps;
         try {
           caps = harnessCapabilities(cli);
         } catch {
-          caps = { command_broker: null };
+          caps = {};
         }
-        if (caps?.command_broker !== requiredBroker) {
+        let missing = null;
+        for (const [key, required] of requiredCaps) {
+          if (caps?.[key] !== required) {
+            missing = { key, required };
+            break;
+          }
+        }
+        if (missing) {
           skipped.push({
             model: `${cli}:${model}`,
-            reason: `command broker unavailable (need ${requiredBroker})`,
+            reason: `${missing.key.replaceAll("_", " ")} unavailable (need ${missing.required})`,
           });
           continue;
         }

@@ -8,6 +8,13 @@ import { getAdapter } from "./registry.mjs";
 import { verifyHarness } from "./verify.mjs";
 import { snapshotCommandPolicy } from "../commands/policy.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
+import {
+  observeContextIsolation,
+  validateIsolationObservation,
+  createSanitizedClaudeHome,
+} from "./isolation-canary.mjs";
+
+export { validateIsolationObservation };
 
 function claudeLoginOrQuotaFailure(text) {
   // Prefer result/assistant/error stream events — SessionStart hooks dump skills
@@ -242,6 +249,7 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-home-"));
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-run-"));
   const prevHome = process.env.TEAM_UP_HOME;
+  let authHome = null;
   process.env.TEAM_UP_HOME = home;
   try {
     const policy = {
@@ -348,10 +356,11 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       };
     }
     const shellArgv = shellPrepared.argv;
+    authHome = createSanitizedClaudeHome();
     const shellRun = spawnSync(shellArgv[0], shellArgv.slice(1), {
       encoding: "utf8",
       timeout: 90_000,
-      env: { ...process.env },
+      env: { ...process.env, HOME: authHome },
       cwd: fixtureProject,
     });
     const shellText = `${shellRun.stdout || ""}\n${shellRun.stderr || ""}`;
@@ -415,7 +424,7 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       const brokerRun = spawnSync(brokerArgv[0], brokerArgv.slice(1), {
         encoding: "utf8",
         timeout: 90_000,
-        env: { ...process.env },
+        env: { ...process.env, HOME: authHome },
         cwd: fixtureProject,
       });
       const brokerText = `${brokerRun.stdout || ""}\n${brokerRun.stderr || ""}`;
@@ -448,14 +457,26 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       }
     }
 
+    const isolation = observeContextIsolation({
+      adapter,
+      adapterId: "claude",
+      spawnSyncFn: spawnSync,
+    });
+
     return {
       native_shell,
       broker_tool,
       broker_preflight,
       cli_version: cliVersion || String(versionOut).trim(),
       argv_sample: shellPrepared.argv.slice(0, 12),
+      isolation_status: isolation.isolation_status,
+      context_isolation: isolation.context_isolation ?? null,
+      ...(isolation.error ? { isolation_error: isolation.error } : {}),
     };
   } finally {
+    if (authHome) {
+      try { fs.rmSync(authHome, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
     if (prevHome === undefined) delete process.env.TEAM_UP_HOME;
     else process.env.TEAM_UP_HOME = prevHome;
     try {
@@ -471,16 +492,71 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
   }
 }
 
+/**
+ * Live Codex conformance: run-specific CODEX_HOME capsule + exact isolation
+ * observation. Never reports "adapter not ready"; credential/runtime gaps are
+ * explicit unverified results.
+ */
+export async function liveCodexVerifyRunner({ adapter, fixtureProject, cliVersion }) {
+  void fixtureProject;
+  let versionOut = "";
+  try {
+    versionOut = execFileSync("codex", ["--version"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+  } catch (e) {
+    return {
+      native_shell: "unverified",
+      broker_tool: "unverified",
+      isolation_status: "unverified",
+      context_isolation: null,
+      error: `codex executable unavailable: ${e.message}`,
+      cli_version: cliVersion,
+    };
+  }
+
+  const authPath = path.join(
+    process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
+    "auth.json"
+  );
+  if (!fs.existsSync(authPath)) {
+    return {
+      native_shell: "unverified",
+      broker_tool: "unverified",
+      isolation_status: "unverified",
+      context_isolation: null,
+      error: "codex auth.json unavailable; isolation not verified",
+      cli_version: cliVersion || String(versionOut).trim(),
+    };
+  }
+
+  const isolation = observeContextIsolation({
+    adapter,
+    adapterId: "codex",
+    spawnSyncFn: spawnSync,
+  });
+
+  return {
+    native_shell: "unverified",
+    broker_tool: "unverified",
+    isolation_status: isolation.isolation_status,
+    context_isolation: isolation.context_isolation ?? null,
+    cli_version: cliVersion || String(versionOut).trim(),
+    ...(isolation.error ? { error: isolation.error } : {}),
+  };
+}
+
 export async function runHarnessVerify(args, io = { out: console.log, err: console.error }) {
   const [cli, ...rest] = args;
   if (!cli) {
-    io.err("usage: team-up harness verify <claude> --fixture-project <path>");
+    io.err("usage: team-up harness verify <claude|codex> --fixture-project <path>");
     return 1;
   }
   const fixtureIdx = rest.indexOf("--fixture-project");
   const fixtureProject = fixtureIdx === -1 ? null : rest[fixtureIdx + 1];
   if (!fixtureProject) {
-    io.err("usage: team-up harness verify <claude> --fixture-project <path>");
+    io.err("usage: team-up harness verify <claude|codex> --fixture-project <path>");
     return 1;
   }
   if (!fs.existsSync(fixtureProject)) {
@@ -494,22 +570,29 @@ export async function runHarnessVerify(args, io = { out: console.log, err: conso
     io.err(String(e.message || e));
     return 1;
   }
-  if (cli !== "claude") {
-    io.err(`adapter ${cli} not ready for live verify in this revision`);
+  if (cli !== "claude" && cli !== "codex") {
+    io.err(`harness verify unsupported for ${cli}`);
     return 2;
   }
+  const runners = io.runners || {};
+  const runner = runners[cli]
+    || (cli === "codex" ? liveCodexVerifyRunner : liveClaudeVerifyRunner);
+  const env = io.env || process.env;
   try {
     const record = await verifyHarness({
       adapter,
       fixtureProject,
-      runner: Object.assign(liveClaudeVerifyRunner, {
-        execFileSync,
+      env,
+      runner: Object.assign(runner, {
+        execFileSync: runner.execFileSync || execFileSync,
       }),
     });
     io.out(`native_shell: ${record.native_shell}`);
     io.out(`broker_tool: ${record.broker_tool}`);
     io.out(`status: ${record.status}`);
     io.out(`cli_version: ${record.cli_version}`);
+    io.out(`context_isolation: ${record.context_isolation}`);
+    io.out(`command_broker: ${record.command_broker}`);
     return record.status === "verified" ? 0 : 2;
   } catch (e) {
     io.err(`BLOCKED: ${e.message}`);

@@ -10,6 +10,7 @@ import {
   inspectPackageDir,
 } from "./manifest.mjs";
 import { assertSafeSpecialistSegment, assertPathInsideRoot } from "./safe-id.mjs";
+import { normalizeRecommendations } from "../capabilities/recommendations.mjs";
 
 const PACKAGE_FILES = [
   "specialist.json",
@@ -80,10 +81,14 @@ export async function inspectPackage(packageDir) {
     const { manifest } = loadManifestFromDir(abs);
     const validation = validateManifest(manifest, { packageDir: abs });
     const checksum = sha256Declared(abs, inspected.files);
+    const recommendations = manifest.recommendations != null
+      ? normalizeRecommendations(manifest.recommendations)
+      : [];
     return {
       ok: validation.ok && inspected.ok,
       errors: [...(inspected.errors || []), ...validation.errors],
       manifest,
+      recommendations,
       checksum,
       path: abs,
     };

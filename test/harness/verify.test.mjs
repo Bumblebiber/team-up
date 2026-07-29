@@ -15,7 +15,11 @@ test("verifyHarness records version-keyed status from injectable runner", async 
     env,
     now: "2026-07-25T12:00:00Z",
     runner: Object.assign(
-      async () => ({ native_shell: "denied", broker_tool: "passed" }),
+      async () => ({
+        native_shell: "denied",
+        broker_tool: "passed",
+        context_isolation: "team-up.context-isolation/v1",
+      }),
       {
         execFileSync: () => "claude 1.2.3\n",
       }

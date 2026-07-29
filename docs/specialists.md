@@ -123,8 +123,46 @@ verified:
   tools → `ALLOWLIST_UNENFORCEABLE` (pre-broker gate)
 
 Starter manifests declare the approved design capabilities (including Hannes
-`command.test` / `project-test` and advisory token targets). Claude is the
-first verified adapter; Cursor / Codex / Hermes / OpenCode remain unsupported.
+`command.test` / `project-test` and advisory token targets). Claude and Codex
+have context-isolation adapters; Cursor / Hermes / OpenCode remain unsupported
+until each has a live verified implementation.
+
+### Capability recommendations and pool
+
+Specialist manifests may declare inert `recommendations` metadata:
+
+```json
+"recommendations": [{
+  "package": "o9k.caveman",
+  "source": "https://github.com/example/caveman.git",
+  "reason": "Reduces routine output",
+  "suggested_target": "research.hugo"
+}]
+```
+
+Recommendations never preselect or activate packages. Effective pool set for
+specialist `S`:
+
+```text
+intrinsic specialist package
++ assignments targeted to all or S
+- assignments explicitly excluding S
+```
+
+There is no mandatory shared baseline. Capsules materialize only the effective
+set under `context/` and `harness/`, with `EFFECTIVE_CAPABILITIES.json` as the
+audit record.
+
+```bash
+team-up capability scan --root ~/.claude
+team-up capability install ./pkg
+team-up capability install https://github.com/example/x.git --git-ref v1.2.0
+team-up capability enable pkg@1.2.0 --checksum sha256:... --for all
+team-up capability disable pkg@1.2.0 --checksum sha256:... --for research.hugo
+team-up capability update pkg --git-ref main
+team-up capability rollback pkg@2 --to 1 --checksum sha256:new --prior-checksum sha256:old
+team-up capability remove pkg@1 --checksum sha256:...
+```
 
 Home-installed CLIs need a **non-empty** `sandbox.runtime_paths` list when
 OS isolation is actually applied.

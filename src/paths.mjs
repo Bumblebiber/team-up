@@ -153,3 +153,13 @@ export function launchDescriptorsRoot(env = process.env) {
 export function launchDescriptorDir(runId, env = process.env) {
   return path.join(launchDescriptorsRoot(env), runId);
 }
+
+export function capabilityPoolRoot(env = process.env) {
+  return env.TEAM_UP_CAPABILITY_POOL ||
+    path.join(teamUpHome(env), "capability-pool");
+}
+
+export function capabilityAssignmentsPath(env = process.env) {
+  return env.TEAM_UP_CAPABILITY_ASSIGNMENTS ||
+    path.join(teamUpHome(env), "capability-assignments.json");
+}
