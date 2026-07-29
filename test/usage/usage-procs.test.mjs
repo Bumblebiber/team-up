@@ -4,8 +4,13 @@ import {
   isAgentProcessCmdline,
   isCollectorCmdline,
   countAgentProcesses,
+  countAgentProcessesOptsFromEnv,
+  agentProcsFixtureFromEnv,
   parsePsTable,
 } from "../../src/usage/usage-procs.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 test("isCollectorCmdline detects usage probes", () => {
   assert.equal(isCollectorCmdline("claude -p /usage"), true);
@@ -63,4 +68,18 @@ test("countAgentProcesses excludes processes with O9K_USAGE_COLLECT in environ",
     hasEnvMarker: () => true,
   });
   assert.equal(counts.claude, 0);
+});
+
+test("countAgentProcessesOptsFromEnv reads pid cmdline fixture file", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-procs-fix-"));
+  const fixture = path.join(dir, "procs.json");
+  fs.writeFileSync(
+    fixture,
+    JSON.stringify({ "42": "/usr/bin/cursor-agent -p hi", "43": "/usr/bin/claude" }),
+  );
+  const opts = countAgentProcessesOptsFromEnv({ TEAM_UP_AGENT_PROCS_FIXTURE: fixture });
+  const counts = countAgentProcesses(opts);
+  assert.equal(counts.cursor, 1);
+  assert.equal(counts.claude, 1);
+  assert.equal(agentProcsFixtureFromEnv({ TEAM_UP_AGENT_PROCS_FIXTURE: fixture })["42"], "/usr/bin/cursor-agent -p hi");
 });

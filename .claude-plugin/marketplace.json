@@ -1,0 +1,12 @@
+{
+  "name": "team-up",
+  "owner": { "name": "Bumblebiber" },
+  "description": "team-up — role-based model selection and cross-CLI mailbox runs for multi-agent work.",
+  "plugins": [
+    {
+      "name": "team-up",
+      "source": "./",
+      "description": "The roster, pass-to and roster-refresh skills. Needs the `team-up` CLI on PATH (npm i -g team-up)."
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+╭─── Claude Code v2.1.220 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                        │
+│               Welcome back Commander!              │ Run /init to create a CLAUDE.md file with instructions for Cla… │
+│                                                    │ ─────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                      │
+│                      ▝▜█████▛▘                     │ Bug fixes and reliability improvements                          │
+│                        ▘▘ ▝▝                       │ Added Claude Opus 5 (`claude-opus-5`), now the default Opus mo… │
+│       Opus 5 with high effort · Claude Pro ·       │ Added `sandbox.network.strictAllowlist` setting to deny non-al… │
+│       benni.z1mm3r@gmail.com's Organization        │ /release-notes for more                                         │
+│     ~/projects/team-up/.worktrees/pane-fixtures    │                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ Run rm -rf /tmp/claude-perm-test-only-never-real                                                                      
+
+● Bash(rm -rf /tmp/claude-perm-test-only-never-real)                                                                    
+  ⎿  Waiting…                                                                                                         
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command                                                                                                           
+                                     
+   rm -rf /tmp/claude-perm-test-only-never-real
+   Remove test path
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to tmp/ from this project
+   3. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain
+
+
+
+
+
+
+
+
+
+

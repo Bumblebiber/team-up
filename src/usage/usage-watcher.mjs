@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { configPath, loadJson } from "../roster/roster.mjs";
-import { countAgentProcesses, watcherStatePath } from "./usage-procs.mjs";
+import { countAgentProcesses, countAgentProcessesOptsFromEnv, watcherStatePath } from "./usage-procs.mjs";
 import { subscriptionsFromRoster } from "./usage-collect.mjs";
 
 const DEFAULT_CONFIG = {
@@ -69,13 +69,11 @@ export function planCollect({
     if (due === null || now >= due) collect.add(cli);
   }
 
-  if (state === "idle") {
-    const hbMs = DEFAULT_CONFIG.intervals.idle_heartbeat_hours * 3_600_000;
-    for (const cli of subscriptions) {
-      if (collecting?.[cli]) continue;
-      const t = parseIso(lastCollect[cli]);
-      if (t === null || now - t >= hbMs) collect.add(cli);
-    }
+  const hbMs = DEFAULT_CONFIG.intervals.idle_heartbeat_hours * 3_600_000;
+  for (const cli of subscriptions) {
+    if (collecting?.[cli]) continue;
+    const t = parseIso(lastCollect[cli]);
+    if (t === null || now - t >= hbMs) collect.add(cli);
   }
 
   return { collect: [...collect], state };
@@ -147,7 +145,7 @@ function runCollect(cli) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "usage-collect.mjs");
   execFileSync(process.execPath, [script, "--cli", cli], {
     stdio: "inherit",
-    timeout: 120_000,
+    timeout: cli === "codex" ? 300_000 : 120_000,
   });
 }
 
@@ -155,7 +153,7 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
   const cfg = watcherConfig(roster || {});
   const subs = subscriptionsFromRoster(roster || {});
   const stateDoc = loadState();
-  const counts = countAgentProcesses();
+  const counts = countAgentProcesses(countAgentProcessesOptsFromEnv());
   const state = computeState(counts);
 
   const plan = planCollect({

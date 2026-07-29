@@ -3,7 +3,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { linkDispatchToRun, runDir, wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, atomicWriteText } from "../runs/runs.mjs";
+import {
+  linkDispatchToRun,
+  runDir,
+  loadState,
+  wrapPromptWithMailboxProtocol,
+  promptHasMailboxProtocol,
+  atomicWriteText,
+} from "../runs/runs.mjs";
 import {
   configPath, usagePath, loadJson, validateRoster, requireRoster, rosterWritePath, usageWritePath,
 } from "./config.mjs";
@@ -25,6 +32,16 @@ export {
 function argValue(args, flag) {
   const i = args.indexOf(flag);
   return i === -1 ? undefined : args[i + 1];
+}
+
+/** Resolve dispatch cwd: explicit --dir wins, else run cwd, else process.cwd(). */
+export function resolveDispatchDir({ dir, runId, cwd = process.cwd(), loadRun = loadState } = {}) {
+  if (dir) return dir;
+  if (runId) {
+    const st = loadRun(runId);
+    if (st?.cwd) return st.cwd;
+  }
+  return cwd;
 }
 
 function cmdInit() {
@@ -169,8 +186,8 @@ async function spawnInTmux({ roster: rosterCfg, role, dir, prompt, runId }) {
 async function cmdDispatch(args) {
   const role = argValue(args, "--role");
   const promptFile = argValue(args, "--prompt-file");
-  const dir = argValue(args, "--dir") || process.cwd();
   const runId = argValue(args, "--run-id");
+  const dir = resolveDispatchDir({ dir: argValue(args, "--dir"), runId });
   if (!role || (!promptFile && !runId)) {
     console.error("usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>]");
     console.error("  with --run-id: prefers ~/.team-up/runs/<id>/mailbox/PROMPT.md (mailbox-wrapped)");

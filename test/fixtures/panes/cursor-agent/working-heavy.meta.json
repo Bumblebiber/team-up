@@ -1,0 +1,41 @@
+{
+  "cli": "cursor-agent",
+  "cliVersion": "2026.07.23-e383d2b",
+  "state": "working-heavy",
+  "command": [
+    "cursor-agent"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    20,
+    40,
+    60
+  ],
+  "sessionStart": "2026-07-28T14:08:13Z",
+  "input": {
+    "text": "Read package.json, README.md, and src/runs/runs.mjs thoroughly. Write a detailed summary of each file. Then run sleep 60 in the shell.",
+    "sentAtSec": 8
+  },
+  "captures": [
+    {
+      "offsetSec": 20,
+      "timestamp": "2026-07-28T14:08:33Z",
+      "file": "cursor-agent/working-heavy-20s.txt"
+    },
+    {
+      "offsetSec": 40,
+      "timestamp": "2026-07-28T14:08:53Z",
+      "file": "cursor-agent/working-heavy-40s.txt"
+    },
+    {
+      "offsetSec": 60,
+      "timestamp": "2026-07-28T14:09:13Z",
+      "file": "cursor-agent/working-heavy-60s.txt"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+  ┃  Delete package.json with rm                                                                                        
+  ┃                                                                                                                     
+                                                                                                                        
+     ▣  Build · MiniMax-M3                                                                                              
+                                                                                                                        
+  ┃                                                                                                                     
+  ┃  insufficient balance (1008)                                                                                        
+  ┃                                                                                                                     
+                                                                                                                        
+     ▣  Build · MiniMax-M3                                                                                              
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                  pillars apply to EVERY response in this sessi                                                                           tanding orders: search-before-read, one repo                                                                            fore compaction (memory). If you catch yourse                                                                           l doing grunt work), that's not a pass — correct it starting the next turn, don't wait to be           ny               en efficiency rules, the using-o9k arbitration table decides.                                                                                 
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+  ┃                                                                                                                     
+  ┃  📍 TIM project marker detected (.tim-project in /home/bbbee/projects).                                             
+This session is bound to TIM project P0062 — bbbee PM Workflow — Projektmanagement, Agent-Orchestrierung, Cronjobs, Delegation. Overseer-Session-Home.. (minimax.io)                                                                            
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  
+ACTION: call tim_load_project(label="P0062") now to load the project brief from the TIM store, then run the tim-session-start skill. STEP 1 (project binding) is already decided by this marker — do NOT ask which project, and do NOT run any hmem        pr             ject resolution. The TIM marker is authoritative for this turn.
+

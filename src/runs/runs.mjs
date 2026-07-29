@@ -7,6 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { stopTmuxSession } from "./tmux.mjs";
+import { parseVerifyCommand, runParentVerification } from "./verification.mjs";
+
+export { parseVerifyCommand, parseNodeTestCounts, runParentVerification } from "./verification.mjs";
 
 const FLOCK_BIN = "/usr/bin/flock";
 
@@ -30,6 +34,29 @@ export function atomicWriteText(filePath, text) {
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmp, text.endsWith("\n") ? text : `${text}\n`);
   fs.renameSync(tmp, filePath);
+}
+
+/** Publish content at destPath only when dest does not exist yet (hard link). */
+export function publishFileNoReplace(destPath, content) {
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  const tmp = path.join(
+    path.dirname(destPath),
+    `.publish.${process.pid}.${Date.now()}.tmp`,
+  );
+  fs.writeFileSync(tmp, content);
+  try {
+    fs.linkSync(tmp, destPath);
+    fs.unlinkSync(tmp);
+    return { published: true };
+  } catch (error) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* */
+    }
+    if (error.code === "EEXIST") return { published: false };
+    throw error;
+  }
 }
 
 function newRunId(now = new Date()) {
@@ -82,6 +109,7 @@ export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory, r
 export function createRun({
   cwd, project, role, parent, worker, prompt, now = new Date(),
   result_protocol,
+  verify,
 }) {
   const runId = newRunId(now);
   const attach = parent.attach || (parent.tmux ? "tmux" : "manual");
@@ -111,6 +139,12 @@ export function createRun({
     mailbox: "mailbox/",
   };
   if (result_protocol) state.result_protocol = result_protocol;
+  if (verify?.command?.length) {
+    state.verify = {
+      command: verify.command,
+      runs: verify.runs ?? 5,
+    };
+  }
   const rd = runDir(runId);
   const mb = path.join(rd, "mailbox");
   fs.mkdirSync(mb, { recursive: true });
@@ -270,7 +304,7 @@ export function mailboxDir(runId) {
   return path.join(runDir(runId), "mailbox");
 }
 
-function readMaybe(filePath) {
+export function readMaybe(filePath) {
   try {
     return fs.readFileSync(filePath, "utf8");
   } catch (e) {
@@ -394,11 +428,68 @@ export function classifyMailbox(runId) {
 const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
 const CAPACITY_RUN_STATUSES = new Set(["waiting_capacity", "waiting_decision"]);
 
+export function isSyntheticStaleFailureState(state) {
+  return state?.status === "failed"
+    && state?.cleanup?.stale_reason === "worker_stale_timeout";
+}
+
+export function isUnresolvedStalePublicationClaim(state) {
+  const claim = state?.cleanup?.stale_publication_claim;
+  if (!claim || claim.aborted_at) return false;
+  return !["finalized"].includes(claim.phase);
+}
+
+export function readMailboxStatusIdentity(runId) {
+  const statusPath = path.join(mailboxDir(runId), "STATUS");
+  try {
+    const stat = fs.statSync(statusPath);
+    const line = fs.readFileSync(statusPath, "utf8").trim();
+    return { line, inode: stat.ino, mtimeMs: stat.mtimeMs };
+  } catch {
+    return { line: "", inode: null, mtimeMs: null };
+  }
+}
+
+export function isGcOwnedStaleFailedStatus(runId, claim) {
+  if (!claim?.status_published_at) return false;
+  const status = readMailboxStatusIdentity(runId);
+  if (status.line !== "failed") return false;
+  if (claim.status_inode != null && claim.status_mtime_ms != null) {
+    return status.inode === claim.status_inode && status.mtimeMs === claim.status_mtime_ms;
+  }
+  return true;
+}
+
+export function isSyntheticStaleMailboxResult(state, runId = state?.runId) {
+  if (!runId) return false;
+  if (state?.result_protocol === "RESULT.json") {
+    const raw = readMaybe(path.join(mailboxDir(runId), "RESULT.json"));
+    if (!raw) return false;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed?.status === "failed" && parsed?.summary === "worker_stale_timeout";
+    } catch {
+      return false;
+    }
+  }
+  const md = readMaybe(path.join(mailboxDir(runId), "RESULT.md"));
+  return md?.trim() === "worker_stale_timeout";
+}
+
+export function isMixedLegitimateCloseout(state, runId = state?.runId) {
+  if (!isUnresolvedStalePublicationClaim(state) || !runId) return false;
+  const claim = state.cleanup.stale_publication_claim;
+  if (!isGcOwnedStaleFailedStatus(runId, claim)) return false;
+  return !isSyntheticStaleMailboxResult(state, runId);
+}
+
 /**
  * Purely reconcile durable STATE with a mailbox observation.
  * Terminal STATE is irreversible here; otherwise terminal mailbox outcomes
  * and pending questions override stale active STATE. A watching mailbox does
  * not erase richer controller states such as waiting_capacity.
+ * Synthetic stale-timeout failures may be superseded by legitimate mailbox
+ * terminal outcomes on a later pass.
  */
 export function resolveRunState(state, classified = { status: "watching" }) {
   if (!state) throw new Error("state required");
@@ -407,11 +498,23 @@ export function resolveRunState(state, classified = { status: "watching" }) {
   let effectiveClassified = classified;
 
   if (TERMINAL_RUN_STATUSES.has(currentStatus)) {
-    if (classified?.status !== currentStatus) {
+    if (
+      isSyntheticStaleFailureState(state)
+      && TERMINAL_RUN_STATUSES.has(classified?.status)
+      && classified.status !== "failed"
+    ) {
+      nextStatus = classified.status;
+      effectiveClassified = classified;
+    } else if (classified?.status !== currentStatus) {
       effectiveClassified = { status: currentStatus };
     }
   } else if (TERMINAL_RUN_STATUSES.has(classified?.status)) {
-    nextStatus = classified.status;
+    if (isUnresolvedStalePublicationClaim(state)) {
+      nextStatus = currentStatus;
+      effectiveClassified = classified;
+    } else {
+      nextStatus = classified.status;
+    }
   } else if (
     classified?.status === "question" &&
     !CAPACITY_RUN_STATUSES.has(currentStatus)
@@ -565,25 +668,27 @@ export function resumeLockPath() {
   return path.join(runsRoot(), ".resume.lock");
 }
 
-export function listActiveStates({ onCorrupt } = {}) {
+export function listAllStates({ onCorrupt } = {}) {
   const root = runsRoot();
   if (!fs.existsSync(root)) return [];
   const out = [];
   for (const name of fs.readdirSync(root)) {
     if (name.startsWith(".")) continue;
-    let st;
     try {
-      st = loadState(name);
-    } catch (e) {
-      if (typeof onCorrupt === "function") onCorrupt(name, e);
-      else console.error(`skip corrupt run ${name}: ${e.message}`);
-      continue;
+      const state = loadState(name);
+      if (state) out.push(state);
+    } catch (error) {
+      if (typeof onCorrupt === "function") onCorrupt(name, error);
+      else console.error(`skip corrupt run ${name}: ${error.message}`);
     }
-    if (!st) continue;
-    if (["done", "failed", "cancelled"].includes(st.status)) continue;
-    out.push(st);
   }
   return out;
+}
+
+export function listActiveStates(options = {}) {
+  return listAllStates(options).filter(
+    state => !["done", "failed", "cancelled"].includes(state.status),
+  );
 }
 
 export function shellQuote(s) {
@@ -774,25 +879,90 @@ export function resumeAll({
   return report;
 }
 
-export function waitMailbox(runId, { ceilingSec = 3600 } = {}) {
-  let resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
+function reconcileMailbox(runId) {
+  const state = loadState(runId);
+  let classified = classifyMailbox(runId);
+
+  if (classified.status === "done" && state?.verify?.command?.length) {
+    const report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson });
+    if (report.verdict === "fail") {
+      classified = {
+        status: "failed",
+        error: "parent verification failed",
+        resultPath: classified.resultPath,
+      };
+    }
+  }
+
+  let resolved = resolveRunState(state, classified);
   if (resolved.changed) {
     resolved = persistResolvedRunStatus(runId, resolved.classified);
   }
+  return resolved;
+}
+
+function cleanupTerminalWorker(state, classified, stopTmux) {
+  const status = classified?.status || state?.status;
+  if (!TERMINAL_RUN_STATUSES.has(status)) return false;
+  if (isUnresolvedStalePublicationClaim(state)) {
+    return false;
+  }
+  const session = state?.worker?.tmux;
+  if (!session) return false;
+  stopTmux(session);
+  return true;
+}
+
+export function waitMailbox(runId, {
+  ceilingSec = 3600,
+  stopTmux = stopTmuxSession,
+  observe = true,
+  pollSec,
+  silenceSec,
+  spawnObserver: spawnObserverFn,
+} = {}) {
+  let resolved = reconcileMailbox(runId);
   if (
     TERMINAL_RUN_STATUSES.has(resolved.state.status) ||
     ["done", "failed", "cancelled", "question"].includes(resolved.classified?.status)
   ) {
+    cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
     return { waitExit: 0, classified: resolved.classified };
   }
 
-  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
-  const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
-  resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
-  if (resolved.changed) {
-    resolved = persistResolvedRunStatus(runId, resolved.classified);
+  let observerChild = null;
+  try {
+    if (observe) {
+      if (spawnObserverFn) {
+        observerChild = spawnObserverFn(runId);
+      } else {
+        // Lazy import avoided — spawn node child directly to keep waitMailbox sync.
+        const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "observe.mjs");
+        const observerEnv = { ...process.env };
+        if (pollSec != null && Number(pollSec) > 0) {
+          observerEnv.TEAM_UP_OBSERVER_POLL_SEC = String(pollSec);
+        }
+        if (silenceSec != null && Number(silenceSec) > 0) {
+          observerEnv.TEAM_UP_OBSERVER_SILENCE_SEC = String(silenceSec);
+        }
+        observerChild = spawn(process.execPath, [script, runId], {
+          stdio: "ignore",
+          detached: false,
+          env: observerEnv,
+        });
+      }
+    }
+
+    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
+    const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
+    resolved = reconcileMailbox(runId);
+    cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
+    return { waitExit: r.status ?? 1, classified: resolved.classified };
+  } finally {
+    if (observerChild && observerChild.exitCode === null) {
+      observerChild.kill("SIGTERM");
+    }
   }
-  return { waitExit: r.status ?? 1, classified: resolved.classified };
 }
 
 function argValue(args, flag) {
@@ -817,11 +987,19 @@ function cmdCreate(args) {
     console.error(
       "usage: runs.mjs create --cwd <dir> --role <role> --parent-cli <cli> --parent-attach <mode>"
       + " [--parent-session <id>] [--parent-tmux <name>] --worker-cli <cli>"
-      + " [--worker-model <model>] [--worker-tmux <name>] --prompt-file <file> [--project <id>]",
+      + " [--worker-model <model>] [--worker-tmux <name>] --prompt-file <file> [--project <id>]"
+      + " [--verify-command <shell words>] [--verify-runs N]",
     );
     process.exit(1);
   }
   const prompt = fs.readFileSync(promptFile, "utf8");
+  const verifyCommandRaw = argValue(args, "--verify-command");
+  const verifyRunsRaw = argValue(args, "--verify-runs");
+  let verify;
+  if (verifyCommandRaw) {
+    verify = { command: parseVerifyCommand(verifyCommandRaw) };
+    if (verifyRunsRaw) verify.runs = Number(verifyRunsRaw);
+  }
   const state = createRun({
     cwd,
     project: argValue(args, "--project"),
@@ -838,6 +1016,7 @@ function cmdCreate(args) {
       tmux: argValue(args, "--worker-tmux"),
     },
     prompt,
+    verify,
   });
   console.log(`runId: ${state.runId}`);
   console.log(`dir: ${runDir(state.runId)}`);
@@ -1043,6 +1222,22 @@ function cmdCancel(args) {
   console.log(`cancelled ${runId}`);
 }
 
+async function cmdGc(args) {
+  const dryRun = args.includes("--dry-run");
+  const { gcRuns } = await import("./gc.mjs");
+  const report = gcRuns({ dryRun });
+  for (const item of report.runs) {
+    console.log(`runId: ${item.runId} action: ${item.action}`);
+  }
+}
+
+async function cmdGcInstall() {
+  const { installGcTimer } = await import("./gc-timer.mjs");
+  const result = installGcTimer();
+  console.log(`service: ${result.servicePath}`);
+  console.log(`timer: ${result.timerPath}`);
+}
+
 const HANDLERS = {
   create: cmdCreate,
   classify: cmdClassify,
@@ -1061,20 +1256,26 @@ const HANDLERS = {
     cmdRecheckCapacity(args);
   },
   cancel: cmdCancel,
+  gc: cmdGc,
+  "gc-install": cmdGcInstall,
 };
 
-function main() {
+async function main() {
   const [cmd, ...args] = process.argv.slice(2);
   const handler = HANDLERS[cmd];
   if (!handler) {
     console.error(`usage: runs.mjs <${Object.keys(HANDLERS).join("|")}> [options]`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
-  handler(args);
+  await handler(args);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }
 
 

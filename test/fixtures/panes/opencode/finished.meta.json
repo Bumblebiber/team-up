@@ -1,0 +1,29 @@
+{
+  "cli": "opencode",
+  "cliVersion": "1.15.13",
+  "state": "finished",
+  "command": [
+    "opencode"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 8,
+  "offsets": [
+    110
+  ],
+  "sessionStart": "2026-07-28T14:30:58Z",
+  "input": {
+    "text": "Run exactly: sleep 75 in shell, then reply done.",
+    "sentAtSec": 12
+  },
+  "captures": [
+    {
+      "offsetSec": 110,
+      "timestamp": "2026-07-28T14:32:48Z",
+      "file": "opencode/finished.txt"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "cli": "codex",
+  "cliVersion": "codex-cli 0.145.0",
+  "state": "trust-prompt",
+  "command": [
+    "codex"
+  ],
+  "cwd": "/tmp/pane-fixture-trust-QyZn5x",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 8,
+  "offsets": [
+    6,
+    10
+  ],
+  "sessionStart": "2026-07-28T14:23:19Z",
+  "input": null,
+  "captures": [
+    {
+      "offsetSec": 6,
+      "timestamp": "2026-07-28T14:23:25Z",
+      "file": "codex/trust-prompt-6s.txt"
+    },
+    {
+      "offsetSec": 10,
+      "timestamp": "2026-07-28T14:23:29Z",
+      "file": "codex/trust-prompt-10s.txt"
+    }
+  ]
+}

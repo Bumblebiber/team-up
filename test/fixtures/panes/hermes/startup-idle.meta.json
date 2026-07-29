@@ -1,0 +1,40 @@
+{
+  "cli": "hermes",
+  "cliVersion": "Hermes Agent v0.18.2 (2026.7.7.2) · upstream 689b51be",
+  "state": "startup-idle",
+  "command": [
+    "hermes",
+    "chat",
+    "--tui"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    3,
+    5,
+    8
+  ],
+  "sessionStart": "2026-07-28T14:24:25Z",
+  "input": null,
+  "captures": [
+    {
+      "offsetSec": 3,
+      "timestamp": "2026-07-28T14:24:28Z",
+      "file": "hermes/startup-idle-3s.txt"
+    },
+    {
+      "offsetSec": 5,
+      "timestamp": "2026-07-28T14:24:30Z",
+      "file": "hermes/startup-idle-5s.txt"
+    },
+    {
+      "offsetSec": 8,
+      "timestamp": "2026-07-28T14:24:33Z",
+      "file": "hermes/startup-idle-8s.txt"
+    }
+  ]
+}

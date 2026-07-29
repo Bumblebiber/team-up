@@ -1,0 +1,35 @@
+{
+  "cli": "codex",
+  "cliVersion": "codex-cli 0.145.0",
+  "state": "permission-prompt",
+  "command": [
+    "codex"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    20,
+    35
+  ],
+  "sessionStart": "2026-07-28T14:23:38Z",
+  "input": {
+    "text": "Delete package.json with rm",
+    "sentAtSec": 10
+  },
+  "captures": [
+    {
+      "offsetSec": 20,
+      "timestamp": "2026-07-28T14:23:58Z",
+      "file": "codex/permission-prompt-20s.txt"
+    },
+    {
+      "offsetSec": 35,
+      "timestamp": "2026-07-28T14:24:14Z",
+      "file": "codex/permission-prompt-35s.txt"
+    }
+  ]
+}

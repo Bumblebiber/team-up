@@ -1,0 +1,10 @@
+{
+  "name": "team-up",
+  "displayName": "team-up",
+  "version": "0.1.0",
+  "description": "Role-based model selection and cross-CLI mailbox runs for multi-agent work: deterministic pick/dispatch by role, limit-aware fallback chains, session-limit handoff, and durable runs that survive a reboot.",
+  "author": { "name": "Bumblebiber" },
+  "repository": "https://github.com/Bumblebiber/team-up",
+  "license": "MIT",
+  "keywords": ["multi-agent", "model-routing", "claude-code", "cursor", "codex", "hermes"]
+}

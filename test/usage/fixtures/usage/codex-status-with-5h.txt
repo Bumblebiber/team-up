@@ -1,0 +1,6 @@
+  Model:                gpt-5.6-sol (reasoning high, summaries auto)
+  Account:              someone@example.com (Plus)
+  Session:              019fa8b8-9538-77b1-8a6a-74ce3a7f2953
+
+  5h limit:              [████████████████████] 42% left (resets 18:30 on 28 Jul)
+  Weekly limit:         [████████████████████] 99% left (resets 14:28 on 4 Aug)

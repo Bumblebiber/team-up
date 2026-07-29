@@ -59,7 +59,23 @@ test("advanceSchedule only journals successful collects", () => {
   assert.equal(next.last_collect.codex, null);
 });
 
-test("idle heartbeat does not re-fire within 24h after successful advance", () => {
+test("per-CLI heartbeat collects non-running CLI even when machine is busy", () => {
+  const d = planCollect({
+    counts: { claude: 1, codex: 0, cursor: 1 },
+    prevCounts: { claude: 1, codex: 0, cursor: 1 },
+    state: "busy",
+    collecting: { claude: false, codex: false, cursor: false },
+    lastCollect: { claude: "2026-07-17T11:00:00Z", codex: null, cursor: "2026-07-17T11:00:00Z" },
+    nextDue: { claude: "2026-07-17T12:30:00Z", codex: null, cursor: "2026-07-17T12:30:00Z" },
+    now: NOW,
+    subscriptions: subs,
+  });
+  assert.ok(d.collect.includes("codex"), "codex with null last_collect must heartbeat");
+  assert.equal(d.collect.includes("claude"), false, "claude recently collected and not due");
+  assert.equal(d.collect.includes("cursor"), false, "cursor recently collected and not due");
+});
+
+test("per-CLI heartbeat does not re-fire within 24h after successful advance", () => {
   const first = planCollect({
     counts: { claude: 0, codex: 0, cursor: 0 },
     prevCounts: { claude: 0, codex: 0, cursor: 0 },
