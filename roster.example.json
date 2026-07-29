@@ -210,6 +210,12 @@
         "cursor:composer-2.5",
         "codex:gpt-5.6-luna"
       ]
+    },
+    "observer": {
+      "chain": [
+        "cursor:grok-4.5-high",
+        "codex:gpt-5.4-mini"
+      ]
     }
   },
   "limits": { "warn_at": 0.9, "handoff_at": 0.95, "handoff_at_burst": 0.8 }

@@ -884,6 +884,10 @@ function cleanupTerminalWorker(state, classified, stopTmux) {
 export function waitMailbox(runId, {
   ceilingSec = 3600,
   stopTmux = stopTmuxSession,
+  observe = true,
+  pollSec,
+  silenceSec,
+  spawnObserver: spawnObserverFn,
 } = {}) {
   let resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
   if (resolved.changed) {
@@ -897,14 +901,42 @@ export function waitMailbox(runId, {
     return { waitExit: 0, classified: resolved.classified };
   }
 
-  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
-  const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
-  resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
-  if (resolved.changed) {
-    resolved = persistResolvedRunStatus(runId, resolved.classified);
+  let observerChild = null;
+  try {
+    if (observe) {
+      if (spawnObserverFn) {
+        observerChild = spawnObserverFn(runId);
+      } else {
+        // Lazy import avoided — spawn node child directly to keep waitMailbox sync.
+        const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "observe.mjs");
+        const observerEnv = { ...process.env };
+        if (pollSec != null && Number(pollSec) > 0) {
+          observerEnv.TEAM_UP_OBSERVER_POLL_SEC = String(pollSec);
+        }
+        if (silenceSec != null && Number(silenceSec) > 0) {
+          observerEnv.TEAM_UP_OBSERVER_SILENCE_SEC = String(silenceSec);
+        }
+        observerChild = spawn(process.execPath, [script, runId], {
+          stdio: "ignore",
+          detached: false,
+          env: observerEnv,
+        });
+      }
+    }
+
+    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
+    const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
+    resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
+    if (resolved.changed) {
+      resolved = persistResolvedRunStatus(runId, resolved.classified);
+    }
+    cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
+    return { waitExit: r.status ?? 1, classified: resolved.classified };
+  } finally {
+    if (observerChild && observerChild.exitCode === null) {
+      observerChild.kill("SIGTERM");
+    }
   }
-  cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
-  return { waitExit: r.status ?? 1, classified: resolved.classified };
 }
 
 function argValue(args, flag) {
