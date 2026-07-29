@@ -66,8 +66,8 @@ run "M8 post-answer stall never escalates"
 
 # M9: defer-escalate removed
 cp "$ORIG" "$SRC"
-perl -0pi -e 's/  if \(\n    verified\.action === "escalate"\n    && verdict\.action === "escalate"\n    && mailboxAgeSec < silenceSec\n    && \(verdict\.state === "working" \|\| verdict\.state === "finished"\)\n  \) \{\n    if \(!loop\.deferredEscalateVerdict\) \{\n      loop\.deferredEscalateVerdict = true;\n      log\(\{\n        kind: "decision",\n        proposed_action: "escalate",\n        action: "wait",\n        reason: "deferred escalate; fresh mailbox contradicts working\/finished verdict",\n      \}\);\n      return \{ loop, stop: false \};\n    \}\n  \}\n\n//' "$SRC"
-run "M9 working escalate deferral removed"
+perl -0pi -e 's/  if \(\n    verified\.action === "escalate"\n    && verdict\.action === "escalate"\n    && mailboxAgeSec < silenceSec\n    && \(verdict\.state === "working"\n      \|\| verdict\.state === "finished"\n      \|\| verdict\.state === "waiting_input"\)\n  \) \{\n    if \(!loop\.deferredEscalateVerdict\) \{\n      loop\.deferredEscalateVerdict = true;\n      log\(\{\n        kind: "decision",\n        proposed_action: "escalate",\n        action: "wait",\n        reason: "deferred escalate; fresh mailbox contradicts verdict",\n      \}\);\n      return \{ loop, stop: false \};\n    \}\n  \}\n\n//' "$SRC"
+run "M9 escalate deferral removed"
 
 cp "$ORIG" "$SRC"
 echo "--- restored ---"

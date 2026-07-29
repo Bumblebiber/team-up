@@ -944,6 +944,46 @@ test("alternating fresh and stale mailbox keeps judge calls bounded", withTempRu
   assert.equal(runs.loadState(runId).status, "watching");
 }));
 
+test("waiting_input escalate with fresh mailbox is deferred then honoured on repeat", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const runId = state.runId;
+  const frozen = readFixture("claude/working-20s.txt");
+  const silenceSec = 2;
+  let judgeCalls = 0;
+  const start = Date.now();
+  const beat = setInterval(() => touchMailbox(runId), 500);
+
+  await runObserver(runId, {
+    pollSec: 0.2,
+    stallTicks: 3,
+    silenceSec,
+    roster: INTEGRATION_ROSTER,
+    usage: {},
+    parentPid: process.pid,
+    isParentAlive: () => true,
+    keepLock: true,
+    capture: () => frozen,
+    judge: () => {
+      judgeCalls += 1;
+      return {
+        ok: true,
+        stdout: JSON.stringify({
+          state: "waiting_input",
+          reason: "screen has not moved",
+          action: "escalate",
+          question: "stuck?",
+        }),
+      };
+    },
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    shouldStop: () => Date.now() - start > 6000,
+  });
+  clearInterval(beat);
+
+  assert.ok(judgeCalls >= 2);
+  assert.equal(runs.loadState(runId).status, "waiting_human");
+}));
+
 test("working escalate with fresh mailbox is deferred then honoured on repeat", withTempRuns(async () => {
   const state = createRunWithTmux();
   const runId = state.runId;

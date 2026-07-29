@@ -108,10 +108,10 @@ Hard timeout 60 s per call.
 4. At most **3** auto-answers per run.
 5. Judge error / timeout / non-JSON / unknown `state` → escalate once.
 6. **`escalate` deferral:** when the judge proposes `escalate` with state
-   `working` or `finished` and the mailbox is fresh, log the verdict and defer
-   once (treat as `wait`). Honour on the next episode if the judge repeats.
-   `login_required`, `crashed`, `unknown`, stale-mailbox escalates, and
-   `waiting_input` escalates are honoured immediately.
+   `working`, `finished`, or `waiting_input` and the mailbox is fresh, log the
+   verdict and defer once (treat as `wait`). Honour on the next episode if the
+   judge repeats. `login_required`, `crashed`, `unknown`, and stale-mailbox
+   escalates are honoured immediately.
 
 Every verdict and code decision is appended to `<mailbox>/OBSERVATION.log`.
 

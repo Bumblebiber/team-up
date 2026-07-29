@@ -721,7 +721,9 @@ export function handleStall({
     verified.action === "escalate"
     && verdict.action === "escalate"
     && mailboxAgeSec < silenceSec
-    && (verdict.state === "working" || verdict.state === "finished")
+    && (verdict.state === "working"
+      || verdict.state === "finished"
+      || verdict.state === "waiting_input")
   ) {
     if (!loop.deferredEscalateVerdict) {
       loop.deferredEscalateVerdict = true;
@@ -729,7 +731,7 @@ export function handleStall({
         kind: "decision",
         proposed_action: "escalate",
         action: "wait",
-        reason: "deferred escalate; fresh mailbox contradicts working/finished verdict",
+        reason: "deferred escalate; fresh mailbox contradicts verdict",
       });
       return { loop, stop: false };
     }
