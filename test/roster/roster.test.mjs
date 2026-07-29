@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   pick, parseTtl, markLimited, checkThresholds, buildCommand, tmuxArgs,
   parseChainEntry, firstPositional, resolveLimitWindows, resolvePickAfterRefresh,
-  validateRoster,
+  validateRoster, resolveDispatchDir,
 } from "../../src/roster/roster.mjs";
 import { fileURLToPath } from "node:url";
 
@@ -297,6 +297,24 @@ test("buildCommand throws when cli template is missing", () => {
     () => buildCommand({ roster: ROSTER, model: "model-b", cli: "nosuch", prompt: "x" }),
     /no cli template/
   );
+});
+
+test("resolveDispatchDir prefers explicit --dir over run cwd", () => {
+  assert.equal(
+    resolveDispatchDir({ dir: "/explicit", runId: "r1", loadRun: () => ({ cwd: "/run" }) }),
+    "/explicit",
+  );
+});
+
+test("resolveDispatchDir uses run cwd when --dir omitted", () => {
+  assert.equal(
+    resolveDispatchDir({ runId: "r1", loadRun: () => ({ cwd: "/run" }), cwd: "/here" }),
+    "/run",
+  );
+});
+
+test("resolveDispatchDir falls back to process cwd when run has no cwd", () => {
+  assert.equal(resolveDispatchDir({ runId: "r1", loadRun: () => ({}), cwd: "/here" }), "/here");
 });
 
 test("tmuxArgs builds a detached session with cwd and shell-quoted command", () => {
