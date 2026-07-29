@@ -210,34 +210,23 @@ test("hermes ticking footer never pane-stalls but silence trigger fires", () => 
   assert.equal(silent.trigger, "silence");
 });
 
-test("trigger change re-opens episode within throttle window", () => {
+test("trigger change re-opens episode before handleStall sets lastJudgeAt", () => {
   const frozen = readFixture("cursor-agent/trust-prompt-6s.txt");
   const loop = createObserverLoop();
   const silenceSec = 120;
-  const t0 = 5_000_000;
 
   for (let i = 0; i < 3; i++) {
-    observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec, now: () => t0 });
+    observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec });
   }
-  const ep1 = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec, now: () => t0 });
+  const ep1 = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec });
   Object.assign(loop, ep1);
   assert.equal(ep1.event, "stall_detected");
-  loop.lastJudgeAt = t0;
-  loop.judgeCalledThisEpisode = true;
+  assert.equal(loop.lastJudgeAt, null);
 
-  const stillFresh = observerTick(loop, frozen, {
-    mailboxAgeSec: 5,
-    silenceSec,
-    now: () => t0 + 1000,
-  });
-  Object.assign(loop, stillFresh);
-  assert.equal(stillFresh.event, "stall_ongoing");
+  const ongoing = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec });
+  assert.equal(ongoing.event, "stall_ongoing");
 
-  const ep2 = observerTick(loop, frozen, {
-    mailboxAgeSec: silenceSec,
-    silenceSec,
-    now: () => t0 + 2000,
-  });
+  const ep2 = observerTick(loop, frozen, { mailboxAgeSec: silenceSec, silenceSec });
   assert.equal(ep2.event, "stall_detected");
   assert.equal(ep2.trigger, "both");
 });
