@@ -95,6 +95,37 @@ function psProcessTable() {
 const HAS_PROC = fs.existsSync("/proc");
 
 /**
+ * JSON fixture path from TEAM_UP_AGENT_PROCS_FIXTURE / O9K_AGENT_PROCS_FIXTURE.
+ * File shape: { "123": "/usr/bin/claude ...", ... } or { cmdlines: { ... } }.
+ */
+export function agentProcsFixtureFromEnv(env = process.env) {
+  const p = env.TEAM_UP_AGENT_PROCS_FIXTURE || env.O9K_AGENT_PROCS_FIXTURE;
+  if (!p) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+    const map = raw?.cmdlines || raw;
+    if (!map || typeof map !== "object" || Array.isArray(map)) return null;
+    return map;
+  } catch {
+    return null;
+  }
+}
+
+/** Build countAgentProcesses opts from env fixture (empty object when unset). */
+export function countAgentProcessesOptsFromEnv(env = process.env) {
+  const map = agentProcsFixtureFromEnv(env);
+  if (!map) return {};
+  const pids = Object.keys(map)
+    .map((k) => Number(k))
+    .filter((n) => Number.isFinite(n));
+  return {
+    listPids: () => pids,
+    readCmdline: (pid) => map[String(pid)] ?? map[pid] ?? null,
+    hasEnvMarker: () => false,
+  };
+}
+
+/**
  * Count live agent processes per subscription CLI.
  * @param {{ excludePids?: number[], envMarker?: string, listPids?: () => number[], readCmdline?: (pid: number) => string|null, hasEnvMarker?: (pid: number, marker: string) => boolean }} [opts]
  */
@@ -103,7 +134,10 @@ export function countAgentProcesses(opts = {}) {
   const exclude = new Set(opts.excludePids || []);
   let { listPids, readCmdline, hasEnvMarker } = opts;
   if (!listPids && !readCmdline) {
-    if (HAS_PROC) {
+    const envFixture = countAgentProcessesOptsFromEnv();
+    if (envFixture.listPids) {
+      ({ listPids, readCmdline, hasEnvMarker } = envFixture);
+    } else if (HAS_PROC) {
       listPids = listProcPids;
       readCmdline = readProcCmdline;
     } else {

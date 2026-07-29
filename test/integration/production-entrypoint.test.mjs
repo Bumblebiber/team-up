@@ -141,6 +141,8 @@ async function withEntrypointEnv(fn) {
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-ep-pkg-"));
   const binDir = path.join(home, "bin");
   const tmuxLog = path.join(home, "tmux.log");
+  const agentProcsFixture = path.join(home, "agent-procs-fixture.json");
+  fs.writeFileSync(agentProcsFixture, "{}\n");
   writeFakeTmux(binDir, tmuxLog);
   writeFakeClaude(binDir);
 
@@ -153,6 +155,7 @@ async function withEntrypointEnv(fn) {
     TEAM_UP_ROSTER: path.join(home, "roster.json"),
     TEAM_UP_USAGE: path.join(home, "usage.json"),
     TEAM_UP_PTY_LOCK: path.join(home, ".usage-pty.lock"),
+    TEAM_UP_AGENT_PROCS_FIXTURE: agentProcsFixture,
     TEAM_UP_SANDBOX_FORCE_NONE: "1",
   };
   Object.assign(process.env, env);
