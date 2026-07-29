@@ -5,7 +5,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -105,16 +105,128 @@ const TESTS = [
   "test/capabilities/*.test.mjs",
 ];
 
+const TARGET_FILES = [...new Set(MUTANTS.map(([, file]) => file))];
+let currentFile = null;
+let activeTestChild = null;
+let exiting = false;
+
+function relPath(file) {
+  return path.relative(REPO, file);
+}
+
+function git(args) {
+  return spawnSync("git", args, { cwd: REPO, encoding: "utf8" });
+}
+
+function isFileDirty(file) {
+  const r = git(["status", "--porcelain", "--", relPath(file)]);
+  return Boolean(r.stdout.trim());
+}
+
+function refuseDirty(file) {
+  const rel = relPath(file);
+  console.error(
+    `ERROR: working tree is dirty for ${rel}. ` +
+    "An earlier interrupted mutation run may have poisoned this file. " +
+    `Restore with: git checkout -- ${rel}`,
+  );
+  process.exit(1);
+}
+
+function restoreFile(file) {
+  const rel = relPath(file);
+  const r = git(["checkout", "--", rel]);
+  if (r.status !== 0) {
+    console.error(`ERROR: git checkout -- ${rel} failed:\n${r.stderr || r.stdout}`);
+    process.exit(1);
+  }
+}
+
+function fileDiff(file) {
+  const r = git(["diff", "--", relPath(file)]);
+  return r.stdout || r.stderr || "(no diff output)";
+}
+
+function assertFileClean(file, context) {
+  if (isFileDirty(file)) {
+    console.error(`ERROR: ${context}: ${relPath(file)} is still modified after restore:\n${fileDiff(file)}`);
+    process.exit(1);
+  }
+}
+
+function restoreAllTargets() {
+  for (const file of TARGET_FILES) {
+    restoreFile(file);
+  }
+}
+
+function verifyAllTargetsClean(context) {
+  for (const file of TARGET_FILES) {
+    assertFileClean(file, context);
+  }
+}
+
+function stopActiveTestChild() {
+  if (!activeTestChild || activeTestChild.killed) return;
+  try {
+    activeTestChild.kill("SIGTERM");
+  } catch {
+    // child may already have exited
+  }
+}
+
+function exitOnSignal(sig) {
+  if (exiting) return;
+  exiting = true;
+  console.error(`\nReceived ${sig}; restoring mutated files...`);
+  stopActiveTestChild();
+  restoreAllTargets();
+  verifyAllTargetsClean(`after ${sig}`);
+  process.exit(1);
+}
+
+process.on("SIGINT", () => exitOnSignal("SIGINT"));
+process.on("SIGTERM", () => exitOnSignal("SIGTERM"));
+
 function runSuite() {
-  const r = spawnSync("node", ["--test", ...TESTS], { cwd: REPO, encoding: "utf8", timeout: 600000 });
-  const out = `${r.stdout}\n${r.stderr}`;
-  const fail = /^# fail (\d+)$/m.exec(out) || /ℹ fail (\d+)/.exec(out);
-  const failing = [...out.matchAll(/^✖ (.+?) \(/gm)].map((m) => m[1]);
-  return { fail: fail ? Number(fail[1]) : -1, failing: [...new Set(failing)] };
+  return new Promise((resolve, reject) => {
+    const child = spawn("node", ["--test", ...TESTS], { cwd: REPO, stdio: ["ignore", "pipe", "pipe"] });
+    activeTestChild = child;
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("test suite timed out after 600000ms"));
+    }, 600000);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      activeTestChild = null;
+      reject(err);
+    });
+    child.on("close", () => {
+      clearTimeout(timer);
+      activeTestChild = null;
+      const out = `${stdout}\n${stderr}`;
+      const fail = /^# fail (\d+)$/m.exec(out) || /ℹ fail (\d+)/.exec(out);
+      const failing = [...out.matchAll(/^✖ (.+?) \(/gm)].map((m) => m[1]);
+      resolve({ fail: fail ? Number(fail[1]) : -1, failing: [...new Set(failing)] });
+    });
+  });
+}
+
+for (const file of TARGET_FILES) {
+  if (isFileDirty(file)) refuseDirty(file);
 }
 
 const results = [];
 for (const [name, file, from, to] of MUTANTS) {
+  if (exiting) break;
+  if (isFileDirty(file)) refuseDirty(file);
+
   const orig = fs.readFileSync(file, "utf8");
   if (!orig.includes(from)) {
     results.push({ name, status: "PATTERN-MISS" });
@@ -122,16 +234,35 @@ for (const [name, file, from, to] of MUTANTS) {
     continue;
   }
   const count = orig.split(from).length - 1;
+  currentFile = file;
   fs.writeFileSync(file, orig.replace(from, to));
+  let suiteResult;
   try {
-    const { fail, failing } = runSuite();
-    const status = fail > 0 ? "KILLED" : "SURVIVED";
-    results.push({ name, status, fail, occurrences: count, failing: failing.slice(0, 6) });
-    console.log(`${name}: ${status} (fail=${fail}${count > 1 ? `, ${count} occurrences, only first patched` : ""})${fail > 0 ? " :: " + failing.slice(0, 3).join(" | ") : ""}`);
-  } finally {
-    fs.writeFileSync(file, orig);
+    suiteResult = await runSuite();
+  } catch (err) {
+    restoreFile(file);
+    assertFileClean(file, "after mutation restore");
+    currentFile = null;
+    if (exiting) process.exit(1);
+    throw err;
   }
+  if (exiting) {
+    restoreFile(file);
+    assertFileClean(file, "after mutation restore");
+    currentFile = null;
+    process.exit(1);
+  }
+  const { fail, failing } = suiteResult;
+  const status = fail > 0 ? "KILLED" : "SURVIVED";
+  results.push({ name, status, fail, occurrences: count, failing: failing.slice(0, 6) });
+  console.log(`${name}: ${status} (fail=${fail}${count > 1 ? `, ${count} occurrences, only first patched` : ""})${fail > 0 ? " :: " + failing.slice(0, 3).join(" | ") : ""}`);
+  restoreFile(file);
+  assertFileClean(file, "after mutation restore");
+  currentFile = null;
 }
+
+verifyAllTargetsClean("final verification");
+
 const outPath = process.argv[2] || path.join(REPO, "mutation-results.json");
 fs.writeFileSync(outPath, JSON.stringify(results, null, 2));
 console.log(`\nWrote ${outPath}`);
