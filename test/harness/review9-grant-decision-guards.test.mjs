@@ -377,7 +377,7 @@ test("structured proof without MCP invocation does not grant", () => {
 });
 
 // M17 — structured proofs: drop init skill/plugin requirement
-test("structured proof denies when init omits selected skill", () => {
+test("parseClaudeStructuredCapabilityProofs denies when init omits selected skill", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = prepareClaudeLaunch(fixture);
@@ -385,7 +385,170 @@ test("structured proof denies when init omits selected skill", () => {
     const init = JSON.parse(streamLines[0]);
     init.skills = [PLUGIN_CANARY_SKILL];
     streamLines[0] = JSON.stringify(init);
-    const stream = [...streamLines,
+    streamLines.push(
+      JSON.stringify({
+        type: "assistant",
+        session_id: SESSION,
+        message: {
+          content: [{
+            type: "tool_use",
+            name: "mcp__selected__lookup",
+            id: "tu-mcp",
+            input: {},
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        session_id: SESSION,
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "tu-mcp",
+            content: `team-up-canary-ok:${fixture.expected.nonces.mcp}`,
+          }],
+        },
+      })
+    );
+    const stream = streamLines.join("\n");
+    assert.equal(
+      parseClaudeStructuredCapabilityProofs(stream, {
+        expected: fixture.expected,
+        capsule: fixture.capsule,
+        prepared,
+      }),
+      null
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("parseClaudeStructuredCapabilityProofs denies when init omits selected plugin", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const streamLines = proofsWithoutMcp(fixture);
+    const init = JSON.parse(streamLines[0]);
+    init.plugins = [];
+    streamLines[0] = JSON.stringify(init);
+    streamLines.push(
+      JSON.stringify({
+        type: "assistant",
+        session_id: SESSION,
+        message: {
+          content: [{
+            type: "tool_use",
+            name: "mcp__selected__lookup",
+            id: "tu-mcp",
+            input: {},
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        session_id: SESSION,
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "tu-mcp",
+            content: `team-up-canary-ok:${fixture.expected.nonces.mcp}`,
+          }],
+        },
+      })
+    );
+    const stream = streamLines.join("\n");
+    assert.equal(
+      parseClaudeStructuredCapabilityProofs(stream, {
+        expected: fixture.expected,
+        capsule: fixture.capsule,
+        prepared,
+      }),
+      null
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+// M18 — structured proofs: drop verifyInitSurfaceExclusion
+test("parseClaudeStructuredCapabilityProofs denies unselected skill in init inventory", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const streamLines = proofsWithoutMcp(fixture);
+    const init = JSON.parse(streamLines[0]);
+    init.skills = ["capsule.selected-skill", PLUGIN_CANARY_SKILL, "o9k-scout"];
+    streamLines[0] = JSON.stringify(init);
+    streamLines.push(
+      JSON.stringify({
+        type: "assistant",
+        session_id: SESSION,
+        message: {
+          content: [{
+            type: "tool_use",
+            name: "mcp__selected__lookup",
+            id: "tu-mcp",
+            input: {},
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        session_id: SESSION,
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "tu-mcp",
+            content: `team-up-canary-ok:${fixture.expected.nonces.mcp}`,
+          }],
+        },
+      })
+    );
+    const stream = streamLines.join("\n");
+    assert.equal(
+      parseClaudeStructuredCapabilityProofs(stream, {
+        expected: fixture.expected,
+        capsule: fixture.capsule,
+        prepared,
+      }),
+      null
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+// M23 — observe: liveProbe stream re-proof dropped
+test("observeContextIsolation liveProbe without stream_text does not grant", async () => {
+  const { observeContextIsolation } = await import("../../src/harness/isolation-canary.mjs");
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const result = observeContextIsolation({
+      adapter: claudeAdapter,
+      adapterId: "claude",
+      cleanup: false,
+      liveProbe: () => ({
+        observed: buildHappyInventory(fixture),
+      }),
+    });
+    assert.equal(result.context_isolation, null);
+    assert.match(result.error || "", /stream_text|re-proof/i);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+// M26 — live: drop probeHome closed-world check (covered in review8; pin parse layer too)
+test("parseClaudeStructuredCapabilityProofs is unaffected by probe HOME leaks", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepareClaudeLaunch(fixture);
+    const leakRoot = path.join(prepared.env.HOME, ".claude", "skills");
+    fs.mkdirSync(path.join(leakRoot, "o9k-scout"), { recursive: true });
+    fs.writeFileSync(path.join(leakRoot, "o9k-scout", "SKILL.md"), "# leak\n");
+    const stream = [
+      ...proofsWithoutMcp(fixture),
       JSON.stringify({
         type: "assistant",
         session_id: SESSION,
@@ -409,14 +572,21 @@ test("structured proof denies when init omits selected skill", () => {
           }],
         },
       }),
-    ];
+    ].join("\n");
+    assert.ok(
+      parseClaudeStructuredCapabilityProofs(stream, {
+        expected: fixture.expected,
+        capsule: fixture.capsule,
+        prepared,
+      })
+    );
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
       globalHome: fixture.globalHome,
       expected: fixture.expected,
       adapterId: "claude",
-      spawnSyncFn: buildHappySpawnSync(fixture, { streamLines }),
+      spawnSyncFn: () => ({ status: 0, stdout: `${stream}\n`, stderr: "" }),
     });
     assert.equal(observed, null);
   } finally {
@@ -424,7 +594,6 @@ test("structured proof denies when init omits selected skill", () => {
   }
 });
 
-// M24 — observe: codex early-deny removed
 test("observeContextIsolation codex never grants even with forged liveProbe", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
