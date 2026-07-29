@@ -1381,7 +1381,10 @@ export function collectLiveIsolationObservation({
   if (!probeHome || !fs.existsSync(path.join(probeHome, ".claude", ".credentials.json"))) {
     return null;
   }
-  void verifyProbeHomeClosedWorld;
+  const homeCheck = verifyProbeHomeClosedWorld(probeHome, {
+    expectedSkills: expected?.skills || [],
+  });
+  if (!homeCheck.ok) return null;
 
   const authHome = probeHome;
   const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-neutral-"));
@@ -1545,7 +1548,7 @@ export function observeContextIsolation({
     // Never shrink expected arrays to make a partial live surface look like a grant.
     const expected = { ...fixture.expected, nonces: { ...fixture.expected.nonces } };
 
-    if (false) {
+    if (adapterId === "codex") {
       // Codex 0.145.0 lacks native plugin/framework isolation surfaces.
       // Keep declared context_isolation:null and do not grant generic v1.
       return finish({
