@@ -46,6 +46,28 @@ export const CLAUDE_HARNESS_BUILTIN_MCP_SERVERS = Object.freeze([
   "team_up_command_broker",
 ]);
 
+/**
+ * Claude Code 2.1.220 built-in skills visible in system/init of a clean harness.
+ * Deliberate allowlist — add entries only when a CLI version introduces new built-ins.
+ */
+export const CLAUDE_HARNESS_BUILTIN_SKILLS = Object.freeze([
+  "design-sync",
+  "dataviz",
+  "update-config",
+  "verify",
+  "debug",
+  "code-review",
+  "simplify",
+  "batch",
+  "fewer-permission-prompts",
+  "doctor",
+  "loop",
+  "schedule",
+  "claude-api",
+  "run",
+  "run-skill-generator",
+]);
+
 function contentNonceField(text, nonce) {
   return `${text}\nnonce:${nonce}\n`;
 }
@@ -87,7 +109,13 @@ export function buildAllowedInitSurface({ expected, prepared } = {}) {
   const allowedSkills = new Set([
     ...(expected?.skills || []),
     PLUGIN_CANARY_SKILL,
+    ...CLAUDE_HARNESS_BUILTIN_SKILLS,
   ]);
+  for (const plugin of expected?.plugins || []) {
+    // Claude reports plugin skills as plugin-id:skill-segment-with-hyphens.
+    allowedSkills.add(`${plugin}:${PLUGIN_CANARY_SKILL.replace(/\./g, "-")}`);
+    allowedSkills.add(`${plugin}:${PLUGIN_CANARY_SKILL}`);
+  }
   const allowedPlugins = new Set(expected?.plugins || []);
   const allowedMcpServers = new Set(["selected"]);
   const allowedTools = new Set([
