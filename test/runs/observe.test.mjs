@@ -15,7 +15,7 @@ import {
   createObserverLoop,
   handleStall,
   handlePostAnswerStall,
-  handleSilenceEscalate,
+  handleStallCeilingEscalate,
   appendObservationLog,
   observationLogPath,
   escalateRun,
@@ -34,7 +34,7 @@ import {
   runObserver,
   MAX_AUTO_ANSWERS,
   MAX_KEYS_PER_ANSWER,
-  MAX_SILENCE_JUDGE_CALLS,
+  MAX_STALL_EPISODES,
   ALLOWED_KEYS,
   DEFAULT_SILENCE_SEC,
   DEFAULT_STALL_TICKS,
@@ -149,10 +149,10 @@ test("buildJudgePrompt includes mailbox age and frozen-screen guidance", () => {
     role: "worker",
     elapsedSec: 90,
     mailboxAgeSec: 30,
-    silenceSec: 120,
+    silenceSec: 900,
   });
   assert.match(prompt, /mailbox_age_sec: 30/);
-  assert.match(prompt, /silence_sec: 120/);
+  assert.match(prompt, /silence_sec: 900/);
   assert.match(prompt, /frozen terminal screen is NOT evidence of idleness/i);
 });
 
@@ -210,29 +210,64 @@ test("hermes ticking footer never pane-stalls but silence trigger fires", () => 
   assert.equal(silent.trigger, "silence");
 });
 
+test("trigger change re-opens episode within throttle window", () => {
+  const frozen = readFixture("cursor-agent/trust-prompt-6s.txt");
+  const loop = createObserverLoop();
+  const silenceSec = 120;
+  const t0 = 5_000_000;
+
+  for (let i = 0; i < 3; i++) {
+    observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec, now: () => t0 });
+  }
+  const ep1 = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec, now: () => t0 });
+  Object.assign(loop, ep1);
+  assert.equal(ep1.event, "stall_detected");
+  loop.lastJudgeAt = t0;
+  loop.judgeCalledThisEpisode = true;
+
+  const stillFresh = observerTick(loop, frozen, {
+    mailboxAgeSec: 5,
+    silenceSec,
+    now: () => t0 + 1000,
+  });
+  Object.assign(loop, stillFresh);
+  assert.equal(stillFresh.event, "stall_ongoing");
+
+  const ep2 = observerTick(loop, frozen, {
+    mailboxAgeSec: silenceSec,
+    silenceSec,
+    now: () => t0 + 2000,
+  });
+  assert.equal(ep2.event, "stall_detected");
+  assert.equal(ep2.trigger, "both");
+});
+
 test("frozen pane with fresh mailbox re-opens episode when mailbox goes stale", () => {
   const frozen = readFixture("cursor-agent/trust-prompt-6s.txt");
   const loop = createObserverLoop();
   const silenceSec = 120;
 
-  // Episode 1: pane stalled, mailbox fresh -> judge once, then stall_ongoing
   for (let i = 0; i < 3; i++) {
     const next = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec });
     Object.assign(loop, next);
   }
-  assert.equal(loop.judgeCalledThisEpisode, false);
   const ep1 = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec });
   Object.assign(loop, ep1);
   assert.equal(ep1.event, "stall_detected");
+  assert.equal(ep1.trigger, "pane");
 
-  loop.judgeCalledThisEpisode = true; // simulate handleStall wait downgrade
+  loop.judgeCalledThisEpisode = true;
+  loop.lastJudgeAt = Date.now();
 
   const ongoing = observerTick(loop, frozen, { mailboxAgeSec: 5, silenceSec });
   Object.assign(loop, ongoing);
   assert.equal(ongoing.event, "stall_ongoing");
 
-  // Episode 2: same frozen pane, mailbox now stale -> latch clears, judge again
-  const ep2 = observerTick(loop, frozen, { mailboxAgeSec: silenceSec, silenceSec });
+  const ep2 = observerTick(loop, frozen, {
+    mailboxAgeSec: silenceSec,
+    silenceSec,
+    now: () => Date.now() + silenceSec * 1000,
+  });
   Object.assign(loop, ep2);
   assert.equal(ep2.event, "stall_detected");
   assert.equal(ep2.trigger, "both");
@@ -558,23 +593,62 @@ test("hydrateLoopFromLog counts answers and treats malformed line as answer", wi
   assert.match(v.reason, /auto-answer cap/);
 }));
 
-test("silence path allows two judge calls then escalates unconditionally", () => {
+test("stall episode ceiling fires after MAX_STALL_EPISODES judge calls", () => {
   const pane = readFixture("hermes/trust-prompt-6s.txt");
   const loop = createObserverLoop();
   const silenceSec = 10;
   const t0 = 1_000_000;
-  loop.silenceJudgeCount = MAX_SILENCE_JUDGE_CALLS;
+  loop.stallEpisodeCount = MAX_STALL_EPISODES;
   loop.judgeCalledThisEpisode = true;
 
-  const third = observerTick(loop, `${pane}\nmore`, {
+  const ceiling = observerTick(loop, `${pane}\nmore`, {
     mailboxAgeSec: silenceSec,
     silenceSec,
     now: () => t0 + 30_000,
   });
-  assert.equal(third.event, "silence_escalate");
+  assert.equal(ceiling.event, "stall_ceiling_escalate");
 });
 
-test("silence judge calls respect minimum interval", () => {
+test("stall episode counter increments through handleStall on each judge call", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const loop = createObserverLoop();
+  const pane = readFixture("cursor-agent/startup-idle-3s.txt");
+  const verdict = { state: "working", reason: "busy", action: "wait" };
+
+  const r1 = handleStall({
+    runId: state.runId,
+    state,
+    loop,
+    capture: pane,
+    deps: {
+      roster: TEST_ROSTER,
+      usage: {},
+      judge: () => ({ ok: true, stdout: JSON.stringify(verdict) }),
+      now: () => Date.now(),
+      mailboxAgeSec: DEFAULT_SILENCE_SEC,
+      stallTrigger: "both",
+    },
+  });
+  assert.equal(r1.loop.stallEpisodeCount, 1);
+
+  const r2 = handleStall({
+    runId: state.runId,
+    state,
+    loop: r1.loop,
+    capture: pane,
+    deps: {
+      roster: TEST_ROSTER,
+      usage: {},
+      judge: () => ({ ok: true, stdout: JSON.stringify(verdict) }),
+      now: () => Date.now(),
+      mailboxAgeSec: DEFAULT_SILENCE_SEC,
+      stallTrigger: "both",
+    },
+  });
+  assert.equal(r2.loop.stallEpisodeCount, 2);
+}));
+
+test("judge calls respect minimum interval for all triggers", () => {
   const pane = readFixture("hermes/trust-prompt-6s.txt");
   const loop = createObserverLoop();
   const silenceSec = 10;
@@ -586,8 +660,8 @@ test("silence judge calls respect minimum interval", () => {
     now: () => t0,
   });
   Object.assign(loop, first);
-  loop.silenceJudgeCount = 1;
-  loop.lastSilenceJudgeAt = t0;
+  loop.stallEpisodeCount = 1;
+  loop.lastJudgeAt = t0;
   loop.judgeCalledThisEpisode = true;
 
   const tooSoon = observerTick(loop, `${pane}\nb`, {
@@ -649,10 +723,10 @@ test("post-answer escalation via real auto-answer path", withTempRuns(async () =
   assert.equal(runs.loadState(state.runId).status, "waiting_human");
 }));
 
-test("handleSilenceEscalate sets waiting_human", withTempRuns(async () => {
+test("handleStallCeilingEscalate sets waiting_human", withTempRuns(async () => {
   const state = createRunWithTmux();
   const loop = createObserverLoop();
-  const result = handleSilenceEscalate({ runId: state.runId, loop, deps: {} });
+  const result = handleStallCeilingEscalate({ runId: state.runId, loop, deps: {} });
   assert.equal(result.stop, true);
   assert.equal(runs.loadState(state.runId).status, "waiting_human");
 }));
@@ -777,4 +851,146 @@ test("waitMailbox spawns and kills observer child", withTempRuns(async () => {
   assert.ok(spawned);
   assert.ok(killed);
   assert.equal(result.waitExit, 2);
+}));
+
+const INTEGRATION_ROSTER = {
+  clis: { cursor: { cmd: ["cursor-agent", "--model", "{model}", "{prompt}"] } },
+  models: { "grok-4.5-high": { provider: "xai", cli: ["cursor"] } },
+  roles: { observer: { chain: ["cursor:grok-4.5-high"] } },
+};
+
+test("frozen pane and dead mailbox escalates after stall episode ceiling", withTempRuns(async (dir) => {
+  const state = createRunWithTmux();
+  const runId = state.runId;
+  const frozen = readFixture("cursor-agent/trust-prompt-6s.txt");
+  const silenceSec = 2;
+  let judgeCalls = 0;
+  const start = Date.now();
+
+  await runObserver(runId, {
+    pollSec: 0.2,
+    stallTicks: 3,
+    silenceSec,
+    roster: INTEGRATION_ROSTER,
+    usage: {},
+    parentPid: process.pid,
+    isParentAlive: () => true,
+    keepLock: true,
+    capture: () => frozen,
+    judge: () => {
+      judgeCalls += 1;
+      return { ok: true, stdout: JSON.stringify({ state: "working", reason: "busy", action: "wait" }) };
+    },
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    shouldStop: () => Date.now() - start > 8000,
+  });
+
+  assert.ok(judgeCalls >= MAX_STALL_EPISODES);
+  assert.equal(runs.loadState(runId).status, "waiting_human");
+}));
+
+test("heartbeating worker with moving pane never escalates", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const runId = state.runId;
+  const paneA = readFixture("hermes/trust-prompt-6s.txt");
+  const paneB = readFixture("hermes/trust-prompt-10s.txt");
+  const silenceSec = 2;
+  let tick = 0;
+  let judgeCalls = 0;
+  const start = Date.now();
+  const beat = setInterval(() => touchMailbox(runId), 5000);
+
+  await runObserver(runId, {
+    pollSec: 0.2,
+    stallTicks: 3,
+    silenceSec,
+    roster: INTEGRATION_ROSTER,
+    usage: {},
+    parentPid: process.pid,
+    isParentAlive: () => true,
+    keepLock: true,
+    capture: () => (tick++ % 2 ? paneA : paneB),
+    judge: () => {
+      judgeCalls += 1;
+      return { ok: true, stdout: JSON.stringify({ state: "working", reason: "ok", action: "wait" }) };
+    },
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    shouldStop: () => Date.now() - start > 6000,
+  });
+  clearInterval(beat);
+
+  assert.equal(runs.loadState(runId).status, "watching");
+  assert.equal(fs.existsSync(path.join(runs.mailboxDir(runId), "QUESTIONS.md")), false);
+}));
+
+test("alternating fresh and stale mailbox keeps judge calls bounded", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const runId = state.runId;
+  const frozen = readFixture("cursor-agent/trust-prompt-6s.txt");
+  const silenceSec = 2;
+  let judgeCalls = 0;
+  const start = Date.now();
+  const beat = setInterval(() => touchMailbox(runId), silenceSec * 1500);
+
+  await runObserver(runId, {
+    pollSec: 0.2,
+    stallTicks: 3,
+    silenceSec,
+    roster: INTEGRATION_ROSTER,
+    usage: {},
+    parentPid: process.pid,
+    isParentAlive: () => true,
+    keepLock: true,
+    capture: () => frozen,
+    judge: () => {
+      judgeCalls += 1;
+      return { ok: true, stdout: JSON.stringify({ state: "working", reason: "busy", action: "wait" }) };
+    },
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    shouldStop: () => Date.now() - start > 8000,
+  });
+  clearInterval(beat);
+
+  assert.ok(judgeCalls <= 12, `expected bounded judge calls, got ${judgeCalls}`);
+  assert.equal(runs.loadState(runId).status, "watching");
+}));
+
+test("working escalate with fresh mailbox is deferred then honoured on repeat", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const runId = state.runId;
+  const frozen = readFixture("claude/working-20s.txt");
+  const silenceSec = 2;
+  let judgeCalls = 0;
+  const start = Date.now();
+  const beat = setInterval(() => touchMailbox(runId), 500);
+
+  await runObserver(runId, {
+    pollSec: 0.2,
+    stallTicks: 3,
+    silenceSec,
+    roster: INTEGRATION_ROSTER,
+    usage: {},
+    parentPid: process.pid,
+    isParentAlive: () => true,
+    keepLock: true,
+    capture: () => frozen,
+    judge: () => {
+      judgeCalls += 1;
+      return {
+        ok: true,
+        stdout: JSON.stringify({
+          state: "working",
+          reason: "frozen screen",
+          action: "escalate",
+          question: "stuck?",
+        }),
+      };
+    },
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    shouldStop: () => Date.now() - start > 6000,
+  });
+  clearInterval(beat);
+
+  assert.ok(judgeCalls >= 2);
+  assert.equal(runs.loadState(runId).status, "waiting_human");
 }));

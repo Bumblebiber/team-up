@@ -774,7 +774,13 @@ export function resumeAll({
   return report;
 }
 
-export function waitMailbox(runId, { ceilingSec = 3600, observe = true, spawnObserver: spawnObserverFn } = {}) {
+export function waitMailbox(runId, {
+  ceilingSec = 3600,
+  observe = true,
+  pollSec,
+  silenceSec,
+  spawnObserver: spawnObserverFn,
+} = {}) {
   let resolved = resolveRunState(loadState(runId), classifyMailbox(runId));
   if (resolved.changed) {
     resolved = persistResolvedRunStatus(runId, resolved.classified);
@@ -794,10 +800,17 @@ export function waitMailbox(runId, { ceilingSec = 3600, observe = true, spawnObs
       } else {
         // Lazy import avoided — spawn node child directly to keep waitMailbox sync.
         const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "observe.mjs");
+        const observerEnv = { ...process.env };
+        if (pollSec != null && Number(pollSec) > 0) {
+          observerEnv.TEAM_UP_OBSERVER_POLL_SEC = String(pollSec);
+        }
+        if (silenceSec != null && Number(silenceSec) > 0) {
+          observerEnv.TEAM_UP_OBSERVER_SILENCE_SEC = String(silenceSec);
+        }
         observerChild = spawn(process.execPath, [script, runId], {
           stdio: "ignore",
           detached: false,
-          env: { ...process.env },
+          env: observerEnv,
         });
       }
     }

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import {
   atomicWriteText,
   captureTmuxPane,
@@ -18,14 +18,14 @@ import { loadJson, requireRoster, usagePath } from "../roster/config.mjs";
 
 export const DEFAULT_POLL_SEC = 5;
 export const DEFAULT_STALL_TICKS = 3;
-export const DEFAULT_SILENCE_SEC = 120;
+export const DEFAULT_SILENCE_SEC = 900;
 export const JUDGE_TIMEOUT_MS = 60_000;
 export const MAX_AUTO_ANSWERS = 3;
 export const PANE_TAIL_BYTES = 8 * 1024;
 export const OBSERVER_PID_FILE = "OBSERVER.pid";
 export const OBSERVATION_LOG_FILE = "OBSERVATION.log";
 export const MAX_KEYS_PER_ANSWER = 8;
-export const MAX_SILENCE_JUDGE_CALLS = 2;
+export const MAX_STALL_EPISODES = 3;
 
 /** Mailbox files written by the observer — excluded from worker-silence age. */
 export const OBSERVER_OWNED_MAILBOX_FILES = new Set([
@@ -502,6 +502,20 @@ export function observerTick(loop, capture, deps = {}) {
   const fp = paneFingerprint(capture);
   const silenceStalled = mailboxAgeSec >= silenceSec;
 
+  // Worker progress: mailbox age dropped — reset stall-episode budget.
+  if (loop.prevMailboxAgeSec != null && mailboxAgeSec < loop.prevMailboxAgeSec) {
+    loop.stallEpisodeCount = 0;
+    loop.deferredEscalateVerdict = false;
+  } else if (
+    loop.prevMailboxAgeSec != null
+    && loop.prevMailboxAgeSec >= silenceSec
+    && mailboxAgeSec < silenceSec
+  ) {
+    loop.stallEpisodeCount = 0;
+    loop.deferredEscalateVerdict = false;
+  }
+  loop.prevMailboxAgeSec = mailboxAgeSec;
+
   let paneChanged = false;
   if (fp !== loop.prevFingerprint) {
     paneChanged = loop.prevFingerprint != null;
@@ -540,27 +554,28 @@ export function observerTick(loop, capture, deps = {}) {
   if (silenceStalled && !paneStalled) trigger = "silence";
   else if (silenceStalled && paneStalled) trigger = "both";
 
-  const mailboxFresh = mailboxAgeSec < silenceSec;
-  const episodeKey = `${trigger}:${mailboxFresh ? "fresh" : "stale"}`;
-  if (loop.lastEpisodeKey != null && episodeKey !== loop.lastEpisodeKey) {
+  if (loop.lastEpisodeKey != null && trigger !== loop.lastEpisodeKey) {
     loop.judgeCalledThisEpisode = false;
   }
-  loop.lastEpisodeKey = episodeKey;
+  loop.lastEpisodeKey = trigger;
 
-  if (trigger === "silence") {
-    if (loop.silenceJudgeCount >= MAX_SILENCE_JUDGE_CALLS) {
-      return { ...loop, event: "silence_escalate", capture, trigger };
-    }
-    if (
-      loop.lastSilenceJudgeAt != null
-      && (nowMs - loop.lastSilenceJudgeAt) < silenceSec * 1000
-    ) {
-      return { ...loop, event: "stall_ongoing" };
-    }
+  if (loop.stallEpisodeCount >= MAX_STALL_EPISODES) {
+    return { ...loop, event: "stall_ceiling_escalate", capture, trigger };
+  }
+
+  const throttleExpired = loop.lastJudgeAt == null
+    || (nowMs - loop.lastJudgeAt) >= silenceSec * 1000;
+
+  if (!throttleExpired) {
+    return { ...loop, event: "stall_ongoing" };
   }
 
   if (loop.judgeCalledThisEpisode) {
-    return { ...loop, event: "stall_ongoing" };
+    if (loop.lastJudgeAt != null) {
+      loop.judgeCalledThisEpisode = false;
+    } else {
+      return { ...loop, event: "stall_ongoing" };
+    }
   }
 
   loop.judgeCalledThisEpisode = true;
@@ -573,8 +588,10 @@ export function createObserverLoop() {
     identicalCount: 0,
     judgeCalledThisEpisode: false,
     lastEpisodeKey: null,
-    silenceJudgeCount: 0,
-    lastSilenceJudgeAt: null,
+    stallEpisodeCount: 0,
+    lastJudgeAt: null,
+    prevMailboxAgeSec: null,
+    deferredEscalateVerdict: false,
     autoAnswerCount: 0,
     answeredPanes: new Set(),
     judgeFailedEscalated: false,
@@ -619,10 +636,8 @@ export function handleStall({
     silence_sec: silenceSec,
   });
 
-  if (deps.stallTrigger === "silence") {
-    loop.silenceJudgeCount += 1;
-    loop.lastSilenceJudgeAt = now();
-  }
+  loop.stallEpisodeCount += 1;
+  loop.lastJudgeAt = now();
 
   const prompt = buildJudgePrompt({
     pane: capture,
@@ -702,6 +717,24 @@ export function handleStall({
     return { loop, stop: false };
   }
 
+  if (
+    verified.action === "escalate"
+    && verdict.action === "escalate"
+    && mailboxAgeSec < silenceSec
+    && (verdict.state === "working" || verdict.state === "finished")
+  ) {
+    if (!loop.deferredEscalateVerdict) {
+      loop.deferredEscalateVerdict = true;
+      log({
+        kind: "decision",
+        proposed_action: "escalate",
+        action: "wait",
+        reason: "deferred escalate; fresh mailbox contradicts working/finished verdict",
+      });
+      return { loop, stop: false };
+    }
+  }
+
   if (verified.action === "escalate") {
     escalate(verified.question);
     loop.escalated = true;
@@ -742,7 +775,7 @@ export function handlePostAnswerStall({
   return { loop, stop: true };
 }
 
-export function handleSilenceEscalate({
+export function handleStallCeilingEscalate({
   runId,
   loop,
   deps = {},
@@ -751,11 +784,16 @@ export function handleSilenceEscalate({
     log = (entry) => appendObservationLog(runId, entry, deps),
     escalate = (q) => escalateRun(runId, q, deps),
   } = deps;
-  const question = "Worker mailbox silent beyond threshold; human attention required.";
-  log({ kind: "decision", action: "escalate", reason: "silence cap", question });
+  const question = "Worker stalled beyond episode ceiling; human attention required.";
+  log({ kind: "decision", action: "escalate", reason: "stall episode ceiling", question });
   escalate(question);
   loop.escalated = true;
   return { loop, stop: true };
+}
+
+/** @deprecated alias — use handleStallCeilingEscalate */
+export function handleSilenceEscalate(args) {
+  return handleStallCeilingEscalate(args);
 }
 
 export async function runObserver(runId, deps = {}) {
@@ -833,8 +871,16 @@ export async function runObserver(runId, deps = {}) {
         });
         Object.assign(loop, result.loop);
         if (result.stop) break;
+      } else if (next.event === "stall_ceiling_escalate") {
+        const result = handleStallCeilingEscalate({
+          runId,
+          loop,
+          deps,
+        });
+        Object.assign(loop, result.loop);
+        if (result.stop) break;
       } else if (next.event === "silence_escalate") {
-        const result = handleSilenceEscalate({
+        const result = handleStallCeilingEscalate({
           runId,
           loop,
           deps,
@@ -855,13 +901,23 @@ function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function parseObserverEnv(env = process.env) {
+  const pollSec = Number(env.TEAM_UP_OBSERVER_POLL_SEC ?? env.O9K_OBSERVER_POLL_SEC);
+  const silenceSec = Number(env.TEAM_UP_OBSERVER_SILENCE_SEC ?? env.O9K_OBSERVER_SILENCE_SEC);
+  return {
+    pollSec: Number.isFinite(pollSec) && pollSec > 0 ? pollSec : DEFAULT_POLL_SEC,
+    silenceSec: Number.isFinite(silenceSec) && silenceSec > 0 ? silenceSec : DEFAULT_SILENCE_SEC,
+  };
+}
+
 function main() {
   const runId = process.argv[2];
   if (!runId) {
     console.error("usage: observe.mjs <runId>");
     process.exit(1);
   }
-  runObserver(runId).catch((e) => {
+  const { pollSec, silenceSec } = parseObserverEnv();
+  runObserver(runId, { pollSec, silenceSec }).catch((e) => {
     console.error(`observer error: ${e.message}`);
     process.exit(1);
   });
