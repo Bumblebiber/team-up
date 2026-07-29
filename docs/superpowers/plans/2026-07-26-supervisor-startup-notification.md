@@ -7,6 +7,18 @@ host: codex
 -->
 # Supervisor Startup and Notification Implementation Plan
 
+> **SUPERSEDED 2026-07-29.** Do not implement this plan. Tasks 1–8 were built on
+> `feature/supervisor-startup-notification` (deleted; last commit `677b23d`,
+> restorable from the reflog) and the branch was rejected as NOT_READY: only one
+> of five CLIs ever got a startup classifier, and the readiness marker this plan
+> relies on — `→ Add a follow-up` for cursor-agent — is provably wrong. It is the
+> input-box placeholder and appears while the agent is working as well as when it
+> is idle; see `test/fixtures/panes/cursor-agent/working-followup-placeholder.txt`.
+>
+> Replaced by adaptive pane observation, which polls the pane and the mailbox and
+> lets a model judge a stalled screen instead of matching per-CLI strings:
+> `docs/superpowers/specs/2026-07-28-adaptive-pane-observation-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prevent pre-model harness prompts and completed workers from silently trapping the supervisor by certifying real startup readiness and delivering durable terminal events through a wake-capable parent route.
