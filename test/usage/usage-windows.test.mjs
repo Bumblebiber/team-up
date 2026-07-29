@@ -12,17 +12,29 @@ import {
 
 const NOW = Date.parse("2026-07-17T12:00:00Z");
 
-test("parseResetAt parses ISO and codex-style reset strings in UTC", () => {
+test("parseResetAt parses ISO reset strings", () => {
   assert.equal(parseResetAt("2026-07-23T17:26:00Z", NOW), Date.parse("2026-07-23T17:26:00Z"));
-  const codex = parseResetAt("17:26 on 23 Jul", NOW);
-  assert.equal(codex, Date.UTC(2026, 6, 23, 17, 26, 0));
-  assert.ok(codex > NOW);
+});
+
+test("parseResetAt converts codex local wall time to UTC (CEST)", () => {
+  const berlin = "Europe/Berlin";
+  const summerNow = Date.parse("2026-07-28T12:00:00Z");
+  const codex = parseResetAt("14:28 on 4 Aug", summerNow, { timeZone: berlin });
+  assert.equal(codex, Date.parse("2026-08-04T12:28:00.000Z"));
+});
+
+test("parseResetAt converts codex local wall time to UTC (CET winter)", () => {
+  const berlin = "Europe/Berlin";
+  const winterNow = Date.parse("2025-12-15T12:00:00Z");
+  const codex = parseResetAt("14:28 on 4 Jan", winterNow, { timeZone: berlin });
+  assert.equal(codex, Date.parse("2026-01-04T13:28:00.000Z"));
 });
 
 test("parseResetAt rolls codex date to next year when month/day already passed", () => {
+  const berlin = "Europe/Berlin";
   const winter = Date.parse("2026-12-15T12:00:00Z");
-  const codex = parseResetAt("17:26 on 23 Jul", winter);
-  assert.equal(codex, Date.UTC(2027, 6, 23, 17, 26, 0));
+  const codex = parseResetAt("17:26 on 23 Jul", winter, { timeZone: berlin });
+  assert.equal(codex, Date.parse("2027-07-23T15:26:00.000Z"));
 });
 
 test("windowIsBlocking ignores windows past resets_at", () => {
@@ -102,6 +114,12 @@ test("modelUsageGate blocks only this model's windows when present", () => {
   });
   assert.equal(hot.blocked, true);
   assert.equal(cool.blocked, false);
+});
+
+test("codex:5h uses burst handoff threshold via isBurstWindow pattern", () => {
+  const limits = { handoff_at: 0.95, handoff_at_burst: 0.8 };
+  assert.equal(resolveHandoffAt("codex:5h", limits), 0.8);
+  assert.equal(WINDOW_MAX_AGE_MS["codex:5h"], 5 * 3_600_000);
 });
 
 test("resolveHandoffAt uses handoff_at_burst for 5h/session windows, handoff_at otherwise", () => {
