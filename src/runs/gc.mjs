@@ -442,6 +442,7 @@ function advanceStaleCleanupClaim(latest, runId, nowIso, {
   }
 
   if (claim.phase === "tmux_stopped") {
+    markTerminalTmuxCleanedState(latest, claim.tmux_stopped_at || nowIso, claim.worker_tmux_id);
     const finalize = finalizeStaleCleanup(latest, runId, nowIso, hooks);
     claim.phase = "finalized";
     claim.finalized_at = nowIso;
@@ -821,7 +822,10 @@ export function gcRuns({
         continue;
       }
       const sessionId = tmux.sessionId || state.cleanup?.worker_tmux_id || null;
-      stopTmux(state.worker.tmux);
+      const stopped = stopTmux(state.worker.tmux);
+      if (stopped === false) {
+        continue;
+      }
       markTerminalTmuxCleaned(state.runId, nowIso, sessionId);
       continue;
     }

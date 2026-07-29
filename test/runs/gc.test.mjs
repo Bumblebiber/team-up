@@ -778,6 +778,59 @@ test("typed blocked result without STATUS finalizes as waiting_human not synthet
   assert.deepEqual(stopped, []);
 }));
 
+test("ordinary terminal kill retries when stopTmux returns false", withTempRuns(async () => {
+  const terminal = createGcFixture({ status: "done" });
+  const stopped = [];
+  let stopCalls = 0;
+
+  const first = gcRuns({
+    now: new Date(NOW),
+    states: [terminal],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: true, activityMs: null, sessionId: "$gc" }),
+    stopTmux: session => {
+      stopCalls += 1;
+      stopped.push(session);
+      return false;
+    },
+  });
+
+  assert.equal(first.runs[0].action, "kill_terminal");
+  assert.equal(stopCalls, 1);
+  const afterFailed = loadState(terminal.runId);
+  assert.equal(afterFailed.worker?.tmux, "worker-gc");
+  assert.equal(afterFailed.cleanup?.terminal_tmux_stopped_at, undefined);
+
+  const second = gcRuns({
+    now: new Date(NOW + 60_000),
+    states: [loadState(terminal.runId)],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: true, activityMs: null, sessionId: "$gc" }),
+    stopTmux: session => {
+      stopCalls += 1;
+      stopped.push(session);
+      return true;
+    },
+  });
+
+  assert.equal(second.runs[0].action, "kill_terminal");
+  assert.equal(stopCalls, 2);
+  const afterSuccess = loadState(terminal.runId);
+  assert.equal(afterSuccess.worker?.tmux, undefined);
+  assert.ok(afterSuccess.cleanup?.terminal_tmux_stopped_at);
+  assert.deepEqual(stopped, ["worker-gc", "worker-gc"]);
+
+  const third = gcRuns({
+    now: new Date(NOW + 120_000),
+    states: [loadState(terminal.runId)],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: true, activityMs: null, sessionId: "$gc" }),
+    stopTmux: () => assert.fail("must not stop after cleanup marked"),
+  });
+  assert.equal(third.runs[0].action, "skip");
+  assert.equal(stopCalls, 2);
+}));
+
 test("gc terminal cleanup is idempotent and dry-run never mutates", withTempRuns(async () => {
   const terminal = createGcFixture({ status: "done" });
   const stopped = [];
@@ -888,6 +941,61 @@ test("crash after tmux stop resumes and finalizes stale failure", withTempRuns(a
   assert.equal(latest.status, "failed");
   assert.equal(latest.cleanup?.stale_publication_claim, undefined);
   assert.equal(fs.readFileSync(path.join(runDir(state.runId), "mailbox", "STATUS"), "utf8").trim(), "failed");
+  assert.deepEqual(stopped, []);
+}));
+
+test("crash resume from tmux_stopped clears worker tmux and ignores reused name", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const candidate = loadState(state.runId);
+  const detectedAt = candidate.cleanup.stale_detected_at;
+  candidate.cleanup = {
+    stale_publication_claim: {
+      token: `${state.runId}.crash-result`,
+      worker_tmux: "worker-gc",
+      worker_tmux_id: "$old",
+      stale_detected_at: detectedAt,
+      phase: "tmux_stopped",
+      claimed_at: new Date(NOW).toISOString(),
+      lease_released_at: new Date(NOW).toISOString(),
+      tmux_stopped_at: new Date(NOW).toISOString(),
+    },
+  };
+  delete candidate.cleanup.stale_detected_at;
+  saveState(candidate);
+  assert.equal(loadState(state.runId).worker?.tmux, "worker-gc");
+
+  const stopped = [];
+  gcRuns({
+    ...makeStaleDeps({
+      tmuxExists: () => false,
+      stopTmux: session => stopped.push(session),
+    }),
+    states: [loadState(state.runId)],
+    releaseLease: () => assert.fail("must not release after stop"),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "failed");
+  assert.equal(latest.worker?.tmux, undefined);
+  assert.ok(latest.cleanup?.terminal_tmux_stopped_at);
+  assert.deepEqual(stopped, []);
+
+  const terminal = loadState(state.runId);
+  terminal.status = "done";
+  terminal.worker = { tmux: "worker-gc" };
+  saveState(terminal);
+  aliveTmuxSessions.add("$new");
+
+  gcRuns({
+    now: new Date(NOW + 60_000),
+    states: [loadState(state.runId)],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: true, activityMs: null, sessionId: "$new" }),
+    tmuxExists: sessionId => aliveTmuxSessions.has(sessionId),
+    stopTmux: session => stopped.push(session),
+    releaseLease: () => assert.fail("terminal sweep must not release lease"),
+  });
+
   assert.deepEqual(stopped, []);
 }));
 
