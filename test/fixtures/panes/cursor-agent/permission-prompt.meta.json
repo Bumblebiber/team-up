@@ -1,0 +1,35 @@
+{
+  "cli": "cursor-agent",
+  "cliVersion": "2026.07.23-e383d2b",
+  "state": "permission-prompt",
+  "command": [
+    "cursor-agent"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    15,
+    25
+  ],
+  "sessionStart": "2026-07-28T14:10:54Z",
+  "input": {
+    "text": "Delete the file package.json permanently using rm.",
+    "sentAtSec": 10
+  },
+  "captures": [
+    {
+      "offsetSec": 15,
+      "timestamp": "2026-07-28T14:11:09Z",
+      "file": "cursor-agent/permission-prompt-15s.txt"
+    },
+    {
+      "offsetSec": 25,
+      "timestamp": "2026-07-28T14:11:19Z",
+      "file": "cursor-agent/permission-prompt-25s.txt"
+    }
+  ]
+}

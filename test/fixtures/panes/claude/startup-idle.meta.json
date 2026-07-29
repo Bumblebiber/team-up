@@ -1,0 +1,38 @@
+{
+  "cli": "claude",
+  "cliVersion": "2.1.220 (Claude Code)",
+  "state": "startup-idle",
+  "command": [
+    "claude"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    3,
+    5,
+    8
+  ],
+  "sessionStart": "2026-07-28T14:11:55Z",
+  "input": null,
+  "captures": [
+    {
+      "offsetSec": 3,
+      "timestamp": "2026-07-28T14:11:58Z",
+      "file": "claude/startup-idle-3s.txt"
+    },
+    {
+      "offsetSec": 5,
+      "timestamp": "2026-07-28T14:12:00Z",
+      "file": "claude/startup-idle-5s.txt"
+    },
+    {
+      "offsetSec": 8,
+      "timestamp": "2026-07-28T14:12:03Z",
+      "file": "claude/startup-idle-8s.txt"
+    }
+  ]
+}

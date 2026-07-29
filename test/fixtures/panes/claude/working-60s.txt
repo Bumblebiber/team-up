@@ -1,0 +1,40 @@
+╭─── Claude Code v2.1.220 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                        │
+│               Welcome back Commander!              │ Run /init to create a CLAUDE.md file with instructions for Cla… │
+│                                                    │ ─────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                      │
+│                      ▝▜█████▛▘                     │ Bug fixes and reliability improvements                          │
+│                        ▘▘ ▝▝                       │ Added Claude Opus 5 (`claude-opus-5`), now the default Opus mo… │
+│       Opus 5 with high effort · Claude Pro ·       │ Added `sandbox.network.strictAllowlist` setting to deny non-al… │
+│       benni.z1mm3r@gmail.com's Organization        │ /release-notes for more                                         │
+│     ~/projects/team-up/.worktrees/pane-fixtures    │                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+                                                       
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯                           
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  bbbee PM Workflow —… · summary in 0                                                                                 
+  ⏸ manual mode on · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

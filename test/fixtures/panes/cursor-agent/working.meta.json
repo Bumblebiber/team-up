@@ -1,0 +1,41 @@
+{
+  "cli": "cursor-agent",
+  "cliVersion": "2026.07.23-e383d2b",
+  "state": "working",
+  "command": [
+    "cursor-agent"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    10,
+    30,
+    60
+  ],
+  "sessionStart": "2026-07-28T14:04:53Z",
+  "input": {
+    "text": "Run exactly this shell command: sleep 75. After it completes, reply with only the word done.",
+    "sentAtSec": 8
+  },
+  "captures": [
+    {
+      "offsetSec": 10,
+      "timestamp": "2026-07-28T14:05:03Z",
+      "file": "cursor-agent/working-10s.txt"
+    },
+    {
+      "offsetSec": 30,
+      "timestamp": "2026-07-28T14:05:23Z",
+      "file": "cursor-agent/working-30s.txt"
+    },
+    {
+      "offsetSec": 60,
+      "timestamp": "2026-07-28T14:05:53Z",
+      "file": "cursor-agent/working-60s.txt"
+    }
+  ]
+}

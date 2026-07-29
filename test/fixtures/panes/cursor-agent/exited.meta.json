@@ -1,0 +1,34 @@
+{
+  "cli": "cursor-agent",
+  "cliVersion": "2026.07.23-e383d2b",
+  "state": "exited",
+  "command": [
+    "bash",
+    "-lc",
+    "cursor-agent --not-a-real-flag 2>&1; echo EXIT:$?; sleep 3"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 1,
+  "offsets": [
+    1,
+    2
+  ],
+  "sessionStart": "2026-07-28T14:11:30Z",
+  "input": null,
+  "captures": [
+    {
+      "offsetSec": 1,
+      "timestamp": "2026-07-28T14:11:31Z",
+      "file": "cursor-agent/exited-1s.txt"
+    },
+    {
+      "offsetSec": 2,
+      "timestamp": "2026-07-28T14:11:32Z",
+      "file": "cursor-agent/exited-2s.txt"
+    }
+  ]
+}

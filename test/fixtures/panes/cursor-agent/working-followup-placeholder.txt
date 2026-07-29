@@ -1,0 +1,40 @@
+
+
+  Cursor Agent
+  v2026.07.23-e383d2b
+  Tip: Use /debug to instrument and debug complex problems.
+
+                                                                                                                       
+  Reply with exactly the word ok and nothing else.                                                                     
+                                                                                                                       
+
+  ok
+
+                                                                                                                       
+  Run exactly this shell command: sleep 60. Then reply done.                                                           
+                                                                                                                       
+
+  $ sleep 60 32s
+    ctrl+b twice to send to background
+
+ ⠀⠞ Running  31 tokens
+    Tip: Use /config to customize Cursor settings and behavior.
+
+                                                                                                                       
+  → Add a follow-up                                                                                     ctrl+c to stop 
+                                                                                                                       
+
+  1 task
+  Composer 2.5 · 16.5%                                                                                  Run Everything
+  ~/projects/team-up/.worktrees/pane-fixtures · chore/pane-fixtures
+
+
+
+
+
+
+
+
+
+
+

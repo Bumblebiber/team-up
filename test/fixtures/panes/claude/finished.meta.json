@@ -1,0 +1,29 @@
+{
+  "cli": "claude",
+  "cliVersion": "2.1.220 (Claude Code)",
+  "state": "finished",
+  "command": [
+    "claude"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 8,
+  "offsets": [
+    110
+  ],
+  "sessionStart": "2026-07-28T14:17:51Z",
+  "input": {
+    "text": "Run exactly this shell command: sleep 75. After it completes, reply with only the word done.",
+    "sentAtSec": 12
+  },
+  "captures": [
+    {
+      "offsetSec": 110,
+      "timestamp": "2026-07-28T14:19:41Z",
+      "file": "claude/finished.txt"
+    }
+  ]
+}

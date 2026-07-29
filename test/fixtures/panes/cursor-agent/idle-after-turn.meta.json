@@ -1,0 +1,35 @@
+{
+  "cli": "cursor-agent",
+  "cliVersion": "2026.07.23-e383d2b",
+  "state": "idle-after-turn",
+  "command": [
+    "cursor-agent"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 5,
+  "offsets": [
+    25,
+    35
+  ],
+  "sessionStart": "2026-07-28T14:09:35Z",
+  "input": {
+    "text": "Reply with exactly the word hello and nothing else.",
+    "sentAtSec": 8
+  },
+  "captures": [
+    {
+      "offsetSec": 25,
+      "timestamp": "2026-07-28T14:10:00Z",
+      "file": "cursor-agent/idle-after-turn-25s.txt"
+    },
+    {
+      "offsetSec": 35,
+      "timestamp": "2026-07-28T14:10:10Z",
+      "file": "cursor-agent/idle-after-turn-35s.txt"
+    }
+  ]
+}

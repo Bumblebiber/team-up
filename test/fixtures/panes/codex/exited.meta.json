@@ -1,0 +1,40 @@
+{
+  "cli": "codex",
+  "cliVersion": "codex-cli 0.145.0",
+  "state": "exited",
+  "command": [
+    "bash",
+    "-lc",
+    "codex --not-a-real-flag 2>&1; echo EXIT:$?; sleep 2"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 0,
+  "offsets": [
+    0,
+    1,
+    2
+  ],
+  "sessionStart": "2026-07-28T14:26:27Z",
+  "input": null,
+  "captures": [
+    {
+      "offsetSec": 0,
+      "timestamp": "2026-07-28T14:26:27Z",
+      "file": "codex/exited-0s.txt"
+    },
+    {
+      "offsetSec": 1,
+      "timestamp": "2026-07-28T14:26:28Z",
+      "file": "codex/exited-1s.txt"
+    },
+    {
+      "offsetSec": 2,
+      "timestamp": "2026-07-28T14:26:29Z",
+      "file": "codex/exited-2s.txt"
+    }
+  ]
+}

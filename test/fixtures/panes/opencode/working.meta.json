@@ -1,0 +1,41 @@
+{
+  "cli": "opencode",
+  "cliVersion": "1.15.13",
+  "state": "working",
+  "command": [
+    "opencode"
+  ],
+  "cwd": "/home/bbbee/projects/team-up/.worktrees/pane-fixtures",
+  "terminalSize": {
+    "cols": 120,
+    "rows": 40
+  },
+  "settleSec": 8,
+  "offsets": [
+    20,
+    40,
+    70
+  ],
+  "sessionStart": "2026-07-28T14:29:34Z",
+  "input": {
+    "text": "Run exactly: sleep 75 in shell, then reply done.",
+    "sentAtSec": 12
+  },
+  "captures": [
+    {
+      "offsetSec": 20,
+      "timestamp": "2026-07-28T14:29:54Z",
+      "file": "opencode/working-20s.txt"
+    },
+    {
+      "offsetSec": 40,
+      "timestamp": "2026-07-28T14:30:14Z",
+      "file": "opencode/working-40s.txt"
+    },
+    {
+      "offsetSec": 70,
+      "timestamp": "2026-07-28T14:30:44Z",
+      "file": "opencode/working-70s.txt"
+    }
+  ]
+}
