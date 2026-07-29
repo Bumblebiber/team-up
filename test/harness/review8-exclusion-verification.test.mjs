@@ -12,6 +12,7 @@ import {
   verifyProbeHomeClosedWorld,
   buildAllowedInitSurface,
   CLAUDE_HARNESS_BUILTIN_TOOLS,
+  CLAUDE_HARNESS_BUILTIN_SKILLS,
   PLUGIN_CANARY_SKILL,
   parseClaudeStructuredCapabilityProofs,
 } from "../../src/harness/isolation-canary.mjs";
@@ -67,6 +68,25 @@ test("built-in tool on allowlist still grants", () => {
     });
     assert.equal(result.ok, true, `built-in tool ${tool} should be allowed`);
   }
+});
+
+test("built-in harness skill on allowlist still grants", () => {
+  const init = {
+    session_id: "s1",
+    skills: ["capsule.selected-skill", PLUGIN_CANARY_SKILL, "doctor", "loop"],
+    plugins: ["capsule.selected-plugin"],
+    mcp_servers: ["selected"],
+    tools: ["Read", "Skill", "mcp__selected__lookup"],
+  };
+  const result = verifyInitSurfaceExclusion(init, {
+    expected: {
+      skills: ["capsule.selected-skill"],
+      plugins: ["capsule.selected-plugin"],
+      mcp_tools: ["mcp__selected__lookup"],
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.ok(CLAUDE_HARNESS_BUILTIN_SKILLS.includes("doctor"));
 });
 
 test("unknown built-in tool denies with named violation", () => {
