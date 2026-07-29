@@ -27,6 +27,25 @@ export const ISOLATION_FORBIDDEN_CANARIES = Object.freeze([
 /** Uniquely named skill shipped inside the selected plugin fixture for nonce proof. */
 export const PLUGIN_CANARY_SKILL = "capsule.selected-plugin-canary";
 
+/**
+ * Claude Code 2.1.220 built-in tools a clean harness may expose in system/init.
+ * Deliberate allowlist — add entries only when a CLI version introduces new built-ins.
+ */
+export const CLAUDE_HARNESS_BUILTIN_TOOLS = Object.freeze([
+  "Read",
+  "Edit",
+  "Write",
+  "Glob",
+  "Grep",
+  "ToolSearch",
+  "Skill",
+]);
+
+/** Built-in MCP server names the harness may expose (broker only). */
+export const CLAUDE_HARNESS_BUILTIN_MCP_SERVERS = Object.freeze([
+  "team_up_command_broker",
+]);
+
 function contentNonceField(text, nonce) {
   return `${text}\nnonce:${nonce}\n`;
 }
@@ -59,6 +78,153 @@ export function validateIsolationObservation({ expected, observed }) {
     }
   }
   return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Build the closed-world allowlist for system/init inventory (selected ∪ built-ins).
+ */
+export function buildAllowedInitSurface({ expected, prepared } = {}) {
+  const allowedSkills = new Set([
+    ...(expected?.skills || []),
+    PLUGIN_CANARY_SKILL,
+  ]);
+  const allowedPlugins = new Set(expected?.plugins || []);
+  const allowedMcpServers = new Set(["selected"]);
+  const allowedTools = new Set([
+    ...CLAUDE_HARNESS_BUILTIN_TOOLS,
+    ...(expected?.mcp_tools || []),
+  ]);
+
+  const mcpPath = prepared?.argv
+    ? flagValues(prepared.argv, "--mcp-config")[0]
+    : null;
+  if (mcpPath && fs.existsSync(mcpPath)) {
+    try {
+      const mcpDoc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+      for (const name of Object.keys(mcpDoc.mcpServers || {})) {
+        if (CLAUDE_HARNESS_BUILTIN_MCP_SERVERS.includes(name)) {
+          allowedMcpServers.add(name);
+        }
+        const tools = mcpDoc.mcpServers[name]?.tools;
+        if (Array.isArray(tools)) {
+          for (const tool of tools) {
+            allowedTools.add(`mcp__${name}__${String(tool).replace(/-/g, "_")}`);
+          }
+        }
+      }
+    } catch {
+      // fail closed in caller
+    }
+  }
+
+  return {
+    allowedSkills,
+    allowedPlugins,
+    allowedMcpServers,
+    allowedTools,
+  };
+}
+
+/**
+ * Deny when init lists anything outside selected ∪ built-in allowlist (R1/R2).
+ */
+export function verifyInitSurfaceExclusion(init, { expected, prepared } = {}) {
+  if (!init || typeof init !== "object") {
+    return { ok: false, violations: [{ kind: "init", name: "missing" }] };
+  }
+  const allowed = buildAllowedInitSurface({ expected, prepared });
+  const violations = [];
+
+  for (const skill of init.skills || []) {
+    if (!allowed.allowedSkills.has(skill)) {
+      violations.push({ kind: "skill", name: skill });
+    }
+  }
+  for (const plugin of init.plugins || []) {
+    if (!allowed.allowedPlugins.has(plugin)) {
+      violations.push({ kind: "plugin", name: plugin });
+    }
+  }
+  for (const server of init.mcp_servers || []) {
+    const name = typeof server === "string" ? server : String(server?.name || "");
+    if (name && !allowed.allowedMcpServers.has(name)) {
+      violations.push({ kind: "mcp_server", name });
+    }
+  }
+  for (const tool of init.tools || []) {
+    const name = String(tool);
+    if (!allowed.allowedTools.has(name)) {
+      violations.push({ kind: "tool", name });
+    }
+  }
+
+  return { ok: violations.length === 0, violations };
+}
+
+/**
+ * Enumerate probe HOME and deny anything outside the auth-only closed world (R3).
+ */
+export function verifyProbeHomeClosedWorld(probeHome, { expectedSkills = [] } = {}) {
+  const violations = [];
+  if (!probeHome || !fs.existsSync(probeHome)) {
+    return { ok: false, violations: [{ kind: "home", name: "missing" }] };
+  }
+
+  for (const entry of fs.readdirSync(probeHome)) {
+    if (entry !== ".claude") {
+      violations.push({ kind: "home_entry", name: entry });
+    }
+  }
+  if (fs.existsSync(path.join(probeHome, ".claude.json"))) {
+    violations.push({ kind: "claude_json", name: ".claude.json" });
+  }
+
+  const claudeDir = path.join(probeHome, ".claude");
+  if (!fs.existsSync(claudeDir)) {
+    violations.push({ kind: "claude_dir", name: ".claude" });
+    return { ok: false, violations };
+  }
+
+  const allowedClaudeEntries = new Set([".credentials.json", "skills"]);
+  for (const entry of fs.readdirSync(claudeDir)) {
+    if (!allowedClaudeEntries.has(entry)) {
+      violations.push({ kind: "claude_entry", name: entry });
+    }
+  }
+
+  const skillsDir = path.join(claudeDir, "skills");
+  const expected = new Set(expectedSkills);
+  if (fs.existsSync(skillsDir)) {
+    for (const entry of fs.readdirSync(skillsDir)) {
+      const full = path.join(skillsDir, entry);
+      if (!fs.statSync(full).isDirectory()) {
+        violations.push({ kind: "skill_nondir", name: entry });
+        continue;
+      }
+      if (!expected.has(entry)) {
+        violations.push({ kind: "skill_dir", name: entry });
+      }
+    }
+  }
+  for (const skill of expected) {
+    if (!fs.existsSync(path.join(skillsDir, skill))) {
+      violations.push({ kind: "skill_missing", name: skill });
+    }
+  }
+
+  return { ok: violations.length === 0, violations };
+}
+
+/** Minimal env for isolation probe — do not inherit parent ambient config (R7). */
+function buildIsolationProbeEnv(home) {
+  const env = { HOME: home };
+  for (const key of [
+    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "USER", "LOGNAME",
+    "TMPDIR", "TEMP", "TMP", "XDG_RUNTIME_DIR",
+  ]) {
+    if (process.env[key] != null) env[key] = process.env[key];
+  }
+  return env;
 }
 
 function writeFile(file, text) {
@@ -498,11 +664,18 @@ function resultContainsExactNonce(text, nonce) {
   return false;
 }
 
-function collectOrderedToolPairs(streamText, sessionId) {
+/**
+ * Parse Claude stream-json with strict session binding and tool envelope rules.
+ * Shared by single-tool proof and structured capability proofs (one parser, one rule set).
+ */
+function collectStrictOrderedToolPairs(streamText, { sessionId: boundSessionId } = {}) {
   const pairs = [];
   const syntheticTexts = [];
-  let pending = null; // { id, name, input, eventIndex }
+  let sessionId = boundSessionId ?? null;
+  const seenToolUseIds = new Set();
+  let pending = null;
   let eventIndex = -1;
+
   for (const line of String(streamText || "").split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed[0] !== "{") continue;
@@ -514,12 +687,23 @@ function collectOrderedToolPairs(streamText, sessionId) {
     }
     if (!evt || typeof evt !== "object" || Array.isArray(evt)) continue;
     eventIndex += 1;
-    if (evt.type === "system" && evt.subtype === "init") continue;
-    if (evt.session_id !== sessionId) continue;
+
+    if (evt.type === "system" && evt.subtype === "init") {
+      if (typeof evt.session_id !== "string" || !evt.session_id) return null;
+      if (sessionId && sessionId !== evt.session_id) return null;
+      sessionId = evt.session_id;
+      continue;
+    }
+
+    if (!sessionId) continue;
+    if (evt.session_id !== sessionId) return null;
+
     const content = evt.message?.content;
     if (!Array.isArray(content)) continue;
 
-    // Claude 2.1.220 injects skill bodies as synthetic user text after Skill launch.
+    let sawUseInThisEvent = false;
+    let sawResultInThisEvent = false;
+
     if (evt.type === "user") {
       for (const block of content) {
         if (block?.type === "text" && typeof block.text === "string") {
@@ -532,37 +716,40 @@ function collectOrderedToolPairs(streamText, sessionId) {
       }
     }
 
-    if (evt.type === "assistant") {
-      for (const block of content) {
-        if (block?.type !== "tool_use") continue;
-        if (typeof block.id !== "string" || !block.id) continue;
-        if (typeof block.name !== "string" || !block.name) continue;
+    for (const block of content) {
+      if (!block || typeof block !== "object") continue;
+      if (block.type === "tool_use") {
+        if (evt.type !== "assistant") return null;
+        if (typeof block.id !== "string" || !block.id) return null;
+        if (typeof block.name !== "string" || !block.name) return null;
+        if (seenToolUseIds.has(block.id)) return null;
+        seenToolUseIds.add(block.id);
         pending = {
           id: block.id,
           name: block.name,
           input: block.input && typeof block.input === "object" ? block.input : {},
           eventIndex,
         };
+        sawUseInThisEvent = true;
       }
-      continue;
-    }
-
-    if (evt.type === "user" && pending) {
-      for (const block of content) {
-        if (block?.type !== "tool_result") continue;
+      if (block.type === "tool_result" && pending) {
         if (block.tool_use_id !== pending.id) continue;
-        if (eventIndex <= pending.eventIndex) continue;
+        if (evt.type !== "user") return null;
+        if (eventIndex <= pending.eventIndex) return null;
         pairs.push({
           ...pending,
           resultText: toolResultText(block.content),
           resultEventIndex: eventIndex,
         });
         pending = null;
-        break;
+        sawResultInThisEvent = true;
       }
     }
+    if (sawUseInThisEvent && sawResultInThisEvent) return null;
   }
-  return { pairs, syntheticTexts };
+
+  if (!sessionId) return null;
+  return { sessionId, pairs, syntheticTexts };
 }
 
 function skillNameMatches(inputSkill, want) {
@@ -615,12 +802,16 @@ function findSkillLaunchProof(pairs, syntheticTexts, skillName, nonce) {
 export function parseClaudeStructuredCapabilityProofs(streamText, {
   expected = null,
   capsule = null,
+  prepared = null,
 } = {}) {
   if (!expected?.nonces || !capsule) return null;
   const init = extractStructuredInitInventory(streamText);
   if (!init) return null;
 
-  for (const bad of ["global.canary-skill", "global.canary-plugin"]) {
+  const exclusion = verifyInitSurfaceExclusion(init, { expected, prepared });
+  if (!exclusion.ok) return null;
+
+  for (const bad of ISOLATION_FORBIDDEN_CANARIES) {
     if ((init.skills || []).includes(bad) || (init.plugins || []).includes(bad)) {
       return null;
     }
@@ -642,7 +833,9 @@ export function parseClaudeStructuredCapabilityProofs(streamText, {
   if (!(init.skills || []).includes(wantSkill)) return null;
   if (!(init.plugins || []).includes(wantPlugin)) return null;
 
-  const { pairs, syntheticTexts } = collectOrderedToolPairs(streamText, init.session_id);
+  const strict = collectStrictOrderedToolPairs(streamText, { sessionId: init.session_id });
+  if (!strict) return null;
+  const { pairs, syntheticTexts } = strict;
   if (!pairs.length) return null;
 
   const skillPair = findSkillLaunchProof(
@@ -774,28 +967,6 @@ export function extractStructuredInitInventory(streamText) {
       mcp_servers,
       claude_code_version: evt.claude_code_version || null,
     };
-  }
-  return null;
-}
-
-function extractInventoryFromStream(streamText) {
-  // Assistant text may carry content_nonces after structured init + tool proof.
-  for (const line of String(streamText || "").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed[0] !== "{") continue;
-    let evt;
-    try {
-      evt = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    const content = evt.message?.content || evt.content;
-    if (!Array.isArray(content)) continue;
-    for (const block of content) {
-      if (block?.type !== "text") continue;
-      const inv = parseIsolationObservationJson(block.text);
-      if (inv) return inv;
-    }
   }
   return null;
 }
@@ -955,25 +1126,6 @@ export function collectLaunchIsolationObservation({
   }
 }
 
-function parseClaudePluginList(text, { sessionOnly = false } = {}) {
-  const names = [];
-  let inSession = false;
-  for (const line of String(text || "").split(/\r?\n/)) {
-    if (/Session-only plugins/i.test(line)) {
-      inSession = true;
-      continue;
-    }
-    if (/^Installed plugins:/i.test(line)) {
-      inSession = false;
-      continue;
-    }
-    if (sessionOnly && !inSession) continue;
-    const m = line.match(/❯\s+([^\s@]+)@/);
-    if (m) names.push(m[1]);
-  }
-  return [...new Set(names)].sort();
-}
-
 function globalsPlanted(globalHome, adapterId) {
   if (adapterId === "codex") {
     return fs.existsSync(path.join(
@@ -993,17 +1145,6 @@ function globalsPlanted(globalHome, adapterId) {
     fs.existsSync(path.join(globalHome, ".claude", "skills", "global.canary-skill", "SKILL.md"))
     && fs.existsSync(path.join(globalHome, ".claude", "plugins", "installed_plugins.json"))
   );
-}
-
-function readClaudeJsonMcpServers(globalHome) {
-  const claudeJsonPath = path.join(globalHome, ".claude.json");
-  if (!fs.existsSync(claudeJsonPath)) return null;
-  try {
-    const doc = JSON.parse(fs.readFileSync(claudeJsonPath, "utf8"));
-    return doc?.mcpServers ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -1172,93 +1313,6 @@ export function createSanitizedClaudeHome({
   return home;
 }
 
-function buildObservedFromInitAndProof({
-  init,
-  toolProof,
-  expected,
-  capsule: _capsule,
-  modelInventory = null,
-}) {
-  if (!init || !toolProof) return null;
-  if (init.session_id && toolProof.session_id
-    && init.session_id !== toolProof.session_id) {
-    return null;
-  }
-  const mcpTools = (init.tools || []).filter((t) => String(t).startsWith("mcp__"));
-  // Deferred MCP may only appear after ToolSearch; tool proof is authoritative
-  // for the selected tool presence.
-  if (!mcpTools.includes("mcp__selected__lookup")
-    && toolProof.tool === "mcp__selected__lookup") {
-    mcpTools.push("mcp__selected__lookup");
-  }
-  // Plugins come from structured init when --plugin-dir is honored.
-  const plugins = [...(init.plugins || [])].filter((p) =>
-    (expected?.plugins || []).includes(p)
-  );
-  if ((expected?.plugins || []).length && !plugins.length) return null;
-  // Skills: structured live init and/or model inventory — never disk listings.
-  const skillCandidates = [
-    ...(init.skills || []),
-    ...(Array.isArray(modelInventory?.skills) ? modelInventory.skills.map(String) : []),
-  ];
-  const skills = [...new Set(skillCandidates)].filter((s) =>
-    (expected?.skills || []).includes(s)
-  );
-  if ((expected?.skills || []).length && !skills.length) return null;
-  let frameworks = Array.isArray(modelInventory?.frameworks)
-    ? modelInventory.frameworks.map(String).filter((f) =>
-      (expected?.frameworks || []).includes(f)
-    )
-    : [...(init.frameworks || [])].filter((f) =>
-      (expected?.frameworks || []).includes(f)
-    );
-  if ((expected?.frameworks || []).length && !frameworks.length) {
-    return null;
-  }
-
-  const visible = new Set([
-    ...skills,
-    ...plugins,
-    ...mcpTools,
-    ...frameworks,
-    ...(init.mcp_servers || []).map((n) => `mcp__${n}__*`),
-  ]);
-  const absent = ISOLATION_FORBIDDEN_CANARIES.filter((name) => {
-    if (name.startsWith("mcp__")) {
-      return !mcpTools.includes(name)
-        && !(init.mcp_servers || []).some((s) => name.includes(`__${s}__`));
-    }
-    return !visible.has(name)
-      && !(init.skills || []).includes(name)
-      && !(init.plugins || []).includes(name);
-  });
-
-  // Live nonces only: MCP from tool_result; skill/plugin/framework from model
-  // inventory that actually read selected content. Never fill from disk/config.
-  const content_nonces = {
-    mcp: toolProof.nonce,
-  };
-  const liveNonces = modelInventory?.content_nonces;
-  if (liveNonces && typeof liveNonces === "object" && !Array.isArray(liveNonces)) {
-    for (const key of ["skill", "plugin", "framework"]) {
-      if (liveNonces[key] != null) content_nonces[key] = String(liveNonces[key]);
-    }
-  }
-
-  return {
-    skills,
-    plugins: plugins.filter((p) => (expected?.plugins || []).includes(p)
-      || p === "capsule.selected-plugin"),
-    mcp_tools: mcpTools.filter((t) => t === "mcp__selected__lookup"
-      || (expected?.mcp_tools || []).includes(t)),
-    frameworks,
-    absent,
-    content_nonces,
-    _init: init,
-    _tool_proof: toolProof,
-  };
-}
-
 /**
  * Live observation with sanitized auth-only HOME + strict selected config.
  * Negatives and positives come from structured init/tool inventory + tool proof.
@@ -1276,16 +1330,8 @@ export function collectLiveIsolationObservation({
   if (typeof spawnSyncFn !== "function") return null;
   if (!prepared?.argv || !capsule) return null;
 
-  if (adapterId === "codex") {
-    return collectLiveCodexIsolationObservation({
-      prepared,
-      capsule,
-      globalHome,
-      expected,
-      spawnSyncFn,
-      authSourceHome,
-    });
-  }
+  // Codex lacks native plugin/framework surfaces — no live collector (R4).
+  if (adapterId === "codex") return null;
 
   if (!globalHome || !globalsPlanted(globalHome, adapterId)) return null;
 
@@ -1307,19 +1353,10 @@ export function collectLiveIsolationObservation({
   if (!probeHome || !fs.existsSync(path.join(probeHome, ".claude", ".credentials.json"))) {
     return null;
   }
-  // Auth home must not contain planted ambient capabilities.
-  if (fs.existsSync(path.join(probeHome, ".claude", "skills", "global.canary-skill"))) {
-    return null;
-  }
-  if (fs.existsSync(path.join(probeHome, ".claude.json"))) {
-    return null;
-  }
-  // Selected skills must be on the sanitized HOME surface Claude discovers.
-  for (const skillName of expected?.skills || []) {
-    if (!fs.existsSync(path.join(probeHome, ".claude", "skills", skillName))) {
-      return null;
-    }
-  }
+  const homeCheck = verifyProbeHomeClosedWorld(probeHome, {
+    expectedSkills: expected?.skills || [],
+  });
+  if (!homeCheck.ok) return null;
 
   const authHome = probeHome;
   const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-neutral-"));
@@ -1345,7 +1382,7 @@ export function collectLiveIsolationObservation({
       encoding: "utf8",
       timeout: 180_000,
       cwd: neutralDir,
-      env: { ...process.env, HOME: authHome },
+      env: buildIsolationProbeEnv(authHome),
     });
     if (inventoryRun.error) return null;
     const inventoryText = `${inventoryRun.stdout || ""}`;
@@ -1382,169 +1419,10 @@ export function collectLiveIsolationObservation({
     const observed = parseClaudeStructuredCapabilityProofs(inventoryText, {
       expected,
       capsule,
+      prepared,
     });
     if (!observed) return null;
     if (!observed.mcp_tools.includes("mcp__selected__lookup")) return null;
-    if (!absentListComplete(observed.absent)) return null;
-    if (!contentNoncesMatch(expectedNonces, observed.content_nonces)) return null;
-    return observed;
-  } catch {
-    return null;
-  } finally {
-    try { fs.rmSync(neutralDir, { recursive: true, force: true }); } catch { /* ignore */ }
-  }
-}
-
-/**
- * Codex live isolation canary: sanitized CODEX_HOME (auth only + strict config),
- * selected skills/MCP from capsule, structured JSONL tool proof.
- */
-export function collectLiveCodexIsolationObservation({
-  prepared,
-  capsule,
-  globalHome,
-  expected = null,
-  spawnSyncFn,
-  authSourceHome = os.homedir(),
-} = {}) {
-  if (typeof spawnSyncFn !== "function") return null;
-  if (!prepared?.argv || !capsule?.codexHome) return null;
-  if (!globalHome || !globalsPlanted(globalHome, "codex")) return null;
-
-  const expectedNonces = expected?.nonces ?? capsule.nonces ?? null;
-  const mcpNonce = expectedNonces?.mcp;
-  if (!mcpNonce) return null;
-
-  const authSrc = path.join(
-    process.env.CODEX_HOME || path.join(authSourceHome, ".codex"),
-    "auth.json"
-  );
-  if (!fs.existsSync(authSrc) && !fs.existsSync(path.join(capsule.codexHome, "auth.json"))) {
-    return null;
-  }
-
-  // Ensure capsule home has auth only from source — no ambient config bleed.
-  try {
-    if (!fs.existsSync(path.join(capsule.codexHome, "auth.json")) && fs.existsSync(authSrc)) {
-      fs.copyFileSync(authSrc, path.join(capsule.codexHome, "auth.json"));
-      fs.chmodSync(path.join(capsule.codexHome, "auth.json"), 0o600);
-    }
-  } catch {
-    return null;
-  }
-
-  const surface = collectLaunchIsolationObservation({
-    prepared,
-    capsule,
-    adapterId: "codex",
-  });
-  if (!surface) return null;
-
-  const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-codex-iso-"));
-  try {
-    const prompt = [
-      "Call the selected MCP server tool named lookup exactly once.",
-      "Then reply with ONLY one JSON object keys skills,plugins,mcp_tools,frameworks,absent,content_nonces.",
-    ].join(" ");
-    // Matches production capsule config.toml sandbox_mode=danger-full-access
-    // (Codex 0.145.0 cancels MCP under read-only/workspace-write).
-    const argv = [
-      "codex", "exec",
-      "--strict-config",
-      "--skip-git-repo-check",
-      "--json",
-      "--sandbox", "danger-full-access",
-      "-c", "approval_policy=never",
-      prompt,
-    ];
-    const run = spawnSyncFn(argv[0], argv.slice(1), {
-      encoding: "utf8",
-      timeout: 180_000,
-      cwd: neutralDir,
-      env: {
-        ...process.env,
-        CODEX_HOME: capsule.codexHome,
-        HOME: globalHome,
-      },
-      input: "",
-    });
-    if (run.error) return null;
-    const text = `${run.stdout || ""}`;
-    if (!text) return null;
-
-    const proof = parseCodexJsonlToolProof(text, { nonce: mcpNonce });
-    if (!proof) return null;
-
-    const liveMcpTools = ["mcp__selected__lookup"];
-    for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed[0] !== "{") continue;
-      let evt;
-      try { evt = JSON.parse(trimmed); } catch { continue; }
-      const item = evt?.item;
-      if (item?.type !== "mcp_tool_call") continue;
-      const server = String(item.server || "");
-      const tool = String(item.tool || "").replace(/-/g, "_");
-      if (server && tool) liveMcpTools.push(`mcp__${server}__${tool}`);
-    }
-    const uniqMcp = [...new Set(liveMcpTools)];
-    if (uniqMcp.some((t) => /global|excluded/i.test(t))) return null;
-
-    const capsuleSkills = listChildDirs([path.join(capsule.codexHome, "skills")]);
-    if (capsuleSkills.includes("global.canary-skill")) return null;
-    // Disk listing is a negative/presence gate only — never a live inventory source.
-    if ((expected?.skills || []).includes("capsule.selected-skill")
-      && !capsuleSkills.includes("capsule.selected-skill")) {
-      return null;
-    }
-    // Full generic matrix requires native plugin/framework surfaces Codex lacks.
-    if ((expected?.plugins || []).length > 0 || (expected?.frameworks || []).length > 0) {
-      return null;
-    }
-
-    const modelInventory = parseIsolationObservationJson(
-      extractCodexAgentMessageText(text)
-    );
-    if (!modelInventory) return null;
-    if (modelInventory?.skills?.includes?.("global.canary-skill")) return null;
-    if (modelInventory?.mcp_tools?.some?.((t) => /global|excluded/i.test(String(t)))) {
-      return null;
-    }
-
-    const initLike = {
-      session_id: proof.session_id,
-      tools: uniqMcp,
-      skills: Array.isArray(modelInventory?.skills)
-        ? modelInventory.skills.map(String).filter((s) =>
-          (expected?.skills || []).includes(s)
-        )
-        : [],
-      plugins: Array.isArray(modelInventory?.plugins)
-        ? modelInventory.plugins.map(String).filter((p) =>
-          (expected?.plugins || []).includes(p)
-        )
-        : [],
-      frameworks: Array.isArray(modelInventory?.frameworks)
-        ? modelInventory.frameworks.map(String).filter((f) =>
-          (expected?.frameworks || []).includes(f)
-        )
-        : [],
-      mcp_servers: ["selected"],
-    };
-    if ((expected?.skills || []).length && !initLike.skills.length) return null;
-
-    const observed = buildObservedFromInitAndProof({
-      init: initLike,
-      toolProof: {
-        tool: "mcp__selected__lookup",
-        nonce: mcpNonce,
-        session_id: proof.session_id,
-      },
-      expected,
-      capsule,
-      modelInventory,
-    });
-    if (!observed) return null;
     if (!absentListComplete(observed.absent)) return null;
     if (!contentNoncesMatch(expectedNonces, observed.content_nonces)) return null;
     return observed;
@@ -1605,24 +1483,6 @@ export function parseCodexJsonlToolProof(streamText, { nonce } = {}) {
     nonce,
     session_id: sessionId,
   };
-}
-
-function extractCodexAgentMessageText(streamText) {
-  const parts = [];
-  for (const line of String(streamText || "").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed[0] !== "{") continue;
-    let evt;
-    try {
-      evt = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    if (evt?.item?.type === "agent_message" && typeof evt.item.text === "string") {
-      parts.push(evt.item.text);
-    }
-  }
-  return parts.join("\n");
 }
 
 export function decideContextIsolationCapability({ expected, observed } = {}) {
@@ -1734,32 +1594,30 @@ export function observeContextIsolation({
           prepared,
         });
       }
-      // Injected probes must still carry re-provable stream evidence.
-      const selectedTool = (expected?.mcp_tools ?? ["mcp__selected__lookup"])[0];
-      const mcpNonce = expected?.nonces?.mcp;
-      if (!live.stream_text || !selectedTool || !mcpNonce) {
+      // Injected probes must still carry full structured stream re-proof (not model JSON).
+      if (!live.stream_text) {
         return finish({
           isolation_status: "unverified",
           context_isolation: null,
           expected,
-          error: "liveProbe missing stream_text or nonce for re-proof",
+          error: "liveProbe missing stream_text for structured re-proof",
           prepared,
         });
       }
-      const streamProof = parseClaudeStreamToolProof(live.stream_text, {
-        toolName: selectedTool,
-        nonce: mcpNonce,
+      observed = parseClaudeStructuredCapabilityProofs(live.stream_text, {
+        expected,
+        capsule: fixture.capsule,
+        prepared,
       });
-      if (!streamProof) {
+      if (!observed) {
         return finish({
           isolation_status: "unverified",
           context_isolation: null,
           expected,
-          error: "liveProbe stream_text failed tool_use/tool_result re-proof",
+          error: "liveProbe stream_text failed structured capability re-proof",
           prepared,
         });
       }
-      observed = live.observed ?? null;
     } else if (typeof spawnSyncFn === "function") {
       observed = collectLiveIsolationObservation({
         prepared,
