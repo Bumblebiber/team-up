@@ -35,6 +35,26 @@ function isFresh(timestamp, nowMs, idleMs) {
   return Number.isFinite(timestamp) && nowMs - timestamp < idleMs;
 }
 
+export function isTerminalTmuxAlreadyCleaned(state) {
+  return Boolean(state.cleanup?.terminal_tmux_stopped_at);
+}
+
+function markTerminalTmuxCleanedState(state, nowIso, sessionId = null) {
+  state.cleanup = {
+    ...(state.cleanup || {}),
+    terminal_tmux_stopped_at: nowIso,
+    ...(sessionId ? { worker_tmux_id: sessionId } : {}),
+  };
+  if (state.worker?.tmux) {
+    delete state.worker.tmux;
+  }
+  return state;
+}
+
+function markTerminalTmuxCleaned(runId, nowIso, sessionId = null) {
+  return updateState(runId, latest => markTerminalTmuxCleanedState(latest, nowIso, sessionId));
+}
+
 export function evaluateGcAction({
   state,
   nowMs,
@@ -44,6 +64,9 @@ export function evaluateGcAction({
   graceMs = GRACE_MS,
 }) {
   if (TERMINAL.has(state.status)) {
+    if (isTerminalTmuxAlreadyCleaned(state)) {
+      return { kind: "skip" };
+    }
     return tmux.exists ? { kind: "kill_terminal" } : { kind: "skip" };
   }
   if (PROTECTED.has(state.status) || !ACTIVE.has(state.status)) {
@@ -149,6 +172,43 @@ function reconcileTerminalMailboxState(state, classified) {
     delete state.cleanup.stale_failed_at;
   }
   return state;
+}
+
+function reconcileQuestionMailboxState(state, classified) {
+  if (state.cleanup?.stale_publication_claim) {
+    delete state.cleanup.stale_publication_claim;
+  }
+  if (isSyntheticStaleFailureState(state)) {
+    delete state.cleanup.stale_reason;
+    delete state.cleanup.stale_failed_at;
+  }
+  if (state.cleanup?.stale_detected_at) delete state.cleanup.stale_detected_at;
+  state.status = "waiting_human";
+  return state;
+}
+
+function buildQuestionClassification(state, runId) {
+  if (state.result_protocol === "RESULT.json") {
+    const raw = readMaybe(path.join(mailboxDir(runId), "RESULT.json"));
+    if (!raw || isSyntheticStaleMailboxResult(state, runId)) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.status !== "blocked") return null;
+      return {
+        status: "question",
+        question: (parsed.questions || []).join("\n") || parsed.summary || "blocked",
+        resultPath: path.join(mailboxDir(runId), "RESULT.json"),
+      };
+    } catch {
+      return null;
+    }
+  }
+  const questions = readMaybe(path.join(mailboxDir(runId), "QUESTIONS.md"));
+  if (!questions?.trim()) return null;
+  return {
+    status: "question",
+    question: questions.trim().slice(0, 2000),
+  };
 }
 
 function staleFailureResultContent(state) {
@@ -298,6 +358,17 @@ function finalizeStaleCleanup(latest, runId, nowIso, hooks = {}) {
     return { kind: "finalized", reconciled: true };
   }
 
+  if (classified.status === "question" && !isSyntheticStaleMailboxResult(latest, runId)) {
+    reconcileQuestionMailboxState(latest, classified);
+    return { kind: "finalized", reconciled: true };
+  }
+
+  const questionClassified = buildQuestionClassification(latest, runId);
+  if (questionClassified) {
+    reconcileQuestionMailboxState(latest, questionClassified);
+    return { kind: "finalized", reconciled: true, derived: true };
+  }
+
   const derivedStatus = deriveStatusFromCanonicalResult(latest, runId);
   if (derivedStatus) {
     ensureMailboxStatus(runId, derivedStatus);
@@ -364,6 +435,7 @@ function advanceStaleCleanupClaim(latest, runId, nowIso, {
     }
     claim.phase = "tmux_stopped";
     claim.tmux_stopped_at = nowIso;
+    markTerminalTmuxCleanedState(latest, nowIso, claim.worker_tmux_id);
     if (typeof hooks.onAfterTmuxStopped === "function") {
       hooks.onAfterTmuxStopped({ runId });
     }
@@ -748,7 +820,9 @@ export function gcRuns({
         reportEntry.action = "pending_claim";
         continue;
       }
+      const sessionId = tmux.sessionId || state.cleanup?.worker_tmux_id || null;
       stopTmux(state.worker.tmux);
+      markTerminalTmuxCleaned(state.runId, nowIso, sessionId);
       continue;
     }
     if (decision.kind === "mark_stale") {

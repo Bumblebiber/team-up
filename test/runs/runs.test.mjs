@@ -499,7 +499,47 @@ test("waitMailbox defers tmux stop while stale cleanup claim is unresolved", wit
     },
   });
 
-  assert.equal(result.classified.status, "watching");
+  assert.equal(result.classified.status, "failed");
+  assert.equal(loadState(state.runId).status, "watching");
+  assert.deepEqual(stopped, []);
+}));
+
+test("waitMailbox preserves done notification during unresolved stale claim", withTempRuns(async () => {
+  const state = createRun({
+    cwd: "/tmp/p",
+    role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex", tmux: "worker-stale" },
+    prompt: "x",
+  });
+  const stalled = loadState(state.runId);
+  stalled.status = "watching";
+  stalled.cleanup = {
+    stale_publication_claim: {
+      token: `${state.runId}.pending`,
+      worker_tmux: "worker-stale",
+      worker_tmux_id: "$gc",
+      attempt_id: "attempt-1",
+      phase: "lease_released",
+      claimed_at: "2026-07-28T13:00:00.000Z",
+      lease_released_at: "2026-07-28T13:00:00.000Z",
+    },
+  };
+  saveState(stalled);
+  atomicWriteText(path.join(runDir(state.runId), "mailbox", "RESULT.md"), "complete\n");
+  atomicWriteText(path.join(runDir(state.runId), "mailbox", "STATUS"), "done\n");
+  const stopped = [];
+
+  const result = waitMailbox(state.runId, {
+    ceilingSec: 1,
+    stopTmux: session => {
+      stopped.push(session);
+      return true;
+    },
+  });
+
+  assert.equal(result.classified.status, "done");
+  assert.equal(loadState(state.runId).status, "watching");
   assert.deepEqual(stopped, []);
 }));
 

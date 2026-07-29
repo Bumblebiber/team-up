@@ -679,6 +679,105 @@ test("stale tmux stop is no-op when immutable session id is gone", withTempRuns(
   assert.equal(loadState(state.runId).status, "failed");
 }));
 
+test("terminal sweep after immutable stale stop never targets reused tmux name", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const candidate = loadState(state.runId);
+  candidate.current_attempt_id = "attempt-1";
+  candidate.cleanup.worker_tmux_id = "$old";
+  saveState(candidate);
+  const stopped = [];
+  let inspectCalls = 0;
+
+  gcRuns({
+    ...makeStaleDeps({
+      inspectTmux: session => {
+        inspectCalls += 1;
+        const staleActivity = NOW - IDLE_MS - 1;
+        if (inspectCalls <= 2) {
+          return { exists: true, activityMs: staleActivity, sessionId: "$old" };
+        }
+        return { exists: true, activityMs: staleActivity, sessionId: "$new" };
+      },
+      tmuxExists: sessionId => aliveTmuxSessions.has(sessionId),
+      stopTmux: session => {
+        aliveTmuxSessions.delete(session);
+        stopped.push(session);
+      },
+    }),
+    states: [loadState(state.runId)],
+    releaseLease: () => ({ ok: true }),
+  });
+
+  assert.deepEqual(stopped, ["$old"]);
+  assert.equal(loadState(state.runId).status, "failed");
+
+  const terminal = loadState(state.runId);
+  terminal.status = "done";
+  saveState(terminal);
+  aliveTmuxSessions.add("$new");
+
+  gcRuns({
+    now: new Date(NOW + 60_000),
+    states: [loadState(state.runId)],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: true, activityMs: null, sessionId: "$new" }),
+    tmuxExists: sessionId => aliveTmuxSessions.has(sessionId),
+    stopTmux: session => stopped.push(session),
+    releaseLease: () => assert.fail("terminal sweep must not release lease"),
+  });
+
+  assert.deepEqual(stopped, ["$old"]);
+}));
+
+test("typed blocked result without STATUS finalizes as waiting_human not synthetic failed", withTempRuns(async () => {
+  const state = staleCandidateFixture({ typed: true });
+  const mb = path.join(runDir(state.runId), "mailbox");
+  const blocked = {
+    schema: "team-up.result/v1",
+    status: "blocked",
+    summary: "need input",
+    questions: ["Approve network access?"],
+  };
+  atomicWriteJson(path.join(mb, "RESULT.json"), blocked);
+  try {
+    fs.unlinkSync(path.join(mb, "STATUS"));
+  } catch {
+    /* already absent */
+  }
+  const candidate = loadState(state.runId);
+  const detectedAt = candidate.cleanup.stale_detected_at;
+  candidate.cleanup = {
+    stale_publication_claim: {
+      token: `${state.runId}.blocked`,
+      worker_tmux: "worker-gc",
+      worker_tmux_id: "$gc",
+      stale_detected_at: detectedAt,
+      phase: "tmux_stopped",
+      claimed_at: new Date(NOW).toISOString(),
+      lease_released_at: new Date(NOW).toISOString(),
+      tmux_stopped_at: new Date(NOW).toISOString(),
+    },
+  };
+  delete candidate.cleanup.stale_detected_at;
+  saveState(candidate);
+  const stopped = [];
+
+  gcRuns({
+    ...makeStaleDeps({
+      stopTmux: session => stopped.push(session),
+    }),
+    states: [loadState(state.runId)],
+    releaseLease: () => ({ ok: true }),
+  });
+
+  const latest = loadState(state.runId);
+  assert.equal(latest.status, "waiting_human");
+  assert.equal(latest.cleanup?.stale_reason, undefined);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(mb, "RESULT.json"), "utf8")), blocked);
+  assert.equal(fs.existsSync(path.join(mb, "STATUS")), false);
+  assert.deepEqual(stopped, []);
+}));
+
 test("gc terminal cleanup is idempotent and dry-run never mutates", withTempRuns(async () => {
   const terminal = createGcFixture({ status: "done" });
   const stopped = [];

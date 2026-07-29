@@ -501,7 +501,7 @@ export function resolveRunState(state, classified = { status: "watching" }) {
   } else if (TERMINAL_RUN_STATUSES.has(classified?.status)) {
     if (isUnresolvedStalePublicationClaim(state)) {
       nextStatus = currentStatus;
-      effectiveClassified = { status: "watching" };
+      effectiveClassified = classified;
     } else {
       nextStatus = classified.status;
     }
