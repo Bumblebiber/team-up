@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { configPath, loadJson } from "../roster/roster.mjs";
-import { countAgentProcesses, watcherStatePath } from "./usage-procs.mjs";
+import { countAgentProcesses, countAgentProcessesOptsFromEnv, watcherStatePath } from "./usage-procs.mjs";
 import { subscriptionsFromRoster } from "./usage-collect.mjs";
 
 const DEFAULT_CONFIG = {
@@ -153,7 +153,7 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
   const cfg = watcherConfig(roster || {});
   const subs = subscriptionsFromRoster(roster || {});
   const stateDoc = loadState();
-  const counts = countAgentProcesses();
+  const counts = countAgentProcesses(countAgentProcessesOptsFromEnv());
   const state = computeState(counts);
 
   const plan = planCollect({
