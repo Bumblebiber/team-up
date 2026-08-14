@@ -37,9 +37,37 @@ node bin/team-up.mjs runs wait <run-id>
 State lives under `~/.team-up` (override with `TEAM_UP_HOME`). Reads may fall
 back to `~/.o9k` during migration; writes never touch `~/.o9k`.
 
+## Capability isolation
+
+`team-up` keeps shared skills, plugins, MCPs, frameworks, and bundles inert in
+a content-addressed pool. Installation does not activate a package. The human
+enables an exact checksum for `all` or named specialists; an explicit
+exclusion wins over `all`.
+
+```bash
+team-up capability scan --root ~/.claude/skills
+team-up capability inspect <source-or-id@version>
+team-up capability install <source>            # or: <git-url> --git-ref <ref>
+team-up capability enable  <id@version> --checksum <sha256:…> --for all
+team-up capability disable <id@version> --checksum <sha256:…> --for research.rick
+team-up capability list
+```
+
+Use the supervisor-only `/team-up-manage` skill or these deterministic
+commands. Specialist recommendations are opt-in and start unselected.
+
+Each specialist run materializes only its effective set into a run capsule and
+records it in `EFFECTIVE_CAPABILITIES.json`. Installing a package nobody is
+assigned changes no worker's prompt or tool schema.
+
+This isolates model context, not Unix files. Workers run as the same trusted
+user. A harness must pass `team-up.context-isolation/v1` conformance before it
+is eligible for specialist work; Claude is currently the only such adapter.
+
 ## Docs
 
 - [configuration.md](docs/configuration.md)
+- [capabilities.md](docs/capabilities.md)
 - [specialists.md](docs/specialists.md)
 - [command-broker.md](docs/command-broker.md)
 - Runtime supervision design: `docs/specs/2026-07-25-runtime-supervision-design.md`

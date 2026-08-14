@@ -35,6 +35,8 @@ export function seedVerifiedClaude(home, { cliVersion = FAKE_CLAUDE_VERSION } = 
       native_shell: "denied",
       broker_tool: "passed",
       command_broker: "team-up.command-broker/v1",
+      context_isolation_check: "passed",
+      context_isolation: "team-up.context-isolation/v1",
     })
   );
   return dir;

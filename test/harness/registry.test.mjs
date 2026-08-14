@@ -40,9 +40,20 @@ test("unverified harness never advertises context isolation", () => {
 test("verified Claude advertises the versioned contract", () => {
   assert.equal(
     defaultHarnessCapabilities("claude", {
-      verification: { status: "verified", cli_version: "fixture" },
+      verification: {
+        status: "verified",
+        cli_version: "fixture",
+        context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      },
     }).context_isolation,
     CONTEXT_ISOLATION_CAPABILITY
+  );
+  // A verified record that never proved isolation must not grant it.
+  assert.equal(
+    defaultHarnessCapabilities("claude", {
+      verification: { status: "verified", cli_version: "fixture" },
+    }).context_isolation,
+    null
   );
   assert.equal(
     declaredHarnessCapabilities("claude").context_isolation,
@@ -75,7 +86,11 @@ test("a verified capsule launch without a broker still isolates", () => {
       mcpConfig: { mcpServers: { selected: { type: "stdio", command: "node" } } },
       homeDir: `${runDir}/harness/home`,
     },
-    verification: { status: "verified", cli_version: "fixture" },
+    verification: {
+      status: "verified",
+      cli_version: "fixture",
+      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+    },
   });
   assert.equal(prepared.argv.includes("--strict-mcp-config"), true);
   assert.equal(prepared.env.CLAUDE_CONFIG_DIR, `${runDir}/harness/home`);

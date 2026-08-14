@@ -8,6 +8,10 @@ import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { prepareHarnessLaunch } from "../harness/registry.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
 import { buildStrictMcpConfig } from "../capabilities/capsule.mjs";
+import {
+  COMMAND_BROKER_CAPABILITY,
+  CONTEXT_ISOLATION_CAPABILITY,
+} from "../harness/capabilities.mjs";
 import { launchDescriptorDir } from "../paths.mjs";
 import {
   acquireAttemptLease,
@@ -307,7 +311,14 @@ export function prepareArgvFromDescriptor(
           : null,
         verification:
           brokerRequired || isolationRequired
-            ? { status: "verified", cli_version: "launch" }
+            ? {
+                status: "verified",
+                cli_version: "launch",
+                command_broker: brokerRequired ? COMMAND_BROKER_CAPABILITY : null,
+                context_isolation: isolationRequired
+                  ? CONTEXT_ISOLATION_CAPABILITY
+                  : null,
+              }
             : null,
       });
     } catch (e) {

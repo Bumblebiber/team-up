@@ -210,6 +210,39 @@ export function decideBrokerToolFromEvidence({
   return "unverified";
 }
 
+/** Canaries that must never be visible from inside a run capsule. */
+export const ISOLATION_CANARIES = Object.freeze([
+  "global.canary-skill",
+  "global.canary-plugin",
+  "mcp__global__canary",
+  "pool.unselected-skill",
+  "mcp__excluded__lookup",
+  "pool.unselected-framework",
+]);
+
+/**
+ * Compare a harness's self-reported effective capabilities against the
+ * capsule's expected set. Verification succeeds only when the observed set
+ * matches exactly and every canary is reported absent — a missing report is
+ * a failure, never a pass.
+ */
+export function validateIsolationObservation({ expected = {}, observed = {} } = {}) {
+  const errors = [];
+  for (const key of ["skills", "plugins", "mcp_tools", "frameworks"]) {
+    const want = [...(expected[key] ?? [])].sort();
+    const got = [...(observed[key] ?? [])].sort();
+    if (JSON.stringify(want) !== JSON.stringify(got)) {
+      errors.push(`${key} mismatch: expected ${want.join(",")} got ${got.join(",")}`);
+    }
+  }
+  for (const name of ISOLATION_CANARIES) {
+    if (!(observed.absent ?? []).includes(name)) {
+      errors.push(`forbidden capability visible: ${name}`);
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+
 /**
  * Live Claude conformance: invoke the installed CLI with the prepared MCP
  * broker config. Never infer denial from argv alone and never grant the

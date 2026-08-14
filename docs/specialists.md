@@ -131,6 +131,28 @@ OS isolation is actually applied.
 `runtime_paths: []` is treated as not configured →
 `SANDBOX_RUNTIME_UNAVAILABLE`.
 
+## Shared capabilities
+
+A specialist's own `capabilities.*` fields stay **intrinsic** — they ship with
+the package and are not shared assignments. Everything else a specialist sees
+comes from the human-controlled capability pool:
+
+```text
+  intrinsic specialist package
++ assignments targeted to all or this specialist
+- assignments explicitly excluding this specialist
+```
+
+There is no mandatory baseline, and installing a package activates nothing.
+Every specialist launch requires a harness that proves
+`team-up.context-isolation/v1`; one that cannot is skipped during profile
+resolution before any worker exists. Full model, capsule layout, lifecycle,
+and command surface: [capabilities.md](capabilities.md).
+
+A manifest may also declare inert `recommendations` (package, source, reason,
+optional `suggested_target`). They are shown as an opt-in list with nothing
+selected and grant no authority.
+
 ## Starters
 
 - `team-up-with-hannes` — testing (`frontier` / `max`); tools include

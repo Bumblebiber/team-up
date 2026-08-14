@@ -48,7 +48,13 @@ export function harnessCapabilities(
     }
   }
   if (record?.status === "verified") {
-    return { ...adapter.capabilities };
+    // A verified record only grants the capabilities it actually proved.
+    return {
+      ...adapter.capabilities,
+      command_broker:
+        record.command_broker ?? adapter.capabilities.command_broker ?? null,
+      context_isolation: record.context_isolation ?? null,
+    };
   }
   return { ...UNVERIFIED_CAPABILITIES };
 }

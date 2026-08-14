@@ -379,9 +379,16 @@ export async function launch({
           actionIds: effectivePerms.commands || [],
         }
       : null,
+    // Carry the capabilities the harness actually proved, not a blanket
+    // "verified" flag.
     verification:
       harnessCaps.context_isolation === CONTEXT_ISOLATION_CAPABILITY
-        ? { status: "verified", cli_version: "launch" }
+        ? {
+            status: "verified",
+            cli_version: "launch",
+            command_broker: harnessCaps.command_broker,
+            context_isolation: harnessCaps.context_isolation,
+          }
         : null,
   });
   const cliArgv = prepared.argv;
