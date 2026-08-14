@@ -176,6 +176,68 @@ test("reading recommendations changes no pool or assignment state", async () => 
   });
 });
 
+test("update installs beside the old version without activating it", async () => {
+  await withHome(async () => {
+    const c = capture();
+    await runCli(["capability", "install", capabilitySource()], c.io);
+    const first = JSON.parse(c.out[0]);
+    await runCli(
+      ["capability", "enable", "x@1", "--checksum", first.checksum, "--for", "all"],
+      c.io
+    );
+
+    const changed = capabilitySource();
+    fs.writeFileSync(
+      path.join(changed, "skills", "x", "SKILL.md"),
+      "# X, revised\n"
+    );
+    assert.equal(
+      await runCli(
+        ["capability", "update", "x@1", "--from-checksum", first.checksum, "--source", changed],
+        c.io
+      ),
+      0
+    );
+    const { installed, plan } = JSON.parse(c.out.at(-1));
+    assert.notEqual(installed.checksum, first.checksum);
+    assert.equal(plan.activate, false);
+
+    // The assignment still points at the original checksum.
+    await runCli(["capability", "list"], c.io);
+    const listed = JSON.parse(c.out.at(-1));
+    assert.equal(listed.packages.length, 2);
+    assert.deepEqual(listed.assignments[0].checksum, first.checksum);
+  });
+});
+
+test("remove refuses an assigned version and succeeds once unassigned", async () => {
+  await withHome(async () => {
+    const c = capture();
+    await runCli(["capability", "install", capabilitySource()], c.io);
+    const { checksum } = JSON.parse(c.out[0]);
+    await runCli(
+      ["capability", "enable", "x@1", "--checksum", checksum, "--for", "all"],
+      c.io
+    );
+    assert.equal(
+      await runCli(["capability", "remove", "x@1", "--checksum", checksum], c.io),
+      1
+    );
+    assert.match(c.err.at(-1), /CAPABILITY_REFERENCED/);
+
+    await runCli(
+      ["capability", "disable", "x@1", "--checksum", checksum, "--for", "all"],
+      c.io
+    );
+    assert.equal(
+      await runCli(["capability", "remove", "x@1", "--checksum", checksum], c.io),
+      0
+    );
+    await runCli(["capability", "list"], c.io);
+    assert.deepEqual(JSON.parse(c.out.at(-1)).packages, []);
+  });
+});
+
 test("unknown subcommands and failed imports exit non-zero", async () => {
   await withHome(async () => {
     const c = capture();

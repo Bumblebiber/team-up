@@ -13,6 +13,11 @@ import {
 import { importGitCapability } from "./git-source.mjs";
 import { normalizeRecommendations } from "./recommendations.mjs";
 import { loadInstalledManifest } from "../specialists/store.mjs";
+import {
+  planCapabilityUpdate,
+  rollbackCapability,
+  removeCapability,
+} from "./lifecycle.mjs";
 
 function value(args, flag) {
   const index = args.indexOf(flag);
@@ -21,7 +26,7 @@ function value(args, flag) {
 
 function usage(io) {
   io.err(
-    "usage: team-up capability <install|inspect|list|recommendations|enable|disable>"
+    "usage: team-up capability <install|inspect|list|recommendations|enable|disable|update|rollback|remove>"
   );
   io.err("  install <source-path | git-url --git-ref <branch|tag|commit>>");
   io.err("  inspect <source-path | id@version [--checksum sha256:…]>");
@@ -29,6 +34,9 @@ function usage(io) {
   io.err("  recommendations <specialist-id> [--project <path>]");
   io.err("  enable  <id@version> --checksum <sha256:…> --for <all|specialist-id>");
   io.err("  disable <id@version> --checksum <sha256:…> --for <all|specialist-id>");
+  io.err("  update  <id@version> --from-checksum <sha256:…> [--source <path|url>] [--git-ref <ref>]");
+  io.err("  rollback <id@version> --from-checksum <sha256:…> --to <id@version> --checksum <sha256:…>");
+  io.err("  remove  <id@version> --checksum <sha256:…>");
   return 1;
 }
 
@@ -108,6 +116,51 @@ async function dispatch(args, io, env) {
         2
       )
     );
+    return 0;
+  }
+
+  if (sub === "update") {
+    const source = value(rest, "--source") || subject;
+    const ref = value(rest, "--git-ref");
+    const currentChecksum = value(rest, "--from-checksum");
+    if (!subject || !source || !currentChecksum) return usage(io);
+    const candidate = ref
+      ? importGitCapability({ url: source, ref }, { env })
+      : importLocalCapability(source, { env });
+    // Installs beside the old version and prints a plan that activates nothing.
+    const plan = planCapabilityUpdate({
+      current: { package: subject, checksum: currentChecksum },
+      candidate: { package: candidate.package, checksum: candidate.checksum },
+      assignments: loadAssignments({ env }).assignments,
+    });
+    io.out(JSON.stringify({ installed: candidate, plan }, null, 2));
+    return 0;
+  }
+
+  if (sub === "rollback") {
+    const toChecksum = value(rest, "--checksum");
+    const fromChecksum = value(rest, "--from-checksum");
+    const toPackage = value(rest, "--to") || subject;
+    if (!subject || !toChecksum || !fromChecksum) return usage(io);
+    const prior = inspectInstalledCapability(toPackage, {
+      checksum: toChecksum,
+      env,
+    });
+    const result = rollbackCapability({
+      current: { package: subject, checksum: fromChecksum },
+      prior: { package: prior.package, checksum: prior.checksum },
+      assignments: loadAssignments({ env }).assignments,
+      env,
+    });
+    io.out(JSON.stringify(result, null, 2));
+    return 0;
+  }
+
+  if (sub === "remove") {
+    const checksum = value(rest, "--checksum");
+    if (!subject || !checksum) return usage(io);
+    const target = inspectInstalledCapability(subject, { checksum, env });
+    io.out(JSON.stringify(removeCapability(target, { env }), null, 2));
     return 0;
   }
 
