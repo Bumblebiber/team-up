@@ -142,6 +142,21 @@ export function debugLogDir(env = process.env) {
   return path.join(teamUpHome(env), "logs");
 }
 
+/** Content-addressed capability package pool. */
+export function capabilityPoolRoot(env = process.env) {
+  return (
+    env.TEAM_UP_CAPABILITY_POOL || path.join(teamUpHome(env), "capability-pool")
+  );
+}
+
+/** Human-controlled assignment document (pool packages → specialists). */
+export function capabilityAssignmentsPath(env = process.env) {
+  return (
+    env.TEAM_UP_CAPABILITY_ASSIGNMENTS ||
+    path.join(teamUpHome(env), "capability-assignments.json")
+  );
+}
+
 /** Authoritative launch descriptors — outside worker-writable run dirs. */
 export function launchDescriptorsRoot(env = process.env) {
   return (
