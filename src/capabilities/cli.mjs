@@ -18,6 +18,7 @@ import {
   rollbackCapability,
   removeCapability,
 } from "./lifecycle.mjs";
+import { scanCapabilityRoots, defaultScanRoots, normalizeDetectedCandidate } from "./scan.mjs";
 
 function value(args, flag) {
   const index = args.indexOf(flag);
@@ -26,9 +27,11 @@ function value(args, flag) {
 
 function usage(io) {
   io.err(
-    "usage: team-up capability <install|inspect|list|recommendations|enable|disable|update|rollback|remove>"
+    "usage: team-up capability <scan|install|inspect|list|recommendations|enable|disable|update|rollback|remove>"
   );
+  io.err("  scan [--root <path>]…");
   io.err("  install <source-path | git-url --git-ref <branch|tag|commit>>");
+  io.err("          [--type skill|plugin|mcp|framework --id ID --version V --display-name NAME [--path REL]]");
   io.err("  inspect <source-path | id@version [--checksum sha256:…]>");
   io.err("  list");
   io.err("  recommendations <specialist-id> [--project <path>]");
@@ -57,12 +60,37 @@ export async function runCapabilityCli(args, io, { env = process.env } = {}) {
 async function dispatch(args, io, env) {
   const [sub, subject, ...rest] = args;
 
+  if (sub === "scan") {
+    const roots = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--root" && rest[i + 1]) roots.push(rest[++i]);
+    }
+    if (subject === "--root" && args[2]) roots.unshift(args[2]);
+    const scanned = scanCapabilityRoots(roots.length ? roots : defaultScanRoots(env));
+    // Read-only: candidates are reported, never imported or activated.
+    io.out(JSON.stringify({ candidates: scanned }, null, 2));
+    return 0;
+  }
+
   if (sub === "install") {
     if (!subject) return usage(io);
     const ref = value(rest, "--git-ref");
+    const type = value(rest, "--type");
+    let manifestOverride;
+    if (type) {
+      manifestOverride = normalizeDetectedCandidate(
+        { type, path: subject },
+        {
+          id: value(rest, "--id"),
+          version: value(rest, "--version"),
+          displayName: value(rest, "--display-name"),
+          relPath: value(rest, "--path"),
+        }
+      );
+    }
     const record = ref
       ? importGitCapability({ url: subject, ref }, { env })
-      : importLocalCapability(subject, { env });
+      : importLocalCapability(subject, { env, manifestOverride });
     io.out(JSON.stringify(record, null, 2));
     return 0;
   }

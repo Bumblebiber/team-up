@@ -238,6 +238,46 @@ test("remove refuses an assigned version and succeeds once unassigned", async ()
   });
 });
 
+test("scan reports candidates and imports nothing", async () => {
+  await withHome(async (home) => {
+    const root = tmpdir("tu-scan-cli-");
+    fs.mkdirSync(path.join(root, "caveman"), { recursive: true });
+    fs.writeFileSync(path.join(root, "caveman", "SKILL.md"), "# Caveman\n");
+
+    const c = capture();
+    assert.equal(await runCli(["capability", "scan", "--root", root], c.io), 0);
+    const { candidates } = JSON.parse(c.out.at(-1));
+    assert.deepEqual(
+      candidates.map((item) => item.type),
+      ["skill"]
+    );
+    assert.equal(fs.existsSync(path.join(home, "capability-pool")), false);
+
+    // A detected skill imports only after the human supplies identity.
+    assert.equal(
+      await runCli(
+        [
+          "capability",
+          "install",
+          path.join(root, "caveman"),
+          "--type",
+          "skill",
+          "--id",
+          "o9k.caveman",
+          "--version",
+          "1.0.0",
+          "--display-name",
+          "Caveman",
+        ],
+        c.io
+      ),
+      0
+    );
+    assert.deepEqual(JSON.parse(c.out.at(-1)).provides.skills, ["SKILL.md"]);
+    assert.deepEqual(fs.readdirSync(path.join(root, "caveman")), ["SKILL.md"]);
+  });
+});
+
 test("unknown subcommands and failed imports exit non-zero", async () => {
   await withHome(async () => {
     const c = capture();
