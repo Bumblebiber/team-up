@@ -6,6 +6,7 @@
   "bin": {
     "team-up": "bin/team-up.mjs"
   },
+  "files": ["bin", "src", "skills", "templates", "README.md", "LICENSE"],
   "scripts": {
     "test": "node --test \"test/**/*.test.mjs\""
   },
