@@ -53,6 +53,108 @@ test("claude prepareLaunch denies shell bypass and writes mcp config", () => {
   );
 });
 
+test("capsule launch uses only explicit plugin, MCP and config-dir paths", () => {
+  const writes = new Map();
+  const prepared = claudeAdapter.prepareLaunch({
+    argv: ["claude", "-p", "work"],
+    runDir: "/run",
+    broker: null,
+    capsule: {
+      pluginDirs: ["/run/harness/plugins/x"],
+      mcpConfig: {
+        mcpServers: {
+          selected: {
+            type: "stdio",
+            command: "node",
+            args: ["/run/harness/mcp/x/server.mjs"],
+          },
+        },
+      },
+      mcpToolNames: ["mcp__selected__do_thing"],
+      homeDir: "/run/harness/home",
+    },
+    writeFileSync: (file, text) => writes.set(file, text),
+    mkdirSync: () => {},
+    chmodSync: () => {},
+  });
+
+  assert.deepEqual(
+    prepared.argv.slice(
+      prepared.argv.indexOf("--plugin-dir"),
+      prepared.argv.indexOf("--plugin-dir") + 2
+    ),
+    ["--plugin-dir", "/run/harness/plugins/x"]
+  );
+  assert.equal(prepared.argv.includes("--strict-mcp-config"), true);
+  assert.match(writes.get("/run/harness/claude-mcp.json"), /"selected"/);
+  // No broker in this launch: the broker server must not be configured.
+  assert.doesNotMatch(
+    writes.get("/run/harness/claude-mcp.json"),
+    /team_up_command_broker/
+  );
+  const tools = prepared.argv[prepared.argv.indexOf("--tools") + 1];
+  assert.match(tools, /mcp__selected__do_thing/);
+  // A run-specific config dir replaces user-global skills, plugins and settings.
+  assert.equal(prepared.env.CLAUDE_CONFIG_DIR, "/run/harness/home");
+});
+
+test("bare mode is opt-in because it never reads subscription auth", () => {
+  const base = {
+    argv: ["claude", "-p", "work"],
+    runDir: "/run",
+    broker: null,
+    writeFileSync: () => {},
+    mkdirSync: () => {},
+    chmodSync: () => {},
+  };
+  const oauth = claudeAdapter.prepareLaunch({
+    ...base,
+    capsule: { pluginDirs: [], mcpConfig: { mcpServers: {} } },
+  });
+  assert.equal(oauth.argv.includes("--bare"), false);
+
+  const apiKey = claudeAdapter.prepareLaunch({
+    ...base,
+    capsule: { pluginDirs: [], mcpConfig: { mcpServers: {} }, bare: true },
+  });
+  assert.equal(apiKey.argv.includes("--bare"), true);
+});
+
+test("capsule and broker compose without leaking global MCP names", () => {
+  const writes = new Map();
+  const prepared = claudeAdapter.prepareLaunch({
+    argv: ["claude", "-p", "work"],
+    runDir: "/run",
+    broker: {
+      policySnapshot: "/abs/policy/commands.json",
+      policyChecksum: "sha256:test",
+      project: "/abs/project",
+      runDir: "/abs/run",
+      actionIds: ["project-test"],
+    },
+    brokerBin: "/abs/bin/broker.mjs",
+    nodePath: "/abs/node",
+    capsule: {
+      pluginDirs: [],
+      mcpConfig: { mcpServers: { selected: { type: "stdio", command: "node" } } },
+      mcpToolNames: ["mcp__selected__do_thing"],
+    },
+    writeFileSync: (file, text) => writes.set(file, text),
+    mkdirSync: () => {},
+    chmodSync: () => {},
+  });
+  const config = JSON.parse(writes.get("/run/harness/claude-mcp.json"));
+  assert.deepEqual(Object.keys(config.mcpServers).sort(), [
+    "selected",
+    "team_up_command_broker",
+  ]);
+  const tools = prepared.argv[prepared.argv.indexOf("--tools") + 1].split(",");
+  assert.deepEqual(tools.filter((name) => name.startsWith("mcp__")).sort(), [
+    "mcp__selected__do_thing",
+    "mcp__team_up_command_broker__project_test",
+  ]);
+});
+
 test("claude injectControl uses tmux argv not a shell", () => {
   const calls = [];
   claudeAdapter.injectControl({

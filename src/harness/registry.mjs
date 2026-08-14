@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 import { execFileSync as realExecFileSync } from "node:child_process";
 import { claudeAdapter } from "./claude.mjs";
 import { unsupportedAdapter } from "./unsupported.mjs";
-import { UNVERIFIED_CAPABILITIES } from "./capabilities.mjs";
+import {
+  CONTEXT_ISOLATION_CAPABILITY,
+  UNVERIFIED_CAPABILITIES,
+} from "./capabilities.mjs";
 import { loadVerificationRecord } from "./verify.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
 
@@ -66,6 +69,7 @@ export function prepareHarnessLaunch({
   argv,
   runDir,
   broker = null,
+  capsule = null,
   allowedBuiltins,
   verification,
   env = process.env,
@@ -85,11 +89,18 @@ export function prepareHarnessLaunch({
     err.code = "HARNESS_UNSUPPORTED";
     throw err;
   }
-  if (!broker) {
+  if (capsule && caps.context_isolation !== CONTEXT_ISOLATION_CAPABILITY) {
+    const err = new Error(
+      `HARNESS_CONTEXT_ISOLATION_UNVERIFIED: ${cli} cannot prove ${CONTEXT_ISOLATION_CAPABILITY}`
+    );
+    err.code = "HARNESS_CONTEXT_ISOLATION_UNVERIFIED";
+    throw err;
+  }
+  if (!broker && !capsule) {
     return { argv, env: {}, files: [], adapter: adapter.id, capabilities: caps };
   }
   const brokeredArgv =
-    typeof adapter.sanitizeBrokeredArgv === "function"
+    broker && typeof adapter.sanitizeBrokeredArgv === "function"
       ? adapter.sanitizeBrokeredArgv(argv)
       : argv;
   return {
@@ -97,6 +108,7 @@ export function prepareHarnessLaunch({
       argv: brokeredArgv,
       runDir,
       broker,
+      capsule,
       allowedBuiltins,
       nodePath,
       brokerBin,
