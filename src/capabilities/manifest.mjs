@@ -90,14 +90,15 @@ export function normalizeCapabilityManifest(input, { packageDir } = {}) {
 }
 
 /**
- * Every regular file a manifest declares, as sorted package-relative POSIX
- * paths. Directories expand deterministically; symlinks are refused so a
- * package can never smuggle content from outside its own root.
+ * Regular files a manifest declares, grouped by provide type and by the
+ * declared entry that contributed them. Directories expand deterministically;
+ * symlinks are refused so a package can never smuggle content from outside
+ * its own root.
  */
-export function declaredCapabilityFiles(packageDir, manifest) {
+export function declaredCapabilityFilesByType(packageDir, manifest) {
   const root = fs.realpathSync(packageDir);
-  const files = [];
-  const collect = (abs, rel) => {
+  const byType = {};
+  const collect = (abs, rel, into) => {
     assertPathInsideRoot(abs, root);
     let stat;
     try {
@@ -108,17 +109,32 @@ export function declaredCapabilityFiles(packageDir, manifest) {
     if (stat.isSymbolicLink()) throw new Error(`refusing symlink: ${rel}`);
     if (stat.isDirectory()) {
       for (const name of fs.readdirSync(abs).sort()) {
-        collect(path.join(abs, name), `${rel}/${name}`);
+        collect(path.join(abs, name), `${rel}/${name}`, into);
       }
       return;
     }
     if (!stat.isFile()) throw new Error(`unsupported capability file type: ${rel}`);
-    files.push(rel);
+    into.push(rel);
   };
   for (const type of PROVIDE_TYPES) {
-    for (const rel of manifest.provides[type]) {
-      collect(path.join(root, rel), rel);
-    }
+    byType[type] = (manifest.provides?.[type] ?? []).map((entry) => {
+      const files = [];
+      collect(path.join(root, entry), entry, files);
+      return { entry, files: [...new Set(files)].sort() };
+    });
+  }
+  return byType;
+}
+
+/**
+ * Every regular file a manifest declares, as sorted package-relative POSIX
+ * paths.
+ */
+export function declaredCapabilityFiles(packageDir, manifest) {
+  const byType = declaredCapabilityFilesByType(packageDir, manifest);
+  const files = [];
+  for (const type of PROVIDE_TYPES) {
+    for (const declared of byType[type]) files.push(...declared.files);
   }
   return [...new Set(files)].sort();
 }
