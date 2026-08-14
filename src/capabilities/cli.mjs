@@ -10,6 +10,7 @@ import {
   disableCapability,
   loadAssignments,
 } from "./assignments.mjs";
+import { importGitCapability } from "./git-source.mjs";
 
 function value(args, flag) {
   const index = args.indexOf(flag);
@@ -18,7 +19,7 @@ function value(args, flag) {
 
 function usage(io) {
   io.err("usage: team-up capability <install|inspect|list|enable|disable>");
-  io.err("  install <source-path>");
+  io.err("  install <source-path | git-url --git-ref <branch|tag|commit>>");
   io.err("  inspect <source-path | id@version [--checksum sha256:…]>");
   io.err("  list");
   io.err("  enable  <id@version> --checksum <sha256:…> --for <all|specialist-id>");
@@ -45,7 +46,11 @@ async function dispatch(args, io, env) {
 
   if (sub === "install") {
     if (!subject) return usage(io);
-    io.out(JSON.stringify(importLocalCapability(subject, { env }), null, 2));
+    const ref = value(rest, "--git-ref");
+    const record = ref
+      ? importGitCapability({ url: subject, ref }, { env })
+      : importLocalCapability(subject, { env });
+    io.out(JSON.stringify(record, null, 2));
     return 0;
   }
 
