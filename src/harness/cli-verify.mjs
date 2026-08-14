@@ -8,6 +8,13 @@ import { getAdapter } from "./registry.mjs";
 import { verifyHarness } from "./verify.mjs";
 import { snapshotCommandPolicy } from "../commands/policy.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
+import {
+  ISOLATION_CANARIES,
+  buildIsolationPrompt,
+  evaluateIsolationRun,
+  plantIsolationFixture,
+  validateIsolationObservation,
+} from "./isolation-probe.mjs";
 
 function claudeLoginOrQuotaFailure(text) {
   // Prefer result/assistant/error stream events — SessionStart hooks dump skills
@@ -210,37 +217,60 @@ export function decideBrokerToolFromEvidence({
   return "unverified";
 }
 
-/** Canaries that must never be visible from inside a run capsule. */
-export const ISOLATION_CANARIES = Object.freeze([
-  "global.canary-skill",
-  "global.canary-plugin",
-  "mcp__global__canary",
-  "pool.unselected-skill",
-  "mcp__excluded__lookup",
-  "pool.unselected-framework",
-]);
+export { ISOLATION_CANARIES, validateIsolationObservation };
 
 /**
- * Compare a harness's self-reported effective capabilities against the
- * capsule's expected set. Verification succeeds only when the observed set
- * matches exactly and every canary is reported absent — a missing report is
- * a failure, never a pass.
+ * Live context-isolation conformance: plant global, project and unselected
+ * pool canaries around a real capsule launch and compare what the harness
+ * reports back.
+ *
+ * The capsule's own skill and plugin are positive controls. If they do not
+ * appear the launch mechanism failed, so the same run's absences prove
+ * nothing and the result is `failed`, never `passed`.
  */
-export function validateIsolationObservation({ expected = {}, observed = {} } = {}) {
-  const errors = [];
-  for (const key of ["skills", "plugins", "mcp_tools", "frameworks"]) {
-    const want = [...(expected[key] ?? [])].sort();
-    const got = [...(observed[key] ?? [])].sort();
-    if (JSON.stringify(want) !== JSON.stringify(got)) {
-      errors.push(`${key} mismatch: expected ${want.join(",")} got ${got.join(",")}`);
+export function runIsolationProbe({ adapter, spawn = spawnSync }) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-verify-iso-"));
+  try {
+    const fixture = plantIsolationFixture(root);
+    const prepared = adapter.prepareLaunch({
+      argv: [
+        "claude",
+        "--print",
+        "--output-format",
+        "text",
+        buildIsolationPrompt(),
+      ],
+      runDir: path.join(root, "launch"),
+      capsule: fixture.capsule,
+      writeFileSync: fs.writeFileSync,
+      mkdirSync: fs.mkdirSync,
+      chmodSync: fs.chmodSync,
+    });
+    const run = spawn(prepared.argv[0], prepared.argv.slice(1), {
+      encoding: "utf8",
+      timeout: 120_000,
+      cwd: fixture.projectDir,
+      input: "",
+      env: {
+        ...process.env,
+        // Ambient globals the capsule must hide, not inherit.
+        CLAUDE_CONFIG_DIR: fixture.globalConfigDir,
+        ...prepared.env,
+      },
+    });
+    const text = `${run.stdout || ""}\n${run.stderr || ""}`;
+    if (claudeLoginOrQuotaFailure(text)) {
+      return {
+        context_isolation: "unverified",
+        context_isolation_errors: [text.trim().slice(0, 300) || "login/quota failure"],
+      };
     }
+    return evaluateIsolationRun({ text, expected: fixture.expected });
+  } catch (e) {
+    return { context_isolation: "unverified", context_isolation_errors: [String(e.message || e)] };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
-  for (const name of ISOLATION_CANARIES) {
-    if (!(observed.absent ?? []).includes(name)) {
-      errors.push(`forbidden capability visible: ${name}`);
-    }
-  }
-  return { ok: errors.length === 0, errors };
 }
 
 /**
@@ -481,10 +511,15 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       }
     }
 
+    // Context isolation is proven on its own launch: a passing command broker
+    // says nothing about whether global capabilities stay out of a capsule.
+    const isolation = runIsolationProbe({ adapter });
+
     return {
       native_shell,
       broker_tool,
       broker_preflight,
+      ...isolation,
       cli_version: cliVersion || String(versionOut).trim(),
       argv_sample: shellPrepared.argv.slice(0, 12),
     };
@@ -541,6 +576,10 @@ export async function runHarnessVerify(args, io = { out: console.log, err: conso
     });
     io.out(`native_shell: ${record.native_shell}`);
     io.out(`broker_tool: ${record.broker_tool}`);
+    io.out(`context_isolation: ${record.context_isolation_check}`);
+    for (const error of record.context_isolation_errors ?? []) {
+      io.err(`context_isolation: ${error}`);
+    }
     io.out(`status: ${record.status}`);
     io.out(`cli_version: ${record.cli_version}`);
     return record.status === "verified" ? 0 : 2;

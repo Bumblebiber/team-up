@@ -76,6 +76,12 @@ export async function verifyHarness({
     native_shell: checks.native_shell,
     broker_tool: checks.broker_tool,
     context_isolation_check: checks.context_isolation ?? "unverified",
+    ...(checks.context_isolation_errors?.length
+      ? { context_isolation_errors: checks.context_isolation_errors }
+      : {}),
+    ...(checks.context_isolation_planted
+      ? { context_isolation_planted: checks.context_isolation_planted }
+      : {}),
     command_broker: status === "verified" ? COMMAND_BROKER_CAPABILITY : null,
     // Context isolation is proven separately: a verified command broker never
     // implies the harness can also hide global capabilities.

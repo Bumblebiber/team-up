@@ -114,9 +114,25 @@ global capability configuration; and report its exact effective capability
 list.
 
 **Claude** launches with a run-specific `CLAUDE_CONFIG_DIR`, explicit
-`--plugin-dir` entries, `--strict-mcp-config`, and a `--tools` allowlist built
-only from selected tools. Only credential files are bridged into that config
-dir — never settings, skills, or plugins.
+`--plugin-dir` entries, `--strict-mcp-config`, `--setting-sources user`, and a
+`--tools` allowlist built only from selected tools. Only credential files are
+bridged into that config dir — never settings, skills, or plugins.
+
+Three details are load-bearing and were each confirmed against the CLI:
+
+- Skills resolve **only** from `$CLAUDE_CONFIG_DIR/skills`, so every selected
+  skill is linked there. Materializing into `context/skills` alone loads
+  nothing.
+- Without `--setting-sources user` the **project's** own `.claude/` skills,
+  plugins and hooks load on top of the capsule. Redirecting the config dir
+  hides user-global capabilities only.
+- A `--tools` allowlist that omits `Skill` silently disables every skill, so
+  the tool is added whenever a capsule selected skills or skill-bearing
+  plugins. Plugin skills appear as `<plugin>:<skill>`.
+
+The CLI's own bundled skills remain visible. They ship with the harness
+executable rather than with a user or project configuration, and they are the
+floor no capsule can go below.
 
 `--bare` is **opt-in** (`capsule.bare`), not unconditional: it never reads
 OAuth or keychain credentials, so forcing it would break every
@@ -126,6 +142,19 @@ Verification is version-keyed to the harness executable, and a verified record
 grants only what it actually proved: a proven command broker never implies
 context isolation. A harness that cannot prove the contract is excluded during
 profile resolution, before any worker process exists.
+
+### Live conformance
+
+`team-up harness verify claude` proves isolation on its own launch. It plants
+a user-global canary skill, a project-local canary skill, an unselected pool
+skill, and a global MCP server around a capsule that selects exactly one skill
+and one plugin, then asks the harness to report its effective capabilities.
+
+The selected skill and plugin are **positive controls**. If they are missing,
+the launch mechanism itself failed and the run's clean canary sheet proves
+nothing, so the result is `failed` — never `passed`. An unparseable report is
+`unverified`. The record stores `context_isolation_planted` so an unplanted
+canary's absence is never mistaken for an exercised one.
 
 Cursor, Codex, Hermes, and OpenCode have no isolation adapter yet and are
 therefore ineligible for specialist runs.

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { claudeAdapter, bridgeClaudeAuth } from "../../src/harness/claude.mjs";
+import { claudeAdapter, bridgeClaudeAuth, linkCapsuleSkills } from "../../src/harness/claude.mjs";
 import { prepareHarnessLaunch } from "../../src/harness/registry.mjs";
 
 test("claude prepareLaunch denies shell bypass and writes mcp config", () => {
@@ -213,4 +213,83 @@ test("brokered Claude launch strips legacy roster bypass before enforcing policy
   assert.equal(prepared.argv.includes("--dangerously-skip-permissions"), false);
   assert.equal(prepared.argv.includes("--effort"), true);
   assert.equal(prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1], "Bash");
+});
+
+test("capsule skills are linked into the config dir and stay invokable", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-skills-"));
+  const skillDir = path.join(runDir, "context", "skills");
+  fs.mkdirSync(path.join(skillDir, "caveman"), { recursive: true });
+  fs.writeFileSync(path.join(skillDir, "caveman", "SKILL.md"), "---\nname: caveman\n---\n");
+  const homeDir = path.join(runDir, "harness", "home");
+
+  const prepared = claudeAdapter.prepareLaunch({
+    argv: ["claude", "-p", "work"],
+    runDir,
+    broker: null,
+    capsule: {
+      pluginDirs: [],
+      mcpConfig: { mcpServers: {} },
+      skillDirs: [skillDir],
+      homeDir,
+      authSourceDir: path.join(runDir, "no-such-auth"),
+    },
+    writeFileSync: fs.writeFileSync,
+    mkdirSync: fs.mkdirSync,
+    chmodSync: fs.chmodSync,
+  });
+
+  // Claude resolves skills only from $CLAUDE_CONFIG_DIR/skills.
+  const link = path.join(homeDir, "skills", "caveman");
+  assert.equal(fs.existsSync(path.join(link, "SKILL.md")), true);
+  // A --tools allowlist without Skill would make the selected skill dead weight.
+  const tools = prepared.argv[prepared.argv.indexOf("--tools") + 1].split(",");
+  assert.equal(tools.includes("Skill"), true);
+  // Project-local skills, plugins and hooks must not load on top of the capsule.
+  assert.equal(prepared.argv[prepared.argv.indexOf("--setting-sources") + 1], "user");
+});
+
+test("a capsule without skills or plugins gets no Skill tool", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-noskills-"));
+  const prepared = claudeAdapter.prepareLaunch({
+    argv: ["claude", "-p", "work"],
+    runDir,
+    broker: null,
+    capsule: {
+      pluginDirs: [],
+      mcpConfig: { mcpServers: {} },
+      skillDirs: [path.join(runDir, "context", "skills")],
+      homeDir: path.join(runDir, "harness", "home"),
+      authSourceDir: path.join(runDir, "no-such-auth"),
+    },
+    writeFileSync: fs.writeFileSync,
+    mkdirSync: fs.mkdirSync,
+    chmodSync: fs.chmodSync,
+  });
+  const tools = prepared.argv[prepared.argv.indexOf("--tools") + 1].split(",");
+  assert.equal(tools.includes("Skill"), false);
+});
+
+test("relaunching drops skill links that are no longer selected", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-relink-"));
+  const skillDir = path.join(runDir, "context", "skills");
+  const homeDir = path.join(runDir, "harness", "home");
+  fs.mkdirSync(path.join(skillDir, "caveman"), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, "skills"), { recursive: true });
+  fs.symlinkSync(path.join(skillDir, "caveman"), path.join(homeDir, "skills", "stale"));
+
+  linkCapsuleSkills({ homeDir, skillDirs: [skillDir] });
+
+  assert.deepEqual(fs.readdirSync(path.join(homeDir, "skills")), ["caveman"]);
+});
+
+test("two capsule sources claiming one skill name fail closed", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-collide-"));
+  const a = path.join(runDir, "a");
+  const b = path.join(runDir, "b");
+  fs.mkdirSync(path.join(a, "caveman"), { recursive: true });
+  fs.mkdirSync(path.join(b, "caveman"), { recursive: true });
+  assert.throws(
+    () => linkCapsuleSkills({ homeDir: path.join(runDir, "home"), skillDirs: [a, b] }),
+    /HARNESS_SKILL_COLLISION/
+  );
 });
