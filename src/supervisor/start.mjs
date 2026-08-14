@@ -7,6 +7,7 @@ import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { prepareHarnessLaunch } from "../harness/registry.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
+import { buildStrictMcpConfig } from "../capabilities/capsule.mjs";
 import { launchDescriptorDir } from "../paths.mjs";
 import {
   acquireAttemptLease,
@@ -70,6 +71,7 @@ export function buildLaunchDescriptor({
   permissions,
   callType,
   broker = null,
+  capsuleRoot = null,
   harnessRequirements = {},
   specialistProfile = null,
   limitWindows = [],
@@ -91,6 +93,7 @@ export function buildLaunchDescriptor({
     permissions,
     call_type: callType,
     broker,
+    capsule_root: capsuleRoot,
     harness_requirements: harnessRequirements,
     specialist_profile: specialistProfile,
     limit_windows: Array.isArray(limitWindows) ? [...limitWindows] : [],
@@ -208,6 +211,36 @@ function resolveSandboxProbe(probe) {
 }
 
 /**
+ * Rebuild the capsule input from the run's audit record so a successor or a
+ * resume launches from exactly the capabilities the original run selected.
+ */
+export function capsuleFromDescriptor(descriptor) {
+  const root = descriptor?.capsule_root;
+  if (!root) return null;
+  const effective = JSON.parse(
+    fs.readFileSync(path.join(root, "EFFECTIVE_CAPABILITIES.json"), "utf8")
+  );
+  return {
+    pluginDirs: effective.packages.flatMap((item) =>
+      (item.resolved?.plugins ?? []).map((rel) => path.join(root, rel))
+    ),
+    mcpConfig: buildStrictMcpConfig(effective, root),
+    skillDirs: [path.join(root, "context", "skills")],
+    frameworkDirs: [path.join(root, "context", "framework")],
+    homeDir: path.join(root, "harness", "home"),
+    codexHome: path.join(root, "harness", "home"),
+    effective,
+  };
+}
+
+/** Prefix argv with an explicit env assignment without hiding argv[0]. */
+export function applyLaunchEnv(argv, env = {}) {
+  const pairs = Object.entries(env).filter(([, value]) => value != null);
+  if (!pairs.length) return argv;
+  return ["/usr/bin/env", ...pairs.map(([key, value]) => `${key}=${value}`), ...argv];
+}
+
+/**
  * Rebuild argv with verified harness adapter + sandbox from persisted descriptor.
  * Never uses raw buildCommand alone when broker/harness requirements exist.
  */
@@ -223,7 +256,16 @@ export function prepareArgvFromDescriptor(
   let argv = buildCommand({ roster: r, model, cli, prompt, effort });
 
   const brokerRequired = Boolean(descriptor.harness_requirements?.command_broker);
+  const isolationRequired = Boolean(descriptor.harness_requirements?.context_isolation);
   const broker = descriptor.broker;
+  const capsule = capsuleFromDescriptor(descriptor);
+  if (isolationRequired && !capsule) {
+    const err = new Error(
+      "CAPSULE_REQUIRED: harness_requirements.context_isolation set but capsule data missing"
+    );
+    err.code = "CAPSULE_REQUIRED";
+    throw err;
+  }
   if (brokerRequired) {
     if (!broker?.policySnapshot || !broker?.policyChecksum) {
       const err = new Error(
@@ -239,8 +281,10 @@ export function prepareArgvFromDescriptor(
     (descriptor.context_dir ? path.dirname(descriptor.context_dir) : null) ||
     path.dirname(descriptor.prompt_path || ".");
 
-  if (brokerRequired || (broker?.policySnapshot && broker?.policyChecksum)) {
-    if (!broker?.policySnapshot || !broker?.policyChecksum) {
+  const brokered = brokerRequired || (broker?.policySnapshot && broker?.policyChecksum);
+  let launchEnv = {};
+  if (brokered || capsule) {
+    if (brokered && (!broker?.policySnapshot || !broker?.policyChecksum)) {
       const err = new Error("BROKER_INVALID: incomplete broker fields");
       err.code = "BROKER_INVALID";
       throw err;
@@ -251,16 +295,20 @@ export function prepareArgvFromDescriptor(
         cli,
         argv,
         runDir: harnessRunDir,
-        broker: {
-          policySnapshot: broker.policySnapshot,
-          policyChecksum: broker.policyChecksum,
-          project: broker.project || descriptor.project,
-          runDir: broker.runDir || harnessRunDir,
-          actionIds: broker.actionIds || descriptor.permissions?.commands || [],
-        },
-        verification: brokerRequired
-          ? { status: "verified", cli_version: "launch" }
+        capsule,
+        broker: brokered
+          ? {
+              policySnapshot: broker.policySnapshot,
+              policyChecksum: broker.policyChecksum,
+              project: broker.project || descriptor.project,
+              runDir: broker.runDir || harnessRunDir,
+              actionIds: broker.actionIds || descriptor.permissions?.commands || [],
+            }
           : null,
+        verification:
+          brokerRequired || isolationRequired
+            ? { status: "verified", cli_version: "launch" }
+            : null,
       });
     } catch (e) {
       if (brokerRequired) {
@@ -274,6 +322,7 @@ export function prepareArgvFromDescriptor(
       throw e;
     }
     argv = prepared.argv;
+    launchEnv = prepared.env || {};
   }
 
   const runPath = broker?.runDir || harnessRunDir;
@@ -321,7 +370,9 @@ export function prepareArgvFromDescriptor(
   });
 
   return {
-    argv: wrapped.argv,
+    // Applied after sandbox wrapping so cliPath resolution still sees the
+    // real harness binary as argv[0].
+    argv: applyLaunchEnv(wrapped.argv, launchEnv),
     sandbox: wrapped.sandbox,
     enforced: wrapped.enforced === true,
     warning: wrapped.warning ?? null,

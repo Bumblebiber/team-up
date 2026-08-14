@@ -9,6 +9,10 @@ import { launch, cliSandboxConfig } from "../../src/specialists/launcher.mjs";
 import { resolveCommandMediation } from "../../src/specialists/adapters.mjs";
 import { normalizeBudget } from "../../src/specialists/budget.mjs";
 import { loadState } from "../../src/runs/runs.mjs";
+import {
+  verifiedClaudeRoster,
+  verifiedHarnessEnv,
+} from "../helpers/verified-harness.mjs";
 function validManifest(overrides = {}) {
   return {
     schema_version: 1,
@@ -158,37 +162,11 @@ test("max_tokens is advisory and does not block launch", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-tok-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-tp-"));
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-tk-"));
-  const env = {
-    ...process.env,
-    TEAM_UP_HOME: home,
-    TEAM_UP_RUNS: path.join(home, "runs"),
-    TEAM_UP_ROSTER: path.join(home, "roster.json"),
-    TEAM_UP_USAGE: path.join(home, "usage.json"),
-  };
+  const env = { ...process.env, ...verifiedHarnessEnv(home) };
   const prev = { ...process.env };
   Object.assign(process.env, env);
   try {
-    fs.writeFileSync(
-      env.TEAM_UP_ROSTER,
-      JSON.stringify({
-        accounts: { cursor: { kind: "subscription", enabled: true } },
-        clis: {
-          cursor: {
-            cmd: ["true", "{prompt}"],
-            sandbox: { token_budget_adapter: true },
-          },
-        },
-        models: {
-          m: {
-            tier: "medium",
-            cli: ["cursor"],
-            account: "cursor",
-            reasoning: { low: null },
-            priority: 1,
-          },
-        },
-      })
-    );
+    fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify(verifiedClaudeRoster()));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
     writePkg(
       pkg,

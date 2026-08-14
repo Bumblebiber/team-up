@@ -30,12 +30,21 @@ import {
   defaultHarnessCapabilities,
   prepareHarnessLaunch,
 } from "../harness/registry.mjs";
+import { CONTEXT_ISOLATION_CAPABILITY } from "../harness/capabilities.mjs";
+import { resolveCapabilities } from "../capabilities/resolve.mjs";
+import { loadAssignments } from "../capabilities/assignments.mjs";
+import { listInstalledCapabilities } from "../capabilities/store.mjs";
+import {
+  materializeCapabilityCapsule,
+  buildStrictMcpConfig,
+} from "../capabilities/capsule.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import {
   buildLaunchDescriptor,
   persistLaunchDescriptor,
   startFromLaunchDescriptor,
   prepareArgvFromDescriptor,
+  applyLaunchEnv,
   resolveLimitWindowsForCell,
   loadAuthoritativeLaunchDescriptor,
 } from "../supervisor/start.mjs";
@@ -107,7 +116,20 @@ export async function launch({
   permissions,
   env = process.env,
   dryRun = false,
+  dependencyOverrides = {},
 }) {
+  const deps = {
+    resolveEffectiveCapabilities: ({ specialistId: id }) =>
+      resolveCapabilities({
+        specialistId: id,
+        assignments: loadAssignments({ env }).assignments,
+        installed: listInstalledCapabilities({ env }),
+      }),
+    materializeCapabilityCapsule,
+    createRun,
+    startFromLaunchDescriptor,
+    ...dependencyOverrides,
+  };
   const installed = loadInstalledManifest(specialistId, { project, env });
   if (!installed) {
     const err = new Error(`specialist not installed: ${specialistId}`);
@@ -178,12 +200,18 @@ export async function launch({
     }
   }
 
+  // Resolve the effective capability set before anything is created: a
+  // version conflict or a missing pool package must fail before a run record.
+  const capabilityResolution = deps.resolveEffectiveCapabilities({ specialistId });
+
   const roster = requireRoster();
   const usage = loadJson(usagePath());
-  const requirements =
-    (manifest.permissions?.commands || []).length > 0
+  const requirements = {
+    context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+    ...((manifest.permissions?.commands || []).length > 0
       ? { command_broker: "team-up.command-broker/v1" }
-      : {};
+      : {}),
+  };
   const profileResult = resolveProfile({
     roster,
     usage,
@@ -224,7 +252,7 @@ export async function launch({
       : null,
   ].filter(Boolean).join("\n");
 
-  const state = createRun({
+  const state = deps.createRun({
     cwd: runCwd || undefined,
     project: fsMode === "none" ? null : project,
     role: `specialist:${specialistId}`,
@@ -281,9 +309,47 @@ export async function launch({
     filesystem: fsMode,
   });
 
+  // Shared pool capabilities are materialized next to the intrinsic context.
+  // A failure here must leave a failed run and no worker process.
+  let effectiveCapabilities;
+  try {
+    effectiveCapabilities = deps.materializeCapabilityCapsule({
+      runRoot: runDir(state.runId),
+      specialistId,
+      packages: capabilityResolution.packages,
+      exclusions: capabilityResolution.exclusions,
+    });
+  } catch (e) {
+    e.code = e.code || "CAPSULE_BUILD_FAILED";
+    setStatus(state.runId, "failed");
+    throw e;
+  }
+
+  const capsuleRoot = runDir(state.runId);
+  const capsule = {
+    pluginDirs: effectiveCapabilities.packages.flatMap((item) =>
+      item.resolved.plugins.map((rel) => path.join(capsuleRoot, rel))
+    ),
+    mcpConfig: buildStrictMcpConfig(effectiveCapabilities, capsuleRoot),
+    skillDirs: [path.join(capsuleRoot, "context", "skills")],
+    frameworkDirs: [path.join(capsuleRoot, "context", "framework")],
+    homeDir: path.join(capsuleRoot, "harness", "home"),
+    codexHome: path.join(capsuleRoot, "harness", "home"),
+    effective: effectiveCapabilities,
+  };
+
   atomicWriteJson(path.join(runDir(state.runId), "mailbox", "REQUEST.json"), request);
 
-  const workerPrompt = wrapPromptWithMailboxProtocol(barePrompt, {
+  // Point at the selected directories only — never at the pool inventory or
+  // the effective-capabilities audit record.
+  const capsuleNote = effectiveCapabilities.packages.length
+    ? [
+        "",
+        "Shared capabilities selected for you are in context/skills and context/framework.",
+      ].join("\n")
+    : "";
+
+  const workerPrompt = wrapPromptWithMailboxProtocol(`${barePrompt}${capsuleNote}`, {
     runId: state.runId,
     runDirectory: runDir(state.runId),
     resultProtocol: "RESULT.json",
@@ -299,25 +365,26 @@ export async function launch({
   });
 
   const runPath = runDir(state.runId);
-  let cliArgv = cliArgvRaw;
-  if (policySnapshot) {
-    const prepared = prepareHarnessLaunch({
-      cli: cell.cli,
-      argv: cliArgvRaw,
-      runDir: runPath,
-      broker: {
-        policySnapshot: policySnapshot.path,
-        policyChecksum: policySnapshot.checksum,
-        project: path.resolve(project),
-        runDir: runPath,
-        actionIds: effectivePerms.commands || [],
-      },
-      verification: harnessCaps.command_broker
+  const prepared = prepareHarnessLaunch({
+    cli: cell.cli,
+    argv: cliArgvRaw,
+    runDir: runPath,
+    capsule,
+    broker: policySnapshot
+      ? {
+          policySnapshot: policySnapshot.path,
+          policyChecksum: policySnapshot.checksum,
+          project: path.resolve(project),
+          runDir: runPath,
+          actionIds: effectivePerms.commands || [],
+        }
+      : null,
+    verification:
+      harnessCaps.context_isolation === CONTEXT_ISOLATION_CAPABILITY
         ? { status: "verified", cli_version: "launch" }
         : null,
-    });
-    cliArgv = prepared.argv;
-  }
+  });
+  const cliArgv = prepared.argv;
 
   const cliPath = resolveCliPath(cliArgv[0]);
   const timeoutSec = budgetNorm.timeout_seconds;
@@ -383,6 +450,7 @@ export async function launch({
           actionIds: effectivePerms.commands || [],
         }
       : null,
+    capsuleRoot: runPath,
     harnessRequirements: requirements,
     specialistProfile: profileResult.profile,
     limitWindows,
@@ -410,6 +478,16 @@ export async function launch({
     enforcement: "best_effort",
   };
   stAfter.harness_requirements = requirements;
+  stAfter.capabilities = {
+    capsule_root: runPath,
+    packages: effectiveCapabilities.packages.map((item) => ({
+      package: item.package,
+      checksum: item.checksum,
+      reason: item.reason,
+    })),
+    exclusions: effectiveCapabilities.exclusions,
+    totals: effectiveCapabilities.totals,
+  };
   stAfter.specialist_profile = profileResult.profile;
   stAfter.runtime = {
     cli: cell.cli,
@@ -433,7 +511,7 @@ export async function launch({
         });
       });
     try {
-      startFromLaunchDescriptor({
+      deps.startFromLaunchDescriptor({
         runId: state.runId,
         sessionName: session,
         probe,
@@ -471,7 +549,7 @@ export async function launch({
     enforced: live?.sandbox?.enforced === true || wrapped.enforced === true,
     sandbox_warning: live?.sandbox?.warning ?? wrapped.warning ?? null,
     argv: dryRun
-      ? wrapped.argv
+      ? applyLaunchEnv(wrapped.argv, prepared.env)
       : prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(state.runId), {
           probe,
         }).argv,

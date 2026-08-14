@@ -1,4 +1,35 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { CLAUDE_DECLARED_CAPABILITIES, UNVERIFIED_CAPABILITIES } from "./capabilities.mjs";
+
+/** Files that carry authentication only — never capability configuration. */
+const AUTH_FILES = [".credentials.json"];
+
+/**
+ * Copy just the credential material into a run-specific config dir so a
+ * capsule launch stays authenticated while user-global skills, plugins,
+ * settings and hooks remain invisible to the worker.
+ */
+export function bridgeClaudeAuth({
+  homeDir,
+  sourceDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"),
+  mkdirSync = fs.mkdirSync,
+  copyFileSync = fs.copyFileSync,
+  existsSync = fs.existsSync,
+} = {}) {
+  if (!homeDir) return [];
+  mkdirSync(homeDir, { recursive: true });
+  const copied = [];
+  for (const name of AUTH_FILES) {
+    const from = path.join(sourceDir, name);
+    if (!existsSync(from)) continue;
+    const to = path.join(homeDir, name);
+    copyFileSync(from, to);
+    copied.push(to);
+  }
+  return copied;
+}
 
 export const claudeAdapter = {
   id: "claude",
@@ -142,8 +173,15 @@ export const claudeAdapter = {
 
     const env = {};
     // A run-specific config dir keeps user-global skills, plugins, settings and
-    // hooks out of the worker. Auth is bridged into it separately.
-    if (capsule?.homeDir) env.CLAUDE_CONFIG_DIR = capsule.homeDir;
+    // hooks out of the worker. Only credentials are bridged into it.
+    if (capsule?.homeDir) {
+      env.CLAUDE_CONFIG_DIR = capsule.homeDir;
+      bridgeClaudeAuth({
+        homeDir: capsule.homeDir,
+        mkdirSync,
+        ...(capsule.authSourceDir ? { sourceDir: capsule.authSourceDir } : {}),
+      });
+    }
 
     return {
       argv: next,

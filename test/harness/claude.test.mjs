@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { claudeAdapter } from "../../src/harness/claude.mjs";
+import { claudeAdapter, bridgeClaudeAuth } from "../../src/harness/claude.mjs";
 import { prepareHarnessLaunch } from "../../src/harness/registry.mjs";
 
 test("claude prepareLaunch denies shell bypass and writes mcp config", () => {
@@ -96,6 +96,22 @@ test("capsule launch uses only explicit plugin, MCP and config-dir paths", () =>
   assert.match(tools, /mcp__selected__do_thing/);
   // A run-specific config dir replaces user-global skills, plugins and settings.
   assert.equal(prepared.env.CLAUDE_CONFIG_DIR, "/run/harness/home");
+});
+
+test("auth is bridged into the capsule home without capability config", () => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-auth-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-home-"));
+  fs.writeFileSync(path.join(source, ".credentials.json"), '{"token":"x"}');
+  fs.mkdirSync(path.join(source, "skills", "global"), { recursive: true });
+  fs.writeFileSync(path.join(source, "skills", "global", "SKILL.md"), "# Global\n");
+  fs.writeFileSync(path.join(source, "settings.json"), "{}");
+
+  const copied = bridgeClaudeAuth({ homeDir: home, sourceDir: source });
+
+  assert.deepEqual(fs.readdirSync(home), [".credentials.json"]);
+  assert.equal(copied.length, 1);
+  assert.equal(fs.existsSync(path.join(home, "skills")), false);
+  assert.equal(fs.existsSync(path.join(home, "settings.json")), false);
 });
 
 test("bare mode is opt-in because it never reads subscription auth", () => {

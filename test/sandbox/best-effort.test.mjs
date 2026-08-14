@@ -7,6 +7,10 @@ import { wrapWithSandbox, createProbeArtifacts, evaluateProbeOutput } from "../.
 import { installPackage } from "../../src/specialists/store.mjs";
 import { approveSpecialist } from "../../src/specialists/approvals.mjs";
 import { launch } from "../../src/specialists/launcher.mjs";
+import {
+  verifiedClaudeRoster,
+  verifiedHarnessEnv,
+} from "../helpers/verified-harness.mjs";
 
 test("ineffective host sandbox falls back with an audit warning", () => {
   const result = wrapWithSandbox({
@@ -77,32 +81,11 @@ test("specialist launch proceeds with best-effort when probe fails", async () =>
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-be-home-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-be-proj-"));
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-be-pkg-"));
-  const env = {
-    ...process.env,
-    TEAM_UP_HOME: home,
-    TEAM_UP_RUNS: path.join(home, "runs"),
-    TEAM_UP_ROSTER: path.join(home, "roster.json"),
-    TEAM_UP_USAGE: path.join(home, "usage.json"),
-  };
+  const env = { ...process.env, ...verifiedHarnessEnv(home) };
   const prev = { ...process.env };
   Object.assign(process.env, env);
   try {
-    fs.writeFileSync(
-      env.TEAM_UP_ROSTER,
-      JSON.stringify({
-        accounts: { cursor: { kind: "subscription", enabled: true } },
-        clis: { cursor: { cmd: ["true", "{prompt}"] } },
-        models: {
-          m: {
-            tier: "medium",
-            cli: ["cursor"],
-            account: "cursor",
-            reasoning: { low: null },
-            priority: 1,
-          },
-        },
-      })
-    );
+    fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify(verifiedClaudeRoster()));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
     fs.writeFileSync(
       path.join(pkg, "specialist.json"),

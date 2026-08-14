@@ -91,7 +91,6 @@ export function resolveProfile({
   const chain = [];
   const skipped = [];
   const quota_blocked = [];
-  const requiredBroker = requirements?.command_broker || null;
 
   for (const [model, spec] of Object.entries(roster?.models || {})) {
     const modelTier = (() => {
@@ -141,17 +140,24 @@ export function resolveProfile({
         continue;
       }
 
-      if (requiredBroker) {
+      // Every declared requirement must be advertised by a verified harness.
+      // Context isolation is fail-closed exactly like the command broker.
+      const requiredCaps = Object.entries(requirements || {}).filter(
+        ([, wanted]) => Boolean(wanted)
+      );
+      if (requiredCaps.length) {
         let caps;
         try {
           caps = harnessCapabilities(cli);
         } catch {
-          caps = { command_broker: null };
+          caps = {};
         }
-        if (caps?.command_broker !== requiredBroker) {
+        const unmet = requiredCaps.find(([key, wanted]) => caps?.[key] !== wanted);
+        if (unmet) {
+          const label = unmet[0] === "command_broker" ? "command broker" : unmet[0];
           skipped.push({
             model: `${cli}:${model}`,
-            reason: `command broker unavailable (need ${requiredBroker})`,
+            reason: `${label} unavailable (need ${unmet[1]})`,
           });
           continue;
         }
