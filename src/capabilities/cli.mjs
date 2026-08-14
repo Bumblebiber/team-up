@@ -11,6 +11,8 @@ import {
   loadAssignments,
 } from "./assignments.mjs";
 import { importGitCapability } from "./git-source.mjs";
+import { normalizeRecommendations } from "./recommendations.mjs";
+import { loadInstalledManifest } from "../specialists/store.mjs";
 
 function value(args, flag) {
   const index = args.indexOf(flag);
@@ -18,10 +20,13 @@ function value(args, flag) {
 }
 
 function usage(io) {
-  io.err("usage: team-up capability <install|inspect|list|enable|disable>");
+  io.err(
+    "usage: team-up capability <install|inspect|list|recommendations|enable|disable>"
+  );
   io.err("  install <source-path | git-url --git-ref <branch|tag|commit>>");
   io.err("  inspect <source-path | id@version [--checksum sha256:…]>");
   io.err("  list");
+  io.err("  recommendations <specialist-id> [--project <path>]");
   io.err("  enable  <id@version> --checksum <sha256:…> --for <all|specialist-id>");
   io.err("  disable <id@version> --checksum <sha256:…> --for <all|specialist-id>");
   return 1;
@@ -63,6 +68,32 @@ async function dispatch(args, io, env) {
           env,
         });
     io.out(JSON.stringify(inspected, null, 2));
+    return 0;
+  }
+
+  if (sub === "recommendations") {
+    if (!subject) return usage(io);
+    const installed = loadInstalledManifest(subject, {
+      project: value(rest, "--project"),
+      env,
+    });
+    if (!installed) {
+      io.err(`specialist not installed: ${subject}`);
+      return 1;
+    }
+    // Read-only: printing recommendations never installs or enables anything.
+    io.out(
+      JSON.stringify(
+        {
+          specialist: subject,
+          recommendations: normalizeRecommendations(
+            installed.manifest.recommendations ?? []
+          ),
+        },
+        null,
+        2
+      )
+    );
     return 0;
   }
 

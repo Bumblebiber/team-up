@@ -152,6 +152,30 @@ test("disable excludes one specialist from a dynamic all", async () => {
   });
 });
 
+test("reading recommendations changes no pool or assignment state", async () => {
+  await withHome(async () => {
+    const c = capture();
+    await runCli(["capability", "install", capabilitySource()], c.io);
+    const { checksum } = JSON.parse(c.out[0]);
+    await runCli(
+      ["capability", "enable", "x@1", "--checksum", checksum, "--for", "all"],
+      c.io
+    );
+
+    await runCli(["capability", "list"], c.io);
+    const before = c.out.at(-1);
+
+    // Unknown specialist is an error, never a mutation.
+    assert.equal(
+      await runCli(["capability", "recommendations", "research.rick"], c.io),
+      1
+    );
+
+    await runCli(["capability", "list"], c.io);
+    assert.equal(c.out.at(-1), before);
+  });
+});
+
 test("unknown subcommands and failed imports exit non-zero", async () => {
   await withHome(async () => {
     const c = capture();

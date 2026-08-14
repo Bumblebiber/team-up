@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assertSafeSpecialistSegment, assertSafeRelPath, assertPathInsideRoot } from "./safe-id.mjs";
 import { normalizeBudget } from "./budget.mjs";
+import { normalizeRecommendations } from "../capabilities/recommendations.mjs";
 
 export const REQUIRED = [
   "schema_version",
@@ -178,6 +179,16 @@ export function validateManifest(manifest, { packageDir } = {}) {
   const schemaVersion = Number(manifest.schema_version);
   if (schemaVersion !== 1 && schemaVersion !== 2) {
     errors.push(`unsupported schema_version: ${manifest.schema_version}`);
+  }
+
+  // Recommendations are inert display metadata; they still have to be
+  // well-formed so the operator skill can show them safely.
+  if (manifest.recommendations != null) {
+    try {
+      normalizeRecommendations(manifest.recommendations);
+    } catch (e) {
+      errors.push(e.message);
+    }
   }
 
   const budget = manifest.budget;
