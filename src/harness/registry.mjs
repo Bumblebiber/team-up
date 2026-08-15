@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync as realExecFileSync } from "node:child_process";
 import { claudeAdapter } from "./claude.mjs";
 import { codexAdapter } from "./codex.mjs";
+import { opencodeAdapter } from "./opencode.mjs";
 import { unsupportedAdapter } from "./unsupported.mjs";
 import {
   CONTEXT_ISOLATION_CAPABILITY,
@@ -17,7 +18,7 @@ const ADAPTERS = Object.freeze({
   cursor: unsupportedAdapter("cursor"),
   codex: codexAdapter,
   hermes: unsupportedAdapter("hermes"),
-  opencode: unsupportedAdapter("opencode"),
+  opencode: opencodeAdapter,
 });
 
 export function getAdapter(cli) {
