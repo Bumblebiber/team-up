@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   declaredHarnessCapabilities,
   defaultHarnessCapabilities,
@@ -7,6 +10,15 @@ import {
   prepareHarnessLaunch,
 } from "../../src/harness/registry.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
+
+/**
+ * A TEAM_UP_HOME with no verification records. Without it these assertions read
+ * the developer's real records and start failing the moment a harness is
+ * verified on that machine.
+ */
+const UNVERIFIED_ENV = {
+  TEAM_UP_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "tu-no-records-")),
+};
 
 test("claude advertises brokered commands; unverified harnesses do not", () => {
   assert.equal(declaredHarnessCapabilities("claude").command_broker, "team-up.command-broker/v1");
@@ -23,7 +35,7 @@ test("claude advertises brokered commands; unverified harnesses do not", () => {
     "team-up.command-broker/v1"
   );
   for (const id of ["cursor", "codex", "hermes", "opencode"]) {
-    assert.equal(harnessCapabilities(id).command_broker, null);
+    assert.equal(harnessCapabilities(id, { env: UNVERIFIED_ENV }).command_broker, null);
   }
 });
 
@@ -32,9 +44,16 @@ test("unknown harness fails closed", () => {
 });
 
 test("unverified harness never advertises context isolation", () => {
-  assert.equal(defaultHarnessCapabilities("claude", {
-    verification: null,
-  }).context_isolation, null);
+  assert.equal(
+    defaultHarnessCapabilities("claude", { verification: null }).context_isolation,
+    null
+  );
+  for (const id of ["cursor", "codex", "hermes", "opencode"]) {
+    assert.equal(
+      defaultHarnessCapabilities(id, { env: UNVERIFIED_ENV }).context_isolation,
+      null
+    );
+  }
 });
 
 test("verified Claude advertises the versioned contract", () => {
