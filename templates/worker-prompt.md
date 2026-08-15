@@ -32,6 +32,9 @@ The parent chat **cannot see your tmux pane**. It only wakes when mailbox
    - Write task-dir artifacts (`PLAN.md`, `GRILL.md`, code, …) as required by the task.
    - Write `mailbox/RESULT.json` conforming to schema `team-up.result/v1`
      (`status`, `summary`, …). This is the live specialist mailbox protocol.
+     `status` must be exactly one of `success`, `partial`, `blocked`, `failed` —
+     any other value (including `done`) fails the run. `done` is the value for
+     `mailbox/STATUS` in the next step, not for `RESULT.json`.
    - Optionally write `mailbox/RESULT.md` as human-readable detail (not sufficient alone).
    - Set `mailbox/STATUS` = `done` (or run: `team-up runs set-status {{RUN_ID}} done`).
    - Then you may stop.

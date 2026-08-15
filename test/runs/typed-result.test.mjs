@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRun, writeTypedResult, classifyMailbox, runDir } from "../../src/runs/runs.mjs";
+import {
+  createRun,
+  writeTypedResult,
+  classifyMailbox,
+  runDir,
+  RESULT_STATUSES,
+} from "../../src/runs/runs.mjs";
 
 function withTempRuns(fn) {
   return async () => {
@@ -47,3 +53,18 @@ test("malformed result becomes failed", withTempRuns(async () => {
   assert.equal(classified.status, "failed");
   assert.match(validated.validation_error, /status/);
 }));
+
+test("worker prompt names every RESULT.json status the validator accepts", () => {
+  const template = fs.readFileSync(
+    path.join(import.meta.dirname, "..", "..", "templates", "worker-prompt.md"),
+    "utf8"
+  );
+  for (const status of RESULT_STATUSES) {
+    assert.ok(
+      template.includes(`\`${status}\``),
+      `worker prompt does not mention RESULT.json status ${status}`
+    );
+  }
+  // The mailbox STATUS value is not a RESULT.json status; workers conflated the two.
+  assert.ok(template.includes("not for `RESULT.json`"));
+});

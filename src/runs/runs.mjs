@@ -379,7 +379,7 @@ export function classifyMailbox(runId) {
         resultPath: resultJsonPath,
       };
     }
-    if (!["success", "partial", "blocked", "failed"].includes(parsed?.status)) {
+    if (!RESULT_STATUSES.includes(parsed?.status)) {
       return {
         status: "failed",
         error: `invalid RESULT.json status: ${parsed?.status}`,
@@ -424,6 +424,13 @@ export function classifyMailbox(runId) {
   }
   return { status: "watching" };
 }
+
+/**
+ * Statuses a worker may write into RESULT.json. Exported so the worker prompt
+ * can be checked against it — a prompt that omits them makes workers guess, and
+ * a guessed value fails the run after the work is already done.
+ */
+export const RESULT_STATUSES = ["success", "partial", "blocked", "failed"];
 
 const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
 const CAPACITY_RUN_STATUSES = new Set(["waiting_capacity", "waiting_decision"]);

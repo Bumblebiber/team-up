@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { claudeAdapter } from "../../src/harness/claude.mjs";
+import { claudeAdapter, materializeClaudeAuthHome } from "../../src/harness/claude.mjs";
 import { prepareHarnessLaunch } from "../../src/harness/registry.mjs";
 
 test("claude prepareLaunch denies shell bypass and writes mcp config", () => {
@@ -170,4 +170,34 @@ test("capsule launch materializes skills into HOME and frameworks via --add-dir"
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }
+});
+
+test("the materialized home clears both headless-fatal first-run gates", () => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-src-"));
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-run-"));
+  fs.mkdirSync(path.join(source, ".claude"), { recursive: true });
+  fs.writeFileSync(path.join(source, ".claude", ".credentials.json"), '{"token":"x"}');
+  fs.writeFileSync(
+    path.join(source, ".claude.json"),
+    JSON.stringify({ hasCompletedOnboarding: true, numStartups: 7, oauthAccount: "secret" })
+  );
+
+  const materialized = materializeClaudeAuthHome(run, {
+    authSourceHome: source,
+    workspaceDirs: [path.join(run, "context")],
+  });
+  const seeded = JSON.parse(
+    fs.readFileSync(path.join(materialized.home, ".claude.json"), "utf8")
+  );
+
+  // Gate one: the onboarding wizard.
+  assert.equal(seeded.hasCompletedOnboarding, true);
+  assert.equal(seeded.numStartups, 7);
+  // Gate two: the workspace trust prompt for the run's own directories.
+  assert.equal(seeded.projects[path.join(run, "context")].hasTrustDialogAccepted, true);
+  // Only the markers travel — nothing else from the user's config.
+  assert.equal(seeded.oauthAccount, undefined);
+
+  fs.rmSync(source, { recursive: true, force: true });
+  fs.rmSync(run, { recursive: true, force: true });
 });

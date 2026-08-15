@@ -266,6 +266,7 @@ export async function launch({
     "Read context/specialist and selected skill/framework directories under context/.",
     "Read REQUEST.json and instructions.md in the context directory. Follow remit/anti-remit.",
     "Write mailbox/RESULT.json conforming to schema team-up.result/v1 when done.",
+    "Its status field must be one of success, partial, blocked, failed — not done.",
     "RESULT.md is optional human-readable detail and does not count as success by itself.",
     budgetNorm.tokens
       ? `Advisory token target: ${budgetNorm.tokens.target} (not hard-enforced).`
@@ -347,7 +348,15 @@ export async function launch({
       mcpConfig: buildStrictMcpConfig(effective, runDir(state.runId)),
       skillDirs: [path.join(runDir(state.runId), "context", "skills")],
       frameworkDirs: [path.join(runDir(state.runId), "context", "framework")],
+      homeDir: path.join(runDir(state.runId), "harness", "home"),
       codexHome: path.join(runDir(state.runId), "harness", "home"),
+      // Directories the worker actually opens. Harnesses that gate on workspace
+      // trust need these pre-accepted, or the launch stalls on a prompt nobody
+      // is there to answer.
+      workspaceDirs: [
+        path.join(runDir(state.runId), "context"),
+        ...(runCwd ? [runCwd] : []),
+      ],
       effective,
       ...collectCapsuleMcpTools(effective, runDir(state.runId)),
     };
