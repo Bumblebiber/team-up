@@ -1,7 +1,54 @@
 import fs from "node:fs";
 import path from "node:path";
 import { OPENCODE_DECLARED_CAPABILITIES } from "./capabilities.mjs";
-import { linkCapsuleSkills } from "./claude.mjs";
+
+/**
+ * Symlink the capsule's skill directories into the layout opencode discovers.
+ *
+ * The Claude adapter copies skills into its sanitized HOME instead; opencode
+ * reads them from its config dir, so this is the only consumer. Colliding skill
+ * names are an error rather than a silent last-one-wins.
+ */
+function linkCapsuleSkills({
+  homeDir,
+  skillDirs = [],
+  mkdirSync = fs.mkdirSync,
+  readdirSync = fs.readdirSync,
+  symlinkSync = fs.symlinkSync,
+  rmSync = fs.rmSync,
+} = {}) {
+  if (!homeDir) return [];
+  const target = path.join(homeDir, "skills");
+  rmSync(target, { recursive: true, force: true });
+  const linked = [];
+  const seen = new Map();
+  for (const dir of skillDirs) {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      if (e.code === "ENOENT") continue;
+      throw e;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const previous = seen.get(entry.name);
+      if (previous) {
+        const err = new Error(
+          `HARNESS_SKILL_COLLISION: ${entry.name} provided by ${previous} and ${dir}`
+        );
+        err.code = "HARNESS_SKILL_COLLISION";
+        throw err;
+      }
+      seen.set(entry.name, dir);
+      mkdirSync(target, { recursive: true });
+      const link = path.join(target, entry.name);
+      symlinkSync(path.join(dir, entry.name), link);
+      linked.push(link);
+    }
+  }
+  return linked;
+}
 
 /**
  * Environment that makes opencode forget the user's global setup.

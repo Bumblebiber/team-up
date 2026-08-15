@@ -84,3 +84,28 @@ test("recommendations command does not mutate pool or assignments", async () => 
     else process.env.TEAM_UP_HOME = prior;
   }
 });
+
+test("enable refuses a checksum that is not installed", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-home-"));
+  const prior = process.env.TEAM_UP_HOME;
+  process.env.TEAM_UP_HOME = home;
+  try {
+    const io = capture();
+    // Without the guard this writes an assignment row that only fails later,
+    // in resolveCapabilities, at every specialist launch, instead of on the
+    // command that typed it.
+    const code = await runCli(
+      ["capability", "enable", "style.caveman@0.1.0",
+       "--checksum", `sha256:${"0".repeat(64)}`, "--for", "coding.codey"],
+      io.io
+    );
+    assert.equal(code, 1);
+    assert.match(io.err.join("\n"), /style\.caveman@0\.1\.0/);
+    // Nothing was written: the assignments file must not exist yet.
+    assert.equal(fs.existsSync(path.join(home, "capability-assignments.json")), false);
+  } finally {
+    if (prior === undefined) delete process.env.TEAM_UP_HOME;
+    else process.env.TEAM_UP_HOME = prior;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

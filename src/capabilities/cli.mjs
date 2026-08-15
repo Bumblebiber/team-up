@@ -152,6 +152,11 @@ async function dispatch(args, io, env) {
     const target = value(rest, "--for");
     const checksum = value(rest, "--checksum");
     if (!subject || !target || !checksum) return usage(io);
+    // Enabling an uninstalled checksum writes a row that only fails later, in
+    // `resolveCapabilities`, at every specialist launch. Resolve it here so the
+    // error lands on the command that typed it. Disable stays unchecked: it
+    // only ever reduces reach, and must keep working on a stale row.
+    if (sub === "enable") inspectInstalledCapability(subject, { checksum, env });
     const fn = sub === "enable" ? enableCapability : disableCapability;
     io.out(JSON.stringify(fn({ package: subject, checksum, target, env }), null, 2));
     return 0;
