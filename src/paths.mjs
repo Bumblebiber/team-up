@@ -164,6 +164,11 @@ export function capabilityPoolRoot(env = process.env) {
     path.join(teamUpHome(env), "capability-pool");
 }
 
+/** Project↔specialist approval records. */
+export function specialistApprovalsPath(env = process.env) {
+  return path.join(teamUpHome(env), "approvals.json");
+}
+
 export function capabilityAssignmentsPath(env = process.env) {
   return env.TEAM_UP_CAPABILITY_ASSIGNMENTS ||
     path.join(teamUpHome(env), "capability-assignments.json");

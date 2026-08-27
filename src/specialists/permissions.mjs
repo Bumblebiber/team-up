@@ -131,11 +131,21 @@ export function assertCallTypeAllowed(callType, manifest) {
  * researcher ended up holding `Write`.
  */
 export function builtinsForPermissions(permissions = {}) {
-  // ToolSearch and Skill grant neither writes nor network, and a capsule that
-  // materialized skills has no way to invoke them without Skill on the list.
-  const tools = ["Read", "Glob", "Grep", "ToolSearch", "Skill"];
+  // `Write` is unconditional: the mailbox is how a specialist reports at all,
+  // and closing it means creating RESULT.json and setting STATUS. Deriving it
+  // from `writes` left a read-only researcher able to finish the work and
+  // unable to hand it over — she said so herself and returned the report as
+  // terminal output nobody was watching. `writes` governs the project, not the
+  // specialist's own output channel; which paths are writable is the sandbox's
+  // job, and the mailbox is bound writable there for every call type.
+  //
+  // ToolSearch and Skill are on the floor for the same kind of reason: neither
+  // writes nor reaches the network, and a `--tools` list without Skill silently
+  // disables every skill the capsule just materialized.
+  const tools = ["Read", "Glob", "Grep", "ToolSearch", "Skill", "Write"];
+  // `Edit` is the one that mutates existing files, so it stays gated.
   if (permissions.writes === true || permissions.writes === "delegated_only") {
-    tools.push("Edit", "Write");
+    tools.push("Edit");
   }
   if (permissions.network === true) tools.push("WebFetch", "WebSearch");
   return tools;
