@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "research.browser",
+  "version": "1.0.0",
+  "display_name": "Headless browser (read-only web sources)",
+  "description": "Open a page in a headless browser and read it: accessibility snapshot, console messages, network requests, screenshots. For sources that render their content with JavaScript and return nothing useful to a plain fetch.",
+  "provides": {
+    "skills": [],
+    "plugins": [],
+    "mcps": [
+      "mcps/playwright.json"
+    ],
+    "frameworks": []
+  },
+  "permissions": {
+    "network": true,
+    "commands": [],
+    "filesystem": "none"
+  }
+}

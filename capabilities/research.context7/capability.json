@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "research.context7",
+  "version": "1.0.0",
+  "display_name": "Context7 (live library documentation)",
+  "description": "Resolve a package or framework name to a library id, then query its current documentation. Answers questions about a library's real API instead of the model's recollection of it.",
+  "provides": {
+    "skills": [],
+    "plugins": [],
+    "mcps": [
+      "mcps/context7.json"
+    ],
+    "frameworks": []
+  },
+  "permissions": {
+    "network": true,
+    "commands": [],
+    "filesystem": "none"
+  }
+}

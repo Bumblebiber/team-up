@@ -4,7 +4,11 @@ import { execFileSync } from "node:child_process";
 import { loadInstalledManifest, verifyInstalledIntegrity } from "./store.mjs";
 import { isApproved } from "./approvals.mjs";
 import { normalizeRequest } from "./request.mjs";
-import { intersectPermissions, assertCallTypeAllowed } from "./permissions.mjs";
+import {
+  intersectPermissions,
+  assertCallTypeAllowed,
+  builtinsForPermissions,
+} from "./permissions.mjs";
 import { resolveProfile } from "../roster/profile.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
@@ -99,21 +103,7 @@ export function cliSandboxConfig(roster, cli, { harnessCapabilities: caps } = {}
   };
 }
 
-/**
- * Builtin tools a specialist may hold, derived from its approved permissions.
- * Without this every specialist gets the adapter default — including `Write`
- * for a read-only researcher, and no web tool for one whose manifest asks for
- * the network. The sandbox still enforces the filesystem side; this keeps the
- * tool list from advertising what the manifest did not grant.
- */
-export function builtinsForPermissions(permissions = {}) {
-  const tools = ["Read", "Glob", "Grep"];
-  if (permissions.writes === true || permissions.writes === "delegated_only") {
-    tools.push("Edit", "Write");
-  }
-  if (permissions.network === true) tools.push("WebFetch", "WebSearch");
-  return tools;
-}
+export { builtinsForPermissions };
 
 function needsCommandMediation(effectivePerms, manifest) {
   if ((effectivePerms.commands || []).length > 0) return true;

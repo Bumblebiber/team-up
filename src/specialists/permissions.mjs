@@ -117,3 +117,24 @@ export function assertCallTypeAllowed(callType, manifest) {
     throw new Error(`call_type not allowed by manifest: ${callType}`);
   }
 }
+
+/**
+ * Builtin tools a specialist may hold, derived from its approved permissions.
+ * Without this every specialist gets the adapter default — including `Write`
+ * for a read-only researcher, and no web tool for one whose manifest asks for
+ * the network. The sandbox still enforces the filesystem side; this keeps the
+ * tool list from advertising what the manifest did not grant.
+ *
+ * Lives here rather than beside the launcher because the authoritative launch
+ * rebuilds its argv from the persisted descriptor, in a module the launcher
+ * imports — deriving it in only one of those two places is how a read-only
+ * researcher ended up holding `Write`.
+ */
+export function builtinsForPermissions(permissions = {}) {
+  const tools = ["Read", "Glob", "Grep"];
+  if (permissions.writes === true || permissions.writes === "delegated_only") {
+    tools.push("Edit", "Write");
+  }
+  if (permissions.network === true) tools.push("WebFetch", "WebSearch");
+  return tools;
+}
