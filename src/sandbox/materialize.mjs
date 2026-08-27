@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { atomicWriteJson, atomicWriteText } from "../json-store.mjs";
+import { atomicWriteJson } from "../json-store.mjs";
 import { assertPathInsideRoot, assertSafeSpecialistSegment, assertSafeRelPath } from "../specialists/safe-id.mjs";
 
 function assertUnderRoot(absPath, root) {
@@ -88,11 +88,12 @@ export async function materialize({
     }
   }
 
-  const mailbox = path.join(destination, "mailbox");
-  fs.mkdirSync(mailbox, { recursive: true });
-  atomicWriteText(path.join(mailbox, "STATUS"), "watching");
-  atomicWriteText(path.join(mailbox, "HEARTBEAT"), new Date().toISOString());
-
+  // No mailbox is seeded here. The run's real one already exists a directory
+  // up, and this destination is the worker's cwd — a second `mailbox/` here is
+  // exactly where a relative path lands, so seeding one turned a wrong path
+  // into a silent success: the worker reported done into a directory nothing
+  // reads, while the watcher waited on the real mailbox forever. Without it a
+  // relative write fails loudly instead.
   return destination;
 }
 

@@ -252,7 +252,11 @@ export async function launch({
     "",
     "Read context/specialist and selected skill/framework directories under context/.",
     "Read REQUEST.json and instructions.md in the context directory. Follow remit/anti-remit.",
-    "Write mailbox/RESULT.json conforming to schema team-up.result/v1 when done.",
+    // No path here: this text is built before the run id exists, so it could
+    // only name a relative one — and the worker's cwd is the context dir, not
+    // the run dir. The mailbox protocol appended below carries the absolute
+    // paths and is the authority.
+    "Report through the mailbox protocol below. RESULT.json conforming to schema team-up.result/v1 is the deliverable.",
     "Its status field must be one of success, partial, blocked, failed — not done.",
     "RESULT.md is optional human-readable detail and does not count as success by itself.",
     budgetNorm.tokens
