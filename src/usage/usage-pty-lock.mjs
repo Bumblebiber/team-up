@@ -1,13 +1,15 @@
 // usage-pty-lock.mjs — cross-process mutex for PTY collectors (zero npm deps).
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { isPidAlive } from "../runs/runs.mjs";
+import { ptyLockPath as resolvePtyLockPath } from "../paths.mjs";
 
+// One implementation only: paths.mjs honours TEAM_UP_HOME, so a run with its
+// own home never contends with a live watcher on the real one.
 export function ptyLockPath() {
-  return process.env.TEAM_UP_PTY_LOCK || process.env.O9K_PTY_LOCK || path.join(os.homedir(), ".team-up/.usage-pty.lock");
+  return resolvePtyLockPath();
 }
 
 /** @returns {boolean} */

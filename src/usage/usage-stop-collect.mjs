@@ -10,15 +10,18 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { debugLog } from "../debug.mjs";
+import { usageCollectDebouncePath } from "../paths.mjs";
 
 const DEBOUNCE_MS = 15 * 60_000;
 
+// Via paths.mjs so TEAM_UP_HOME is honoured: this stamp is shared across
+// processes, and a run with its own home must not read or suppress the
+// real one's.
 function debouncePath() {
-  return path.join(os.homedir(), ".team-up/.usage-collect-claude.debounce");
+  return usageCollectDebouncePath();
 }
 
 async function runCollect() {

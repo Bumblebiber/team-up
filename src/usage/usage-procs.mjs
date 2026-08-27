@@ -4,6 +4,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { usageWatcherStatePath } from "../paths.mjs";
+
 export const CLI_BINARIES = {
   claude: "claude",
   codex: "codex",
@@ -167,7 +169,8 @@ export function countAgentProcesses(opts = {}) {
   return counts;
 }
 
+// Same rule as the PTY lock: TEAM_UP_HOME decides, so isolated runs get an
+// isolated watcher state file.
 export function watcherStatePath() {
-  const home = process.env.HOME || "/tmp";
-  return process.env.TEAM_UP_USAGE_WATCHER_STATE || process.env.O9K_USAGE_WATCHER_STATE || path.join(home, ".team-up/usage-watcher.json");
+  return usageWatcherStatePath();
 }
