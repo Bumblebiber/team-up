@@ -1,19 +1,19 @@
 ---
-name: o9k-pass-to
-description: "Manual session handoff to a named model in its native CLI (tmux). Use when the user invokes /o9k-pass-to, says pass to <model>, hand off to opus/composer/codex/hermes, or wants to continue this session in another harness with a TIM + HANDOFF.md checkpoint. Not for automatic limit handoff (that is roster handoff --role) and not for Path-B mailbox workers."
+name: pass-to
+description: "Manual session handoff to a named model in its native CLI (tmux). Use when the user invokes /pass-to, says pass to <model>, hand off to opus/composer/codex/hermes, or wants to continue this session in another harness with a TIM + HANDOFF.md checkpoint. Not for automatic limit handoff (that is roster handoff --role) and not for Path-B mailbox workers."
 disable-model-invocation: true
 ---
 
 > Config lives in `~/.team-up/`. Rosters left behind by an older o9k install are still read from `~/.o9k/` as a fallback, but every write goes to `~/.team-up/` — copy yours over once. Path B is unchanged: `runs create` → `dispatch --run-id` → `runs wait`.
 
-# o9k-pass-to — Manual model handoff
+# pass-to — Manual model handoff
 
 You are the **outgoing** main agent. The human asked to continue in another
 model's native harness. Do the limit-handoff ritual, but **pin their model** —
 do not walk a role chain, do not wait on a mailbox watcher.
 
 **Prerequisite:** `~/.team-up/roster.json` (CLI templates). If missing → say so and
-stop; suggest `/o9k-init` roster setup.
+stop; suggest `team-up init` to scaffold one.
 
 `ROSTER="team-up"`
 (the CLI is on PATH after `npm i -g team-up`).
@@ -36,7 +36,7 @@ blocks on approvals and the handoff looks "hung".
 
 ## Argument
 
-User form: `/o9k-pass-to <Modellname>` or "pass to opus / composer-2.5 / …".
+User form: `/pass-to <Modellname>` or "pass to opus / composer-2.5 / …".
 `<Modellname>` is free text. Resolution is **code** (`team-up pass-to`), not
 your judgment:
 
