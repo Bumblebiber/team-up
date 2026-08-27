@@ -98,6 +98,22 @@ export function cliSandboxConfig(roster, cli, { harnessCapabilities: caps } = {}
   };
 }
 
+/**
+ * Builtin tools a specialist may hold, derived from its approved permissions.
+ * Without this every specialist gets the adapter default — including `Write`
+ * for a read-only researcher, and no web tool for one whose manifest asks for
+ * the network. The sandbox still enforces the filesystem side; this keeps the
+ * tool list from advertising what the manifest did not grant.
+ */
+export function builtinsForPermissions(permissions = {}) {
+  const tools = ["Read", "Glob", "Grep"];
+  if (permissions.writes === true || permissions.writes === "delegated_only") {
+    tools.push("Edit", "Write");
+  }
+  if (permissions.network === true) tools.push("WebFetch", "WebSearch");
+  return tools;
+}
+
 function needsCommandMediation(effectivePerms, manifest) {
   if ((effectivePerms.commands || []).length > 0) return true;
   const tools = effectivePerms.tools ?? manifest?.capabilities?.tools ?? [];
@@ -405,6 +421,7 @@ export async function launch({
     runDir: runPath,
     broker,
     capsule,
+    allowedBuiltins: builtinsForPermissions(effectivePerms),
     env,
     verification: {
       status: "verified",
