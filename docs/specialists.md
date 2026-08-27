@@ -52,12 +52,20 @@ executable install hooks.
 team-up specialist inspect <path>
 team-up specialist install <path>
 team-up specialist approve <id>@<version> --project <abs-path>
+team-up specialist pin <id>@<version> [--project <abs-path>]
 team-up specialist list
 team-up specialist run --id <id> --call-type review --objective "..." --project <abs>
 ```
 
 Approval binds project + id + version + checksum + permissions. Any checksum
 or permission change requires reapproval.
+
+Installing a second version never repoints an existing selection — that would
+silently change what runs. `pin` is how the selection moves, and it is a
+separate step on purpose: approve the new version first, then pin it. Without
+`--project` the pin is global; with it, only that project sees the new version
+and everywhere else keeps the old one. `run` has no `--version` flag; the pin
+is the single place a version gets chosen.
 
 ## Call types
 

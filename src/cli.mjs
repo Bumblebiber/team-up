@@ -9,6 +9,7 @@ import {
   inspectPackage,
   installPackage,
   listInstalled,
+  pinSpecialist,
 } from "./specialists/store.mjs";
 import { approveSpecialist, listApprovals } from "./specialists/approvals.mjs";
 import { runSpecialist } from "./specialists/launcher.mjs";
@@ -113,6 +114,22 @@ async function cmdSpecialist(args, io) {
     io.out(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }
+  if (sub === "pin") {
+    // Install deliberately never repoints an existing selection, so a second
+    // version sits installed-but-unreachable until something selects it. That
+    // something is this: pinSpecialist already resolved by version and wrote
+    // the selection; it just had no way in from the CLI.
+    const idVer = rest[0];
+    const project = argValue(rest, "--project");
+    const [id, version] = String(idVer ?? "").split("@");
+    if (!id || !version) {
+      io.err("usage: team-up specialist pin <id>@<version> [--project <absolute-path>]");
+      return 1;
+    }
+    const result = pinSpecialist(id, { version, project });
+    io.out(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
   if (sub === "list") {
     io.out(JSON.stringify(listInstalled(), null, 2));
     return 0;
@@ -121,7 +138,7 @@ async function cmdSpecialist(args, io) {
     const result = await runSpecialist(rest, io);
     return result.code;
   }
-  io.err("usage: team-up specialist <inspect|install|approve|list|run>");
+  io.err("usage: team-up specialist <inspect|install|approve|pin|list|run>");
   return 1;
 }
 
