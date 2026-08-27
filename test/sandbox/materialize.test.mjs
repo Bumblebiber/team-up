@@ -8,12 +8,12 @@ import { materialize, exists } from "../../src/sandbox/materialize.mjs";
 test("materializer copies only selected package files", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mat-pkg-"));
   const hannes = path.join(root, "team-up-with-hannes");
-  const hugo = path.join(root, "team-up-with-hugo");
+  const reanna = path.join(root, "team-up-with-reanna");
   fs.mkdirSync(hannes);
-  fs.mkdirSync(hugo);
+  fs.mkdirSync(reanna);
   fs.writeFileSync(path.join(hannes, "specialist.json"), JSON.stringify({ id: "testing.hannes" }));
   fs.writeFileSync(path.join(hannes, "instructions.md"), "hi");
-  fs.writeFileSync(path.join(hugo, "instructions.md"), "nope");
+  fs.writeFileSync(path.join(reanna, "instructions.md"), "nope");
   const out = path.join(root, "out");
   await materialize({
     packageDir: hannes,
@@ -22,6 +22,6 @@ test("materializer copies only selected package files", async () => {
     manifest: { capabilities: { skills: [] } },
   });
   assert.equal(await exists(path.join(out, "instructions.md")), true);
-  assert.equal(await exists(path.join(out, "team-up-with-hugo")), false);
+  assert.equal(await exists(path.join(out, "team-up-with-reanna")), false);
   assert.equal(await exists(path.join(out, "specialist.json")), true);
 });

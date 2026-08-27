@@ -136,7 +136,7 @@ Specialist manifests may declare inert `recommendations` metadata:
   "package": "o9k.caveman",
   "source": "https://github.com/example/caveman.git",
   "reason": "Reduces routine output",
-  "suggested_target": "research.hugo"
+  "suggested_target": "research.reanna"
 }]
 ```
 
@@ -158,7 +158,7 @@ team-up capability scan --root ~/.claude
 team-up capability install ./pkg
 team-up capability install https://github.com/example/x.git --git-ref v1.2.0
 team-up capability enable pkg@1.2.0 --checksum sha256:... --for all
-team-up capability disable pkg@1.2.0 --checksum sha256:... --for research.hugo
+team-up capability disable pkg@1.2.0 --checksum sha256:... --for research.reanna
 team-up capability update pkg --git-ref main
 team-up capability rollback pkg@2 --to 1 --checksum sha256:new --prior-checksum sha256:old
 team-up capability remove pkg@1 --checksum sha256:...
@@ -174,5 +174,5 @@ OS isolation is actually applied.
 - `team-up-with-hannes` — testing (`frontier` / `max`); tools include
   `filesystem.read` + `command.test`; commands include `project-test`;
   advisory `tokens.target: 80000`
-- `team-up-with-hugo` — research (`medium` / `low`); read-only project +
+- `team-up-with-reanna` — research (`medium` / `low`); read-only project +
   optional network; advisory `tokens.target: 80000`

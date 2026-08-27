@@ -104,7 +104,7 @@ function materializeMiniCapsule(runRoot, { withMcp = true } = {}) {
   }
   const effective = {
     schema_version: 1,
-    specialist_id: "research.hugo",
+    specialist_id: "research.reanna",
     packages: [],
     exclusions: [],
     totals: { estimated_description_tokens: 0, mcp_tool_count: 0 },
@@ -129,7 +129,7 @@ function materializeMiniCapsule(runRoot, { withMcp = true } = {}) {
 function persistCapsuleRun(cli = "claude", model = "m1") {
   const run = createRun({
     cwd: "/tmp",
-    role: "specialist:hugo",
+    role: "specialist:reanna",
     parent: { cli: "team-up", attach: "manual" },
     worker: { cli, model },
     prompt: "hi",
@@ -159,7 +159,7 @@ function persistCapsuleRun(cli = "claude", model = "m1") {
         context_isolation: CONTEXT_ISOLATION_CAPABILITY,
       },
       capsuleLaunch,
-      specialist: { id: "research.hugo", version: "0.1.0" },
+      specialist: { id: "research.reanna", version: "0.1.0" },
     })
   );
   return { runId: run.runId, rd, version };
@@ -247,7 +247,7 @@ test("reconstruction requires authoritative content manifest path (no embedded f
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "m1" },
       prompt: "hi",

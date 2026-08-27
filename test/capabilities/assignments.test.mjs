@@ -16,17 +16,17 @@ test("all remains dynamic and specialist disable adds an exclusion", () => {
   });
   disableCapability({
     package: "o9k.caveman@1.2.0", checksum: "sha256:abc",
-    target: "research.hugo", env,
+    target: "research.reanna", env,
   });
   assert.deepEqual(loadAssignments({ env }).assignments[0], {
     package: "o9k.caveman@1.2.0",
     checksum: "sha256:abc",
     targets: ["all"],
-    exclude: ["research.hugo"],
+    exclude: ["research.reanna"],
   });
   enableCapability({
     package: "o9k.caveman@1.2.0", checksum: "sha256:abc",
-    target: "research.hugo", env,
+    target: "research.reanna", env,
   });
   assert.deepEqual(loadAssignments({ env }).assignments[0].exclude, []);
 });

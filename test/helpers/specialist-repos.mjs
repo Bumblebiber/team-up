@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const REQUIRED_SPECIALISTS = ["team-up-with-hannes", "team-up-with-hugo"];
+const REQUIRED_SPECIALISTS = ["team-up-with-hannes", "team-up-with-reanna"];
 
 function containsSpecialistRepos(candidate) {
   return REQUIRED_SPECIALISTS.every((repo) =>

@@ -15,7 +15,7 @@ import { findSpecialistRepos } from "../helpers/specialist-repos.mjs";
 
 const REPOS = findSpecialistRepos(path.dirname(fileURLToPath(import.meta.url)));
 const HANNES = path.join(REPOS, "team-up-with-hannes");
-const HUGO = path.join(REPOS, "team-up-with-hugo");
+const REANNA = path.join(REPOS, "team-up-with-reanna");
 
 test("mvp flow: install, approve, exact tier, materialize, typed result, reapproval", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-mvp-"));
@@ -76,9 +76,9 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
     fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify(roster, null, 2));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
 
-    // 2. Install Hannes + Hugo
+    // 2. Install Hannes + Reanna
     const hInstall = await installPackage(HANNES, env);
-    const uInstall = await installPackage(HUGO, env);
+    const uInstall = await installPackage(REANNA, env);
     assert.equal(hInstall.ok, true, hInstall.errors?.join("; "));
     assert.equal(uInstall.ok, true);
 
@@ -137,7 +137,7 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
       projectRoot: project,
     });
     assert.equal(await exists(path.join(out, "instructions.md")), true);
-    assert.equal(await exists(path.join(out, "team-up-with-hugo")), false);
+    assert.equal(await exists(path.join(out, "team-up-with-reanna")), false);
 
     // 8. Typed result success
     process.env.TEAM_UP_RUNS = env.TEAM_UP_RUNS;

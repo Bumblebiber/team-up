@@ -103,7 +103,7 @@ function materializeMiniCapsule(runRoot, { withMcp = true } = {}) {
   }
   const effective = {
     schema_version: 1,
-    specialist_id: "research.hugo",
+    specialist_id: "research.reanna",
     packages: [],
     exclusions: [],
     totals: { estimated_description_tokens: 0, mcp_tool_count: 0 },
@@ -129,7 +129,7 @@ test("prepareArgvFromDescriptor rebuilds Claude bare capsule from persisted desc
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "m1" },
       prompt: "hi",
@@ -163,7 +163,7 @@ test("prepareArgvFromDescriptor rebuilds Claude bare capsule from persisted desc
         context_isolation: CONTEXT_ISOLATION_CAPABILITY,
       },
       capsuleLaunch,
-      specialist: { id: "research.hugo", version: "0.1.0" },
+      specialist: { id: "research.reanna", version: "0.1.0" },
     });
     persistLaunchDescriptor(run.runId, desc);
 
@@ -205,7 +205,7 @@ test("prepareArgvFromDescriptor fails closed for Codex isolation (no native full
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "codex", model: "cx" },
       prompt: "hi",
@@ -240,7 +240,7 @@ test("prepareArgvFromDescriptor fails closed for Codex isolation (no native full
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
-        specialist: { id: "research.hugo", version: "0.1.0" },
+        specialist: { id: "research.reanna", version: "0.1.0" },
       })
     );
     // Declared context_isolation is null — verification token cannot unlock capsules.
@@ -277,7 +277,7 @@ test("prepareArgvFromDescriptor fails closed for Codex isolation (no native full
                 loadAuthoritativeLaunchDescriptor(run.runId).capsule_launch
                   .authoritative_content_manifest_path,
             },
-            specialist: { id: "research.hugo", version: "0.1.0" },
+            specialist: { id: "research.reanna", version: "0.1.0" },
           })
         ),
       /HARNESS_CONTEXT_ISOLATION_UNVERIFIED|BROKER_VERIFY_FAILED/
@@ -289,7 +289,7 @@ test("Claude verification cannot be reused under Codex runtime override", async 
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "m1" },
       prompt: "hi",
@@ -323,7 +323,7 @@ test("Claude verification cannot be reused under Codex runtime override", async 
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
-        specialist: { id: "research.hugo", version: "0.1.0" },
+        specialist: { id: "research.reanna", version: "0.1.0" },
       })
     );
     assert.throws(
@@ -340,7 +340,7 @@ test("missing or corrupt capsule launch data fails closed", async () => {
   await withTempEnv(async (home) => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "m1" },
       prompt: "hi",
@@ -371,7 +371,7 @@ test("missing or corrupt capsule launch data fails closed", async () => {
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
-        specialist: { id: "research.hugo", version: "0.1.0" },
+        specialist: { id: "research.reanna", version: "0.1.0" },
       })
     );
 
@@ -391,7 +391,7 @@ test("missing or corrupt capsule launch data fails closed", async () => {
               status: "verified",
               context_isolation: CONTEXT_ISOLATION_CAPABILITY,
             },
-            specialist: { id: "research.hugo", version: "0.1.0" },
+            specialist: { id: "research.reanna", version: "0.1.0" },
           })
         ),
       /CAPSULE_LAUNCH/
@@ -431,7 +431,7 @@ test("reconstruction fails closed when selected SKILL.md content is mutated", as
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "m1" },
       prompt: "hi",
@@ -464,7 +464,7 @@ test("reconstruction fails closed when selected SKILL.md content is mutated", as
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
-        specialist: { id: "research.hugo", version: "0.1.0" },
+        specialist: { id: "research.reanna", version: "0.1.0" },
       })
     );
 
@@ -484,7 +484,7 @@ test("reconstruction fails closed when selected skill root is deleted (no recrea
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "m1" },
       prompt: "hi",
@@ -517,7 +517,7 @@ test("reconstruction fails closed when selected skill root is deleted (no recrea
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
-        specialist: { id: "research.hugo", version: "0.1.0" },
+        specialist: { id: "research.reanna", version: "0.1.0" },
       })
     );
 
@@ -536,7 +536,7 @@ test("reconstruction never falls back to worker-writable EFFECTIVE_CAPABILITIES"
   await withTempEnv(async (home) => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "m1" },
       prompt: "hi",
@@ -569,7 +569,7 @@ test("reconstruction never falls back to worker-writable EFFECTIVE_CAPABILITIES"
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
-        specialist: { id: "research.hugo", version: "0.1.0" },
+        specialist: { id: "research.reanna", version: "0.1.0" },
       })
     );
 
@@ -592,7 +592,7 @@ test("reconstruction fails closed when unlisted file is added under skill root",
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "m1" },
       prompt: "hi",
@@ -626,7 +626,7 @@ test("reconstruction fails closed when unlisted file is added under skill root",
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
-        specialist: { id: "research.hugo", version: "0.1.0" },
+        specialist: { id: "research.reanna", version: "0.1.0" },
       })
     );
 
@@ -645,7 +645,7 @@ test("exact unmodified reconstruction succeeds with content manifest", async () 
   await withTempEnv(async () => {
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:hugo",
+      role: "specialist:reanna",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "m1" },
       prompt: "hi",
@@ -683,7 +683,7 @@ test("exact unmodified reconstruction succeeds with content manifest", async () 
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
         },
         capsuleLaunch,
-        specialist: { id: "research.hugo", version: "0.1.0" },
+        specialist: { id: "research.reanna", version: "0.1.0" },
       })
     );
 
