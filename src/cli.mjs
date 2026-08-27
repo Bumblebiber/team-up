@@ -10,6 +10,7 @@ import {
   installPackage,
   listInstalled,
   pinSpecialist,
+  uninstallSpecialist,
 } from "./specialists/store.mjs";
 import { approveSpecialist, listApprovals } from "./specialists/approvals.mjs";
 import { runSpecialist } from "./specialists/launcher.mjs";
@@ -130,6 +131,16 @@ async function cmdSpecialist(args, io) {
     io.out(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }
+  if (sub === "uninstall") {
+    const [id, version] = String(rest[0] ?? "").split("@");
+    if (!id || !version) {
+      io.err("usage: team-up specialist uninstall <id>@<version>");
+      return 1;
+    }
+    const result = uninstallSpecialist(id, { version });
+    io.out(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
   if (sub === "list") {
     io.out(JSON.stringify(listInstalled(), null, 2));
     return 0;
@@ -138,7 +149,7 @@ async function cmdSpecialist(args, io) {
     const result = await runSpecialist(rest, io);
     return result.code;
   }
-  io.err("usage: team-up specialist <inspect|install|approve|pin|list|run>");
+  io.err("usage: team-up specialist <inspect|install|approve|pin|uninstall|list|run>");
   return 1;
 }
 

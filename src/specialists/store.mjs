@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { teamUpHome } from "../paths.mjs";
+import { teamUpHome, runsPath, specialistApprovalsPath } from "../paths.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import {
   validateManifest,
@@ -281,3 +281,135 @@ export function verifyInstalledIntegrity(entry, manifest) {
 }
 
 export { validateManifest, PACKAGE_FILES, declaredPackageFiles };
+
+/** Run states that no longer need their specialist package on disk. */
+const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
+
+/**
+ * Specialist versions an unfinished run still depends on, read from each run's
+ * own state. A resume re-verifies the package checksum, so removing a package
+ * out from under a live run turns it into an integrity failure later instead
+ * of an error now.
+ */
+export function activeRunSpecialistReferences({ env = process.env } = {}) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(runsPath(env), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const active = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    let state;
+    try {
+      state = JSON.parse(
+        fs.readFileSync(path.join(runsPath(env), entry.name, "STATE.json"), "utf8")
+      );
+    } catch {
+      continue;
+    }
+    if (!state || TERMINAL_RUN_STATUSES.has(state.status)) continue;
+    if (!state.specialist?.id) continue;
+    active.push({
+      runId: entry.name,
+      id: state.specialist.id,
+      version: state.specialist.version ?? null,
+    });
+  }
+  return active;
+}
+
+/**
+ * Remove one installed specialist version: its pool directory, its index
+ * entry, and any pin naming it.
+ *
+ * Refuses while it is the selected version and siblings remain — install
+ * never repoints a selection silently, and neither should removal. Pin
+ * another version first. Refuses while an unfinished run depends on it.
+ */
+export function uninstallSpecialist(id, { version, env = process.env, activeRuns } = {}) {
+  assertSafeSpecialistSegment(id, "id");
+  assertSafeSpecialistSegment(version, "version");
+  const index = loadIndex(env);
+  const versions = index.versions?.[id] || [];
+  const entry = versions.find((v) => v.version === version);
+  if (!entry) return { ok: false, errors: [`not installed: ${id}@${version}`] };
+
+  const live = (activeRuns ?? activeRunSpecialistReferences({ env })).filter(
+    (run) => run.id === id && (run.version == null || run.version === version)
+  );
+  if (live.length) {
+    return {
+      ok: false,
+      errors: [
+        `unfinished run depends on ${id}@${version}: ${live.map((r) => r.runId).join(", ")}`,
+      ],
+    };
+  }
+
+  const selected = index.specialists?.[id];
+  const remaining = versions.filter((v) => v.version !== version);
+  if (selected?.version === version && remaining.length) {
+    return {
+      ok: false,
+      errors: [
+        `${id}@${version} is the selected version; pin another first (team-up specialist pin ${id}@${remaining[0].version})`,
+      ],
+    };
+  }
+
+  // Remove the version tree, then the records. Losing the tree while the index
+  // still advertises it would be a package that fails integrity on next use.
+  const dir = path.resolve(entry.path);
+  assertPathInsideRoot(dir, specialistsRoot(env));
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  if (remaining.length) index.versions[id] = remaining;
+  else {
+    delete index.versions[id];
+    delete index.specialists[id];
+    // Last version gone: drop the now-empty id directory too.
+    fs.rmSync(path.join(specialistsRoot(env), id), { recursive: true, force: true });
+  }
+  saveIndex(index, env);
+
+  const pins = loadPins(env);
+  const dropped = [];
+  for (const [key, pin] of Object.entries(pins.pins || {})) {
+    if (pin?.id === id && pin?.version === version) {
+      delete pins.pins[key];
+      dropped.push(key);
+    }
+  }
+  if (dropped.length) savePins(pins, env);
+
+  // An approval binds project + id + version + checksum. Leaving one behind
+  // for a package that no longer exists is a record nothing can satisfy and
+  // nothing will ever clear.
+  const droppedApprovals = [];
+  let approvals;
+  try {
+    approvals = JSON.parse(fs.readFileSync(specialistApprovalsPath(env), "utf8"));
+  } catch {
+    approvals = null;
+  }
+  if (approvals?.approvals) {
+    for (const [key, record] of Object.entries(approvals.approvals)) {
+      if (record?.id === id && record?.version === version) {
+        delete approvals.approvals[key];
+        droppedApprovals.push(key);
+      }
+    }
+    if (droppedApprovals.length) atomicWriteJson(specialistApprovalsPath(env), approvals);
+  }
+
+  return {
+    ok: true,
+    id,
+    version,
+    removed_path: dir,
+    dropped_pins: dropped,
+    dropped_approvals: droppedApprovals,
+  };
+}

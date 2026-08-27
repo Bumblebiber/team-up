@@ -53,6 +53,7 @@ team-up specialist inspect <path>
 team-up specialist install <path>
 team-up specialist approve <id>@<version> --project <abs-path>
 team-up specialist pin <id>@<version> [--project <abs-path>]
+team-up specialist uninstall <id>@<version>
 team-up specialist list
 team-up specialist run --id <id> --call-type review --objective "..." --project <abs>
 ```
@@ -66,6 +67,14 @@ separate step on purpose: approve the new version first, then pin it. Without
 `--project` the pin is global; with it, only that project sees the new version
 and everywhere else keeps the old one. `run` has no `--version` flag; the pin
 is the single place a version gets chosen.
+
+`uninstall` removes one version: its package tree, its index entry, any pin
+naming it, and any approval bound to it. It refuses while an unfinished run
+still depends on that version — a resume re-verifies the package checksum, so
+removing it early turns into an integrity failure later instead of an error
+now. It also refuses to remove the selected version while siblings remain, for
+the same reason install never repoints a selection: pin the replacement first.
+Removing the last version drops the id entirely.
 
 ## Call types
 
