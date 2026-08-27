@@ -6,7 +6,7 @@
     {
       "name": "team-up",
       "source": "./",
-      "description": "The roster, pass-to and roster-refresh skills. Needs the `team-up` CLI on PATH (npm i -g team-up)."
+      "description": "The dispatch, roster, pass-to, roster-refresh and team-up-manage skills. Needs the `team-up` CLI on PATH (npm i -g team-up)."
     }
   ]
 }
