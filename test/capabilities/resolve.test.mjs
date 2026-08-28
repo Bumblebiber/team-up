@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { resolveCapabilities } from "../../src/capabilities/resolve.mjs";
 
 const installed = [
-  { package: "o9k.caveman@1.2.0", id: "o9k.caveman", version: "1.2.0",
+  { package: "style.caveman@1.2.0", id: "style.caveman", version: "1.2.0",
     checksum: "sha256:a", packageDir: "/pool/a" },
   { package: "reanna.search@1.0.0", id: "reanna.search", version: "1.0.0",
     checksum: "sha256:b", packageDir: "/pool/b" },
@@ -11,7 +11,7 @@ const installed = [
 
 test("exclusion wins over all and explicit target is included", () => {
   const assignments = [
-    { package: "o9k.caveman@1.2.0", checksum: "sha256:a",
+    { package: "style.caveman@1.2.0", checksum: "sha256:a",
       targets: ["all"], exclude: ["research.reanna"] },
     { package: "reanna.search@1.0.0", checksum: "sha256:b",
       targets: ["research.reanna"], exclude: [] },

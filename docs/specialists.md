@@ -1,45 +1,3 @@
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T17:39:55.852Z
-why: Document accepted same-UID trust boundary for command broker / launch descriptor
-trigger: fourth runtime review — accepted trust boundary
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T15:41:04.855Z
-why: Document delivered command allowlist / broker boundary
-trigger: runtime-supervision review remediation Minor 13
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor-agent:grok
-when: 2026-07-25T15:18:22.926Z
-why: Document best-effort OS sandbox for trusted specialists
-trigger: runtime-supervision plan Task 2
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T13:52:56.781Z
-why: unspecified
-trigger: afterFileEdit
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T13:44:03.449Z
-why: unspecified
-trigger: afterFileEdit
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor-agent:grok
-when: 2026-07-25T13:19:53.457Z
-why: team-up specialist package docs
-trigger: plan Task 10
-host: cursor
--->
 # Specialists
 
 One repository = one specialist. Packages contain `specialist.json`,
@@ -150,7 +108,7 @@ Specialist manifests may declare inert `recommendations` metadata:
 
 ```json
 "recommendations": [{
-  "package": "o9k.caveman",
+  "package": "style.caveman",
   "source": "https://github.com/example/caveman.git",
   "reason": "Reduces routine output",
   "suggested_target": "research.reanna"

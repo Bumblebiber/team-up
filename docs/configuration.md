@@ -1,31 +1,3 @@
-<!-- o9k-provenance
-who: cursor-agent:grok
-when: 2026-07-25T15:26:40.820Z
-why: Update config docs for advisory tokens and harness verify
-trigger: runtime-supervision plan Task 12
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T13:53:00.842Z
-why: unspecified
-trigger: afterFileEdit
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T13:44:12.175Z
-why: Document null reasoning map and CLI sandbox capabilities
-trigger: second review pushback + findings 7-8
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor-agent:grok
-when: 2026-07-25T13:19:51.465Z
-why: team-up configuration migration docs
-trigger: plan Task 10
-host: cursor
--->
 # Configuration
 
 ## Paths

@@ -1,17 +1,3 @@
-<!-- o9k-provenance
-who: cursor-agent:grok
-when: 2026-07-25T15:26:34.448Z
-why: Point README at runtime supervision docs
-trigger: runtime-supervision plan Task 12
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor-agent:grok
-when: 2026-07-25T13:19:45.773Z
-why: Document standalone team-up MVP engine
-trigger: plan Task 10 handoff docs
-host: cursor
--->
 # team-up
 
 Standalone deterministic model roster and specialist runtime.

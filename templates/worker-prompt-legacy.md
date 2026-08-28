@@ -1,10 +1,3 @@
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T13:43:32.306Z
-why: Generic Path-B RESULT.md mailbox protocol template
-trigger: second review finding 5 protocol compatibility
-host: cursor
--->
 # Worker task (mailbox protocol)
 
 Run directory: `{{RUN_DIR}}`

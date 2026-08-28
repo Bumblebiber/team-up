@@ -33,7 +33,7 @@ That subset does cost something: no clicking means a page behind a cookie
 banner or a "load more" button may not open. Adding a tool later is a version
 bump and a re-approval, which is the cheap direction to be wrong in.
 
-## `style.caveman`, formerly `o9k.caveman`
+## `style.caveman`, formerly `style.caveman`
 
 The caveman package never depended on o9k. It is thirteen lines of hand-written
 skill about how to write, with no import, tool call or path pointing at o9k —
@@ -53,7 +53,7 @@ off switch that only make sense on a host. This package is a deliberate
 reduction for a capsule. If the two should converge, that is a content decision
 and a version bump, not a rename.
 
-`o9k.caveman@1.0.0` is unassigned but still in the pool: three unfinished runs
+`style.caveman@1.0.0` is unassigned but still in the pool: three unfinished runs
 from 2026-08-15 name it in their state, and `capability remove` refuses while
 that holds — a resume re-verifies the checksum. It goes when they are closed.
 

@@ -32,7 +32,7 @@ test("recommendations pass without mutating assignment state", () => {
   const result = validateManifest({
     ...valid,
     recommendations: [{
-      package: "o9k.caveman",
+      package: "style.caveman",
       source: "https://github.com/example/caveman.git",
       reason: "shorten output",
       suggested_target: "testing.tessa",
@@ -45,7 +45,7 @@ test("rejects unsafe recommendation suggested_target", () => {
   assert.match(validateManifest({
     ...valid,
     recommendations: [{
-      package: "o9k.caveman",
+      package: "style.caveman",
       source: "https://github.com/example/caveman.git",
       reason: "x",
       suggested_target: "all/../../x",

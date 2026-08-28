@@ -57,7 +57,7 @@ test("recommendations command does not mutate pool or assignments", async () => 
     model_profile: { tier: "medium", reasoning: "low" },
     eval_suite: "evals/evals.json",
     recommendations: [{
-      package: "o9k.caveman",
+      package: "style.caveman",
       source: "https://github.com/example/caveman.git",
       reason: "shorten",
     }],

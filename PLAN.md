@@ -484,7 +484,7 @@ and a pointer to P0073.
 
 ### Why archive rather than delete
 
-`its-over-9k@2.0.1` is live on npm and the repo is public. Deleting the remote
+`team-up@2.0.1` is live on npm and the repo is public. Deleting the remote
 undoes none of that — npm, forks and caches all survive it — and only breaks
 inbound links and your own ability to look something up later. Archiving is
 read-only, reversible, and says the true thing: retired, not vanished.

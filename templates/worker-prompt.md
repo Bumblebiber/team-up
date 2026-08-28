@@ -1,10 +1,3 @@
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T17:02:32.952Z
-why: Document typed checkpoint + handoff_ready specialist mailbox protocol
-trigger: mailbox worker RUNTIME_FIX2 production wiring
-host: cursor
--->
 # Worker task (mailbox protocol)
 
 Run directory: `{{RUN_DIR}}`
