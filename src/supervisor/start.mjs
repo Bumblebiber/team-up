@@ -7,6 +7,7 @@ import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { prepareHarnessLaunch, getAdapter } from "../harness/registry.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
+import { builtinsForPermissions } from "../specialists/permissions.mjs";
 import { launchDescriptorDir } from "../paths.mjs";
 import {
   acquireAttemptLease,
@@ -593,6 +594,10 @@ export function prepareArgvFromDescriptor(
             }
           : null,
         capsule,
+        // The authoritative launch rebuilds its argv here, not from the capsule
+        // the launcher assembled. Without this the adapter default applies and a
+        // `writes: false` specialist is handed Edit and Write anyway.
+        allowedBuiltins: builtinsForPermissions(descriptor.permissions || {}),
         verification,
         requireExactVersion,
         execFileSync: execFileSyncFn,

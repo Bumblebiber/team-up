@@ -32,7 +32,7 @@ The parent chat **cannot see your tmux pane**. It only wakes when mailbox
    - Then you may stop.
 5. Hard failure: `{{RUN_DIR}}/mailbox/STATUS` = `failed` and explain in `{{RUN_DIR}}/mailbox/RESULT.md`.
 
-The parent may write `mailbox/VERIFICATION.json` after you close the mailbox — that file is
+The parent may write `{{RUN_DIR}}/mailbox/VERIFICATION.json` after you close the mailbox — that file is
 **parent-owned evidence**, not yours to author. Do not write or rely on it.
 
 Do **not** leave STATUS=`watching` after you finished the work. That traps the parent watcher forever.

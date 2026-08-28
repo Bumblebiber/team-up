@@ -131,7 +131,9 @@ export function assertCallTypeAllowed(callType, manifest) {
  * researcher ended up holding `Write`.
  */
 export function builtinsForPermissions(permissions = {}) {
-  const tools = ["Read", "Glob", "Grep"];
+  // ToolSearch and Skill grant neither writes nor network, and a capsule that
+  // materialized skills has no way to invoke them without Skill on the list.
+  const tools = ["Read", "Glob", "Grep", "ToolSearch", "Skill"];
   if (permissions.writes === true || permissions.writes === "delegated_only") {
     tools.push("Edit", "Write");
   }
