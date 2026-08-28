@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+
 /**
  * Permission intersection: request may only reduce the approved manifest permissions.
  */
@@ -149,4 +152,43 @@ export function builtinsForPermissions(permissions = {}) {
   }
   if (permissions.network === true) tools.push("WebFetch", "WebSearch");
   return tools;
+}
+
+/**
+ * Files whose contents no specialist has a reason to see. Each is mode 600 and
+ * every specialist runs as the same UID, so file modes do not separate them —
+ * the tool layer has to.
+ *
+ * The realistic failure is not theft but quotation. Reporting file contents is
+ * exactly what a scout is for, so a specialist that reads a credential file may
+ * repeat it in RESULT.md, and RESULT.md gets committed. No malice required.
+ *
+ * A `Read(...)` deny rule is enforced where the file is opened, not in the
+ * `Read` tool, so it also stops `Grep` from returning the matching line — which
+ * is where a token would actually surface. Verified against claude 2.x: an
+ * exact path and a `/**` subtree both refuse, siblings stay readable, and a
+ * forced `Grep` on a denied path comes back `is_error: true`.
+ */
+export function credentialDenyPaths(homeDir) {
+  const home = homeDir || os.homedir();
+  return [
+    path.join(home, ".mcp.json"),
+    path.join(home, ".npmrc"),
+    path.join(home, ".netrc"),
+    path.join(home, ".git-credentials"),
+    path.join(home, ".claude", ".credentials.json"),
+    path.join(home, ".config", "gh", "**"),
+    path.join(home, ".hermes", "secrets", "**"),
+    path.join(home, ".ssh", "**"),
+    path.join(home, ".aws", "**"),
+    path.join(home, ".gnupg", "**"),
+  ];
+}
+
+/**
+ * The same paths as claude-CLI permission rules. An absolute path is written
+ * with a leading `//` in that syntax, hence the extra slash.
+ */
+export function credentialDenyRules(homeDir) {
+  return credentialDenyPaths(homeDir).map((p) => `Read(/${p})`);
 }

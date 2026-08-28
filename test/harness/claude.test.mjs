@@ -31,7 +31,11 @@ test("claude prepareLaunch denies shell bypass and writes mcp config", () => {
   });
   assert.ok(prepared.argv.includes("--strict-mcp-config"));
   assert.ok(prepared.argv.includes("--disallowedTools"));
-  assert.equal(prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1], "Bash");
+  const denied = prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1].split(",");
+  assert.ok(denied.includes("Bash"));
+  // Credential files are denied whether or not the broker is attached.
+  assert.ok(denied.some((r) => r.endsWith("/.mcp.json)")));
+  assert.ok(denied.some((r) => r.endsWith("/.ssh/**)")));
   assert.match(prepared.argv.join(" "), /mcp__team_up_command_broker__project_test/);
   assert.equal(fs.statSync(prepared.files[0]).mode & 0o222, 0);
   assert.throws(
@@ -100,7 +104,9 @@ test("brokered Claude launch strips legacy roster bypass before enforcing policy
 
   assert.equal(prepared.argv.includes("--dangerously-skip-permissions"), false);
   assert.equal(prepared.argv.includes("--effort"), true);
-  assert.equal(prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1], "Bash");
+  assert.ok(
+    prepared.argv[prepared.argv.indexOf("--disallowedTools") + 1].split(",").includes("Bash")
+  );
 });
 
 test("capsule launch uses auth-only HOME and only explicit plugin and MCP paths", () => {

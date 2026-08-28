@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { credentialDenyRules } from "../specialists/permissions.mjs";
 import { CLAUDE_DECLARED_CAPABILITIES } from "./capabilities.mjs";
 
 function homeChecksum(homePath) {
@@ -315,7 +316,10 @@ export const claudeAdapter = {
     next.push("--mcp-config", mcpPath);
     next.push("--tools", tools);
     next.push("--allowedTools", tools);
-    next.push("--disallowedTools", "Bash");
+    // Deny credential files unconditionally, alongside the shell. The capsule
+    // closes the config surface; this closes the file read, and it applies to
+    // `Grep` too because the rule is enforced where the file is opened.
+    next.push("--disallowedTools", ["Bash", ...credentialDenyRules()].join(","));
 
     const env = {};
     const files = [mcpPath];

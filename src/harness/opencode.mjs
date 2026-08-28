@@ -169,6 +169,14 @@ export const opencodeAdapter = {
       $schema: "https://opencode.ai/config.json",
       // Denying a tool removes it from the worker's tool list rather than
       // prompting for it, which is what native_shell: denied means here.
+      //
+      // Gap: the claude adapter also denies the credential paths from
+      // `credentialDenyRules()`, so a specialist there cannot read (or grep)
+      // `~/.mcp.json` and friends. This map is tool-name granular and opencode's
+      // path-rule syntax has not been verified here, so the same guard does not
+      // exist for opencode runs. Verify the syntax before adding it — an
+      // unmatched deny pattern raises no error and looks exactly like a working
+      // one.
       permission: { bash: "deny" },
       mcp: buildOpencodeMcp({ broker, capsule, nodePath, brokerBin }),
     };
