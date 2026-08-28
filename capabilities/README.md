@@ -33,6 +33,30 @@ That subset does cost something: no clicking means a page behind a cookie
 banner or a "load more" button may not open. Adding a tool later is a version
 bump and a re-approval, which is the cheap direction to be wrong in.
 
+## `style.caveman`, formerly `o9k.caveman`
+
+The caveman package never depended on o9k. It is thirteen lines of hand-written
+skill about how to write, with no import, tool call or path pointing at o9k —
+the name was the only connection, and it outlived the thing it named. Renamed
+to `style.caveman` once o9k was retired.
+
+Two things the rename fixed beyond the name.
+
+Its recorded source was `/tmp/cap-caveman`, a directory that is now empty. The
+package existed only as its pool copy: unreviewable, undiffable, impossible to
+rebuild — exactly the case the top of this file describes. The source now lives
+here, and the content is byte-identical to what was in the pool.
+
+Note what it is *not*: `~/.agents/caveman.md` and the output style synced from
+it are 64 and 73 lines, with sections about memory writes, boundaries and an
+off switch that only make sense on a host. This package is a deliberate
+reduction for a capsule. If the two should converge, that is a content decision
+and a version bump, not a rename.
+
+`o9k.caveman@1.0.0` is unassigned but still in the pool: three unfinished runs
+from 2026-08-15 name it in their state, and `capability remove` refuses while
+that holds — a resume re-verifies the checksum. It goes when they are closed.
+
 ## Vendored skill packages
 
 `ponytail.build` and `ponytail.review` are the only packages here that carry

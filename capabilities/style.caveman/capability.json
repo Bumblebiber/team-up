@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "style.caveman",
+  "version": "1.0.0",
+  "display_name": "Caveman (terse output style)",
+  "description": "Drop articles, filler and pleasantries; keep every technical term, path, command and error message exact, and never rewrite a code block. Changes how a specialist writes, not what it may do.",
+  "provides": {
+    "skills": ["skills/caveman/SKILL.md"],
+    "plugins": [],
+    "mcps": [],
+    "frameworks": []
+  },
+  "permissions": {
+    "network": false,
+    "commands": [],
+    "filesystem": "none"
+  }
+}
