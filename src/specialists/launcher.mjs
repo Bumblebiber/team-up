@@ -297,6 +297,11 @@ export async function launch({
       timeout_seconds: budgetNorm.timeout_seconds,
       tokens: budgetNorm.tokens,
     },
+    // Explicit, though it is also the default: this is the call site an
+    // orchestrator has to change to `parent.depth + 1`, and `normalizeRequest`
+    // caps it at `MAX_DEPTH`. Leaving the field out hides where the increment
+    // belongs.
+    depth: 0,
   });
   request.run_id = state.runId;
 

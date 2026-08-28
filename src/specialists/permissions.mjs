@@ -176,8 +176,15 @@ export function credentialDenyPaths(homeDir) {
     path.join(home, ".npmrc"),
     path.join(home, ".netrc"),
     path.join(home, ".git-credentials"),
+    // Scoped to the one file on purpose. Run dirs live under `~/.team-up`
+    // (`paths.mjs`), so nothing a specialist needs sits under `~/.claude` today
+    // — but broadening this to `~/.claude/**` would deny a capsule its own
+    // config the moment that stops being true. Keep it file-scoped.
     path.join(home, ".claude", ".credentials.json"),
-    path.join(home, ".config", "gh", "**"),
+    // `hosts.yml`, not the whole `gh` tree: `config.yml` beside it holds
+    // ordinary settings, and denying it would fail as a permission error that
+    // reads like a bug.
+    path.join(home, ".config", "gh", "hosts.yml"),
     path.join(home, ".hermes", "secrets", "**"),
     path.join(home, ".ssh", "**"),
     path.join(home, ".aws", "**"),

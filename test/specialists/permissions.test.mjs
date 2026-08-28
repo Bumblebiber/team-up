@@ -73,4 +73,8 @@ test("credential deny rules use the absolute-path rule syntax", () => {
   }
   assert.ok(rules.includes("Read(//home/x/.mcp.json)"));
   assert.ok(rules.includes("Read(//home/x/.ssh/**)"));
+  // Narrow on purpose: the gh token lives in hosts.yml, config.yml beside it
+  // does not, and ~/.claude holds a capsule's own config.
+  assert.ok(rules.includes("Read(//home/x/.config/gh/hosts.yml)"));
+  assert.ok(!rules.some((r) => r === "Read(//home/x/.claude/**)"));
 });
