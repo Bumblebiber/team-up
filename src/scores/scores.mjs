@@ -1,4 +1,4 @@
-// scores.mjs — merge collectors into ~/.o9k/roster-scores.json + role_scores.
+// scores.mjs — merge collectors into ~/.team-up/roster-scores.json + role_scores.
 
 import fs from "node:fs";
 import os from "node:os";

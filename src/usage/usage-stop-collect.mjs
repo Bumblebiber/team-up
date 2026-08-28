@@ -57,5 +57,5 @@ try {
   }).unref();
 } catch (e) {
   // hook must never block the host
-  debugLog("o9k-roster usage-stop-collect", e);
+  debugLog("team-up usage-stop-collect", e);
 }

@@ -65,7 +65,7 @@ function newRunId(now = new Date()) {
   return `${iso}-${short}`;
 }
 
-/** Plugin root (…/o9k-roster) — templates live beside scripts/. */
+/** Plugin root — templates live beside scripts/. */
 export function packageRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 }
@@ -781,14 +781,14 @@ export function pasteInject(session, text, {
   readyTimeoutMs = 10000,
 } = {}) {
   waitReady(session, { timeoutMs: readyTimeoutMs });
-  const tmp = path.join(os.tmpdir(), `o9k-inject-${session}-${process.pid}.txt`);
+  const tmp = path.join(os.tmpdir(), `team-up-inject-${session}-${process.pid}.txt`);
   fs.writeFileSync(tmp, text || "");
   try {
     execFileSync(
       "bash",
       [
         "-lc",
-        `tmux load-buffer -b o9k ${shellQuote(tmp)} && tmux paste-buffer -b o9k -t ${shellQuote(session)} && sleep 0.3 && tmux send-keys -t ${shellQuote(session)} Enter`,
+        `tmux load-buffer -b team_up ${shellQuote(tmp)} && tmux paste-buffer -b team_up -t ${shellQuote(session)} && sleep 0.3 && tmux send-keys -t ${shellQuote(session)} Enter`,
       ],
       { stdio: "ignore" },
     );

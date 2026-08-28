@@ -149,7 +149,7 @@ export function validateRoster(roster) {
 export function requireRoster() {
   const roster = loadJson(configPath());
   if (!roster) {
-    console.error(`no roster config at ${configPath()} — run: team-up init (or /o9k-init)`);
+    console.error(`no roster config at ${configPath()} — run: team-up init`);
     process.exit(1);
   }
   const { errors, warnings } = validateRoster(roster);

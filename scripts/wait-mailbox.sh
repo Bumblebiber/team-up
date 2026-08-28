@@ -37,14 +37,14 @@ if command -v inotifywait >/dev/null 2>&1; then
     remaining=$((deadline - SECONDS))
     (( remaining < 1 )) && break
     # inotifywait -t is seconds; exit 2 on timeout
-    if inotifywait -e create,close_write,moved_to,modify -t "$remaining" --format '%w%f' "$MB" >/tmp/o9k-wait-mailbox.$$.out 2>/dev/null; then
-      rm -f /tmp/o9k-wait-mailbox.$$.out
+    if inotifywait -e create,close_write,moved_to,modify -t "$remaining" --format '%w%f' "$MB" >/tmp/team-up-wait-mailbox.$$.out 2>/dev/null; then
+      rm -f /tmp/team-up-wait-mailbox.$$.out
       if is_wake; then exit 0; fi
       # HEARTBEAT / non-terminal STATUS change — keep waiting
       continue
     else
       ec=$?
-      rm -f /tmp/o9k-wait-mailbox.$$.out
+      rm -f /tmp/team-up-wait-mailbox.$$.out
       if [[ "$ec" -eq 2 ]]; then exit 2; fi
       # spurious error — brief backoff then retry if time left
       sleep 1
