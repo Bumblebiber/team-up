@@ -16,7 +16,7 @@ test("launcher refuses required sandbox when probe fails; missing specialist sti
     async () => {
       wrapWithSandbox({
         command: ["true"],
-        permissions: { network: false },
+        permissions: { writes: false },
         cwd: "/tmp",
         probe: () => false,
         enforcement: "required",
