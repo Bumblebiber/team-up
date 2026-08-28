@@ -29,8 +29,8 @@ test("two specialists resolve isolated capsules from shared pool", () => {
   const shared = writeCap(fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-")), {
     id: "example.shared", version: "1", skill: "shared",
   });
-  const hannesOnly = writeCap(fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-")), {
-    id: "example.hannes", version: "1", skill: "hannes",
+  const tessaOnly = writeCap(fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-")), {
+    id: "example.tessa", version: "1", skill: "tessa",
   });
   const reannaOnly = writeCap(fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-")), {
     id: "example.reanna", version: "1", skill: "reanna",
@@ -39,7 +39,7 @@ test("two specialists resolve isolated capsules from shared pool", () => {
     id: "example.inert", version: "1", skill: "inert",
   });
   const sharedRec = importLocalCapability(shared, { env });
-  const hannesRec = importLocalCapability(hannesOnly, { env });
+  const tessaRec = importLocalCapability(tessaOnly, { env });
   const reannaRec = importLocalCapability(reannaOnly, { env });
   importLocalCapability(inert, { env });
   enableCapability({
@@ -49,26 +49,26 @@ test("two specialists resolve isolated capsules from shared pool", () => {
     package: sharedRec.package, checksum: sharedRec.checksum, target: "research.reanna", env,
   });
   enableCapability({
-    package: hannesRec.package, checksum: hannesRec.checksum, target: "testing.hannes", env,
+    package: tessaRec.package, checksum: tessaRec.checksum, target: "testing.tessa", env,
   });
   enableCapability({
     package: reannaRec.package, checksum: reannaRec.checksum, target: "research.reanna", env,
   });
   const installed = listInstalledCapabilities({ env });
   const assignments = loadAssignments({ env }).assignments;
-  const hannesResolved = resolveCapabilities({
-    specialistId: "testing.hannes", assignments, installed,
+  const tessaResolved = resolveCapabilities({
+    specialistId: "testing.tessa", assignments, installed,
   });
   const reannaResolved = resolveCapabilities({
     specialistId: "research.reanna", assignments, installed,
   });
-  const hannesRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-run-"));
+  const tessaRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-run-"));
   const reannaRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-run-"));
-  const hannes = materializeCapabilityCapsule({
-    runRoot: hannesRoot,
-    specialistId: "testing.hannes",
-    packages: hannesResolved.packages,
-    exclusions: hannesResolved.exclusions,
+  const tessa = materializeCapabilityCapsule({
+    runRoot: tessaRoot,
+    specialistId: "testing.tessa",
+    packages: tessaResolved.packages,
+    exclusions: tessaResolved.exclusions,
   });
   const reanna = materializeCapabilityCapsule({
     runRoot: reannaRoot,
@@ -76,18 +76,20 @@ test("two specialists resolve isolated capsules from shared pool", () => {
     packages: reannaResolved.packages,
     exclusions: reannaResolved.exclusions,
   });
-  assert.deepEqual(hannes.packages.map((x) => x.id).sort(),
-    ["example.hannes", "example.shared"]);
+  // .sort() is lexicographic, so the expectation follows the id, not the role:
+  // "example.shared" < "example.tessa". Renaming a specialist moves it here.
+  assert.deepEqual(tessa.packages.map((x) => x.id).sort(),
+    ["example.shared", "example.tessa"]);
   assert.deepEqual(reanna.packages.map((x) => x.id), ["example.reanna"]);
-  assert.equal(JSON.stringify(hannes).includes("example.reanna"), false);
-  assert.equal(JSON.stringify(reanna).includes("example.hannes"), false);
-  const beforePrompt = hannes.totals.estimated_description_tokens;
-  const beforeMcp = hannes.totals.mcp_tool_count;
+  assert.equal(JSON.stringify(tessa).includes("example.reanna"), false);
+  assert.equal(JSON.stringify(reanna).includes("example.tessa"), false);
+  const beforePrompt = tessa.totals.estimated_description_tokens;
+  const beforeMcp = tessa.totals.mcp_tool_count;
   assert.equal(beforePrompt, materializeCapabilityCapsule({
     runRoot: fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-run-")),
-    specialistId: "testing.hannes",
-    packages: hannesResolved.packages,
-    exclusions: hannesResolved.exclusions,
+    specialistId: "testing.tessa",
+    packages: tessaResolved.packages,
+    exclusions: tessaResolved.exclusions,
   }).totals.estimated_description_tokens);
   assert.equal(beforeMcp, 0);
 });

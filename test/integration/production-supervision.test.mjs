@@ -49,7 +49,7 @@ test("production launch path records attempt+lease without test-only composition
     const { beginSupervisedAttempt } = await import("../../src/supervisor/production.mjs");
     const run = createRun({
       cwd: "/tmp",
-      role: "specialist:testing.hannes",
+      role: "specialist:testing.tessa",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "frontier-claude" },
       prompt: "hi",
@@ -57,7 +57,7 @@ test("production launch path records attempt+lease without test-only composition
     const attempt = beginSupervisedAttempt({
       runId: run.runId,
       runtime: { cli: "claude", model: "frontier-claude" },
-      specialist: { id: "testing.hannes", version: "0.1.0" },
+      specialist: { id: "testing.tessa", version: "0.1.0" },
     });
     const st = loadState(run.runId);
     assert.equal(st.supervision?.enabled, true);

@@ -4,8 +4,8 @@ import { validateManifest } from "../../src/specialists/manifest.mjs";
 
 const valid = {
   schema_version: 1,
-  id: "testing.hannes",
-  display_name: "Hannes",
+  id: "testing.tessa",
+  display_name: "Tessa",
   version: "0.1.0",
   remit: ["test strategy"],
   anti_remit: ["deployment"],
@@ -35,7 +35,7 @@ test("recommendations pass without mutating assignment state", () => {
       package: "o9k.caveman",
       source: "https://github.com/example/caveman.git",
       reason: "shorten output",
-      suggested_target: "testing.hannes",
+      suggested_target: "testing.tessa",
     }],
   });
   assert.equal(result.ok, true);

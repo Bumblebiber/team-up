@@ -4,7 +4,7 @@ import { normalizeRequest, validateResult, MAX_DEPTH } from "../../src/specialis
 
 test("review is read-only by default", () => {
   const request = normalizeRequest({
-    specialist_id: "testing.hannes",
+    specialist_id: "testing.tessa",
     call_type: "review",
     objective: "Review test plan",
     inputs: []
@@ -19,7 +19,7 @@ test("result rejects unknown status", () => {
 
 test("depth is bounded at MAX_DEPTH", () => {
   const base = {
-    specialist_id: "testing.hannes",
+    specialist_id: "testing.tessa",
     call_type: "delegate",
     objective: "run the suite",
   };

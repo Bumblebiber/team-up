@@ -27,7 +27,7 @@ function withTempRuns(fn) {
 
 test("typed result success classifies done", withTempRuns(async () => {
   const s = createRun({
-    cwd: "/tmp/p", role: "specialist:testing.hannes",
+    cwd: "/tmp/p", role: "specialist:testing.tessa",
     parent: { cli: "team-up", attach: "manual" },
     worker: { cli: "codex", model: "m" },
     prompt: "x",

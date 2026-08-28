@@ -11,7 +11,7 @@ test("rejects path traversal id/version segments", () => {
   for (const bad of ["../../escape", "../x", "a/b", "a\\b", "/abs", "", ".", "..", "a\0b", "a/../b"]) {
     assert.throws(() => assertSafeSpecialistSegment(bad, "id"), /invalid|unsafe|empty/i);
   }
-  assert.doesNotThrow(() => assertSafeSpecialistSegment("testing.hannes", "id"));
+  assert.doesNotThrow(() => assertSafeSpecialistSegment("testing.tessa", "id"));
   assert.doesNotThrow(() => assertSafeSpecialistSegment("0.1.0", "version"));
 });
 

@@ -28,7 +28,7 @@ bundle lives in its own repo `team-up-with-<name>`, manifest is
 | Susy the summarizer | summarizer | `summary.susy` |
 | Ada the advisor | advisor | `advice.ada` |
 
-Already installed and staying: `testing.hannes` — Hannes, test strategy and
+Already installed and staying: `testing.tessa` — Tessa, test strategy and
 verification review.
 
 Dropped:
@@ -36,6 +36,31 @@ Dropped:
 - **An observer specialist.** The roster keeps the `observer` role; nothing needs a capability bundle behind it.
 - **Libby the librarian.** Knowledge management is Orlando's, and it already overlaps TIM; two specialists for it was one too many.
 - **Hugo.** The researcher is Reanna. `research.hugo` is installed and has its own repo, so this is a rename to carry out, not just a line to delete — see below.
+
+## The Tessa rename — done
+
+Tessa was the first of these bundles and predates the rule the others follow,
+where the name alliterates with the role. Revan reviews, Reanna researches,
+Codey codes; Tessa tested. He is now **Tessa**, `testing.tessa`, and the repo
+is [team-up-with-tessa](https://github.com/Bumblebiber/team-up-with-tessa) —
+GitHub redirects the old name.
+
+Nothing about the remit, permissions or capabilities changed. The id did, so
+the store treats it as a different specialist: `testing.tessa@0.1.0` is
+installed and approved, and `testing.tessa@0.1.0` is still installed because
+three unfinished runs from 2026-08-15 reference it. `uninstall` refuses while
+that is true, correctly — a resume re-verifies the package checksum, so
+removing it early turns into an integrity failure later. It goes once those
+runs are closed out.
+
+Twenty-two files in this repo carried the name, almost all tests. One
+expectation had to be reordered: capability ids are sorted, and
+`example.tessa` sorts after `example.shared` where `example.tessa` sorted
+before it — the same trap the Hugo rename hit.
+
+The design records under `docs/specs/` and `docs/superpowers/` still say
+Tessa. They are dated history, not current documentation, which is the same
+call made for Hugo.
 
 ## The Hugo rename — done
 
@@ -76,7 +101,7 @@ holds a single package, so there is nothing to assign yet.
 1. `team-up capability scan --root ~/.claude/skills` — fills the pool from the
    81 skills already installed, and yields the checksums `capability enable`
    requires.
-2. Define one specialist completely, copying the `team-up-with-hannes` shape:
+2. Define one specialist completely, copying the `team-up-with-tessa` shape:
    `specialist.json`, `instructions.md`, `skills/`, `evals/evals.json`.
    Revan is the best first candidate — the `code-review` skill and the
    `reviewer` role both exist, and the remit is sharp.

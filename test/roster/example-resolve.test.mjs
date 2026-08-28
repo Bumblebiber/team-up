@@ -10,7 +10,7 @@ import { resolveProfile } from "../../src/roster/profile.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const examplePath = path.join(root, "roster.example.json");
 
-test("shipped example roster migrates and resolves Hannes + Reanna exact tiers", () => {
+test("shipped example roster migrates and resolves Tessa + Reanna exact tiers", () => {
   const legacy = JSON.parse(fs.readFileSync(examplePath, "utf8"));
   // Simulate legacy mid tier still present on a copy
   const withMid = structuredClone(legacy);
@@ -28,16 +28,16 @@ test("shipped example roster migrates and resolves Hannes + Reanna exact tiers",
   const { errors } = validateRoster(migrated);
   assert.equal(errors.length, 0, errors.join("; "));
 
-  const hannes = resolveProfile({
+  const tessa = resolveProfile({
     roster: migrated,
     usage: {},
     profile: { tier: "frontier", reasoning: "max" },
-    specialistId: "testing.hannes",
+    specialistId: "testing.tessa",
     callType: "review",
   });
-  assert.equal(hannes.code, "OK", JSON.stringify(hannes.skipped.slice(0, 8)));
-  assert.ok(hannes.chain.length >= 1);
-  for (const c of hannes.chain) {
+  assert.equal(tessa.code, "OK", JSON.stringify(tessa.skipped.slice(0, 8)));
+  assert.ok(tessa.chain.length >= 1);
+  for (const c of tessa.chain) {
     assert.equal(migrated.models[c.model].tier, "frontier");
   }
 

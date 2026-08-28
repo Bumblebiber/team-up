@@ -75,7 +75,7 @@ is unsupported for the model (profile resolution skips it).
 
 Legacy `tier: "mid"` imports as `medium` via `migrateRoster()`. After copying
 an old `~/.o9k/roster.json`, run migration (or `team-up init` refresh) before
-resolving Hannes (`frontier:max`) / Reanna (`medium:low`).
+resolving Tessa (`frontier:max`) / Reanna (`medium:low`).
 
 ## CLI sandbox capabilities
 

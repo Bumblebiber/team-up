@@ -139,7 +139,7 @@ verified:
 - non-empty `permissions.commands` or `command.*` / `shell.*` / `exec.*`
   tools → `ALLOWLIST_UNENFORCEABLE` (pre-broker gate)
 
-Starter manifests declare the approved design capabilities (including Hannes
+Starter manifests declare the approved design capabilities (including Tessa
 `command.test` / `project-test` and advisory token targets). Claude and Codex
 have context-isolation adapters; Cursor / Hermes / OpenCode remain unsupported
 until each has a live verified implementation.
@@ -188,7 +188,7 @@ OS isolation is actually applied.
 
 ## Starters
 
-- `team-up-with-hannes` — testing (`frontier` / `max`); tools include
+- `team-up-with-tessa` — testing (`frontier` / `max`); tools include
   `filesystem.read` + `command.test`; commands include `project-test`;
   advisory `tokens.target: 80000`
 - `team-up-with-reanna` — research (`medium` / `low`); read-only project +

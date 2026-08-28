@@ -14,7 +14,7 @@ import { sha256Dir } from "../../src/specialists/manifest.mjs";
 import { findSpecialistRepos } from "../helpers/specialist-repos.mjs";
 
 const REPOS = findSpecialistRepos(path.dirname(fileURLToPath(import.meta.url)));
-const HANNES = path.join(REPOS, "team-up-with-hannes");
+const TESSA = path.join(REPOS, "team-up-with-tessa");
 const REANNA = path.join(REPOS, "team-up-with-reanna");
 
 test("mvp flow: install, approve, exact tier, materialize, typed result, reapproval", async () => {
@@ -76,8 +76,8 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
     fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify(roster, null, 2));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
 
-    // 2. Install Hannes + Reanna
-    const hInstall = await installPackage(HANNES, env);
+    // 2. Install Tessa + Reanna
+    const hInstall = await installPackage(TESSA, env);
     const uInstall = await installPackage(REANNA, env);
     assert.equal(hInstall.ok, true, hInstall.errors?.join("; "));
     assert.equal(uInstall.ok, true);
@@ -98,9 +98,9 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
       })
     );
 
-    // 3. Approve Hannes for temp project
+    // 3. Approve Tessa for temp project
     const approval = await approveSpecialist({
-      idAtVersion: "testing.hannes@0.1.0",
+      idAtVersion: "testing.tessa@0.1.0",
       project,
       env,
     });
@@ -118,7 +118,7 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
 
     // 6. Create review request
     const request = normalizeRequest({
-      specialist_id: "testing.hannes",
+      specialist_id: "testing.tessa",
       specialist_version: "0.1.0",
       call_type: "review",
       objective: "Review test plan",
@@ -126,14 +126,14 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
     });
     assert.equal(request.permissions.writes, false);
 
-    // 7. Materialize only Hannes
-    const out = path.join(home, "context-hannes");
-    const hannesManifest = JSON.parse(fs.readFileSync(path.join(HANNES, "specialist.json"), "utf8"));
+    // 7. Materialize only Tessa
+    const out = path.join(home, "context-tessa");
+    const tessaManifest = JSON.parse(fs.readFileSync(path.join(TESSA, "specialist.json"), "utf8"));
     await materialize({
       packageDir: hInstall.path,
       request,
       destination: out,
-      manifest: hannesManifest,
+      manifest: tessaManifest,
       projectRoot: project,
     });
     assert.equal(await exists(path.join(out, "instructions.md")), true);
@@ -144,7 +144,7 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
     const run = createRun({
       cwd: project,
       project,
-      role: "specialist:testing.hannes",
+      role: "specialist:testing.tessa",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "codex", model: "frontier-a" },
       prompt: "review",
@@ -160,10 +160,10 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
     assert.equal(
       isApproved({
         project,
-        id: "testing.hannes",
+        id: "testing.tessa",
         version: "0.1.0",
         checksum: hInstall.checksum,
-        permissions: hannesManifest.permissions,
+        permissions: tessaManifest.permissions,
         command_policy_checksum: approval.approval.command_policy_checksum,
         env,
       }),
@@ -172,10 +172,10 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
     assert.equal(
       isApproved({
         project,
-        id: "testing.hannes",
+        id: "testing.tessa",
         version: "0.1.0",
         checksum: "sha256:deadbeef",
-        permissions: hannesManifest.permissions,
+        permissions: tessaManifest.permissions,
         command_policy_checksum: approval.approval.command_policy_checksum,
         env,
       }),
@@ -184,18 +184,18 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
     assert.notEqual(
       approvalKey({
         project,
-        id: "testing.hannes",
+        id: "testing.tessa",
         version: "0.1.0",
         checksum: hInstall.checksum,
-        permissions: hannesManifest.permissions,
+        permissions: tessaManifest.permissions,
         command_policy_checksum: approval.approval.command_policy_checksum,
       }),
       approvalKey({
         project,
-        id: "testing.hannes",
+        id: "testing.tessa",
         version: "0.1.0",
         checksum: "sha256:deadbeef",
-        permissions: hannesManifest.permissions,
+        permissions: tessaManifest.permissions,
         command_policy_checksum: approval.approval.command_policy_checksum,
       })
     );

@@ -91,7 +91,7 @@ real merge conflict with a test run is code work, and that is the moment to hand
 it out — not something to build for in advance.
 
 **One repo per specialist**, so a user can take only what they need. Two left to
-build: Codey and Revan. Hannes already exists.
+build: Codey and Revan. Tessa already exists.
 
 ## Who writes to TIM
 
@@ -169,11 +169,11 @@ the same rule. The existing pipeline uses 3.
 
 Verify with a unit test: a request at the cap normalizes, one past it throws.
 
-## Step 2 — Remove the network mapping that will break Hannes — DONE (`853af68`)
+## Step 2 — Remove the network mapping that will break Tessa — DONE (`853af68`)
 
 The bug was wider than the paragraph below says. `PrivateNetwork` came from
 `Boolean(permissions?.network)`, which is false when the key is merely absent —
-so it was not only Hannes's explicit `network: false`. Every specialist that
+so it was not only Tessa's explicit `network: false`. Every specialist that
 reached the sandbox for an unrelated reason (`writes: false`,
 `filesystem: project_readonly`) lost the network unless it had asked for it, and
 that is every consult and every review specialist. Both the isolation trigger
@@ -181,8 +181,8 @@ and the `PrivateNetwork` property are gone.
 
 `src/sandbox/systemd.mjs:274` includes `permissions?.network === false` in
 `needsIsolation`, and the property list sets
-`PrivateNetwork=${network ? "no" : "yes"}`. `testing.hannes@0.1.0` declares
-`network: false`. The moment any sandbox actually engages, Hannes stops
+`PrivateNetwork=${network ? "no" : "yes"}`. `testing.tessa@0.1.0` declares
+`network: false`. The moment any sandbox actually engages, Tessa stops
 starting. Nobody has seen this because the sandbox has never engaged on this
 host — the broken sandbox is hiding the bug.
 
