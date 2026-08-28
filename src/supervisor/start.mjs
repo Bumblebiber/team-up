@@ -104,6 +104,11 @@ export function buildCapsuleLaunchRecord({ runRoot, capsule, env = process.env }
     skill_dirs: skillDirs,
     framework_dirs: frameworkDirs,
     codex_home: capsule.codexHome ? path.resolve(capsule.codexHome) : null,
+    home_dir: capsule.homeDir ? path.resolve(capsule.homeDir) : null,
+    // Directories the worker opens. A successor or resume that rebuilds the
+    // capsule without these hits the workspace trust prompt and stalls, so the
+    // record has to carry them alongside the rest of the launch.
+    workspace_dirs: [...(capsule.workspaceDirs ?? [])].map((p) => path.resolve(p)),
     mcp_config: mcpConfig,
     mcp_tool_names: [...(capsule.mcpToolNames ?? [])],
     mcp_tools_by_server: { ...(capsule.mcpToolsByServer ?? {}) },
@@ -213,6 +218,8 @@ export function reconstructCapsuleFromLaunchRecord(record) {
     skillDirs: [...(record.skill_dirs ?? [])],
     frameworkDirs: [...(record.framework_dirs ?? [])],
     codexHome: record.codex_home,
+    homeDir: record.home_dir ?? null,
+    workspaceDirs: [...(record.workspace_dirs ?? [])],
     claudeHome: record.claude_home ?? null,
     home_generation: record.home_generation ?? null,
     home_checksum: record.home_checksum ?? null,
