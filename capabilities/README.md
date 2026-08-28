@@ -33,6 +33,31 @@ That subset does cost something: no clicking means a page behind a cookie
 banner or a "load more" button may not open. Adding a tool later is a version
 bump and a re-approval, which is the cheap direction to be wrong in.
 
+## Vendored skill packages
+
+`ponytail.build` and `ponytail.review` are the only packages here that carry
+skill files rather than an MCP descriptor. Both vendor from
+[ponytail](https://github.com/DietrichGebert/ponytail) 4.8.4, MIT, © 2026
+Dietrich Gebert — the upstream `LICENSE` sits beside each `capability.json`,
+and each vendored `SKILL.md` carries an attribution line, because the pool copy
+holds only the files a package declares and a licence cannot be declared.
+
+The split is deliberate. Upstream ships six skills; installing all six to get
+one is the mistake this whole pool exists to avoid.
+
+| Package | Skills | For |
+|---|---|---|
+| `ponytail.build` | `ponytail` | an implementer — the ladder that stops at the first rung that holds |
+| `ponytail.review` | `ponytail-review`, `ponytail-debt` | a reviewer — hunting complexity rather than correctness, plus the ledger of deliberate shortcuts |
+
+`ponytail-audit`, `ponytail-gain` and `ponytail-help` are not packaged: nothing
+in the current roster has a use for them.
+
+Cost, measured at import: `ponytail.build` is 1,696 estimated description
+tokens and `ponytail.review` 1,094. That is not free for a specialist whose
+value is being narrow, and it is why these are enabled per specialist rather
+than for `all`.
+
 ## Host-specific packages
 
 `research.paperclip` is installed in the pool but has no source here: its

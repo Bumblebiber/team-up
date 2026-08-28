@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "ponytail.build",
+  "version": "4.8.4",
+  "display_name": "Ponytail (laziest solution that works)",
+  "description": "A ladder that stops at the first rung that holds: does this need to exist, is it already in the codebase, does the standard library do it, does an installed dependency, can it be one line. For a specialist that writes code.",
+  "provides": {
+    "skills": ["skills/ponytail/SKILL.md"],
+    "plugins": [],
+    "mcps": [],
+    "frameworks": []
+  },
+  "permissions": {
+    "network": false,
+    "commands": [],
+    "filesystem": "none"
+  }
+}

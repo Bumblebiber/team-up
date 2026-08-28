@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "ponytail.review",
+  "version": "4.8.4",
+  "display_name": "Ponytail (over-engineering review)",
+  "description": "Review that hunts complexity rather than correctness — reinvented standard library, unneeded dependencies, speculative abstractions, dead flexibility — plus a harvester for the `ponytail:` comments that mark deliberate shortcuts. For a specialist that reviews.",
+  "provides": {
+    "skills": [
+      "skills/ponytail-review/SKILL.md",
+      "skills/ponytail-debt/SKILL.md"
+    ],
+    "plugins": [],
+    "mcps": [],
+    "frameworks": []
+  },
+  "permissions": {
+    "network": false,
+    "commands": [],
+    "filesystem": "none"
+  }
+}
