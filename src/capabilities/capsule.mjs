@@ -277,3 +277,32 @@ export function buildStrictMcpConfig(effective, runRoot) {
 }
 
 export { mcpSchemaBytesFromToolsList } from "./mcp-schema.mjs";
+
+/**
+ * Tool allowlist entries for every MCP server a capsule materialized.
+ *
+ * `tools` may sit on a server or beside `mcpServers` as a shared list. The
+ * shared form can only be attributed when the descriptor declares a single
+ * server: with two servers and one flat list, handing it to both would grant
+ * each of them the other's tool names.
+ */
+export function collectCapsuleMcpTools(effective, runRoot) {
+  const mcpToolsByServer = {};
+  const mcpToolNames = [];
+  for (const item of effective.packages ?? []) {
+    for (const rel of item.resolved?.mcps ?? []) {
+      const document = JSON.parse(fs.readFileSync(path.join(runRoot, rel), "utf8"));
+      const entries = Object.entries(document.mcpServers ?? {});
+      const sharedTools =
+        entries.length === 1 && Array.isArray(document.tools) ? document.tools : [];
+      for (const [name, server] of entries) {
+        const tools = Array.isArray(server?.tools) ? server.tools : sharedTools;
+        mcpToolsByServer[name] = tools;
+        for (const tool of tools) {
+          mcpToolNames.push(`mcp__${name}__${String(tool).replace(/-/g, "_")}`);
+        }
+      }
+    }
+  }
+  return { mcpToolNames, mcpToolsByServer };
+}

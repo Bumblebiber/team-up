@@ -38,6 +38,7 @@ import { resolveCapabilities } from "../capabilities/resolve.mjs";
 import {
   materializeCapabilityCapsule,
   buildStrictMcpConfig,
+  collectCapsuleMcpTools,
 } from "../capabilities/capsule.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import {
@@ -120,26 +121,6 @@ function needsCommandMediation(effectivePerms, manifest) {
   return tools.some((t) => /^(command|shell|exec)([.]|$)/i.test(String(t)));
 }
 
-function collectCapsuleMcpTools(effective, runRoot) {
-  const mcpToolsByServer = {};
-  const mcpToolNames = [];
-  for (const item of effective.packages ?? []) {
-    for (const rel of item.resolved?.mcps ?? []) {
-      const document = JSON.parse(fs.readFileSync(path.join(runRoot, rel), "utf8"));
-      const sharedTools = Array.isArray(document.tools) ? document.tools : [];
-      for (const [name, server] of Object.entries(document.mcpServers ?? {})) {
-        const tools = Array.isArray(server?.tools) ? server.tools : sharedTools;
-        mcpToolsByServer[name] = tools;
-        for (const tool of tools) {
-          mcpToolNames.push(
-            `mcp__${name}__${String(tool).replace(/-/g, "_")}`
-          );
-        }
-      }
-    }
-  }
-  return { mcpToolNames, mcpToolsByServer };
-}
 
 /**
  * Launch API used by tests and CLI.

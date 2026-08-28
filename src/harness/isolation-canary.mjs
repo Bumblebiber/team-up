@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync as realSpawnSync } from "node:child_process";
-import { materializeCapabilityCapsule, buildStrictMcpConfig } from "../capabilities/capsule.mjs";
+import {
+  materializeCapabilityCapsule,
+  buildStrictMcpConfig,
+  collectCapsuleMcpTools,
+} from "../capabilities/capsule.mjs";
 import { randomContentNonce } from "../capabilities/mcp-schema.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "./capabilities.mjs";
 
@@ -378,26 +382,6 @@ function flagValues(argv, flag) {
   return values;
 }
 
-function collectCapsuleMcpTools(effective, runRoot) {
-  const mcpToolsByServer = {};
-  const mcpToolNames = [];
-  for (const item of effective.packages ?? []) {
-    for (const rel of item.resolved?.mcps ?? []) {
-      const document = JSON.parse(fs.readFileSync(path.join(runRoot, rel), "utf8"));
-      const sharedTools = Array.isArray(document.tools) ? document.tools : [];
-      for (const [name, server] of Object.entries(document.mcpServers ?? {})) {
-        const tools = Array.isArray(server?.tools) ? server.tools : sharedTools;
-        mcpToolsByServer[name] = tools;
-        for (const tool of tools) {
-          mcpToolNames.push(
-            `mcp__${name}__${String(tool).replace(/-/g, "_")}`
-          );
-        }
-      }
-    }
-  }
-  return { mcpToolNames, mcpToolsByServer };
-}
 
 /**
  * Build global + pool canaries and a capsule containing only the selected set.
