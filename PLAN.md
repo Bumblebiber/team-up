@@ -686,6 +686,33 @@ public repo is a separate decision from fixing this branch.
 Result: 611/612. The one failure, `dispatch --run-id uses run cwd`, fails on
 `main` too. Four of main's five baseline failures are fixed by the replay.
 
+### The reaper worked, and immediately looped
+
+Surfaced the moment `runs gc` started running: it reported `kill_terminal` for
+eight July runs on every single invocation and never cleared them. The
+five-minute timer would have done that forever.
+
+`inspectTmuxSession` only treated a thrown error as absence. Measured on this
+host:
+
+    tmux display-message -p -t <dead-session>   → exit 0, prints nothing
+    tmux has-session      -t <dead-session>     → exit 1, "can't find session"
+
+So a session that no longer exists came back as `exists: true` with a null
+activity time. `evaluateGcAction` then chose `kill_terminal`, `tmux
+kill-session` failed because there was nothing to kill, and the run was never
+marked cleaned — back again five minutes later.
+
+The same wrong answer defeated the `if (!tmux.exists) return skip` shortcut for
+active runs, so staleness was being decided against a session that was not
+there.
+
+Treating empty output as absence fixes every caller at once. After it, all 119
+runs resolve to `skip`.
+
+This is the second-order cost of a broken reaper: the bug was there the whole
+time and could not show itself while nothing ran.
+
 ### Codey has never been able to launch on this host
 
 Found by dry-running all four specialists after the replay, to check the launch
