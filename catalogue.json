@@ -5,7 +5,7 @@
     {
       "id": "coding.codey",
       "name": "Codey",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "repo": "https://github.com/Bumblebiber/team-up-with-codey",
       "summary": "Implements one ticket against a spec, with the tests that cover it.",
       "call_types": [
@@ -21,14 +21,14 @@
         ]
       },
       "model_profile": {
-        "tier": "high",
+        "tier": "frontier",
         "reasoning": "medium"
       },
       "needs": [
         "a `.team-up/commands.json` in every project it works in, defining `project-test`",
         "its own full clone per ticket \u2014 a worktree leaves .git pointing outside the tree"
       ],
-      "caveat": "Its `Write` is unbounded. Write scope is not enforceable through a tool path specifier (measured, claude 2.1.250), so what keeps it in its ticket is the disposable clone and the prompt, not a fence."
+      "caveat": "Its `Write` is unbounded. Write scope is not enforceable through a tool path specifier (measured, claude 2.1.250), so what keeps it in its ticket is the disposable clone and the prompt, not a fence. Runs Opus at medium effort deliberately: never Sonnet for coding work, and effort is the cheaper lever to turn down than the model."
     },
     {
       "id": "review.revan",

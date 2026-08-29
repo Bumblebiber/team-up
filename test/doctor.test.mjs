@@ -86,6 +86,42 @@ test("the literal all target is not a specialist id", () => {
   assert.equal(report.findings.some((f) => f.kind === "assignment_unknown_target"), false);
 });
 
+test("a superseded approval row is not a finding when a current one covers it", () => {
+  // Approving a new version leaves the old row behind. That is what an upgrade
+  // looks like, not a problem: the launcher matches on checksum, so the old row
+  // is never selected. Reporting it made every upgrade produce a finding.
+  const report = withHome(
+    {
+      "specialists-index.json": INDEX,
+      "approvals.json": {
+        approvals: {
+          old: { id: "testing.tessa", version: "0.0.9", checksum: "sha256:old", project: "/p" },
+          now: { id: "testing.tessa", version: "0.1.0", checksum: "sha256:aaa", project: "/p" },
+        },
+      },
+    },
+    diagnose
+  );
+  assert.equal(report.findings.some((f) => f.kind === "approval_stale_version"), false);
+});
+
+test("a superseded row for a different project is still reported", () => {
+  const report = withHome(
+    {
+      "specialists-index.json": INDEX,
+      "approvals.json": {
+        approvals: {
+          old: { id: "testing.tessa", version: "0.0.9", checksum: "sha256:old", project: "/other" },
+          now: { id: "testing.tessa", version: "0.1.0", checksum: "sha256:aaa", project: "/p" },
+        },
+      },
+    },
+    diagnose
+  );
+  const finding = report.findings.find((f) => f.kind === "approval_stale_version");
+  assert.ok(finding, "coverage is per project, not per specialist");
+});
+
 test("a stale approval checksum and a vanished project are both reported", () => {
   const report = withHome(
     {

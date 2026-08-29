@@ -124,6 +124,16 @@ export function diagnose(env = process.env) {
   }
 
   const approvals = readJson(specialistApprovalsPath(env))?.approvals ?? {};
+  // Approving a new version leaves the old row in place, which is normal and
+  // harmless: the launcher matches on checksum, so a superseded row is simply
+  // never selected. Only report a mismatch when nothing else covers that
+  // specialist for that project — otherwise every upgrade produces a finding.
+  const covered = new Set();
+  for (const a of Object.values(approvals)) {
+    if (ids.has(a.id) && installed[a.id].checksum === a.checksum) {
+      covered.add(`${a.id}\u0000${a.project}`);
+    }
+  }
   for (const [key, a] of Object.entries(approvals)) {
     if (!ids.has(a.id)) {
       findings.push({
@@ -133,7 +143,11 @@ export function diagnose(env = process.env) {
         approval: String(key).slice(0, 12),
         detail: "approval names no installed specialist",
       });
-    } else if (a.checksum && installed[a.id].checksum !== a.checksum) {
+    } else if (
+      a.checksum &&
+      installed[a.id].checksum !== a.checksum &&
+      !covered.has(`${a.id}\u0000${a.project}`)
+    ) {
       findings.push({
         kind: "approval_stale_version",
         severity: "medium",
