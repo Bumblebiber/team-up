@@ -819,6 +819,61 @@ have unblocked it. cursor's binary contains `beforeShellExecution`,
 `beforeMCPExecution` and `preToolUse` hook names, so shell denial looks
 plausible — unproven, and the next cheap measurement.
 
+### All three research capabilities pointed at code their checksum did not cover
+
+Found by dry-running Reanna: she could not start at all, failing at capsule
+build with `MCP_RUNTIME_COMMAND_DENIED: playwright command must be the node
+binary`.
+
+**This is a latent defect the replay exposed, not one it introduced.** Main's
+`isAllowedImmutableRuntimeCommand` requires an MCP server's command to be the
+node binary, and args that look like paths to be absolute, regular, non-symlink
+files, which are then copied into the capsule and set read-only. Held against
+that rule, all three packages were wrong in the same way — a content-addressed
+package whose checksum covers a descriptor pointing at code the checksum does
+not cover:
+
+    research.browser     npx @playwright/mcp@latest --headless
+    research.context7    npx -y @upstash/context7-mcp
+    research.paperclip   /home/bbbee/projects/paperclip/.venv/bin/fastmcp …
+
+The first two fetch unpinned remote code at launch. The third is worse in a
+quieter way: an absolute path into a working directory, editable at any time by
+anyone with the account, wearing the appearance of a pinned capability. The
+rule caught three real defects. It should not be relaxed to admit `npx`, and
+wrapping npx in a launcher script would be the same defect with indirection.
+
+**What a fix would actually take.** The current mechanism copies only the arg
+file, so a server runs only if it is a single, self-contained,
+location-independent file. Measured against `@upstash/context7-mcp`, the
+lightest of the three:
+
+- 89 packages, 30 MB installed; `dist/index.js` alone dies on
+  `Cannot find package '@modelcontextprotocol/node'`.
+- Bundled with esbuild it becomes one 3.7 MB file — and still fails, because it
+  reads a `package.json` two directories above itself, a path baked in from its
+  original layout.
+
+So bundling does not rescue it, and vendoring means 30 MB of transitive
+dependencies inside a checksummed package. Playwright is further out of reach:
+it drives browsers and will not usefully bundle at all.
+
+The gap is real and worth naming: `materializeMcpServerIntoCapsule`'s own
+comment promises to copy "capability-owned MCP runtime scripts", but the code
+only accepts absolute host paths, which is precisely what a package cannot own.
+A package-relative runtime would close it. That is a feature, and it does not
+make the two npm servers work by itself.
+
+**Done for now:** the three assignments are disabled, so Reanna launches again.
+She is degraded, not dead — `network: true` gives her `WebFetch` and
+`WebSearch`; what she loses is JavaScript-rendered pages and curated docs
+lookup. Re-enabling is one `capability enable` per package once a runtime
+mechanism exists.
+
+One thing already handled: changing any of these packages moves its checksum
+and strands the assignment rows keyed on the old one. `team-up doctor` reports
+that as `assignment_unknown_package` at high severity.
+
 ### One flaky test
 
 `STATE lock contention respects a bounded timeout` failed twice while the
