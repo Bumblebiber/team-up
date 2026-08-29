@@ -120,6 +120,104 @@ test("a pin left behind by a rename is reported", () => {
   assert.ok(report.findings.some((f) => f.kind === "pin_unknown_specialist"));
 });
 
+function installedPackage(home, manifest) {
+  const dir = path.join(home, "specialists", manifest.id, manifest.version, "abc");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "specialist.json"), JSON.stringify(manifest));
+  fs.writeFileSync(path.join(dir, "instructions.md"), "hi\n");
+  return dir;
+}
+
+const ROSTER_FRONTIER_ONLY = {
+  schema_version: 1,
+  models: {
+    "some-frontier": {
+      tier: "frontier",
+      reasoning: ["max", "medium", "low"],
+      cli: "claude",
+      account: "a",
+    },
+  },
+  accounts: { a: { limits: {} } },
+};
+
+test("a specialist no roster model can satisfy is reported before launch", () => {
+  // coding.codey was built, published, installed and approved on this host and
+  // could never have run. Nothing between building it and running it said so.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    const manifest = {
+      schema_version: 1,
+      id: "coding.example",
+      version: "0.1.0",
+      display_name: "Example",
+      call_types: ["delegate"],
+      output_contract: "team-up.result/v1",
+      capabilities: { skills: [], tools: [], mcps: [], frameworks: [] },
+      permissions: { filesystem: "project", writes: true, network: false, commands: [] },
+      model_profile: { tier: "high", reasoning: "medium" },
+    };
+    const dir = installedPackage(home, manifest);
+    fs.writeFileSync(
+      path.join(home, "specialists-index.json"),
+      JSON.stringify({
+        specialists: {
+          "coding.example": {
+            id: manifest.id,
+            version: manifest.version,
+            checksum: "sha256:abc",
+            path: dir,
+          },
+        },
+      })
+    );
+    fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify(ROSTER_FRONTIER_ONLY));
+
+    const report = diagnose({ TEAM_UP_HOME: home });
+    const finding = report.findings.find((f) => f.kind === "no_model_for_profile");
+    assert.ok(finding, "a profile no cell satisfies must be reported");
+    assert.equal(finding.id, "coding.example");
+    assert.equal(finding.severity, "high");
+    // The reasons come from the real resolver, so they say why rather than
+    // just that it failed.
+    assert.ok(finding.skipped.some((sk) => /tier frontier != high/.test(sk.reason)));
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a satisfiable profile is not reported", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    const manifest = {
+      schema_version: 1,
+      id: "review.example",
+      version: "0.1.0",
+      display_name: "Example",
+      call_types: ["review"],
+      output_contract: "team-up.result/v1",
+      capabilities: { skills: [], tools: [], mcps: [], frameworks: [] },
+      permissions: { filesystem: "project_readonly", writes: false, network: false, commands: [] },
+      model_profile: { tier: "frontier", reasoning: "max" },
+    };
+    const dir = installedPackage(home, manifest);
+    fs.writeFileSync(
+      path.join(home, "specialists-index.json"),
+      JSON.stringify({
+        specialists: {
+          "review.example": { id: manifest.id, version: manifest.version, checksum: "sha256:abc", path: dir },
+        },
+      })
+    );
+    fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify(ROSTER_FRONTIER_ONLY));
+
+    const report = diagnose({ TEAM_UP_HOME: home });
+    assert.equal(report.findings.some((f) => f.kind === "no_model_for_profile"), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("a clean install reports ok", () => {
   const report = withHome({ "specialists-index.json": INDEX }, diagnose);
   assert.equal(report.ok, true);

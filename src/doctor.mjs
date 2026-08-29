@@ -4,6 +4,13 @@ import { teamUpHome, specialistApprovalsPath } from "./paths.mjs";
 import { listInstalled } from "./specialists/store.mjs";
 import { listInstalledCapabilities } from "./capabilities/store.mjs";
 import { loadAssignments } from "./capabilities/assignments.mjs";
+import { loadInstalledManifest } from "./specialists/store.mjs";
+import { resolveProfile } from "./roster/profile.mjs";
+import {
+  COMMAND_BROKER_CAPABILITY,
+  CONTEXT_ISOLATION_CAPABILITY,
+} from "./harness/capabilities.mjs";
+import { requireRoster } from "./roster/config.mjs";
 
 function readJson(file) {
   try {
@@ -60,6 +67,59 @@ export function diagnose(env = process.env) {
         checksum: row.checksum,
         detail: "assigned package/checksum is not in the pool; a launch resolving it fails",
       });
+    }
+  }
+
+  // A specialist whose model profile no roster cell can satisfy installs,
+  // approves and pins without complaint, then fails at launch with
+  // PROFILE_UNAVAILABLE. Nothing between building it and running it says so.
+  // Asking the real resolver is the only honest check: the reason is rarely the
+  // tier itself — coding.codey asks for `high`, four cells offer it, and it
+  // still cannot launch because the only reachable one runs on an adapter with
+  // no verified context isolation on this host.
+  let roster = null;
+  try {
+    roster = requireRoster();
+  } catch {
+    // No roster configured: nothing to resolve against, so skip the check
+    // rather than report every specialist as broken.
+  }
+  if (roster) {
+    for (const id of ids) {
+      let manifest;
+      try {
+        manifest = loadInstalledManifest(id, { env })?.manifest;
+      } catch {
+        continue;
+      }
+      if (!manifest?.model_profile) continue;
+      const callType = (manifest.call_types ?? [])[0];
+      if (!callType) continue;
+      // The same requirements the launcher derives. Without them the resolver
+      // is answering an easier question than the launch asks.
+      const resolved = resolveProfile({
+        roster,
+        profile: manifest.model_profile,
+        specialistId: id,
+        callType,
+        requirements: {
+          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          ...((manifest.permissions?.commands ?? []).length
+            ? { command_broker: COMMAND_BROKER_CAPABILITY }
+            : {}),
+        },
+      });
+      if (resolved.code === "PROFILE_UNAVAILABLE") {
+        findings.push({
+          kind: "no_model_for_profile",
+          severity: "high",
+          id,
+          profile: manifest.model_profile,
+          call_type: callType,
+          skipped: (resolved.skipped ?? []).slice(0, 6),
+          detail: "no roster model satisfies this profile; every launch fails with PROFILE_UNAVAILABLE",
+        });
+      }
     }
   }
 

@@ -686,6 +686,37 @@ public repo is a separate decision from fixing this branch.
 Result: 611/612. The one failure, `dispatch --run-id uses run cwd`, fails on
 `main` too. Four of main's five baseline failures are fixed by the replay.
 
+### Codey has never been able to launch on this host
+
+Found by dry-running all four specialists after the replay, to check the launch
+mechanism change had not broken them. Three prepare cleanly. `coding.codey`
+does not, and never could:
+
+    PROFILE_UNAVAILABLE: [{"model":"claude-opus","reason":"tier frontier != high"},
+                          ...
+                          {"model":"codex:gpt-5.6-terra",
+                           "reason":"context isolation unavailable"}]
+
+Codey's manifest asks for tier `high`. Four roster cells offer it —
+`gpt-5.6-terra`, `grok-4.5-high`, `gpt-5.6-luna-max`, `ox-alpha` — so the tier
+is not the problem. The only one reachable through a configured CLI runs on
+codex, and codex has no verified `team-up.context-isolation/v1` record on this
+host. Every Claude cell is frontier, medium or low; none is high.
+
+So Codey was specified, built, published, installed, pinned and approved
+yesterday, and would have failed on its first real ticket. Nothing between
+those steps checks that a profile is satisfiable — which is why `team-up
+doctor` now asks the real resolver, with the same requirements the launcher
+derives, and reports this as a high finding.
+
+Two ways out, both the user's call: give Codey a profile the Claude cells can
+satisfy (`frontier` or `medium`), or verify codex's context isolation so the
+high-tier cell becomes reachable.
+
+`research.reanna` also failed its dry run, with `NOT_APPROVED` — the same stale
+0.1.0 approval `doctor` reports. Re-approving is a permission grant, so it is
+left for the user rather than done here.
+
 ### One flaky test
 
 `STATE lock contention respects a bounded timeout` failed twice while the
