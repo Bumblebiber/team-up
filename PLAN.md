@@ -785,6 +785,40 @@ Reanna researches. Revan and Tessa both resolve to `claude-opus max`.
 `research.reanna` also failed its dry run with `NOT_APPROVED` — the stale 0.1.0
 approval `doctor` reports. Re-approving is a permission grant, left for Benni.
 
+### cursor cannot be verified yet, and the reason is not what it looked like
+
+Benni asked for cursor (opencode and hermes have no credit right now). The
+finding is in `docs/harness-cursor.md`; the summary is that **cursor isolates
+correctly and cannot prove it**.
+
+The missing piece was never the verify runner — `registry.mjs` has
+`cursor: unsupportedAdapter("cursor")`, so the adapter itself does not exist.
+Building one turned out to be gated on something measurable, and the
+measurement came out negative.
+
+Isolation works: overriding `HOME` hides `~/.cursor` (MCP, rules, hooks) but
+breaks auth, because credentials live under `~/.config/cursor/auth.json` and
+follow `XDG_CONFIG_HOME`. Bridging just that one file into an isolated `HOME`
+gives both — logged in, global MCP invisible. Same shape as
+`materializeClaudeAuthHome`.
+
+The blocker is the proof. `decideContextIsolationCapability` needs a complete
+`absent` list covering six planted canaries, and every path to it reads
+`init.tools` from a structured init event. cursor's init carries `apiKeySource`,
+`cwd`, `session_id`, `model` and `permissionMode` — no inventory. It does emit
+typed `tool_call` frames, which prove presence, but a canary that is never
+called produces no frame, and absence is exactly what the six canaries test.
+Asking the model to self-report is what main's hardening explicitly refuses.
+
+So granting the token would mean either cursor exposing an inventory, or the
+contract accepting a second proof shape. The second is a change to a security
+check and belongs in a design record, not slipped into an adapter.
+
+Separately: Codey requires `command_broker` too, so isolation alone would not
+have unblocked it. cursor's binary contains `beforeShellExecution`,
+`beforeMCPExecution` and `preToolUse` hook names, so shell denial looks
+plausible — unproven, and the next cheap measurement.
+
 ### One flaky test
 
 `STATE lock contention respects a bounded timeout` failed twice while the
