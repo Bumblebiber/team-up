@@ -17,6 +17,7 @@ import { approveSpecialist, listApprovals } from "./specialists/approvals.mjs";
 import { runSpecialist } from "./specialists/launcher.mjs";
 import { loadEvalSuite, runEvalSuite } from "./specialists/evals.mjs";
 import { runHarnessVerify } from "./harness/cli-verify.mjs";
+import { diagnose } from "./doctor.mjs";
 import { runCapabilityCli } from "./capabilities/cli.mjs";
 
 function argValue(args, flag) {
@@ -194,6 +195,13 @@ export async function runCli(args, io = { out: console.log, err: console.error }
   if (cmd === "validate") return cmdValidate(rest, io);
   if (cmd === "pick") return cmdPick(rest, io);
   if (cmd === "runs") return cmdRuns(rest, io);
+  if (cmd === "doctor") {
+    const report = diagnose();
+    io.out(JSON.stringify(report, null, 2));
+    // A stale exclusion delivers a capability that was meant to be denied, so
+    // high findings are an error; the rest are reported without failing.
+    return report.counts.high > 0 ? 1 : 0;
+  }
   if (cmd === "specialist") return cmdSpecialist(rest, io);
   if (cmd === "capability") return runCapabilityCli(rest, io);
   if (cmd === "harness") {
@@ -219,7 +227,7 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     return runRosterCli(args);
   }
   io.err(
-    "usage: team-up <version|init|validate|pick|dispatch|handoff|pass-to|\nmark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness>"
+    "usage: team-up <version|init|validate|doctor|pick|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness>"
   );
   return 1;
 }
