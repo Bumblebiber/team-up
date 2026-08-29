@@ -963,6 +963,33 @@ place.**
 `send: spawn id exp3 not open` in the generated expect script. Subscription
 limit tracking has been blind for at least two days. Not chased here.
 
+### Stuck runs are reported now, not reaped — `runs stale`
+
+Benni's suggestion, and a better answer than the gc change proposed above: the
+reaper tells him, he decides. That removes the part I did not want to automate
+— deciding when a person is not coming back.
+
+`team-up runs stale [--hours N] [--json]` reports a run when it is unfinished
+and either its terminal is gone or its mailbox has been silent past the
+threshold (default six hours), plus any `team-up-*` session no unfinished run
+claims. It reports; it never cancels. Exit 1 when there is something to look
+at, so a wrapper can branch without parsing.
+
+The detection is in `src/runs/stale.mjs` with nine tests rather than in the
+shell, because the scripts under `~/.hermes` are untested glue and this is
+exactly the logic that must not quietly stop working. `~/.hermes/scripts/stale-runs.sh`
+only formats, deduplicates by run-id set, and sends through the CronBot —
+following `worker-reaper.sh`, including the watchdog pattern of staying silent
+on stdout when there is nothing to say. `STALE_RUNS_DRY_RUN=1` prints the
+message instead of sending it.
+
+The phone message stays one line per run — id, status, why, how long quiet.
+The full report lands in `~/.hermes/cron-outputs/stale-runs/pending.md` and
+names the trap found today: a status that will not stick means something is
+still supervising the run.
+
+**The cron job is not installed yet.**
+
 ### One flaky test
 
 `STATE lock contention respects a bounded timeout` failed twice while the

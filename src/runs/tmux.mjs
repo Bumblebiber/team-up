@@ -46,3 +46,20 @@ export function tmuxSessionExists(sessionId, { exec = execFileSync } = {}) {
     return false;
   }
 }
+
+/**
+ * Names of every live tmux session, or an empty list when tmux itself is
+ * absent or has no server running. An empty list is the same answer as "no
+ * sessions", which is what a caller asking about orphans needs.
+ */
+export function listTmuxSessions({ exec = execFileSync } = {}) {
+  try {
+    const raw = exec("tmux", ["list-sessions", "-F", "#{session_name}"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return String(raw).split("\n").map((l) => l.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
