@@ -647,7 +647,12 @@ Merging two independent implementations of one subsystem by hand is the
 likeliest way to silently drop one of main's fail-closed guards. So instead:
 branch from `main`, replay only what is genuinely unique.
 
-`refactor/reanna-2` = `main` + 31 replayed commits. Of the original 62:
+`refactor/reanna-2` = `main` + 31 replayed commits. The old branch was deleted
+locally and on the remote on 2026-08-29, at `60197ae`. Five files lived only
+there — `src/harness/isolation-probe.mjs` and its test, the
+`test/helpers/verified-harness.mjs` helper, `test/sandbox/launch-env.test.mjs`
+and `test/supervisor/descriptor-tools.test.mjs` — every one of them belonging to
+a design main supersedes. Of the original 62:
 
 - **13 dropped** as the superseded re-implementation of the capability pool.
 - **4 dropped** as superseded by main's better mechanism: the live isolation
