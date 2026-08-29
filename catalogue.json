@@ -110,17 +110,10 @@
   ],
   "capabilities": [
     {
-      "id": "research.browser",
-      "version": "1.0.0",
-      "source": "capabilities/research.browser",
-      "summary": "Headless browser for sources that render with JavaScript. Read-only tool set: no evaluate, no file upload, no form filling.",
-      "network": true
-    },
-    {
       "id": "research.context7",
       "version": "1.0.0",
       "source": "capabilities/research.context7",
-      "summary": "Library documentation lookup.",
+      "summary": "Library documentation lookup: resolve a package name to a library id, then query its current docs. NOT USABLE as shipped \u2014 its descriptor runs the server through npx, which the capsule refuses.",
       "network": true
     },
     {

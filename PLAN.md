@@ -921,6 +921,48 @@ by its own removal and `o9k.caveman` left by the rename to `style.caveman`.
 `removeCapability` deletes the checksum tree and leaves the id and version
 directories behind.
 
+### Seven runs were immortal, and something was keeping them that way
+
+Benni asked whether stuck tmux sessions could be reported over Telegram rather
+than reaped automatically. Checking what such a report would say today found
+seven non-terminal runs, none of them alive:
+
+    3x watching        2026-07-28   tmux gone, heartbeat 770h stale
+    1x waiting_human   2026-07-29   tmux gone, heartbeat 744h stale
+    1x watching        2026-08-21   tmux gone, heartbeat 191h stale
+    2x handing_off     2026-08-15 / 2026-08-27   tmux gone, no heartbeat at all
+
+The `waiting_human` one is the sharpest: an observer had asked "is the
+tmux/cursor session still alive or dead?" and had been waiting 31 days for
+someone to answer a question whose answer was already no.
+
+Cancelling them did not stick. `runs set-status … cancelled` succeeded, the
+status read back as `cancelled`, and minutes later it was `handing_off` again.
+The run's own `supervision-events.jsonl` said why, with entries written that
+afternoon:
+
+    action: recover_crash
+    error:  USAGE_REFRESH_FAILED: claude:Command failed:
+            expect /tmp/o9k-usage-pty-claude-2560024.exp
+    retryable: true
+
+`team-up-usage-watcher.service`, PID 2560024, had been running since
+2026-08-27 — and the PID in that temp path is its own. It was executing code
+from before this session renamed those paths, retrying every three minutes,
+failing every time, and resetting the status on each attempt. Two days of that,
+2h20m of CPU.
+
+Stopping the service, cancelling the seven, and starting it again cleared all
+of them and dropped the o9k path from the logs. **A long-running service
+resolves the CLI through the working tree, so editing the tree does not change
+what is already running — the same lesson the reaper taught, in a different
+place.**
+
+**Still broken, separately:** the watcher collects nothing. Every cycle logs
+`collected: (none ok)`, with cursor and codex both failing at
+`send: spawn id exp3 not open` in the generated expect script. Subscription
+limit tracking has been blind for at least two days. Not chased here.
+
 ### One flaky test
 
 `STATE lock contention respects a bounded timeout` failed twice while the

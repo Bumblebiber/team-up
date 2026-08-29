@@ -6,9 +6,9 @@ copy, so a package that exists nowhere else cannot be reviewed, diffed, or
 rebuilt. These directories are that missing original.
 
 ```bash
-team-up capability install capabilities/research.context7
-team-up capability enable research.context7@1.0.0 \
-  --checksum <sha256 from the install output> --for research.reanna
+team-up capability install capabilities/ponytail.build
+team-up capability enable ponytail.build@4.8.4 \
+  --checksum <sha256 from the install output> --for coding.codey
 ```
 
 Nothing here is enabled by being present. Import puts a package in the pool;
@@ -22,7 +22,7 @@ happens to expose. Omitting the array grants the whole server, which is only
 right when every tool on it fits the narrowest specialist that will hold the
 package.
 
-`research.browser` is the clear case. `@playwright/mcp` also exposes
+`research.browser`, dropped from this tree but worth keeping as the example, is the clear case. `@playwright/mcp` also exposes
 `browser_run_code_unsafe`, `browser_evaluate`, `browser_file_upload`,
 `browser_fill_form`, `browser_click` and `browser_type`. A researcher reading
 sources needs none of them, and two of them — arbitrary code in the page, and
@@ -84,11 +84,32 @@ than for `all`.
 
 ## Host-specific packages
 
-`research.paperclip` is installed in the pool but has no source here: its
-descriptor points at an absolute path to a local checkout
-(`~/projects/paperclip`), so committing it would publish a package that
-resolves on exactly one machine. The two here run through `npx` and work
-anywhere node does.
+A descriptor pointing at an absolute path into a local checkout publishes a
+package that resolves on exactly one machine, so it does not belong here.
+`research.paperclip` was that shape — `~/projects/paperclip/.venv/bin/fastmcp`
+— and has been removed entirely: the capsule only starts the node binary, so a
+Python server cannot be a capability at all, whatever else is fixed.
+
+**`npx` does not work either, and the reason matters.** `research.context7`
+still declares `npx -y @upstash/context7-mcp` and will be refused at capsule
+build with `MCP_RUNTIME_COMMAND_DENIED`. That is correct: a content-addressed
+package whose checksum covers a descriptor that fetches unpinned remote code at
+launch is not pinned in any useful sense. The checksum covers the pointer, not
+what it points at.
+
+What the capsule accepts is the node binary plus absolute paths to regular
+files, which it copies in and sets read-only. Only the argument file is copied,
+not its `node_modules`, so a server runs only if it is a single, self-contained,
+location-independent file. Measured against `@upstash/context7-mcp`: 89
+packages and 30 MB installed; its entry alone dies on a missing dependency;
+bundled to one 3.7 MB file it still fails, because it reads a `package.json`
+two directories above itself.
+
+So `research.context7` is kept as a record of the intent and is **not usable as
+shipped**. `research.browser` was dropped: twelve tool schemas in every
+researcher's context, the largest overlap with the `WebFetch` a networked
+specialist already has, and Playwright drives browsers, so it will not bundle
+at all.
 
 Never build a descriptor by copying from `~/.mcp.json`. That file holds live
 credentials in cleartext, and a capability package is content-addressed with a
