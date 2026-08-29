@@ -756,14 +756,31 @@ For now Codey is made launchable by a host-scoped roster override, which
 republish and no re-approval:
 
 ```json
-"specialists": { "coding.codey": { "model_profile": { "tier": "medium", "reasoning": "medium" } } }
+"specialists": { "coding.codey": { "model_profile": { "tier": "frontier", "reasoning": "medium" } } }
 ```
 
-It resolves to `claude claude-sonnet medium`. Benni asked for work-horse class
-and named `gpt-5.6-luna-max`, `composer-2.5`, `deepseek-v4-pro` and
-`deepseek-v4-flash`; `composer-2.5` and `deepseek-v4-pro` are tier `medium` in
-this roster, which is why the override says medium even though "not medium" was
-the wording. None of the four is reachable today, for the reason above.
+It resolves to `claude claude-opus medium`.
+
+Getting there took two passes, and the second one matters more than the first.
+Benni first asked for work-horse class and named `gpt-5.6-luna-max`,
+`composer-2.5`, `deepseek-v4-pro` and `deepseek-v4-flash` — none of which is
+reachable, for the reason above. The override went to `medium`, which is where
+two of those models sit in this roster, and that resolved to `claude-sonnet`.
+
+Benni's correction: **never Sonnet for coding work** — "ineffizient hoch zehn"
+— Opus at medium effort instead. So the reachable-cell question and the
+model-quality question have different answers, and the tier that satisfies the
+second is `frontier`, the tier Sonnet is not in. Reasoning stays `medium`:
+effort is the lever, not the model.
+
+The override is host-scoped, and the published manifest still says
+`high`/`medium`. Anyone installing `coding.codey` from GitHub gets a profile
+that cannot launch. Correcting that is a version bump, reinstall, re-pin,
+re-approve and a push to a public repo — offered, not done.
+
+`research.reanna` resolves to `claude-sonnet low` from its own manifest
+(`medium`/`low`). Left alone: the objection was scoped to coding work, and
+Reanna researches. Revan and Tessa both resolve to `claude-opus max`.
 
 `research.reanna` also failed its dry run with `NOT_APPROVED` — the stale 0.1.0
 approval `doctor` reports. Re-approving is a permission grant, left for Benni.
