@@ -887,6 +887,40 @@ One thing already handled: changing any of these packages moves its checksum
 and strands the assignment rows keyed on the old one. `team-up doctor` reports
 that as `assignment_unknown_package` at high severity.
 
+### A capability became unremovable the first time anything used it
+
+Found while removing `research.paperclip`, which Benni had installed to try
+once and never used. The removal was refused:
+
+    CAPABILITY_REFERENCED: active run 20260827T184044Z-o3b7
+
+`activeRunsWithCapabilities` in `src/capabilities/cli.mjs` enumerated every run
+directory containing an `EFFECTIVE_CAPABILITIES.json` and never looked at its
+status. Every run that has ever launched with a capability leaves that file
+behind, so the guard called "active runs" was really "all runs, forever" — the
+same shape as `materializeMcpServerIntoCapsule`, whose comment promises
+capability-owned runtimes while the code accepts only host paths. A name that
+says one thing and code that does another, twice in one subsystem.
+
+It now skips runs in `done`, `failed` or `cancelled`. A run whose `STATE.json`
+cannot be read still blocks: refusing to remove a package is recoverable,
+removing one out from under a live worker is not.
+
+Two stale runs surfaced behind it, both stuck in `handing_off` — one from
+2026-08-15 naming `team-up-testing-hannes-…`, from before the rename. That
+status is in gc's `PROTECTED` set, correctly, because a quota handoff must not
+be killed mid-flight. But there is no upper bound on it: neither run had a
+heartbeat file or a live tmux session, and both would have sat there
+indefinitely holding capabilities. **A protected run with no tmux and no
+heartbeat cannot be handing off to anything — gc has no rule for that, and
+adding one is a change to reaper semantics, so it is recorded here rather than
+made.**
+
+Cleaned up along the way: two empty pool directories, `research.paperclip` left
+by its own removal and `o9k.caveman` left by the rename to `style.caveman`.
+`removeCapability` deletes the checksum tree and leaves the id and version
+directories behind.
+
 ### One flaky test
 
 `STATE lock contention respects a bounded timeout` failed twice while the

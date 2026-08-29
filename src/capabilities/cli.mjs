@@ -53,6 +53,23 @@ function resolveInstalledSelector(subject, { checksum, env } = {}) {
   return matches[0];
 }
 
+/** Statuses after which a run can no longer be holding anything open. */
+const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
+
+function runIsTerminal(root, name) {
+  try {
+    const state = JSON.parse(
+      fs.readFileSync(path.join(root, name, "STATE.json"), "utf8")
+    );
+    return TERMINAL_RUN_STATUSES.has(state.status);
+  } catch {
+    // No readable state: treat it as live and keep blocking. Refusing to
+    // remove a package is recoverable; removing one out from under a running
+    // worker is not.
+    return false;
+  }
+}
+
 function activeRunsWithCapabilities(env) {
   const root = runsPath(env);
   if (!fs.existsSync(root)) return [];
@@ -60,6 +77,11 @@ function activeRunsWithCapabilities(env) {
   for (const name of fs.readdirSync(root)) {
     const effectivePath = path.join(root, name, "EFFECTIVE_CAPABILITIES.json");
     if (!fs.existsSync(effectivePath)) continue;
+    // The point of this list is runs that could still be using the package.
+    // Every run that ever used one leaves its EFFECTIVE_CAPABILITIES.json
+    // behind, so without this a capability became unremovable the first time
+    // anything launched with it.
+    if (runIsTerminal(root, name)) continue;
     try {
       const doc = JSON.parse(fs.readFileSync(effectivePath, "utf8"));
       runs.push({
