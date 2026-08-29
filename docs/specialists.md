@@ -146,8 +146,22 @@ OS isolation is actually applied.
 
 ## Starters
 
-- `team-up-with-tessa` — testing (`frontier` / `max`); tools include
-  `filesystem.read` + `command.test`; commands include `project-test`;
-  advisory `tokens.target: 80000`
-- `team-up-with-reanna` — research (`medium` / `low`); read-only project +
-  optional network; advisory `tokens.target: 80000`
+`catalogue.json` at the repo root lists every published specialist and every
+capability package here: id, version, repo, call types, the permissions it
+asks for, and what it needs from the project. Read the permissions before the
+repo URL — that is what decides whether you want to run someone else's
+specialist at all.
+
+It is a hand-maintained list, not a registry. Nothing resolves it at runtime
+and installing is unchanged:
+
+```bash
+git clone https://github.com/Bumblebiber/team-up-with-<name>
+team-up specialist inspect ./team-up-with-<name>
+team-up specialist install ./team-up-with-<name>
+```
+
+The half of the list that lives in this repo — the capability packages — is
+checked against its manifests by `test/catalogue.test.mjs`. The specialist
+half is not: those bundles are separate repos, so a version there can move
+without this file noticing.

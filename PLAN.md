@@ -693,16 +693,30 @@ machine was busy killing processes, then passed five runs in a row. Timing
 sensitive, not caused by any change here — but it will fail in CI on a loaded
 runner.
 
-## Step 7 — A catalogue in this repo
+## Step 7 — A catalogue in this repo — DONE, at the lowest useful rung
 
-One repo per specialist means discovery has to live somewhere. The main repo
-gets a catalogue: browse the available specialists, see what each one costs in
-context and what capabilities it wants, and install the ones you need.
+One repo per specialist means discovery has to live somewhere. `catalogue.json`
+at the repo root is that somewhere: the four published specialists and the five
+capability packages, each with id, version, repo, call types, the permissions
+it asks for, what it needs from the project, and its caveat.
 
-Not designed yet. The open questions are where the list of specialists lives
-(a file in this repo, or something resolved at runtime), whether installing
-means cloning the bundle repo or fetching a release, and how it relates to the
-`capabilities/` packages that already exist.
+The three design questions this step opened — where the list lives, whether
+installing means cloning or fetching a release, how it relates to
+`capabilities/` — are **not answered, deliberately**. The need was "where do I
+find the specialists", and a static file answers it. Nothing resolves the
+catalogue at runtime; installing is still `git clone` then `specialist
+install`. Build the registry when a static list actually stops working.
+
+The honest weakness is drift, and it was already there: the `## Starters`
+section in `docs/specialists.md` listed two of four specialists and no repo
+URLs. That section now points at the catalogue instead of repeating it.
+
+`test/catalogue.test.mjs` checks what it can. Every capability entry is
+verified against the `capability.json` it names, and every package in
+`capabilities/` must appear — that caught `style.caveman` listed at 0.1.0 when
+it is 1.0.0, on the first run. The specialist half cannot be checked the same
+way: those are separate repos, so a version can move there without this file
+noticing. Named rather than papered over.
 
 ## Open questions for Benni
 
