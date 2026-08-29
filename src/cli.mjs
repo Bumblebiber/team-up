@@ -9,11 +9,13 @@ import {
   inspectPackage,
   installPackage,
   listInstalled,
+  loadInstalledManifest,
   pinSpecialist,
   uninstallSpecialist,
 } from "./specialists/store.mjs";
 import { approveSpecialist, listApprovals } from "./specialists/approvals.mjs";
 import { runSpecialist } from "./specialists/launcher.mjs";
+import { loadEvalSuite, runEvalSuite } from "./specialists/evals.mjs";
 import { runHarnessVerify } from "./harness/cli-verify.mjs";
 import { runCapabilityCli } from "./capabilities/cli.mjs";
 
@@ -145,11 +147,41 @@ async function cmdSpecialist(args, io) {
     io.out(JSON.stringify(listInstalled(), null, 2));
     return 0;
   }
+  if (sub === "evals") {
+    const targets = rest[0] && !rest[0].startsWith("--")
+      ? [rest[0]]
+      : Object.keys(listInstalled().specialists ?? {});
+    if (!targets.length) {
+      io.err("no specialists installed");
+      return 1;
+    }
+    const reports = [];
+    for (const target of targets) {
+      const [id, version] = String(target).split("@");
+      const entry = loadInstalledManifest(id, version ? { version } : {});
+      if (!entry) {
+        reports.push({ specialist: target, ok: false, error: "not installed" });
+        continue;
+      }
+      const suite = loadEvalSuite(entry.manifest, entry.path);
+      if (!suite.ok) {
+        reports.push({ specialist: target, ok: false, error: suite.error });
+        continue;
+      }
+      reports.push(runEvalSuite({
+        manifest: entry.manifest,
+        suite,
+        specialistId: entry.manifest.id,
+      }));
+    }
+    io.out(JSON.stringify({ suites: reports }, null, 2));
+    return reports.every((r) => r.ok) ? 0 : 1;
+  }
   if (sub === "run") {
     const result = await runSpecialist(rest, io);
     return result.code;
   }
-  io.err("usage: team-up specialist <inspect|install|approve|pin|uninstall|list|run>");
+  io.err("usage: team-up specialist <inspect|install|approve|pin|uninstall|list|evals|run>");
   return 1;
 }
 
