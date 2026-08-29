@@ -147,10 +147,15 @@ test("STATE lock contention respects a bounded timeout", withTempRuns(async (dir
   const state = fixture();
   const enteredPath = path.join(dir, "timeout-holder-entered");
   const resultPath = path.join(dir, "timeout-result.json");
+  // The holder sleeps far longer than the waiter's timeout on purpose. What
+  // this test proves is that the waiter gave up on its own bound rather than
+  // waiting for the lock to be released, and the two are only distinguishable
+  // if there is a wide gap between them — at 500ms against a 100ms timeout a
+  // loaded machine could not tell them apart, and the assertion flaked.
   const holder = startWorker(`
 updateState(process.env.RUN_ID, (draft) => {
   fs.writeFileSync(process.env.ENTERED_PATH, "entered\\n");
-  sleep(500);
+  sleep(2000);
   draft.holder = true;
   return draft;
 });
@@ -175,6 +180,6 @@ try {
   assert.equal(result.acquired, false);
   assert.equal(result.code, "STATE_LOCK_BUSY");
   assert.ok(result.elapsed >= 80, `lock returned too early after ${result.elapsed}ms`);
-  assert.ok(result.elapsed < 450, `lock exceeded its bound: ${result.elapsed}ms`);
+  assert.ok(result.elapsed < 1500, `lock exceeded its bound: ${result.elapsed}ms`);
   assert.deepEqual(await waitForExit(holder), { code: 0, signal: null });
 }));

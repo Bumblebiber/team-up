@@ -257,13 +257,35 @@ host skill of the same name. The host version spawns two parallel sub-agents;
 a capsule specialist holds `Read`, `Glob`, `Grep`, `Write` and no `Task`, so the
 bundle version runs both axes in one session and says so.
 
-**semgrep is not in this bundle and should not be.** It is an MCP server, which
-means a capability package (`capability inspect` → `install` → `enable --for
-review.revan`), not a manifest line. Reanna's scouting stands — MIT, 7 tools,
-`SEMGREP_APP_TOKEN` only needed for `semgrep_findings`, and
-`write_custom_semgrep_rule` sitting close to a reviewer's anti-remit. Building
-that package is a follow-up, and `capabilities/README.md`'s rule applies to it:
-never copy a descriptor out of `~/.mcp.json`.
+**semgrep is not in this bundle, and the follow-up is now closed: do not build
+the package.** It would have been a capability package rather than a manifest
+line, so the first step was to ask the server what it actually exposes instead
+of trusting the scouting note. Measured against `semgrep-mcp` 0.9.0 on
+2026-08-29, `tools/list` returns exactly one tool:
+
+    deprecation_notice
+
+Its own description names the seven tools it replaces — `semgrep_scan`,
+`semgrep_scan_remote`, `semgrep_scan_with_custom_rule`, `semgrep_findings`,
+`semgrep_rule_schema`, `get_supported_languages`, `get_abstract_syntax_tree` —
+and says to call the notice instead of any of them. Reanna's scouting was
+accurate when it was made and is now stale; both `uvx semgrep-mcp` and the
+hosted `mcp.semgrep.ai` are deprecated. A capability package built on it would
+deliver one tool that tells the reviewer to stop using it.
+
+Two things measured on the way there, worth keeping if a successor server
+appears:
+
+- The server needs the `semgrep` binary reachable and does not get it from its
+  own `uvx` environment — it fails with `Semgrep is not installed or not in
+  your PATH` unless `--semgrep-path` is passed explicitly. That is a runtime
+  dependency beyond node and git, which "Not in scope" rules out.
+- It initialises Datadog tracing at startup, unprompted, and prints the trace
+  URL. For a package whose whole job is reading someone else's code, that is a
+  property to decide about deliberately rather than discover later.
+
+`capabilities/README.md`'s rule would still have applied: never copy a
+descriptor out of `~/.mcp.json`.
 
 ## Step 5 — Codey — DONE, but the write scope is not enforceable
 
