@@ -713,36 +713,60 @@ runs resolve to `skip`.
 This is the second-order cost of a broken reaper: the bug was there the whole
 time and could not show itself while nothing ran.
 
-### Codey has never been able to launch on this host
+### Codey has never been able to launch — and why the fix is not the tier
 
-Found by dry-running all four specialists after the replay, to check the launch
-mechanism change had not broken them. Three prepare cleanly. `coding.codey`
-does not, and never could:
+Found by dry-running all four specialists after the replay. Three prepare
+cleanly; `coding.codey` did not, and never could.
 
-    PROFILE_UNAVAILABLE: [{"model":"claude-opus","reason":"tier frontier != high"},
-                          ...
-                          {"model":"codex:gpt-5.6-terra",
-                           "reason":"context isolation unavailable"}]
+The obvious reading was wrong. Codey asks for tier `high`, and the roster lists
+four `high` models, so the tier was not empty. The full skip list says what is:
 
-Codey's manifest asks for tier `high`. Four roster cells offer it —
-`gpt-5.6-terra`, `grok-4.5-high`, `gpt-5.6-luna-max`, `ox-alpha` — so the tier
-is not the problem. The only one reachable through a configured CLI runs on
-codex, and codex has no verified `team-up.context-isolation/v1` record on this
-host. Every Claude cell is frontier, medium or low; none is high.
+    codex:gpt-5.6-terra      context isolation unavailable
+    cursor:grok-4.5-high     context isolation unavailable
+    opencode:grok-4.5-high   context isolation unavailable
+    hermes:grok-4.5-high     context isolation unavailable
+    cursor:gpt-5.6-luna-max  context isolation unavailable
+    opencode:ox-alpha        context isolation unavailable
 
-So Codey was specified, built, published, installed, pinned and approved
-yesterday, and would have failed on its first real ticket. Nothing between
-those steps checks that a profile is satisfiable — which is why `team-up
-doctor` now asks the real resolver, with the same requirements the launcher
-derives, and reports this as a high finding.
+Every `high` cell runs on cursor, codex, opencode or hermes. **On this host only
+`claude` has a usable `team-up.context-isolation/v1` record**, so `high` is
+empty in practice — and so is every non-Claude cell at every other tier.
 
-Two ways out, both the user's call: give Codey a profile the Claude cells can
-satisfy (`frontier` or `medium`), or verify codex's context isolation so the
-high-tier cell becomes reachable.
+Harness verification is keyed by CLI version, and the CLIs have moved:
 
-`research.reanna` also failed its dry run, with `NOT_APPROVED` — the same stale
-0.1.0 approval `doctor` reports. Re-approving is a permission grant, so it is
-left for the user rather than done here.
+| adapter  | record for | installed          |
+|----------|-----------|---------------------|
+| codex    | 0.145.0   | 0.150.1             |
+| opencode | 1.18.15   | 1.18.23             |
+| cursor   | —         | 2026.08.25          |
+| hermes   | —         | —                   |
+
+Re-running the one supported path, `team-up harness verify codex`, produced
+`status: unverified`, `context_isolation: null` on 0.150.1. So codex is not a
+stale record to refresh — the current version fails the isolation probe. And
+`harness verify` accepts only `claude` and `codex`: **opencode, cursor and
+hermes have no verification path in the tooling at all**, so their cells cannot
+be reached no matter what a manifest asks for.
+
+That is the real gap, and it is a feature, not a configuration change: live
+verify runners for the other three adapters.
+
+For now Codey is made launchable by a host-scoped roster override, which
+`resolveProfile` already supports and which needs no version bump, no
+republish and no re-approval:
+
+```json
+"specialists": { "coding.codey": { "model_profile": { "tier": "medium", "reasoning": "medium" } } }
+```
+
+It resolves to `claude claude-sonnet medium`. Benni asked for work-horse class
+and named `gpt-5.6-luna-max`, `composer-2.5`, `deepseek-v4-pro` and
+`deepseek-v4-flash`; `composer-2.5` and `deepseek-v4-pro` are tier `medium` in
+this roster, which is why the override says medium even though "not medium" was
+the wording. None of the four is reachable today, for the reason above.
+
+`research.reanna` also failed its dry run with `NOT_APPROVED` — the stale 0.1.0
+approval `doctor` reports. Re-approving is a permission grant, left for Benni.
 
 ### One flaky test
 
