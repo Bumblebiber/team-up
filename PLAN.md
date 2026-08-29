@@ -550,10 +550,18 @@ is on the remote, including the abandoned statusline branch; the two that were
 not pushed are zero commits off `main`. Repo archived on GitHub: read-only,
 still public, still readable.
 
-`npm deprecate` **failed and is still open**: `npm whoami` returns 401, so the
-token in `~/.npmrc` has expired. After `npm login` the command is
+`npm deprecate` **done (2026-08-29)**. All 28 versions, 1.0.0 through 2.0.1,
+now carry:
 
-    npm deprecate its-over-9k "Retired. Superseded by team-up — https://github.com/Bumblebiber/team-up"
+    Retired. Superseded by team-up — https://github.com/Bumblebiber/team-up
+
+It took three attempts to get there, and the failures were each a different
+thing. The token in `~/.npmrc` had expired, so `npm whoami` returned 401. A web
+`npm login` fixed authentication but not authorization: the account runs
+`two-factor auth: auth-and-writes`, and deprecation counts as a publish-class
+write, so it returned 403 asking for an OTP or a token with 2FA bypass. The
+login also overwrote `~/.npmrc` — worth remembering before suggesting it, since
+token values cannot be read back after creation.
 
 It marks every published version, 1.0.0 through 2.0.1.
 
@@ -908,8 +916,6 @@ noticing. Named rather than papered over.
 
 ## Open questions for Benni
 
-- **`npm deprecate its-over-9k`** is still blocked on an expired npm token —
-  see the retirement section.
 - **`tim-hmem-import-audit`** is TIM's own skill, present in
   `tim/packages/tim-skills/skills`, so removing it from the hosts would only
   last until the next sync. The hmem import is finished; whether the skill
