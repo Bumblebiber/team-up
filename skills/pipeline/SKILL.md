@@ -73,6 +73,10 @@ So a ticket carries what stays true across all of that:
 - **The constraints** that bind it — version floors, dependency limits,
   naming rules — copied verbatim from the spec rather than paraphrased.
 - **Acceptance criteria**, and the behaviour they check, from the user's side.
+- **The non-goals** — the neighbouring defects a competent implementer would
+  otherwise fold in. A writer that finds a second bug while fixing the first
+  will fix both unless the ticket says not to, and that is how one slice turns
+  into a diff the reviewer cannot judge.
 
 It does not carry exact file paths, line ranges, or implementation code.
 
