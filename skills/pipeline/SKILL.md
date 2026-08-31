@@ -27,6 +27,7 @@ Six stages, and the first two never leave your session:
    it does not serialise into a request field.
 2. **Spec.** You write it, because you have the conversation behind it.
 3. **Tickets.** Cut the spec into pieces that can be done independently.
+   What each piece must carry is an invariant below.
 4. **Dispatch.** One writer per ticket, in parallel, each in its own clone.
 5. **Merge.** Yours. You have the real tree and you are the only one who can
    ask the human about a conflict.
@@ -54,6 +55,39 @@ directory cannot follow either pointer, so git stops working inside it.
 
 A full clone is self-contained and disposable. That is what makes it safe to
 let a writer use git freely inside one.
+
+### A ticket carries its contract, not its coordinates
+
+A file path and a line range written into a ticket describe the tree as it
+stood when the ticket was cut. The writer's own first edit invalidates them
+inside its own clone; a blocking ticket invalidates them before the writer
+starts. A writer that trusts a stale coordinate does not stall on it — it
+edits the wrong place and reports success, and the cost lands in a review
+cycle.
+
+So a ticket carries what stays true across all of that:
+
+- **The seam** it is verified at, named from the spec. Not "add tests".
+- **Consumes / Produces** — what it relies on from its blockers and what its
+  dependents rely on from it, as exact names and types.
+- **The constraints** that bind it — version floors, dependency limits,
+  naming rules — copied verbatim from the spec rather than paraphrased.
+- **Acceptance criteria**, and the behaviour they check, from the user's side.
+
+It does not carry exact file paths, line ranges, or implementation code.
+
+Consumes/Produces does the work that reading the code would otherwise do. A
+writer sees only its own ticket, so this block is the only place it learns the
+names its neighbours expect; and for a ticket behind a blocker there is no
+post-blocker tree to read at cutting time, so the contract has to be declared
+rather than discovered.
+
+None of this is licence to cut a thin ticket. A writer that has to pick the
+seam and design the test itself produces worse work than one handed the
+contract — at the same model, on the same slice. The detail is what closes
+that gap. Putting it in the ticket costs nothing extra: cutting tickets
+already means reading the codebase once, with the context loaded. Re-deriving
+it per ticket pays that read again for every ticket.
 
 ### The reviewer runs once, on the merged result
 
