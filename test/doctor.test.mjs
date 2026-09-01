@@ -5,13 +5,20 @@ import os from "node:os";
 import path from "node:path";
 import { diagnose } from "../src/doctor.mjs";
 
+// The whole world a diagnosis may see. O9K_HOME is named too because the read
+// paths fall back to the legacy home for migration, and an unnamed one is the
+// host's — which is how the host's roster reached these tests to begin with.
+function homeEnv(home) {
+  return { TEAM_UP_HOME: home, O9K_HOME: home };
+}
+
 function withHome(state, fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
   try {
     for (const [name, doc] of Object.entries(state)) {
       fs.writeFileSync(path.join(home, name), JSON.stringify(doc));
     }
-    return fn({ TEAM_UP_HOME: home });
+    return fn(homeEnv(home));
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -164,17 +171,22 @@ function installedPackage(home, manifest) {
   return dir;
 }
 
+// One cell, and a valid one: the doctor resolves against the roster of the
+// home it is given, so this fixture is the whole world these two tests see.
+// It has to survive validateRoster (an invalid roster exits the process) and
+// reach the resolver, or the assertions below would be about nothing.
 const ROSTER_FRONTIER_ONLY = {
   schema_version: 1,
   models: {
     "some-frontier": {
       tier: "frontier",
-      reasoning: ["max", "medium", "low"],
-      cli: "claude",
+      reasoning: { max: "high", medium: "medium", low: "low" },
+      cli: ["claude"],
       account: "a",
     },
   },
-  accounts: { a: { limits: {} } },
+  accounts: { a: { kind: "subscription", enabled: true } },
+  clis: { claude: { cmd: ["claude"] } },
 };
 
 test("a specialist no roster model can satisfy is reported before launch", () => {
@@ -209,14 +221,17 @@ test("a specialist no roster model can satisfy is reported before launch", () =>
     );
     fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify(ROSTER_FRONTIER_ONLY));
 
-    const report = diagnose({ TEAM_UP_HOME: home });
+    const report = diagnose(homeEnv(home));
     const finding = report.findings.find((f) => f.kind === "no_model_for_profile");
     assert.ok(finding, "a profile no cell satisfies must be reported");
     assert.equal(finding.id, "coding.example");
     assert.equal(finding.severity, "high");
     // The reasons come from the real resolver, so they say why rather than
-    // just that it failed.
-    assert.ok(finding.skipped.some((sk) => /tier frontier != high/.test(sk.reason)));
+    // just that it failed — and they are about the fixture cell only. A host
+    // model appearing here means the doctor read a roster it was not given.
+    assert.deepEqual(finding.skipped, [
+      { model: "some-frontier", reason: "tier frontier != high" },
+    ]);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -247,7 +262,7 @@ test("a satisfiable profile is not reported", () => {
     );
     fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify(ROSTER_FRONTIER_ONLY));
 
-    const report = diagnose({ TEAM_UP_HOME: home });
+    const report = diagnose(homeEnv(home));
     assert.equal(report.findings.some((f) => f.kind === "no_model_for_profile"), false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

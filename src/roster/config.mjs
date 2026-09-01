@@ -3,8 +3,8 @@ import path from "node:path";
 import { rosterPath as configPathFromPaths, usagePath as usagePathFromPaths, rosterWritePath, usageWritePath } from "../paths.mjs";
 import { parseChainEntry } from "./chain.mjs";
 
-export function configPath() {
-  return configPathFromPaths();
+export function configPath(env = process.env) {
+  return configPathFromPaths(env);
 }
 
 export function usagePath() {

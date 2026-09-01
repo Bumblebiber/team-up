@@ -10,7 +10,7 @@ import {
   COMMAND_BROKER_CAPABILITY,
   CONTEXT_ISOLATION_CAPABILITY,
 } from "./harness/capabilities.mjs";
-import { requireRoster } from "./roster/config.mjs";
+import { configPath, loadJson, validateRoster } from "./roster/config.mjs";
 
 function readJson(file) {
   try {
@@ -77,11 +77,23 @@ export function diagnose(env = process.env) {
   // tier itself — coding.codey asks for `high`, four cells offer it, and it
   // still cannot launch because the only reachable one runs on an adapter with
   // no verified context isolation on this host.
+  // The roster comes from the env we were handed, like everything else here.
+  // Reading the caller's real environment instead mixed the specialists of one
+  // home with the roster of another, and made the answer depend on the host.
+  //
+  // requireRoster is deliberately not used: it exits the process when the
+  // roster is missing or invalid, which is right for the CLI and fatal for a
+  // library caller — a diagnosis of a broken home would kill its caller.
   let roster = null;
   try {
-    roster = requireRoster();
+    const candidate = loadJson(configPath(env));
+    // An invalid roster is not something to resolve against. Reporting it is
+    // `team-up roster validate`'s job, not this check's.
+    if (candidate && validateRoster(candidate).errors.length === 0) {
+      roster = candidate;
+    }
   } catch {
-    // No roster configured: nothing to resolve against, so skip the check
+    // No readable roster: nothing to resolve against, so skip the check
     // rather than report every specialist as broken.
   }
   if (roster) {
