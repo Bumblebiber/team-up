@@ -3,6 +3,8 @@
 // State: ~/.team-up/runs/<runId>/ (TEAM_UP_RUNS / O9K_RUNS override). Zero dependencies.
 
 import fs from "node:fs";
+import { findStaleRuns, findOrphanSessions, DEFAULT_THRESHOLD_MS } from "./stale.mjs";
+import { listTmuxSessions } from "./tmux.mjs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -65,7 +67,7 @@ function newRunId(now = new Date()) {
   return `${iso}-${short}`;
 }
 
-/** Plugin root (…/o9k-roster) — templates live beside scripts/. */
+/** Plugin root — templates live beside scripts/. */
 export function packageRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 }
@@ -379,7 +381,7 @@ export function classifyMailbox(runId) {
         resultPath: resultJsonPath,
       };
     }
-    if (!["success", "partial", "blocked", "failed"].includes(parsed?.status)) {
+    if (!RESULT_STATUSES.includes(parsed?.status)) {
       return {
         status: "failed",
         error: `invalid RESULT.json status: ${parsed?.status}`,
@@ -424,6 +426,13 @@ export function classifyMailbox(runId) {
   }
   return { status: "watching" };
 }
+
+/**
+ * Statuses a worker may write into RESULT.json. Exported so the worker prompt
+ * can be checked against it — a prompt that omits them makes workers guess, and
+ * a guessed value fails the run after the work is already done.
+ */
+export const RESULT_STATUSES = ["success", "partial", "blocked", "failed"];
 
 const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
 const CAPACITY_RUN_STATUSES = new Set(["waiting_capacity", "waiting_decision"]);
@@ -774,14 +783,14 @@ export function pasteInject(session, text, {
   readyTimeoutMs = 10000,
 } = {}) {
   waitReady(session, { timeoutMs: readyTimeoutMs });
-  const tmp = path.join(os.tmpdir(), `o9k-inject-${session}-${process.pid}.txt`);
+  const tmp = path.join(os.tmpdir(), `team-up-inject-${session}-${process.pid}.txt`);
   fs.writeFileSync(tmp, text || "");
   try {
     execFileSync(
       "bash",
       [
         "-lc",
-        `tmux load-buffer -b o9k ${shellQuote(tmp)} && tmux paste-buffer -b o9k -t ${shellQuote(session)} && sleep 0.3 && tmux send-keys -t ${shellQuote(session)} Enter`,
+        `tmux load-buffer -b team_up ${shellQuote(tmp)} && tmux paste-buffer -b team_up -t ${shellQuote(session)} && sleep 0.3 && tmux send-keys -t ${shellQuote(session)} Enter`,
       ],
       { stdio: "ignore" },
     );
@@ -1238,6 +1247,39 @@ async function cmdGcInstall() {
   console.log(`timer: ${result.timerPath}`);
 }
 
+/**
+ * Report runs that are stuck, without touching them.
+ *
+ * gc reaps only active runs with a live terminal, so a protected or
+ * terminal-less run is skipped forever by design. Bounding that automatically
+ * means deciding when a person is not coming back; reporting it does not.
+ */
+function cmdStale(args) {
+  const hoursArg = args[args.indexOf("--hours") + 1];
+  const hours = args.includes("--hours") ? Number(hoursArg) : null;
+  if (hours !== null && (!Number.isFinite(hours) || hours <= 0)) {
+    console.error("usage: runs.mjs stale [--hours N] [--json]");
+    process.exitCode = 1;
+    return;
+  }
+  const thresholdMs = hours === null ? DEFAULT_THRESHOLD_MS : hours * 3_600_000;
+  const runs = findStaleRuns({ thresholdMs });
+  const orphans = findOrphanSessions({ listSessions: listTmuxSessions });
+
+  if (args.includes("--json")) {
+    console.log(JSON.stringify({ threshold_hours: thresholdMs / 3_600_000, runs, orphan_sessions: orphans }, null, 2));
+  } else {
+    for (const r of runs) {
+      const silent = r.silent_hours === null ? "never" : `${r.silent_hours}h`;
+      console.log(`${r.runId}  ${r.status}  age=${r.age_hours}h  silent=${silent}  ${r.reasons.join("; ")}`);
+    }
+    for (const name of orphans) console.log(`orphan session: ${name}`);
+  }
+  // Exit 1 when there is something to look at, so a cron wrapper can branch on
+  // it without parsing the output.
+  process.exitCode = runs.length || orphans.length ? 1 : 0;
+}
+
 const HANDLERS = {
   create: cmdCreate,
   classify: cmdClassify,
@@ -1258,6 +1300,7 @@ const HANDLERS = {
   cancel: cmdCancel,
   gc: cmdGc,
   "gc-install": cmdGcInstall,
+  stale: cmdStale,
 };
 
 async function main() {

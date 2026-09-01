@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+
 /**
  * Permission intersection: request may only reduce the approved manifest permissions.
  */
@@ -116,4 +119,83 @@ export function assertCallTypeAllowed(callType, manifest) {
   if (!Array.isArray(allowed) || !allowed.includes(callType)) {
     throw new Error(`call_type not allowed by manifest: ${callType}`);
   }
+}
+
+/**
+ * Builtin tools a specialist may hold, derived from its approved permissions.
+ * Without this every specialist gets the adapter default — including `Write`
+ * for a read-only researcher, and no web tool for one whose manifest asks for
+ * the network. The sandbox still enforces the filesystem side; this keeps the
+ * tool list from advertising what the manifest did not grant.
+ *
+ * Lives here rather than beside the launcher because the authoritative launch
+ * rebuilds its argv from the persisted descriptor, in a module the launcher
+ * imports — deriving it in only one of those two places is how a read-only
+ * researcher ended up holding `Write`.
+ */
+export function builtinsForPermissions(permissions = {}) {
+  // `Write` is unconditional: the mailbox is how a specialist reports at all,
+  // and closing it means creating RESULT.json and setting STATUS. Deriving it
+  // from `writes` left a read-only researcher able to finish the work and
+  // unable to hand it over — she said so herself and returned the report as
+  // terminal output nobody was watching. `writes` governs the project, not the
+  // specialist's own output channel; which paths are writable is the sandbox's
+  // job, and the mailbox is bound writable there for every call type.
+  //
+  // ToolSearch and Skill are on the floor for the same kind of reason: neither
+  // writes nor reaches the network, and a `--tools` list without Skill silently
+  // disables every skill the capsule just materialized.
+  const tools = ["Read", "Glob", "Grep", "ToolSearch", "Skill", "Write"];
+  // `Edit` is the one that mutates existing files, so it stays gated.
+  if (permissions.writes === true || permissions.writes === "delegated_only") {
+    tools.push("Edit");
+  }
+  if (permissions.network === true) tools.push("WebFetch", "WebSearch");
+  return tools;
+}
+
+/**
+ * Files whose contents no specialist has a reason to see. Each is mode 600 and
+ * every specialist runs as the same UID, so file modes do not separate them —
+ * the tool layer has to.
+ *
+ * The realistic failure is not theft but quotation. Reporting file contents is
+ * exactly what a scout is for, so a specialist that reads a credential file may
+ * repeat it in RESULT.md, and RESULT.md gets committed. No malice required.
+ *
+ * A `Read(...)` deny rule is enforced where the file is opened, not in the
+ * `Read` tool, so it also stops `Grep` from returning the matching line — which
+ * is where a token would actually surface. Verified against claude 2.x: an
+ * exact path and a `/**` subtree both refuse, siblings stay readable, and a
+ * forced `Grep` on a denied path comes back `is_error: true`.
+ */
+export function credentialDenyPaths(homeDir) {
+  const home = homeDir || os.homedir();
+  return [
+    path.join(home, ".mcp.json"),
+    path.join(home, ".npmrc"),
+    path.join(home, ".netrc"),
+    path.join(home, ".git-credentials"),
+    // Scoped to the one file on purpose. Run dirs live under `~/.team-up`
+    // (`paths.mjs`), so nothing a specialist needs sits under `~/.claude` today
+    // — but broadening this to `~/.claude/**` would deny a capsule its own
+    // config the moment that stops being true. Keep it file-scoped.
+    path.join(home, ".claude", ".credentials.json"),
+    // `hosts.yml`, not the whole `gh` tree: `config.yml` beside it holds
+    // ordinary settings, and denying it would fail as a permission error that
+    // reads like a bug.
+    path.join(home, ".config", "gh", "hosts.yml"),
+    path.join(home, ".hermes", "secrets", "**"),
+    path.join(home, ".ssh", "**"),
+    path.join(home, ".aws", "**"),
+    path.join(home, ".gnupg", "**"),
+  ];
+}
+
+/**
+ * The same paths as claude-CLI permission rules. An absolute path is written
+ * with a leading `//` in that syntax, hence the extra slash.
+ */
+export function credentialDenyRules(homeDir) {
+  return credentialDenyPaths(homeDir).map((p) => `Read(/${p})`);
 }

@@ -27,7 +27,7 @@ import { materializePartialCheckpoint, validateCheckpoint } from "../../src/supe
 import { findSpecialistRepos } from "../helpers/specialist-repos.mjs";
 
 const REPOS = findSpecialistRepos(path.dirname(fileURLToPath(import.meta.url)));
-const HANNES = path.join(REPOS, "team-up-with-hannes");
+const TESSA = path.join(REPOS, "team-up-with-tessa");
 const brokerBin = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../bin/team-up-command-broker.mjs"
@@ -98,10 +98,10 @@ test("runtime supervision fake-harness integration", async () => {
     fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify(roster));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
 
-    const inst = await installPackage(HANNES, env);
+    const inst = await installPackage(TESSA, env);
     assert.equal(inst.ok, true, inst.errors?.join("; "));
     const ap = await approveSpecialist({
-      idAtVersion: "testing.hannes@0.1.0",
+      idAtVersion: "testing.tessa@0.1.0",
       project,
       env,
     });
@@ -111,7 +111,7 @@ test("runtime supervision fake-harness integration", async () => {
     assert.equal(
       isApproved({
         project,
-        id: "testing.hannes",
+        id: "testing.tessa",
         version: "0.1.0",
         checksum: inst.checksum,
         permissions: ap.approval.permissions,
@@ -186,7 +186,7 @@ test("runtime supervision fake-harness integration", async () => {
     const run = createRun({
       cwd: project,
       project,
-      role: "specialist:testing.hannes",
+      role: "specialist:testing.tessa",
       parent: { cli: "team-up", attach: "manual" },
       worker: { cli: "claude", model: "frontier-claude" },
       prompt: "test",
@@ -195,7 +195,7 @@ test("runtime supervision fake-harness integration", async () => {
     const a1 = createAttempt({
       runId: run.runId,
       runtime: { cli: "claude", model: "frontier-claude" },
-      specialist: { id: "testing.hannes", version: "0.1.0", checksum: inst.checksum },
+      specialist: { id: "testing.tessa", version: "0.1.0", checksum: inst.checksum },
     });
     assert.equal(acquireAttemptLease({ runId: run.runId, attemptId: a1.id, expectedPrevious: null }).ok, true);
     const cp = materializePartialCheckpoint({
@@ -207,7 +207,7 @@ test("runtime supervision fake-harness integration", async () => {
     const a2 = createAttempt({
       runId: run.runId,
       runtime: { cli: "claude", model: "frontier-claude" },
-      specialist: { id: "testing.hannes", version: "0.1.0", checksum: inst.checksum },
+      specialist: { id: "testing.tessa", version: "0.1.0", checksum: inst.checksum },
     });
     assert.equal(
       acquireAttemptLease({ runId: run.runId, attemptId: a2.id, expectedPrevious: a1.id }).ok,

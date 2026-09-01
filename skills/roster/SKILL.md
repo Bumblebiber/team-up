@@ -7,10 +7,10 @@ description: "Role-based model selection for multi-agent delegation. Use when te
 
 # roster — Who Does the Work
 
-**Prerequisite:** this pillar is optional *to install*. If `~/.team-up/roster.json` is
+**Prerequisite:** the roster is optional. If `~/.team-up/roster.json` is
 missing, do not invent multi-agent flows — use `dispatch` path A (in-host
-RESULT subagents) only. Users who never enabled the roster at `/o9k-init`
-should never see these commands.
+RESULT subagents) only. Users who never ran `team-up init` should never see
+these commands.
 
 Once roster **is** configured: model choice is config + code, not judgment —
 and every external CLI worker spawn must complete the mailbox protocol (below).
@@ -89,7 +89,7 @@ No config yet → `team-up init`, then tell the user to curate `~/.team-up/roste
   4. Then you may tell the human the tmux attach string — never before step 3
 - **Rate-limit:** `team-up mark-limited <model|provider> --ttl 5h --reason rate-limit`
 - **Limits:** `team-up usage --check` / `team-up usage --refresh [--cli claude|codex|cursor]`
-- **Manual pass to a named model (human attaches):** skill `/o9k-pass-to` —
+- **Manual pass to a named model (human attaches):** skill `/pass-to` —
   `team-up pass-to --model <name|cli:model> --dir "$PWD"` (requires `HANDOFF.md`)
 - **Scores:** see `roster-refresh` — `team-up refresh [--apply]`
 
@@ -156,7 +156,7 @@ that to the user verbatim and stop — never substitute your own model choice.
    are failed and stopped only after another 10 minutes without either signal.
    Human questions, capacity/decision waits, and handoff states are never
    stale-killed.
-6. After host reboot: `team-up runs resume` (systemd `o9k-resume.service`). If `REATTACH_WATCHER` exists, respawn watcher; do not double-dispatch if worker tmux lives.
+6. After host reboot: `team-up runs resume` (no unit ships for this — run it yourself, or wire your own). If `REATTACH_WATCHER` exists, respawn watcher; do not double-dispatch if worker tmux lives.
 
 **Stuck recovery:** task-dir has `PLAN.md` but `team-up runs classify <id>` still says
 `watching` → worker skipped mailbox closeout. Write `mailbox/RESULT.md`, then

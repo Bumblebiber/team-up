@@ -4,7 +4,11 @@ import { execFileSync } from "node:child_process";
 import { loadInstalledManifest, verifyInstalledIntegrity } from "./store.mjs";
 import { isApproved } from "./approvals.mjs";
 import { normalizeRequest } from "./request.mjs";
-import { intersectPermissions, assertCallTypeAllowed } from "./permissions.mjs";
+import {
+  intersectPermissions,
+  assertCallTypeAllowed,
+  builtinsForPermissions,
+} from "./permissions.mjs";
 import { resolveProfile } from "../roster/profile.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
@@ -38,6 +42,7 @@ import { resolveCapabilities } from "../capabilities/resolve.mjs";
 import {
   materializeCapabilityCapsule,
   buildStrictMcpConfig,
+  collectCapsuleMcpTools,
 } from "../capabilities/capsule.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import {
@@ -98,32 +103,14 @@ export function cliSandboxConfig(roster, cli, { harnessCapabilities: caps } = {}
   };
 }
 
+export { builtinsForPermissions };
+
 function needsCommandMediation(effectivePerms, manifest) {
   if ((effectivePerms.commands || []).length > 0) return true;
   const tools = effectivePerms.tools ?? manifest?.capabilities?.tools ?? [];
   return tools.some((t) => /^(command|shell|exec)([.]|$)/i.test(String(t)));
 }
 
-function collectCapsuleMcpTools(effective, runRoot) {
-  const mcpToolsByServer = {};
-  const mcpToolNames = [];
-  for (const item of effective.packages ?? []) {
-    for (const rel of item.resolved?.mcps ?? []) {
-      const document = JSON.parse(fs.readFileSync(path.join(runRoot, rel), "utf8"));
-      const sharedTools = Array.isArray(document.tools) ? document.tools : [];
-      for (const [name, server] of Object.entries(document.mcpServers ?? {})) {
-        const tools = Array.isArray(server?.tools) ? server.tools : sharedTools;
-        mcpToolsByServer[name] = tools;
-        for (const tool of tools) {
-          mcpToolNames.push(
-            `mcp__${name}__${String(tool).replace(/-/g, "_")}`
-          );
-        }
-      }
-    }
-  }
-  return { mcpToolNames, mcpToolsByServer };
-}
 
 /**
  * Launch API used by tests and CLI.
@@ -265,7 +252,12 @@ export async function launch({
     "",
     "Read context/specialist and selected skill/framework directories under context/.",
     "Read REQUEST.json and instructions.md in the context directory. Follow remit/anti-remit.",
-    "Write mailbox/RESULT.json conforming to schema team-up.result/v1 when done.",
+    // No path here: this text is built before the run id exists, so it could
+    // only name a relative one — and the worker's cwd is the context dir, not
+    // the run dir. The mailbox protocol appended below carries the absolute
+    // paths and is the authority.
+    "Report through the mailbox protocol below. RESULT.json conforming to schema team-up.result/v1 is the deliverable.",
+    "Its status field must be one of success, partial, blocked, failed — not done.",
     "RESULT.md is optional human-readable detail and does not count as success by itself.",
     budgetNorm.tokens
       ? `Advisory token target: ${budgetNorm.tokens.target} (not hard-enforced).`
@@ -305,6 +297,11 @@ export async function launch({
       timeout_seconds: budgetNorm.timeout_seconds,
       tokens: budgetNorm.tokens,
     },
+    // Explicit, though it is also the default: this is the call site an
+    // orchestrator has to change to `parent.depth + 1`, and `normalizeRequest`
+    // caps it at `MAX_DEPTH`. Leaving the field out hides where the increment
+    // belongs.
+    depth: 0,
   });
   request.run_id = state.runId;
 
@@ -347,7 +344,15 @@ export async function launch({
       mcpConfig: buildStrictMcpConfig(effective, runDir(state.runId)),
       skillDirs: [path.join(runDir(state.runId), "context", "skills")],
       frameworkDirs: [path.join(runDir(state.runId), "context", "framework")],
+      homeDir: path.join(runDir(state.runId), "harness", "home"),
       codexHome: path.join(runDir(state.runId), "harness", "home"),
+      // Directories the worker actually opens. Harnesses that gate on workspace
+      // trust need these pre-accepted, or the launch stalls on a prompt nobody
+      // is there to answer.
+      workspaceDirs: [
+        path.join(runDir(state.runId), "context"),
+        ...(runCwd ? [runCwd] : []),
+      ],
       effective,
       ...collectCapsuleMcpTools(effective, runDir(state.runId)),
     };
@@ -396,6 +401,7 @@ export async function launch({
     runDir: runPath,
     broker,
     capsule,
+    allowedBuiltins: builtinsForPermissions(effectivePerms),
     env,
     verification: {
       status: "verified",

@@ -131,7 +131,7 @@ expect eof
 export function runPtyCollect(cli, opts = {}) {
   const timeoutSec = opts.timeoutSec ?? (cli === "codex" || cli === "cursor" ? 180 : 45);
   const script = buildExpectScript(cli, timeoutSec);
-  const tmp = path.join(os.tmpdir(), `o9k-usage-pty-${cli}-${process.pid}.exp`);
+  const tmp = path.join(os.tmpdir(), `team-up-usage-pty-${cli}-${process.pid}.exp`);
   fs.writeFileSync(tmp, script);
   try {
     return execFileSync("expect", [tmp], {

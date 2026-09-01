@@ -6,6 +6,19 @@ const CALL_DEFAULTS = {
 
 const RESULT_STATUSES = new Set(["success", "partial", "blocked", "failed"]);
 
+/**
+ * How deep a chain of specialists may nest. A run at `MAX_DEPTH` is the last
+ * one that may exist; a request past it is refused here rather than spawned.
+ *
+ * Nothing increments `depth` yet — no call site passes it, so today this
+ * rejects only a caller that sets it by hand. It is a guard waiting for the
+ * orchestrator, not live protection, and it has to exist before that arrives:
+ * once one specialist can call another, an unbounded chain is unbounded spend.
+ * The same number bounds a Codey→Revan→Codey ping-pong, which is the shape the
+ * pipeline will actually produce.
+ */
+export const MAX_DEPTH = 3;
+
 export function normalizeRequest(input) {
   if (!input || typeof input !== "object") {
     throw new Error("request must be an object");
@@ -16,6 +29,14 @@ export function normalizeRequest(input) {
   }
   if (!input.specialist_id) throw new Error("specialist_id required");
   if (!input.objective) throw new Error("objective required");
+
+  const depth = input.depth ?? 0;
+  if (!Number.isInteger(depth) || depth < 0) {
+    throw new Error(`invalid depth: ${input.depth}`);
+  }
+  if (depth > MAX_DEPTH) {
+    throw new Error(`depth ${depth} exceeds maximum nesting of ${MAX_DEPTH}`);
+  }
 
   const defaults = CALL_DEFAULTS[call_type];
   const permissions = {
@@ -42,7 +63,7 @@ export function normalizeRequest(input) {
     permissions,
     budget: input.budget ?? null,
     parent_run: input.parent_run ?? null,
-    depth: input.depth ?? 0,
+    depth,
   };
 }
 

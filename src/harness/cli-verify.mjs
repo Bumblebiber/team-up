@@ -360,7 +360,11 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
     const shellRun = spawnSync(shellArgv[0], shellArgv.slice(1), {
       encoding: "utf8",
       timeout: 90_000,
-      env: { ...process.env, HOME: authHome },
+      // The adapter's env is the isolation mechanism for CLIs that configure
+      // themselves through the environment; dropping it verifies the user's
+      // global setup instead of the prepared launch. The sanitized home stays
+      // the base, so a probe the adapter left env-less is still isolated.
+      env: { ...process.env, HOME: authHome, ...shellPrepared.env },
       cwd: fixtureProject,
     });
     const shellText = `${shellRun.stdout || ""}\n${shellRun.stderr || ""}`;
@@ -424,7 +428,7 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       const brokerRun = spawnSync(brokerArgv[0], brokerArgv.slice(1), {
         encoding: "utf8",
         timeout: 90_000,
-        env: { ...process.env, HOME: authHome },
+        env: { ...process.env, HOME: authHome, ...brokerPrepared.env },
         cwd: fixtureProject,
       });
       const brokerText = `${brokerRun.stdout || ""}\n${brokerRun.stderr || ""}`;

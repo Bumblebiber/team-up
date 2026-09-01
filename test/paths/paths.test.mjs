@@ -56,3 +56,35 @@ test("explicit TEAM_UP env wins over legacy", () => {
     "/tmp/tu-roster.json"
   );
 });
+
+// Regression: these three used to compute their paths from os.homedir()/HOME
+// directly instead of going through paths.mjs, so a run with its own home
+// still touched the real one. For the PTY lock that meant a test contended
+// with the live usage watcher and usage refresh failed mid-handoff.
+//
+// This guards the path, not the isolation under contention — reproducing that
+// needs a live lock holder. A fourth module growing its own homedir copy would
+// slip past unless it is added here.
+test("cross-process usage state stays inside TEAM_UP_HOME", async () => {
+  const { ptyLockPath } = await import("../../src/usage/usage-pty-lock.mjs");
+  const { watcherStatePath } = await import("../../src/usage/usage-procs.mjs");
+  const { usageCollectDebouncePath } = await import("../../src/paths.mjs");
+  const prev = process.env.TEAM_UP_HOME;
+  const isolated = "/tmp/paths-test-home";
+  process.env.TEAM_UP_HOME = isolated;
+  try {
+    const realHome = path.join(os.homedir(), ".team-up");
+    for (const [name, resolve] of [
+      ["pty lock", ptyLockPath],
+      ["watcher state", watcherStatePath],
+      ["collect debounce", usageCollectDebouncePath],
+    ]) {
+      const p = resolve();
+      assert.equal(path.dirname(p), isolated, `${name} escaped TEAM_UP_HOME: ${p}`);
+      assert.notEqual(path.dirname(p), realHome, `${name} used the real home`);
+    }
+  } finally {
+    if (prev === undefined) delete process.env.TEAM_UP_HOME;
+    else process.env.TEAM_UP_HOME = prev;
+  }
+});

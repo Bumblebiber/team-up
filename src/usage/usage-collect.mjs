@@ -1,4 +1,4 @@
-// usage-collect.mjs — subscription usage collectors → ~/.o9k/usage.json
+// usage-collect.mjs — subscription usage collectors → ~/.team-up/usage.json
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";

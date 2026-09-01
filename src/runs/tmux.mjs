@@ -8,6 +8,13 @@ export function inspectTmuxSession(session, { exec = execFileSync } = {}) {
       ["display-message", "-p", "-t", session, "#{window_activity} #{session_id}"],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     ).trim();
+    // `display-message -t` exits 0 for a session that does not exist and simply
+    // prints nothing, so a thrown error is not the only way to be absent — only
+    // `has-session` reports it as a failure. Treating empty output as "exists"
+    // told the collector to kill a terminal that was already gone, which then
+    // could not be marked cleaned, so the same runs came back every five
+    // minutes forever.
+    if (!raw) return { exists: false, activityMs: null, sessionId: null };
     const [activityRaw, sessionId] = raw.split(/\s+/, 2);
     const seconds = Number(activityRaw);
     return {
@@ -37,5 +44,22 @@ export function tmuxSessionExists(sessionId, { exec = execFileSync } = {}) {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Names of every live tmux session, or an empty list when tmux itself is
+ * absent or has no server running. An empty list is the same answer as "no
+ * sessions", which is what a caller asking about orphans needs.
+ */
+export function listTmuxSessions({ exec = execFileSync } = {}) {
+  try {
+    const raw = exec("tmux", ["list-sessions", "-F", "#{session_name}"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return String(raw).split("\n").map((l) => l.trim()).filter(Boolean);
+  } catch {
+    return [];
   }
 }

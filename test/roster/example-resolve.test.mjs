@@ -10,7 +10,7 @@ import { resolveProfile } from "../../src/roster/profile.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const examplePath = path.join(root, "roster.example.json");
 
-test("shipped example roster migrates and resolves Hannes + Hugo exact tiers", () => {
+test("shipped example roster migrates and resolves Tessa + Reanna exact tiers", () => {
   const legacy = JSON.parse(fs.readFileSync(examplePath, "utf8"));
   // Simulate legacy mid tier still present on a copy
   const withMid = structuredClone(legacy);
@@ -28,31 +28,31 @@ test("shipped example roster migrates and resolves Hannes + Hugo exact tiers", (
   const { errors } = validateRoster(migrated);
   assert.equal(errors.length, 0, errors.join("; "));
 
-  const hannes = resolveProfile({
+  const tessa = resolveProfile({
     roster: migrated,
     usage: {},
     profile: { tier: "frontier", reasoning: "max" },
-    specialistId: "testing.hannes",
+    specialistId: "testing.tessa",
     callType: "review",
   });
-  assert.equal(hannes.code, "OK", JSON.stringify(hannes.skipped.slice(0, 8)));
-  assert.ok(hannes.chain.length >= 1);
-  for (const c of hannes.chain) {
+  assert.equal(tessa.code, "OK", JSON.stringify(tessa.skipped.slice(0, 8)));
+  assert.ok(tessa.chain.length >= 1);
+  for (const c of tessa.chain) {
     assert.equal(migrated.models[c.model].tier, "frontier");
   }
 
-  const hugo = resolveProfile({
+  const reanna = resolveProfile({
     roster: migrated,
     usage: {},
     profile: { tier: "medium", reasoning: "low" },
-    specialistId: "research.hugo",
+    specialistId: "research.reanna",
     callType: "consult",
   });
-  assert.equal(hugo.code, "OK", JSON.stringify(hugo.skipped.slice(0, 8)));
-  for (const c of hugo.chain) {
+  assert.equal(reanna.code, "OK", JSON.stringify(reanna.skipped.slice(0, 8)));
+  for (const c of reanna.chain) {
     assert.equal(migrated.models[c.model].tier, "medium");
   }
-  assert.ok(!hugo.chain.some((c) => ["frontier", "high", "low"].includes(migrated.models[c.model].tier)));
+  assert.ok(!reanna.chain.some((c) => ["frontier", "high", "low"].includes(migrated.models[c.model].tier)));
 });
 
 test("legacy Claude command gains an effort slot without losing tmux auto-approval", () => {

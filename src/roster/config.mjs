@@ -3,8 +3,8 @@ import path from "node:path";
 import { rosterPath as configPathFromPaths, usagePath as usagePathFromPaths, rosterWritePath, usageWritePath } from "../paths.mjs";
 import { parseChainEntry } from "./chain.mjs";
 
-export function configPath() {
-  return configPathFromPaths();
+export function configPath(env = process.env) {
+  return configPathFromPaths(env);
 }
 
 export function usagePath() {
@@ -149,7 +149,7 @@ export function validateRoster(roster) {
 export function requireRoster() {
   const roster = loadJson(configPath());
   if (!roster) {
-    console.error(`no roster config at ${configPath()} — run: team-up init (or /o9k-init)`);
+    console.error(`no roster config at ${configPath()} — run: team-up init`);
     process.exit(1);
   }
   const { errors, warnings } = validateRoster(roster);

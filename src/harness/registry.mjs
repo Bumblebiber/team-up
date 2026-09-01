@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync as realExecFileSync } from "node:child_process";
 import { claudeAdapter } from "./claude.mjs";
 import { codexAdapter } from "./codex.mjs";
+import { opencodeAdapter } from "./opencode.mjs";
 import { unsupportedAdapter } from "./unsupported.mjs";
 import {
   CONTEXT_ISOLATION_CAPABILITY,
@@ -17,7 +18,7 @@ const ADAPTERS = Object.freeze({
   cursor: unsupportedAdapter("cursor"),
   codex: codexAdapter,
   hermes: unsupportedAdapter("hermes"),
-  opencode: unsupportedAdapter("opencode"),
+  opencode: opencodeAdapter,
 });
 
 export function getAdapter(cli) {
@@ -169,8 +170,14 @@ export function prepareHarnessLaunch({
   if (!broker && !capsule) {
     return { argv, env: {}, files: [], adapter: adapter.id, capabilities: caps };
   }
+  // A capsule is as much a permission boundary as a broker: it pins the tool
+  // allowlist and pre-approves exactly that set. Sanitizing only for brokers
+  // left every specialist without `commands` handing the roster's raw argv —
+  // `--dangerously-skip-permissions` and all — to prepareLaunch, which then
+  // refused the launch outright. The refusal there stays as the backstop for
+  // a caller that skipped this.
   const brokeredArgv =
-    typeof adapter.sanitizeBrokeredArgv === "function"
+    (broker || capsule) && typeof adapter.sanitizeBrokeredArgv === "function"
       ? adapter.sanitizeBrokeredArgv(argv)
       : argv;
   return {

@@ -5,15 +5,15 @@ import { normalizeRecommendations }
 
 test("recommendations normalize as inert display metadata", () => {
   assert.deepEqual(normalizeRecommendations([{
-    package: "o9k.caveman",
+    package: "style.caveman",
     source: "https://github.com/example/caveman.git",
     reason: "Reduces routine output",
-    suggested_target: "research.hugo",
+    suggested_target: "research.reanna",
   }]), [{
-    package: "o9k.caveman",
+    package: "style.caveman",
     source: "https://github.com/example/caveman.git",
     reason: "Reduces routine output",
-    suggested_target: "research.hugo",
+    suggested_target: "research.reanna",
     selected: false,
   }]);
 });

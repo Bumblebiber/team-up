@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "note": "Discovery only. One repo per specialist means there is nowhere else to see what exists before installing it. This file is a hand-maintained list, not a registry: nothing resolves it at runtime, and installing is still `git clone` then `team-up specialist install <path>`. Fields mirror each bundle's specialist.json at the version named here \u2014 if they disagree, the bundle wins.",
+  "specialists": [
+    {
+      "id": "coding.codey",
+      "name": "Codey",
+      "version": "0.1.2",
+      "repo": "https://github.com/Bumblebiber/team-up-with-codey",
+      "summary": "Implements one ticket against a spec, with the tests that cover it.",
+      "call_types": [
+        "delegate",
+        "consult"
+      ],
+      "permissions": {
+        "filesystem": "project",
+        "writes": true,
+        "network": false,
+        "commands": [
+          "project-test"
+        ]
+      },
+      "model_profile": {
+        "tier": "frontier",
+        "reasoning": "medium"
+      },
+      "needs": [
+        "a `.team-up/commands.json` in every project it works in, defining `project-test`",
+        "its own full clone per ticket \u2014 a worktree leaves .git pointing outside the tree"
+      ],
+      "caveat": "Its `Write` is unbounded. Write scope is not enforceable through a tool path specifier (measured, claude 2.1.250), so what keeps it in its ticket is the disposable clone and the prompt, not a fence. Runs Opus at medium effort deliberately: never Sonnet for coding work, and effort is the cheaper lever to turn down than the model."
+    },
+    {
+      "id": "review.revan",
+      "name": "Revan",
+      "version": "0.1.1",
+      "repo": "https://github.com/Bumblebiber/team-up-with-revan",
+      "summary": "Two-axis review of a merged diff: repository standards, and the originating spec.",
+      "call_types": [
+        "review",
+        "consult"
+      ],
+      "permissions": {
+        "filesystem": "project_readonly",
+        "writes": false,
+        "network": false,
+        "commands": []
+      },
+      "model_profile": {
+        "tier": "frontier",
+        "reasoning": "max"
+      },
+      "needs": [],
+      "caveat": "Deliberately has no `delegate` call type: its default is `writes: \"delegated_only\"`, which a reviewer should not hold. Runs once, on the merged result."
+    },
+    {
+      "id": "testing.tessa",
+      "name": "Tessa",
+      "version": "0.1.0",
+      "repo": "https://github.com/Bumblebiber/team-up-with-tessa",
+      "summary": "Test strategy, regression testing, and verification that a fix does what it claims.",
+      "call_types": [
+        "consult",
+        "delegate",
+        "review"
+      ],
+      "permissions": {
+        "filesystem": "project",
+        "writes": "delegated_only",
+        "network": false,
+        "commands": [
+          "project-test"
+        ]
+      },
+      "model_profile": {
+        "tier": "frontier",
+        "reasoning": "max"
+      },
+      "needs": [
+        "a `.team-up/commands.json` in every project it works in, defining `project-test`"
+      ],
+      "caveat": null
+    },
+    {
+      "id": "research.reanna",
+      "name": "Reanna",
+      "version": "0.2.0",
+      "repo": "https://github.com/Bumblebiber/team-up-with-reanna",
+      "summary": "Source discovery and evidence synthesis, with provenance and stated uncertainty. Also scouts capabilities for other specialists.",
+      "call_types": [
+        "consult",
+        "delegate",
+        "review"
+      ],
+      "permissions": {
+        "filesystem": "project_readonly",
+        "writes": false,
+        "network": true,
+        "commands": []
+      },
+      "model_profile": {
+        "tier": "medium",
+        "reasoning": "low"
+      },
+      "needs": [
+        "the `research.browser` or `research.context7` capability for anything a plain fetch cannot read"
+      ],
+      "caveat": "The only starter with network access. Its GitHub remote was renamed from team-up-with-hugo; the old URL still redirects."
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "research.context7",
+      "version": "1.0.0",
+      "source": "capabilities/research.context7",
+      "summary": "Library documentation lookup: resolve a package name to a library id, then query its current docs. NOT USABLE as shipped \u2014 its descriptor runs the server through npx, which the capsule refuses.",
+      "network": true
+    },
+    {
+      "id": "ponytail.build",
+      "version": "4.8.4",
+      "source": "capabilities/ponytail.build",
+      "summary": "The laziest-solution-that-works ladder, for a specialist that writes code. Costs about 1,696 description tokens.",
+      "network": false
+    },
+    {
+      "id": "ponytail.review",
+      "version": "4.8.4",
+      "source": "capabilities/ponytail.review",
+      "summary": "The same ladder as a review lens. Costs about 1,094 description tokens.",
+      "network": false
+    },
+    {
+      "id": "style.caveman",
+      "version": "1.0.0",
+      "source": "capabilities/style.caveman",
+      "summary": "Terse prose style. Chat output only \u2014 never applied to code, commits, or written files.",
+      "network": false
+    }
+  ]
+}

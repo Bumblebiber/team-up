@@ -7,24 +7,24 @@ import { validateManifest } from "../../src/specialists/manifest.mjs";
 import { findSpecialistRepos } from "../helpers/specialist-repos.mjs";
 
 const repos = findSpecialistRepos(path.dirname(fileURLToPath(import.meta.url)));
-const hannesPath = path.join(repos, "team-up-with-hannes", "specialist.json");
-const hugoPath = path.join(repos, "team-up-with-hugo", "specialist.json");
+const tessaPath = path.join(repos, "team-up-with-tessa", "specialist.json");
+const reannaPath = path.join(repos, "team-up-with-reanna", "specialist.json");
 
-test("hannes and hugo packages validate without concrete models", () => {
-  const hannes = JSON.parse(fs.readFileSync(hannesPath, "utf8"));
-  const hugo = JSON.parse(fs.readFileSync(hugoPath, "utf8"));
-  assert.equal(validateManifest(hannes).ok, true, validateManifest(hannes).errors.join("; "));
-  assert.equal(validateManifest(hugo).ok, true, validateManifest(hugo).errors.join("; "));
-  assert.equal(hannes.id, "testing.hannes");
-  assert.deepEqual(hannes.model_profile, { tier: "frontier", reasoning: "max" });
-  assert.deepEqual(hannes.capabilities.tools, ["filesystem.read", "command.test"]);
-  assert.deepEqual(hannes.permissions.commands, ["project-test"]);
-  assert.equal(hannes.budget.tokens.target, 80000);
-  assert.equal(hannes.budget.tokens.enforcement, "advisory");
-  assert.equal(hugo.id, "research.hugo");
-  assert.deepEqual(hugo.model_profile, { tier: "medium", reasoning: "low" });
-  assert.equal(hugo.budget.tokens.target, 80000);
-  assert.equal(hugo.budget.tokens.enforcement, "advisory");
-  assert.equal(JSON.stringify(hannes).includes("grok"), false);
-  assert.equal(JSON.stringify(hugo).includes("claude"), false);
+test("tessa and reanna packages validate without concrete models", () => {
+  const tessa = JSON.parse(fs.readFileSync(tessaPath, "utf8"));
+  const reanna = JSON.parse(fs.readFileSync(reannaPath, "utf8"));
+  assert.equal(validateManifest(tessa).ok, true, validateManifest(tessa).errors.join("; "));
+  assert.equal(validateManifest(reanna).ok, true, validateManifest(reanna).errors.join("; "));
+  assert.equal(tessa.id, "testing.tessa");
+  assert.deepEqual(tessa.model_profile, { tier: "frontier", reasoning: "max" });
+  assert.deepEqual(tessa.capabilities.tools, ["filesystem.read", "command.test"]);
+  assert.deepEqual(tessa.permissions.commands, ["project-test"]);
+  assert.equal(tessa.budget.tokens.target, 80000);
+  assert.equal(tessa.budget.tokens.enforcement, "advisory");
+  assert.equal(reanna.id, "research.reanna");
+  assert.deepEqual(reanna.model_profile, { tier: "medium", reasoning: "low" });
+  assert.equal(reanna.budget.tokens.target, 80000);
+  assert.equal(reanna.budget.tokens.enforcement, "advisory");
+  assert.equal(JSON.stringify(tessa).includes("grok"), false);
+  assert.equal(JSON.stringify(reanna).includes("claude"), false);
 });

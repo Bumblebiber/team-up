@@ -239,7 +239,7 @@ async function main() {
     return;
   }
 
-  console.log(`o9k usage-watcher tick=${cfg.tick_sec}s`);
+  console.log(`team-up usage-watcher tick=${cfg.tick_sec}s`);
   for (;;) {
     let supervisedCount = 0;
     try {

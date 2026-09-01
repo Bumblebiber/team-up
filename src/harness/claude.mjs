@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { credentialDenyRules } from "../specialists/permissions.mjs";
 import { CLAUDE_DECLARED_CAPABILITIES } from "./capabilities.mjs";
 
 function homeChecksum(homePath) {
@@ -53,6 +54,24 @@ function cleanAbandonedStaging(runDir, keepName) {
 }
 
 /**
+ * Keys that record nothing but "first-run setup already happened".
+ *
+ * A freshly materialized HOME is empty, so the CLI treats every capsule launch
+ * as a first start and blocks on the interactive onboarding wizard (theme
+ * picker, then login method, then an OAuth paste prompt) — bridged credentials
+ * do not skip it. Copying these markers is what makes a headless launch
+ * possible. Everything carrying project history, MCP wiring or tool state
+ * stays out.
+ */
+const ONBOARDING_KEYS = [
+  "hasCompletedOnboarding",
+  "lastOnboardingVersion",
+  "numStartups",
+  "hasSeenTasksHint",
+  "hasSeenAutoModeEntryWarning",
+];
+
+/**
  * Fresh attempt-specific Claude HOME built atomically from empty staging.
  * Contains only minimal auth plus selected skill surfaces. Never reuses a prior
  * mutable home directory in place.
@@ -60,6 +79,7 @@ function cleanAbandonedStaging(runDir, keepName) {
 export function materializeClaudeAuthHome(runDir, {
   authSourceHome = process.env.HOME || os.homedir(),
   skillDirs = [],
+  workspaceDirs = [],
   generationId = crypto.randomBytes(8).toString("hex"),
 } = {}) {
   const stagingName = `.claude-home-staging-${generationId}`;
@@ -105,9 +125,41 @@ export function materializeClaudeAuthHome(runDir, {
     }
   }
 
-  // Reject unexpected top-level entries beyond .claude in staging.
+  // Credentials alone leave the worker sitting in the first-run wizard, and an
+  // unknown working directory then hits the workspace trust prompt. Both gates
+  // are headless-fatal, so seed the markers that clear them. The user's other
+  // projects stay unknown to the worker.
+  const markers = {};
+  try {
+    const userConfig = JSON.parse(
+      fs.readFileSync(path.join(authSourceHome, ".claude.json"), "utf8")
+    );
+    for (const key of ONBOARDING_KEYS) {
+      if (userConfig[key] !== undefined) markers[key] = userConfig[key];
+    }
+  } catch {
+    // No readable user config: the defaults below still suppress the wizard.
+  }
+  if (markers.hasCompletedOnboarding === undefined) markers.hasCompletedOnboarding = true;
+  const projects = {};
+  for (const dir of workspaceDirs) {
+    if (!dir) continue;
+    projects[dir] = {
+      hasTrustDialogAccepted: true,
+      hasCompletedProjectOnboarding: true,
+      projectOnboardingSeenCount: 1,
+    };
+  }
+  if (Object.keys(projects).length) markers.projects = projects;
+  fs.writeFileSync(
+    path.join(staging, ".claude.json"),
+    `${JSON.stringify(markers, null, 2)}\n`,
+    { mode: 0o600 }
+  );
+
+  // Reject unexpected top-level entries beyond the two we just wrote.
   for (const entry of fs.readdirSync(staging)) {
-    if (entry !== ".claude") {
+    if (entry !== ".claude" && entry !== ".claude.json") {
       const err = new Error(`CLAUDE_HOME_UNEXPECTED: ${entry}`);
       err.code = "CLAUDE_HOME_UNEXPECTED";
       fs.rmSync(staging, { recursive: true, force: true });
@@ -264,7 +316,10 @@ export const claudeAdapter = {
     next.push("--mcp-config", mcpPath);
     next.push("--tools", tools);
     next.push("--allowedTools", tools);
-    next.push("--disallowedTools", "Bash");
+    // Deny credential files unconditionally, alongside the shell. The capsule
+    // closes the config surface; this closes the file read, and it applies to
+    // `Grep` too because the rule is enforced where the file is opened.
+    next.push("--disallowedTools", ["Bash", ...credentialDenyRules()].join(","));
 
     const env = {};
     const files = [mcpPath];
@@ -273,6 +328,7 @@ export const claudeAdapter = {
     if (capsule) {
       const materialized = materializeClaudeAuthHome(runDir, {
         skillDirs: capsule.skillDirs ?? [],
+        workspaceDirs: capsule.workspaceDirs ?? [],
       });
       env.HOME = materialized.home;
       home_generation = materialized.home_generation;

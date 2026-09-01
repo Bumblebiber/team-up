@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync as realSpawnSync } from "node:child_process";
-import { materializeCapabilityCapsule, buildStrictMcpConfig } from "../capabilities/capsule.mjs";
+import {
+  materializeCapabilityCapsule,
+  buildStrictMcpConfig,
+  collectCapsuleMcpTools,
+} from "../capabilities/capsule.mjs";
 import { randomContentNonce } from "../capabilities/mcp-schema.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "./capabilities.mjs";
 
@@ -190,6 +194,25 @@ export function verifyInitSurfaceExclusion(init, { expected, prepared } = {}) {
 }
 
 /**
+ * Keys the materialized home writes into `.claude.json`. Everything else —
+ * `mcpServers` above all — means a global config reached the capsule.
+ */
+const ALLOWED_CLAUDE_JSON_KEYS = new Set([
+  "hasCompletedOnboarding",
+  "lastOnboardingVersion",
+  "numStartups",
+  "hasSeenTasksHint",
+  "hasSeenAutoModeEntryWarning",
+  "projects",
+]);
+
+const ALLOWED_CLAUDE_JSON_PROJECT_KEYS = new Set([
+  "hasTrustDialogAccepted",
+  "hasCompletedProjectOnboarding",
+  "projectOnboardingSeenCount",
+]);
+
+/**
  * Enumerate probe HOME and deny anything outside the auth-only closed world (R3).
  */
 export function verifyProbeHomeClosedWorld(probeHome, { expectedSkills = [] } = {}) {
@@ -199,12 +222,39 @@ export function verifyProbeHomeClosedWorld(probeHome, { expectedSkills = [] } = 
   }
 
   for (const entry of fs.readdirSync(probeHome)) {
-    if (entry !== ".claude") {
+    if (entry !== ".claude" && entry !== ".claude.json") {
       violations.push({ kind: "home_entry", name: entry });
     }
   }
-  if (fs.existsSync(path.join(probeHome, ".claude.json"))) {
-    violations.push({ kind: "claude_json", name: ".claude.json" });
+  // `.claude.json` is the file a leaked global home arrives in — it carries
+  // user-global MCP servers. It is also the only place to record that first-run
+  // setup happened, without which an interactive capsule launch stalls on the
+  // onboarding wizard. So judge it by content, not existence: the markers the
+  // materialized home writes are allowed, anything that could carry a server is
+  // not. An unreadable one is a violation, never a pass.
+  const claudeJson = path.join(probeHome, ".claude.json");
+  if (fs.existsSync(claudeJson)) {
+    let doc = null;
+    try {
+      doc = JSON.parse(fs.readFileSync(claudeJson, "utf8"));
+    } catch {
+      violations.push({ kind: "claude_json", name: "unreadable" });
+    }
+    if (doc) {
+      for (const key of Object.keys(doc)) {
+        if (!ALLOWED_CLAUDE_JSON_KEYS.has(key)) {
+          violations.push({ kind: "claude_json", name: key });
+        }
+      }
+      // A per-project entry can carry its own servers, so every one is checked.
+      for (const [dir, entry] of Object.entries(doc.projects ?? {})) {
+        for (const key of Object.keys(entry ?? {})) {
+          if (!ALLOWED_CLAUDE_JSON_PROJECT_KEYS.has(key)) {
+            violations.push({ kind: "claude_json", name: `projects.${dir}.${key}` });
+          }
+        }
+      }
+    }
   }
 
   const claudeDir = path.join(probeHome, ".claude");
@@ -378,26 +428,6 @@ function flagValues(argv, flag) {
   return values;
 }
 
-function collectCapsuleMcpTools(effective, runRoot) {
-  const mcpToolsByServer = {};
-  const mcpToolNames = [];
-  for (const item of effective.packages ?? []) {
-    for (const rel of item.resolved?.mcps ?? []) {
-      const document = JSON.parse(fs.readFileSync(path.join(runRoot, rel), "utf8"));
-      const sharedTools = Array.isArray(document.tools) ? document.tools : [];
-      for (const [name, server] of Object.entries(document.mcpServers ?? {})) {
-        const tools = Array.isArray(server?.tools) ? server.tools : sharedTools;
-        mcpToolsByServer[name] = tools;
-        for (const tool of tools) {
-          mcpToolNames.push(
-            `mcp__${name}__${String(tool).replace(/-/g, "_")}`
-          );
-        }
-      }
-    }
-  }
-  return { mcpToolNames, mcpToolsByServer };
-}
 
 /**
  * Build global + pool canaries and a capsule containing only the selected set.

@@ -21,12 +21,12 @@ test("capsule contains selected declared files and exact audit record", () => {
   const runRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-"));
   const result = materializeCapabilityCapsule({
     runRoot,
-    specialistId: "research.hugo",
+    specialistId: "research.reanna",
     packages: [{
       package: "selected@1", id: "selected", version: "1",
-      checksum: "sha256:a", packageDir, reason: "target:research.hugo",
+      checksum: "sha256:a", packageDir, reason: "target:research.reanna",
     }],
-    exclusions: [{ package: "hidden@1", reason: "exclude:research.hugo" }],
+    exclusions: [{ package: "hidden@1", reason: "exclude:research.reanna" }],
   });
   assert.equal(fs.existsSync(path.join(
     runRoot, "context", "skills", "selected", "SKILL.md")), true);
@@ -57,7 +57,7 @@ test("failed capsule construction cleans partial trees", () => {
   const runRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-"));
   assert.throws(() => materializeCapabilityCapsule({
     runRoot,
-    specialistId: "research.hugo",
+    specialistId: "research.reanna",
     packages: [
       { package: "a@1", id: "a", version: "1", checksum: "sha256:a",
         packageDir, reason: "target:all" },
@@ -97,11 +97,11 @@ test("unselected pool package does not change capsule bytes", () => {
   }];
   const firstRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-"));
   const first = materializeCapabilityCapsule({
-    runRoot: firstRoot, specialistId: "research.hugo", packages,
+    runRoot: firstRoot, specialistId: "research.reanna", packages,
   });
   const secondRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-"));
   const second = materializeCapabilityCapsule({
-    runRoot: secondRoot, specialistId: "research.hugo", packages,
+    runRoot: secondRoot, specialistId: "research.reanna", packages,
   });
   assert.equal(first.totals.estimated_description_tokens,
     second.totals.estimated_description_tokens);
@@ -172,7 +172,7 @@ test("EFFECTIVE_CAPABILITIES records estimated_prompt_token_contribution and mcp
   }];
   const firstRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-"));
   const first = materializeCapabilityCapsule({
-    runRoot: firstRoot, specialistId: "research.hugo", packages,
+    runRoot: firstRoot, specialistId: "research.reanna", packages,
   });
   assert.ok(first.packages[0].estimated_prompt_token_contribution > 0);
   assert.ok(first.packages[0].mcp_schema_bytes > 0);
@@ -197,14 +197,14 @@ test("EFFECTIVE_CAPABILITIES records estimated_prompt_token_contribution and mcp
   fs.writeFileSync(path.join(selected, "mcp.json"), mcpBodyCompact);
   const compactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-"));
   const compact = materializeCapabilityCapsule({
-    runRoot: compactRoot, specialistId: "research.hugo", packages,
+    runRoot: compactRoot, specialistId: "research.reanna", packages,
   });
   assert.equal(compact.packages[0].mcp_schema_bytes, first.packages[0].mcp_schema_bytes);
 
   // Inert (unselected) pool package must not change either metric.
   const still = materializeCapabilityCapsule({
     runRoot: fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-")),
-    specialistId: "research.hugo",
+    specialistId: "research.reanna",
     packages,
   });
   assert.equal(
@@ -246,7 +246,7 @@ test("EFFECTIVE_CAPABILITIES records estimated_prompt_token_contribution and mcp
   ];
   const withExtra = materializeCapabilityCapsule({
     runRoot: fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-")),
-    specialistId: "research.hugo",
+    specialistId: "research.reanna",
     packages: both,
   });
   assert.ok(
@@ -257,9 +257,9 @@ test("EFFECTIVE_CAPABILITIES records estimated_prompt_token_contribution and mcp
 
   const excluded = materializeCapabilityCapsule({
     runRoot: fs.mkdtempSync(path.join(os.tmpdir(), "tu-run-")),
-    specialistId: "research.hugo",
+    specialistId: "research.reanna",
     packages,
-    exclusions: [{ package: "extra@1", reason: "exclude:research.hugo" }],
+    exclusions: [{ package: "extra@1", reason: "exclude:research.reanna" }],
   });
   assert.equal(
     excluded.totals.estimated_prompt_token_contribution,

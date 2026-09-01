@@ -131,6 +131,11 @@ export function ptyLockPath(env = process.env) {
   );
 }
 
+/** Stop-hook debounce stamp for the claude usage collector. */
+export function usageCollectDebouncePath(env = process.env) {
+  return path.join(teamUpHome(env), ".usage-collect-claude.debounce");
+}
+
 export function usageWatcherStatePath(env = process.env) {
   return (
     legacyAwarePath("TEAM_UP_USAGE_WATCHER_STATE", "O9K_USAGE_WATCHER_STATE", env) ||
@@ -157,6 +162,11 @@ export function launchDescriptorDir(runId, env = process.env) {
 export function capabilityPoolRoot(env = process.env) {
   return env.TEAM_UP_CAPABILITY_POOL ||
     path.join(teamUpHome(env), "capability-pool");
+}
+
+/** Project↔specialist approval records. */
+export function specialistApprovalsPath(env = process.env) {
+  return path.join(teamUpHome(env), "approvals.json");
 }
 
 export function capabilityAssignmentsPath(env = process.env) {

@@ -1,24 +1,3 @@
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T17:53:19.402Z
-why: Correct authoritative policy snapshot path; clarify run/policy copy is non-authoritative
-trigger: Final focused runtime corrections — item 3
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T17:40:00.217Z
-why: Clarify command restriction protects accidental mutation not hostile same-UID tampering
-trigger: fourth runtime review — accepted trust boundary
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor-agent:grok
-when: 2026-07-25T15:26:30.131Z
-why: Document shared command broker and harness adapters
-trigger: runtime-supervision plan Task 12
-host: cursor
--->
 # Command broker
 
 Project owners map specialist action IDs to fixed argv arrays in

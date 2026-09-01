@@ -170,10 +170,10 @@ export function checkThresholds({ roster, usage, now = Date.now() }) {
       if (resetAt !== null && now >= resetAt) continue;
       const pct = Math.round(info.used * 100);
       if (windowIsBlocking(wkey, usage, thresholds, now)) {
-        lines.push(`⛔ o9k-roster: ${wkey} at ${pct}% — session limit reached.`);
+        lines.push(`⛔ team-up roster: ${wkey} at ${pct}% — session limit reached.`);
         handoff = true;
       } else if (info.used >= warn_at) {
-        lines.push(`⚠️ o9k-roster: ${wkey} at ${pct}% — prepare for handoff: converge to a checkpointable state.`);
+        lines.push(`⚠️ team-up roster: ${wkey} at ${pct}% — prepare for handoff: converge to a checkpointable state.`);
       }
     }
   } else {
@@ -181,16 +181,16 @@ export function checkThresholds({ roster, usage, now = Date.now() }) {
       if (typeof info?.used !== "number") continue;
       const pct = Math.round(info.used * 100);
       if (info.used >= handoff_at) {
-        lines.push(`⛔ o9k-roster: ${provider} at ${pct}% — session limit reached.`);
+        lines.push(`⛔ team-up roster: ${provider} at ${pct}% — session limit reached.`);
         handoff = true;
       } else if (info.used >= warn_at) {
-        lines.push(`⚠️ o9k-roster: ${provider} at ${pct}% — prepare for handoff: converge to a checkpointable state.`);
+        lines.push(`⚠️ team-up roster: ${provider} at ${pct}% — prepare for handoff: converge to a checkpointable state.`);
       }
     }
   }
   for (const [target, mark] of Object.entries(usage?.marked || {})) {
     if (Date.parse(mark.until) > now) {
-      lines.push(`ℹ️ o9k-roster: ${target} marked limited until ${mark.until}${mark.reason ? ` (${mark.reason})` : ""}`);
+      lines.push(`ℹ️ team-up roster: ${target} marked limited until ${mark.until}${mark.reason ? ` (${mark.reason})` : ""}`);
     }
   }
   if (handoff) {

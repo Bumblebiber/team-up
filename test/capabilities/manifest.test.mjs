@@ -18,7 +18,7 @@ test("normalizes all provider arrays and validates declared files", () => {
   fs.writeFileSync(path.join(root, "skills", "caveman", "SKILL.md"), "# Caveman\n");
   const manifest = normalizeCapabilityManifest({
     schema_version: 1,
-    id: "o9k.caveman",
+    id: "style.caveman",
     version: "1.2.0",
     display_name: "Caveman",
     provides: { skills: ["skills/caveman/SKILL.md"] },

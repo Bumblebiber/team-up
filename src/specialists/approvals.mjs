@@ -1,18 +1,14 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { teamUpHome } from "../paths.mjs";
+import { specialistApprovalsPath } from "../paths.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import { resolveInstalled, loadInstalledManifest, verifyInstalledIntegrity } from "./store.mjs";
 import { resolveCommandPolicyForApproval } from "../commands/policy.mjs";
 
-function approvalsPath(env = process.env) {
-  return path.join(teamUpHome(env), "approvals.json");
-}
-
 function loadApprovals(env = process.env) {
   try {
-    return JSON.parse(fs.readFileSync(approvalsPath(env), "utf8"));
+    return JSON.parse(fs.readFileSync(specialistApprovalsPath(env), "utf8"));
   } catch (e) {
     if (e.code === "ENOENT") return { approvals: {} };
     throw e;
@@ -20,7 +16,7 @@ function loadApprovals(env = process.env) {
 }
 
 function saveApprovals(data, env = process.env) {
-  atomicWriteJson(approvalsPath(env), data);
+  atomicWriteJson(specialistApprovalsPath(env), data);
 }
 
 export function approvalKey({

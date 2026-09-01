@@ -9,10 +9,15 @@ import {
   inspectPackage,
   installPackage,
   listInstalled,
+  loadInstalledManifest,
+  pinSpecialist,
+  uninstallSpecialist,
 } from "./specialists/store.mjs";
 import { approveSpecialist, listApprovals } from "./specialists/approvals.mjs";
 import { runSpecialist } from "./specialists/launcher.mjs";
+import { loadEvalSuite, runEvalSuite } from "./specialists/evals.mjs";
 import { runHarnessVerify } from "./harness/cli-verify.mjs";
+import { diagnose } from "./doctor.mjs";
 import { runCapabilityCli } from "./capabilities/cli.mjs";
 
 function argValue(args, flag) {
@@ -113,15 +118,71 @@ async function cmdSpecialist(args, io) {
     io.out(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }
+  if (sub === "pin") {
+    // Install deliberately never repoints an existing selection, so a second
+    // version sits installed-but-unreachable until something selects it. That
+    // something is this: pinSpecialist already resolved by version and wrote
+    // the selection; it just had no way in from the CLI.
+    const idVer = rest[0];
+    const project = argValue(rest, "--project");
+    const [id, version] = String(idVer ?? "").split("@");
+    if (!id || !version) {
+      io.err("usage: team-up specialist pin <id>@<version> [--project <absolute-path>]");
+      return 1;
+    }
+    const result = pinSpecialist(id, { version, project });
+    io.out(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+  if (sub === "uninstall") {
+    const [id, version] = String(rest[0] ?? "").split("@");
+    if (!id || !version) {
+      io.err("usage: team-up specialist uninstall <id>@<version>");
+      return 1;
+    }
+    const result = uninstallSpecialist(id, { version });
+    io.out(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
   if (sub === "list") {
     io.out(JSON.stringify(listInstalled(), null, 2));
     return 0;
+  }
+  if (sub === "evals") {
+    const targets = rest[0] && !rest[0].startsWith("--")
+      ? [rest[0]]
+      : Object.keys(listInstalled().specialists ?? {});
+    if (!targets.length) {
+      io.err("no specialists installed");
+      return 1;
+    }
+    const reports = [];
+    for (const target of targets) {
+      const [id, version] = String(target).split("@");
+      const entry = loadInstalledManifest(id, version ? { version } : {});
+      if (!entry) {
+        reports.push({ specialist: target, ok: false, error: "not installed" });
+        continue;
+      }
+      const suite = loadEvalSuite(entry.manifest, entry.path);
+      if (!suite.ok) {
+        reports.push({ specialist: target, ok: false, error: suite.error });
+        continue;
+      }
+      reports.push(runEvalSuite({
+        manifest: entry.manifest,
+        suite,
+        specialistId: entry.manifest.id,
+      }));
+    }
+    io.out(JSON.stringify({ suites: reports }, null, 2));
+    return reports.every((r) => r.ok) ? 0 : 1;
   }
   if (sub === "run") {
     const result = await runSpecialist(rest, io);
     return result.code;
   }
-  io.err("usage: team-up specialist <inspect|install|approve|list|run>");
+  io.err("usage: team-up specialist <inspect|install|approve|pin|uninstall|list|evals|run>");
   return 1;
 }
 
@@ -134,6 +195,13 @@ export async function runCli(args, io = { out: console.log, err: console.error }
   if (cmd === "validate") return cmdValidate(rest, io);
   if (cmd === "pick") return cmdPick(rest, io);
   if (cmd === "runs") return cmdRuns(rest, io);
+  if (cmd === "doctor") {
+    const report = diagnose();
+    io.out(JSON.stringify(report, null, 2));
+    // A stale exclusion delivers a capability that was meant to be denied, so
+    // high findings are an error; the rest are reported without failing.
+    return report.counts.high > 0 ? 1 : 0;
+  }
   if (cmd === "specialist") return cmdSpecialist(rest, io);
   if (cmd === "capability") return runCapabilityCli(rest, io);
   if (cmd === "harness") {
@@ -158,6 +226,8 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     // Preserve roster CLI surface through the facade (uses console directly).
     return runRosterCli(args);
   }
-  io.err("usage: team-up <version|validate|pick|dispatch|runs|specialist|capability|harness>");
+  io.err(
+    "usage: team-up <version|init|validate|doctor|pick|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness>"
+  );
   return 1;
 }

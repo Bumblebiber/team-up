@@ -5,13 +5,11 @@ import { systemdSandboxArgv, wrapWithSandbox, systemdAvailable } from "../../src
 test("sandbox hides $HOME via ProtectHome=tmpfs and bind paths", () => {
   const argv = systemdSandboxArgv({
     cwd: "/tmp/run/context",
-    network: false,
     readOnlyPaths: ["/home/u/proj", "/usr/bin/cursor-agent"],
     writablePaths: ["/tmp/run"],
     command: ["cursor-agent", "--yolo", "hi"],
   });
   assert.ok(argv.includes("ProtectHome=tmpfs"));
-  assert.ok(argv.includes("PrivateNetwork=yes"));
   assert.ok(argv.some((a) => String(a).includes("BindReadOnlyPaths=") || String(a).startsWith("/home/u/proj")));
   // Properties are passed as -p pairs
   const joined = argv.join("\n");
@@ -23,7 +21,6 @@ test("sandbox hides $HOME via ProtectHome=tmpfs and bind paths", () => {
 test("consult/review get read-only project; delegate may get writable when permitted", () => {
   const consult = systemdSandboxArgv({
     cwd: "/ctx",
-    network: false,
     callType: "consult",
     projectPath: "/proj",
     packagePath: "/pkg",
@@ -38,7 +35,6 @@ test("consult/review get read-only project; delegate may get writable when permi
 
   const delegate = systemdSandboxArgv({
     cwd: "/ctx",
-    network: false,
     callType: "delegate",
     projectPath: "/proj",
     packagePath: "/pkg",

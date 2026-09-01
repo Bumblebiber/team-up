@@ -7,6 +7,7 @@ import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { prepareHarnessLaunch, getAdapter } from "../harness/registry.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
+import { builtinsForPermissions } from "../specialists/permissions.mjs";
 import { launchDescriptorDir } from "../paths.mjs";
 import {
   acquireAttemptLease,
@@ -104,6 +105,11 @@ export function buildCapsuleLaunchRecord({ runRoot, capsule, env = process.env }
     skill_dirs: skillDirs,
     framework_dirs: frameworkDirs,
     codex_home: capsule.codexHome ? path.resolve(capsule.codexHome) : null,
+    home_dir: capsule.homeDir ? path.resolve(capsule.homeDir) : null,
+    // Directories the worker opens. A successor or resume that rebuilds the
+    // capsule without these hits the workspace trust prompt and stalls, so the
+    // record has to carry them alongside the rest of the launch.
+    workspace_dirs: [...(capsule.workspaceDirs ?? [])].map((p) => path.resolve(p)),
     mcp_config: mcpConfig,
     mcp_tool_names: [...(capsule.mcpToolNames ?? [])],
     mcp_tools_by_server: { ...(capsule.mcpToolsByServer ?? {}) },
@@ -213,6 +219,8 @@ export function reconstructCapsuleFromLaunchRecord(record) {
     skillDirs: [...(record.skill_dirs ?? [])],
     frameworkDirs: [...(record.framework_dirs ?? [])],
     codexHome: record.codex_home,
+    homeDir: record.home_dir ?? null,
+    workspaceDirs: [...(record.workspace_dirs ?? [])],
     claudeHome: record.claude_home ?? null,
     home_generation: record.home_generation ?? null,
     home_checksum: record.home_checksum ?? null,
@@ -586,6 +594,10 @@ export function prepareArgvFromDescriptor(
             }
           : null,
         capsule,
+        // The authoritative launch rebuilds its argv here, not from the capsule
+        // the launcher assembled. Without this the adapter default applies and a
+        // `writes: false` specialist is handed Edit and Write anyway.
+        allowedBuiltins: builtinsForPermissions(descriptor.permissions || {}),
         verification,
         requireExactVersion,
         execFileSync: execFileSyncFn,

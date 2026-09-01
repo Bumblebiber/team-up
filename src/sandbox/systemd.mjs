@@ -131,7 +131,6 @@ function validateBindPath(p, label = "bind path") {
  */
 export function systemdSandboxArgv({
   cwd,
-  network,
   writablePaths = [],
   readOnlyPaths = [],
   command,
@@ -189,7 +188,14 @@ export function systemdSandboxArgv({
     "NoExecPaths=/",
     `ExecPaths=${[...execList].join(":")}`,
     `WorkingDirectory=${path.resolve(cwd || "/tmp")}`,
-    `PrivateNetwork=${network ? "no" : "yes"}`,
+    // No `PrivateNetwork`. It was derived from `permissions.network`, which
+    // defaults to falsy — so every specialist that reached the sandbox for any
+    // other reason (`writes: false`, `filesystem: project_readonly`) lost the
+    // network unless it had asked for it explicitly. Every consult and review
+    // specialist is in that set, and none of them can start without reaching
+    // the provider API. `network: false` in a manifest means "no WebFetch and
+    // no WebSearch", which `builtinsForPermissions` implements; it has never
+    // meant "no packets", because no agent survives that.
   ];
   for (const p of ro) properties.push(`BindReadOnlyPaths=${p}`);
   for (const p of rw) properties.push(`BindPaths=${p}`);
@@ -245,8 +251,9 @@ export function wrapWithSandbox({
   ...rest
 }) {
   const timeoutSeconds = timeoutSecondsArg ?? rest.timeoutSeconds ?? null;
+  // `network` is deliberately absent: it governs which web tools a specialist
+  // holds, not whether it needs a mount namespace.
   const needsIsolation =
-    permissions?.network === false ||
     permissions?.filesystem === "project" ||
     permissions?.filesystem === "project_readonly" ||
     permissions?.writes === false ||
@@ -340,7 +347,6 @@ export function wrapWithSandbox({
 
   let argv = systemdSandboxArgv({
     cwd,
-    network: Boolean(permissions?.network),
     writablePaths,
     readOnlyPaths: extraRo,
     command,

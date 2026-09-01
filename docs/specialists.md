@@ -1,45 +1,3 @@
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T17:39:55.852Z
-why: Document accepted same-UID trust boundary for command broker / launch descriptor
-trigger: fourth runtime review — accepted trust boundary
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T15:41:04.855Z
-why: Document delivered command allowlist / broker boundary
-trigger: runtime-supervision review remediation Minor 13
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor-agent:grok
-when: 2026-07-25T15:18:22.926Z
-why: Document best-effort OS sandbox for trusted specialists
-trigger: runtime-supervision plan Task 2
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T13:52:56.781Z
-why: unspecified
-trigger: afterFileEdit
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor:grok-4.5
-when: 2026-07-25T13:44:03.449Z
-why: unspecified
-trigger: afterFileEdit
-host: cursor
--->
-<!-- o9k-provenance
-who: cursor-agent:grok
-when: 2026-07-25T13:19:53.457Z
-why: team-up specialist package docs
-trigger: plan Task 10
-host: cursor
--->
 # Specialists
 
 One repository = one specialist. Packages contain `specialist.json`,
@@ -52,12 +10,29 @@ executable install hooks.
 team-up specialist inspect <path>
 team-up specialist install <path>
 team-up specialist approve <id>@<version> --project <abs-path>
+team-up specialist pin <id>@<version> [--project <abs-path>]
+team-up specialist uninstall <id>@<version>
 team-up specialist list
 team-up specialist run --id <id> --call-type review --objective "..." --project <abs>
 ```
 
 Approval binds project + id + version + checksum + permissions. Any checksum
 or permission change requires reapproval.
+
+Installing a second version never repoints an existing selection — that would
+silently change what runs. `pin` is how the selection moves, and it is a
+separate step on purpose: approve the new version first, then pin it. Without
+`--project` the pin is global; with it, only that project sees the new version
+and everywhere else keeps the old one. `run` has no `--version` flag; the pin
+is the single place a version gets chosen.
+
+`uninstall` removes one version: its package tree, its index entry, any pin
+naming it, and any approval bound to it. It refuses while an unfinished run
+still depends on that version — a resume re-verifies the package checksum, so
+removing it early turns into an integrity failure later instead of an error
+now. It also refuses to remove the selected version while siblings remain, for
+the same reason install never repoints a selection: pin the replacement first.
+Removing the last version drops the id entirely.
 
 ## Call types
 
@@ -122,7 +97,7 @@ verified:
 - non-empty `permissions.commands` or `command.*` / `shell.*` / `exec.*`
   tools → `ALLOWLIST_UNENFORCEABLE` (pre-broker gate)
 
-Starter manifests declare the approved design capabilities (including Hannes
+Starter manifests declare the approved design capabilities (including Tessa
 `command.test` / `project-test` and advisory token targets). Claude and Codex
 have context-isolation adapters; Cursor / Hermes / OpenCode remain unsupported
 until each has a live verified implementation.
@@ -133,10 +108,10 @@ Specialist manifests may declare inert `recommendations` metadata:
 
 ```json
 "recommendations": [{
-  "package": "o9k.caveman",
+  "package": "style.caveman",
   "source": "https://github.com/example/caveman.git",
   "reason": "Reduces routine output",
-  "suggested_target": "research.hugo"
+  "suggested_target": "research.reanna"
 }]
 ```
 
@@ -158,7 +133,7 @@ team-up capability scan --root ~/.claude
 team-up capability install ./pkg
 team-up capability install https://github.com/example/x.git --git-ref v1.2.0
 team-up capability enable pkg@1.2.0 --checksum sha256:... --for all
-team-up capability disable pkg@1.2.0 --checksum sha256:... --for research.hugo
+team-up capability disable pkg@1.2.0 --checksum sha256:... --for research.reanna
 team-up capability update pkg --git-ref main
 team-up capability rollback pkg@2 --to 1 --checksum sha256:new --prior-checksum sha256:old
 team-up capability remove pkg@1 --checksum sha256:...
@@ -171,8 +146,22 @@ OS isolation is actually applied.
 
 ## Starters
 
-- `team-up-with-hannes` — testing (`frontier` / `max`); tools include
-  `filesystem.read` + `command.test`; commands include `project-test`;
-  advisory `tokens.target: 80000`
-- `team-up-with-hugo` — research (`medium` / `low`); read-only project +
-  optional network; advisory `tokens.target: 80000`
+`catalogue.json` at the repo root lists every published specialist and every
+capability package here: id, version, repo, call types, the permissions it
+asks for, and what it needs from the project. Read the permissions before the
+repo URL — that is what decides whether you want to run someone else's
+specialist at all.
+
+It is a hand-maintained list, not a registry. Nothing resolves it at runtime
+and installing is unchanged:
+
+```bash
+git clone https://github.com/Bumblebiber/team-up-with-<name>
+team-up specialist inspect ./team-up-with-<name>
+team-up specialist install ./team-up-with-<name>
+```
+
+The half of the list that lives in this repo — the capability packages — is
+checked against its manifests by `test/catalogue.test.mjs`. The specialist
+half is not: those bundles are separate repos, so a version there can move
+without this file noticing.
