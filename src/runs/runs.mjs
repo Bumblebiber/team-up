@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // runs.mjs — disk-first cross-CLI run registry + mailbox + agentless resume.
-// State: ~/.team-up/runs/<runId>/ (TEAM_UP_RUNS / O9K_RUNS override). Zero dependencies.
+// State: ~/.team-up/runs/<runId>/ (TEAM_UP_HOME or TEAM_UP_RUNS override). Zero dependencies.
 
 import fs from "node:fs";
+import { runsPath } from "../paths.mjs";
 import { findStaleRuns, findOrphanSessions, DEFAULT_THRESHOLD_MS } from "./stale.mjs";
 import { listTmuxSessions } from "./tmux.mjs";
 import os from "node:os";
@@ -16,8 +17,15 @@ export { parseVerifyCommand, parseNodeTestCounts, runParentVerification } from "
 
 const FLOCK_BIN = "/usr/bin/flock";
 
+/**
+ * Delegates to `runsPath` rather than resolving the location a second time.
+ * This used to read `TEAM_UP_RUNS` and then jump straight to the real home,
+ * ignoring `TEAM_UP_HOME` — which `runsPath` honours. Two functions for one
+ * path, disagreeing: a test that redirected `TEAM_UP_HOME` and reached this
+ * one operated on the caller's actual runs.
+ */
 export function runsRoot() {
-  return process.env.TEAM_UP_RUNS || process.env.O9K_RUNS || path.join(os.homedir(), ".team-up/runs");
+  return runsPath(process.env);
 }
 
 export function runDir(runId) {

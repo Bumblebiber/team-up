@@ -990,6 +990,59 @@ still supervising the run.
 
 **The cron job is not installed yet.**
 
+### gc never read the mailbox first — so finished work sat unread
+
+Asked to fix the gap above, and the fix is not the one that was proposed there.
+
+**The proposal was wrong.** It assumed a protected run whose terminal is gone
+cannot be answered anyway, so failing it loses nothing. `buildResumePlan` says
+otherwise: a run with a dead session gets `spawn_worker`, so `runs resume`
+revives exactly that shape. Killing them would have destroyed recoverable work.
+The caution was right; the reasoning behind it was not.
+
+**What was actually wrong.** Three runs had piled up over two days, and two of
+them were finished:
+
+    STATE.json: waiting_human   mailbox/STATUS: done   RESULT.md present
+    STATE.json: running         mailbox/STATUS: done   RESULT.md present
+
+The worker had written its result and closed its mailbox; nothing carried that
+into the run status. The same failure as the 25-hour MAIMO worker at the start
+of this plan — finished work nobody lifted.
+
+gc does reconcile the mailbox, but only inside `finalizeStaleCleanup` and its
+neighbours, which a run reaches solely by being ACTIVE with a live terminal. A
+protected run leaves `evaluateGcAction` at the second line, long before any of
+it. So gc read `waiting_human`, said "protected", and skipped — forever, with
+the answer sitting beside it.
+
+`adoptTerminalMailbox` now runs before anything is decided: if the mailbox has
+finished, take the worker's word, through the same `resolveRunState` that
+`runs resume` uses and the same `hasLegitimateTerminalMailbox` guard that
+rejects a synthetic stale result. It invents nothing and kills nothing. On the
+real runs: `waiting_human`/`running`/`waiting_human` became
+`done`/`done`/`waiting_human` — the one genuine waiter untouched, because its
+own mailbox agrees it is waiting.
+
+### A test was operating on the real runs directory
+
+Found while writing the test above: it scanned 160 live runs instead of its
+temp directory, and took two minutes doing it.
+
+    export function runsRoot() {
+      return process.env.TEAM_UP_RUNS || process.env.O9K_RUNS
+        || path.join(os.homedir(), ".team-up/runs");
+    }
+
+`runs.mjs` resolved the runs directory a second time and skipped
+`TEAM_UP_HOME`, which `paths.mjs`'s `runsPath` honours. Two functions for one
+path, disagreeing — so any test that redirected `TEAM_UP_HOME` and reached this
+one worked on the caller's actual data. Harmless this time only because every
+decision came out `skip`.
+
+`runsRoot` delegates to `runsPath` now. The adoption test dropped from over two
+minutes to 85ms, which is what isolation was supposed to buy.
+
 ### One flaky test
 
 `STATE lock contention respects a bounded timeout` failed twice while the

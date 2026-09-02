@@ -243,6 +243,34 @@ function hasLegitimateTerminalMailbox(classified, state, runId) {
   return true;
 }
 
+/**
+ * Adopt a terminal mailbox into the run's status before anything is decided.
+ *
+ * A worker that finishes writes its RESULT and sets its mailbox STATUS, and
+ * something has to carry that into STATE.json. gc did reconcile — but only
+ * inside the stale-failure path, which a run reaches solely by being ACTIVE
+ * with a live terminal. A `waiting_human` or `handing_off` run is skipped at
+ * the PROTECTED check long before that, so a finished worker whose run never
+ * left a protected state stayed "stuck" with its answer sitting unread in the
+ * mailbox. Three had accumulated in two days, two of them already done.
+ *
+ * This invents nothing: it takes the worker's own report, through the same
+ * `resolveRunState` that `runs resume` uses, guarded by the same legitimacy
+ * check that rejects a synthetic stale result. Runs whose mailbox has not
+ * finished are left exactly as they were.
+ */
+function adoptTerminalMailbox(runId) {
+  const before = loadState(runId);
+  if (!before || TERMINAL.has(before.status)) return false;
+  const classified = classifyMailbox(runId);
+  if (!hasLegitimateTerminalMailbox(classified, before, runId)) return false;
+  if (isUnresolvedStalePublicationClaim(before)) return false;
+  const after = updateState(runId, (latest) =>
+    reconcileTerminalMailboxState(latest, classified)
+  );
+  return after?.status !== before.status ? after.status : false;
+}
+
 function deriveStatusFromCanonicalResult(state, runId) {
   if (state.result_protocol === "RESULT.json") {
     const raw = readMaybe(path.join(mailboxDir(runId), "RESULT.json"));
@@ -805,11 +833,22 @@ export function gcRuns({
       }
     }
 
-    const tmux = inspectTmux(state.worker?.tmux || null);
+    // Before deciding anything: if the worker already reported, take its word.
+    // Otherwise a run that finished while protected is never looked at again.
+    let current = state;
+    if (!dryRun) {
+      const adopted = adoptTerminalMailbox(state.runId);
+      if (adopted) {
+        reportEntry.adopted_from_mailbox = adopted;
+        current = loadState(state.runId) || state;
+      }
+    }
+
+    const tmux = inspectTmux(current.worker?.tmux || null);
     const decision = evaluateGcAction({
-      state,
+      state: current,
       nowMs,
-      heartbeatMs: heartbeatFor(state.runId),
+      heartbeatMs: heartbeatFor(current.runId),
       tmux,
     });
     reportEntry.action = decision.kind;

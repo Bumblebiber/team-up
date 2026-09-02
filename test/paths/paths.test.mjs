@@ -88,3 +88,34 @@ test("cross-process usage state stays inside TEAM_UP_HOME", async () => {
     else process.env.TEAM_UP_HOME = prev;
   }
 });
+
+test("runsRoot honours TEAM_UP_HOME, like every other path helper", async () => {
+  // It used to read TEAM_UP_RUNS and then jump straight to the real home. A
+  // test that redirected TEAM_UP_HOME and reached this one operated on the
+  // caller's actual runs — which is how it was found.
+  const { runsRoot } = await import("../../src/runs/runs.mjs");
+  const prior = process.env.TEAM_UP_HOME;
+  process.env.TEAM_UP_HOME = "/tmp/tu-isolation-probe";
+  try {
+    assert.equal(runsRoot(), "/tmp/tu-isolation-probe/runs");
+  } finally {
+    if (prior === undefined) delete process.env.TEAM_UP_HOME;
+    else process.env.TEAM_UP_HOME = prior;
+  }
+});
+
+test("an explicit TEAM_UP_RUNS still wins over the home", async () => {
+  const { runsRoot } = await import("../../src/runs/runs.mjs");
+  const priorHome = process.env.TEAM_UP_HOME;
+  const priorRuns = process.env.TEAM_UP_RUNS;
+  process.env.TEAM_UP_HOME = "/tmp/tu-home";
+  process.env.TEAM_UP_RUNS = "/tmp/tu-explicit-runs";
+  try {
+    assert.equal(runsRoot(), "/tmp/tu-explicit-runs");
+  } finally {
+    if (priorHome === undefined) delete process.env.TEAM_UP_HOME;
+    else process.env.TEAM_UP_HOME = priorHome;
+    if (priorRuns === undefined) delete process.env.TEAM_UP_RUNS;
+    else process.env.TEAM_UP_RUNS = priorRuns;
+  }
+});
