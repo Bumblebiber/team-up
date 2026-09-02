@@ -988,7 +988,20 @@ The full report lands in `~/.hermes/cron-outputs/stale-runs/pending.md` and
 names the trap found today: a status that will not stick means something is
 still supervising the run.
 
-**The cron job is not installed yet.**
+Installed 2026-09-02 as a crontab entry beside `worker-reaper.sh`, which is
+where the host glue lives:
+
+    23 */2 * * * STALE_RUNS_HOURS=12 ~/.hermes/scripts/stale-runs.sh >> …/cron.log
+
+Every two hours at :23, offset from the reaper's :00 so they do not fire
+together. Twelve hours rather than the default six: a `waiting_human` answered
+the same evening should not page anybody, and twelve would still have caught
+all seven that had accumulated. Verified in a stripped `env -i` shell, which is
+closer to what cron actually gives it than an interactive one.
+
+Not a systemd timer, though `runs gc-install` ships one: that unit runs a repo
+command, while this runs host glue that knows about Telegram. The crontab is
+where the other `~/.hermes` scripts already live.
 
 ### gc never read the mailbox first — so finished work sat unread
 
