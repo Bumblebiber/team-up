@@ -50,13 +50,26 @@ test("dispatch --run-id uses run cwd; explicit --dir overrides", () => {
     }),
   );
 
+  const usagePath = path.join(home, "usage.json");
+  const now = new Date().toISOString();
+  fs.writeFileSync(
+    usagePath,
+    JSON.stringify({
+      windows: {
+        "claude:session": { used: 0.1, updated: now },
+        "claude:week": { used: 0.1, updated: now },
+        "claude:5h": { used: 0.1, updated: now },
+      },
+    }),
+  );
+
   const prev = { ...process.env };
   const env = {
     ...process.env,
     PATH: `${binDir}:${process.env.PATH}`,
     TEAM_UP_RUNS: runsDir,
     TEAM_UP_ROSTER: rosterPath,
-    TEAM_UP_USAGE: path.join(home, "usage.json"),
+    TEAM_UP_USAGE: usagePath,
   };
   Object.assign(process.env, env);
 

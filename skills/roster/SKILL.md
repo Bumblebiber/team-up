@@ -84,6 +84,8 @@ No config yet → `team-up init`, then tell the user to curate `~/.team-up/roste
 - **Delegate a task (complete spawn — use this, not bare dispatch):**
   1. `team-up runs create … --prompt-file <prompt.md>` → note `runId`
   2. `team-up dispatch --role <role> --prompt-file <prompt.md> --dir <taskdir> --run-id <runId>`
+     Optional pin: `--model <name|cli:model>` uses that CLI×model directly (same
+     query language as `pass-to`); the role chain is **not** walked as fallback.
   3. Spawn a **cheap in-host watcher** (see `dispatch` Path B): only
      `team-up runs wait <runId>`, return status, exit
   4. Then you may tell the human the tmux attach string — never before step 3
@@ -141,8 +143,9 @@ that to the user verbatim and stop — never substitute your own model choice.
 1. `team-up runs create … --prompt-file …` — **auto-wraps** the file with
    `templates/worker-prompt.md` into `mailbox/PROMPT.md` (HEARTBEAT +
    `STATUS=done` closeout). Bare task prompts are fine as `--prompt-file`.
-2. `team-up dispatch … --run-id <id>` — **injects `mailbox/PROMPT.md`**, not the
-   bare task file. (Passing only a bare `--prompt-file` without this link is how
+2. `team-up dispatch … --run-id <id> [--model <name|cli:model>]` — **injects `mailbox/PROMPT.md`**, not the
+   bare task file. `--model` pins the worker CLI×model (no chain fallback).
+   (Passing only a bare `--prompt-file` without this link is how
    workers finish PLAN.md but leave the parent hanging on `runs wait`.)
 3. Spawn an **internal cheap subagent** (see `templates/watcher-prompt.md`) whose only job:
    - `team-up runs wait <runId>` (ONE blocking call — do not poll in a model loop)

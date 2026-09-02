@@ -16,7 +16,8 @@ import {
 } from "./config.mjs";
 import {
   parseChainEntry, resolveLimitWindows, pick, parseTtl, markLimited, checkThresholds,
-  resolvePickAfterRefresh, dispatchFreshnessMs, limits,
+  resolvePickAfterRefresh, resolvePinnedAfterRefresh, dispatchFreshnessMs, limits,
+  evaluatePickCell, chainEntryEffortForPin,
 } from "./chain.mjs";
 import {
   firstPositional, buildCommand, tmuxArgs, spawnPinnedInTmux, resolveEffort,
@@ -25,7 +26,8 @@ import {
 export {
   configPath, usagePath, loadJson, validateRoster, requireRoster, rosterWritePath, usageWritePath,
   parseChainEntry, resolveLimitWindows, pick, parseTtl, markLimited, checkThresholds,
-  resolvePickAfterRefresh, dispatchFreshnessMs, limits,
+  resolvePickAfterRefresh, resolvePinnedAfterRefresh, dispatchFreshnessMs, limits,
+  evaluatePickCell, chainEntryEffortForPin,
   firstPositional, buildCommand, tmuxArgs, spawnPinnedInTmux, resolveEffort,
 };
 
@@ -132,15 +134,57 @@ async function cmdUsageRefresh(args) {
   if (!results.some((r) => r.ok)) process.exit(1);
 }
 
-async function spawnInTmux({ roster: rosterCfg, role, dir, prompt, runId }) {
+async function spawnInTmux({ roster: rosterCfg, role, dir, prompt, runId, modelPin }) {
   const now = Date.now();
   let usage = loadJson(usagePath());
-  let r = pick({ roster: rosterCfg, usage, role, now });
-  for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
-  if (!r.model) {
-    console.error(`chain exhausted for role ${role} — no viable model`);
-    process.exit(2);
+  let r;
+  let pinResolved = null;
+
+  if (modelPin) {
+    const { resolvePassTo } = await import("./pass-to.mjs");
+    const resolved = resolvePassTo(modelPin, rosterCfg);
+    if (resolved.status === "ambiguous") {
+      console.error(`ambiguous model "${modelPin}" — pick one and re-run with --model <exact>:`);
+      for (const m of resolved.matches) console.error(`  ${m.label}`);
+      process.exit(3);
+    }
+    if (resolved.status !== "ok") {
+      console.error(
+        `unresolved model "${modelPin}"${resolved.reason ? ` — ${resolved.reason}` : ""}`
+      );
+      console.error("use a roster model id, cli:model pin, or a recognizable free string (opus, composer-2.5, gpt-…)");
+      process.exit(4);
+    }
+    pinResolved = resolved;
+    const entryEffort = chainEntryEffortForPin(
+      rosterCfg,
+      role,
+      resolved.model,
+      resolved.cli,
+    );
+    r = evaluatePickCell({
+      roster: rosterCfg,
+      usage,
+      role,
+      model: resolved.model,
+      cli: resolved.cli,
+      entryEffort,
+      now,
+    });
+    for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
+    if (!r.model) {
+      console.error(`pinned model "${modelPin}" cannot run`);
+      process.exit(2);
+    }
+  } else {
+    r = pick({ roster: rosterCfg, usage, role, now });
+    for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
+    if (!r.model) {
+      console.error(`chain exhausted for role ${role} — no viable model`);
+      process.exit(2);
+    }
   }
+
   const priorPick = { model: r.model, cli: r.cli, skipped: r.skipped, effort: r.effort };
   try {
     const { isSubscriptionCli, collectUsageForCli } = await import("../usage/usage-collect.mjs");
@@ -153,17 +197,39 @@ async function spawnInTmux({ roster: rosterCfg, role, dir, prompt, runId }) {
       if (refreshed.ok) {
         const preUsage = usage;
         usage = loadJson(usagePath());
-        r = resolvePickAfterRefresh({
-          roster: rosterCfg,
-          preUsage,
-          postUsage: usage,
-          priorPick,
-          role,
-          now,
-        });
+        if (modelPin && pinResolved) {
+          const entryEffort = chainEntryEffortForPin(
+            rosterCfg,
+            role,
+            pinResolved.model,
+            pinResolved.cli,
+          );
+          r = resolvePinnedAfterRefresh({
+            roster: rosterCfg,
+            postUsage: usage,
+            role,
+            model: pinResolved.model,
+            cli: pinResolved.cli,
+            entryEffort,
+            now,
+          });
+        } else {
+          r = resolvePickAfterRefresh({
+            roster: rosterCfg,
+            preUsage,
+            postUsage: usage,
+            priorPick,
+            role,
+            now,
+          });
+        }
         for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
         if (!r.model) {
-          console.error(`chain exhausted for role ${role} after usage refresh`);
+          console.error(
+            modelPin
+              ? `pinned model "${modelPin}" cannot run after usage refresh`
+              : `chain exhausted for role ${role} after usage refresh`,
+          );
           process.exit(2);
         }
       }
@@ -187,10 +253,14 @@ async function cmdDispatch(args) {
   const role = argValue(args, "--role");
   const promptFile = argValue(args, "--prompt-file");
   const runId = argValue(args, "--run-id");
+  const modelPin = argValue(args, "--model");
   const dir = resolveDispatchDir({ dir: argValue(args, "--dir"), runId });
   if (!role || (!promptFile && !runId)) {
-    console.error("usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>]");
+    console.error(
+      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>]",
+    );
     console.error("  with --run-id: prefers ~/.team-up/runs/<id>/mailbox/PROMPT.md (mailbox-wrapped)");
+    console.error("  --model: pin CLI×model (no role-chain fallback); same query language as pass-to");
     process.exit(1);
   }
   let prompt = null;
@@ -223,7 +293,7 @@ async function cmdDispatch(args) {
     }
     prompt = fs.readFileSync(promptFile, "utf8").trim();
   }
-  await spawnInTmux({ roster: requireRoster(), role, dir, prompt, runId });
+  await spawnInTmux({ roster: requireRoster(), role, dir, prompt, runId, modelPin });
 }
 
 async function cmdHandoff(args) {

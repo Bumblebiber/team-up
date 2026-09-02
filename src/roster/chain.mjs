@@ -67,6 +67,97 @@ export function dispatchFreshnessMs(roster) {
   return roster?.usage_watcher?.dispatch_freshness_sec ?? 300;
 }
 
+/** Effort from a matching role-chain entry for a pinned CLI×model, if any. */
+export function chainEntryEffortForPin(roster, role, modelName, cli) {
+  const spec = roster.roles?.[role];
+  if (!spec?.chain) return null;
+  for (const raw of spec.chain) {
+    try {
+      const parsed = parseChainEntry(raw);
+      if (parsed.model !== modelName) continue;
+      if (parsed.cli && parsed.cli !== cli) continue;
+      return parsed.effort || null;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
+ * Apply pick's per-cell skip gates to one resolved CLI×model (no chain walk).
+ */
+export function evaluatePickCell({
+  roster,
+  usage,
+  role,
+  model: name,
+  cli: cliIn,
+  entryEffort = null,
+  now = Date.now(),
+}) {
+  const roleLimits = limits(roster);
+  const skipped = [];
+  const model = roster.models?.[name];
+  const label = entryLabel(name, cliIn);
+
+  if (!model) {
+    skipped.push({ model: label, reason: "not in models" });
+    return { model: null, cli: null, effort: null, skipped };
+  }
+
+  const cli = cliIn ?? model.cli?.[0] ?? null;
+
+  if (!cli) {
+    skipped.push({ model: label, reason: "no cli resolved" });
+    return { model: null, cli: null, effort: null, skipped };
+  }
+  if (!roster.clis?.[cli]?.cmd) {
+    skipped.push({ model: label, reason: `no cli template for "${cli}"` });
+    return { model: null, cli: null, effort: null, skipped };
+  }
+  if (Array.isArray(model.cli) && model.cli.length > 0 && !model.cli.includes(cli)) {
+    skipped.push({ model: label, reason: `cli "${cli}" not listed for model` });
+    return { model: null, cli: null, effort: null, skipped };
+  }
+
+  const limitWindows = resolveLimitWindows(roster, name, model);
+  const gate = modelUsageGate({
+    usage,
+    limitWindows,
+    provider: model.provider,
+    cli,
+    limits: roleLimits,
+    now,
+  });
+  if (gate.blocked) {
+    skipped.push({ model: label, reason: gate.reason });
+    return { model: null, cli: null, effort: null, skipped };
+  }
+  if (markedUntil(usage, name, now)) {
+    skipped.push({ model: label, reason: `marked limited until ${usage.marked[name].until}` });
+    return { model: null, cli: null, effort: null, skipped };
+  }
+  if (markedUntil(usage, model.provider, now)) {
+    skipped.push({
+      model: label,
+      reason: `provider marked limited until ${usage.marked[model.provider].until}`,
+    });
+    return { model: null, cli: null, effort: null, skipped };
+  }
+  if (markedUntil(usage, cli, now)) {
+    skipped.push({ model: label, reason: `cli marked limited until ${usage.marked[cli].until}` });
+    return { model: null, cli: null, effort: null, skipped };
+  }
+
+  return {
+    model: name,
+    cli,
+    effort: resolveEffort({ roster, role, model: name, entryEffort }),
+    skipped,
+  };
+}
+
 export function pick({ roster, usage, role, now = Date.now() }) {
   const spec = roster.roles?.[role];
   if (!spec) throw new Error(`unknown role: ${role}`);
@@ -250,4 +341,25 @@ export function resolvePickAfterRefresh({
     return priorPick;
   }
   return { model: null, cli: null, effort: null, skipped: r2.skipped };
+}
+
+/** Re-check a pinned cell after usage refresh — no chain walk. */
+export function resolvePinnedAfterRefresh({
+  roster,
+  postUsage,
+  role,
+  model,
+  cli,
+  entryEffort = null,
+  now = Date.now(),
+}) {
+  return evaluatePickCell({
+    roster,
+    usage: postUsage,
+    role,
+    model,
+    cli,
+    entryEffort,
+    now,
+  });
 }
