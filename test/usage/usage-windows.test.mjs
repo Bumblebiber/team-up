@@ -151,3 +151,52 @@ test("isCliUsageFresh respects per-cli window updated timestamps", () => {
   assert.equal(isCliUsageFresh("claude", usage, 5 * 60_000, NOW), true);
   assert.equal(isCliUsageFresh("codex", usage, 5 * 60_000, NOW), false);
 });
+
+/**
+ * Two collectors print a reset that is missing half of a date: cursor gives a
+ * month and day with no time, codex's 5h window gives a time with no day.
+ * Both fell through to `Date.parse`, which does not reject a partial date — it
+ * invents the missing part. "Sep 27" came back as 2001, so the reset landed
+ * permanently in the past and `resets_at` was written as null.
+ */
+test("parseResetAt reads a bare month and day as the next such date", () => {
+  const berlin = "Europe/Berlin";
+  const now = Date.parse("2026-09-02T15:00:00Z");
+  assert.equal(
+    parseResetAt("Sep 27", now, { timeZone: berlin }),
+    Date.parse("2026-09-26T22:00:00Z") // midnight on the 27th, Berlin
+  );
+});
+
+test("parseResetAt rolls a bare month and day into next year once it has passed", () => {
+  const berlin = "Europe/Berlin";
+  const now = Date.parse("2026-11-02T15:00:00Z");
+  const ts = parseResetAt("Sep 27", now, { timeZone: berlin });
+  assert.ok(ts > now, "a reset already past this year belongs to the next one");
+  assert.equal(new Date(ts).getUTCFullYear(), 2027);
+});
+
+test("parseResetAt reads a bare wall clock as today when it is still ahead", () => {
+  const berlin = "Europe/Berlin";
+  const now = Date.parse("2026-09-02T15:00:00Z"); // 17:00 Berlin
+  assert.equal(
+    parseResetAt("19:41", now, { timeZone: berlin }),
+    Date.parse("2026-09-02T17:41:00Z")
+  );
+});
+
+test("parseResetAt rolls a bare wall clock to tomorrow once it has passed", () => {
+  const berlin = "Europe/Berlin";
+  const now = Date.parse("2026-09-02T15:00:00Z"); // 17:00 Berlin
+  assert.equal(
+    parseResetAt("08:00", now, { timeZone: berlin }),
+    Date.parse("2026-09-03T06:00:00Z")
+  );
+});
+
+test("parseResetAt refuses a date that is nowhere near now", () => {
+  const now = Date.parse("2026-09-02T15:00:00Z");
+  // The guard that keeps Date.parse from answering for partial dates must not
+  // start accepting a genuinely absurd one either.
+  assert.equal(parseResetAt("2001-09-27T00:00:00Z", now), null);
+});

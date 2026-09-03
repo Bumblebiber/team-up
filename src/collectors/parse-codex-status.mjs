@@ -1,17 +1,10 @@
 // parse-codex-status.mjs — pure parser for codex /status output.
 import { normalizeWindowRecord } from "../usage/usage-windows.mjs";
+import { stripAnsi } from "./strip-ansi.mjs";
 
 const LIMIT_LINE_RE =
   /([A-Za-z0-9][A-Za-z0-9 ]*?)\s+limit:\s+.*?(\d+)%\s+left\s*\(resets\s+([^)]+)\)/gi;
 const HIT_LIMIT_RE = /hit your usage limit.*?try again at\s+([^.]+)/is;
-
-function stripAnsi(text) {
-  return text
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "")
-    .replace(/\x1b[()][AB012]/g, "")
-    .replace(/\r/g, "");
-}
 
 function labelToWindowKey(label) {
   const norm = label.trim().toLowerCase();
@@ -40,7 +33,9 @@ export function parseCodexStatus(text, opts = {}) {
     windows[wkey] = normalizeWindowRecord(
       wkey,
       {
-        used: Math.min(1, Math.max(0, 1 - left / 100)),
+        // (100 - left) / 100, not 1 - left/100: the latter leaves float
+        // grit like 0.22999999999999998 sitting in usage.json.
+        used: Math.min(1, Math.max(0, (100 - left) / 100)),
         resets_at_raw: raw,
         resets_at: raw,
         source,

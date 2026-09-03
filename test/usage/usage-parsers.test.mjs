@@ -51,3 +51,41 @@ test("parseCursorUsage reads included/auto/api", () => {
   assert.equal(w["cursor:auto"].used, 0.52);
   assert.equal(w["cursor:api"].used, 0.69);
 });
+
+/**
+ * The fixture above was stripped by hand before it was ever committed, so it
+ * proved nothing about the text the collector is actually handed. Straight off
+ * the PTY the child rows carry colour escapes where the row regex expects
+ * leading whitespace, and for weeks only "Included" — the one unstyled row —
+ * was collected. These read the untouched transcript.
+ */
+test("parseCursorUsage reads all three rows out of a raw PTY transcript", () => {
+  const text = fs.readFileSync(path.join(FIX, "cursor-usage-raw-pty.txt"), "utf8");
+  const w = parseCursorUsage(text);
+  assert.equal(w["cursor:included"].used, 0.11);
+  assert.equal(w["cursor:auto"].used, 0.12);
+  assert.equal(w["cursor:api"].used, 0.01);
+});
+
+test("parseCursorUsage carries the plan reset date onto every row", () => {
+  const text = fs.readFileSync(path.join(FIX, "cursor-usage-raw-pty.txt"), "utf8");
+  const w = parseCursorUsage(text, { now: "2026-09-02T15:00:00.000Z" });
+  for (const key of ["cursor:included", "cursor:auto", "cursor:api"]) {
+    assert.equal(w[key].resets_at_raw, "Sep 27");
+    // "Sep 27" alone used to leave resets_at null; Date.parse would have read
+    // it as the year 2001.
+    assert.match(w[key].resets_at, /^2026-09-2[67]T/);
+    assert.equal(w[key].reset_confidence, "provider");
+  }
+});
+
+test("parseCodexStatus reads the 5h window out of a raw PTY transcript", () => {
+  const text = fs.readFileSync(path.join(FIX, "codex-status-raw-pty.txt"), "utf8");
+  const w = parseCodexStatus(text, { now: "2026-09-02T15:00:00.000Z" });
+  assert.equal(w["codex:5h"].used, 0.32);
+  assert.equal(w["codex:weekly"].used, 0.5);
+  // Bare wall clock, no date — it used to leave resets_at null.
+  assert.equal(w["codex:5h"].resets_at_raw, "19:41");
+  assert.equal(w["codex:5h"].resets_at, "2026-09-02T17:41:00.000Z");
+  assert.equal(w["codex:weekly"].resets_at, "2026-09-07T06:03:00.000Z");
+});

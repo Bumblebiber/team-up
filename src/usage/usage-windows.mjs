@@ -118,15 +118,76 @@ function parseClaudeResetLocal(str, now) {
   return ts;
 }
 
+/** Calendar date of an instant, as read in a given zone. */
+function zonedDateParts(ms, timeZone) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(new Date(ms))
+      .map((p) => [p.type, p.value])
+  );
+  return { year: Number(parts.year), month: Number(parts.month) - 1, day: Number(parts.day) };
+}
+
+/** Cursor renders a bare month and day, "Sep 27" — the next time it comes round. */
+function parseMonthDayLocal(str, now, timeZone = localTimeZone()) {
+  const m = /^([A-Za-z]{3,})\s+(\d{1,2})$/.exec(str.trim());
+  if (!m) return null;
+  const month = MONTH[m[1].toLowerCase().slice(0, 3)];
+  if (month === undefined) return null;
+  const day = Number(m[2]);
+  if (day < 1 || day > 31) return null;
+  const baseYear = zonedDateParts(now, timeZone).year;
+  for (const year of [baseYear, baseYear + 1]) {
+    const ts = zonedWallTimeToUtc({ year, month, day, hour: 0, minute: 0 }, timeZone);
+    if (Number.isFinite(ts) && ts >= now - 60_000) return ts;
+  }
+  return null;
+}
+
+/** Codex renders its 5h reset as a bare wall clock, "19:41" — today or tomorrow. */
+function parseBareTimeLocal(str, now, timeZone = localTimeZone()) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(str.trim());
+  if (!m) return null;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (hour > 23 || minute > 59) return null;
+  const today = zonedDateParts(now, timeZone);
+  // Tomorrow by calendar arithmetic rather than +24h: a DST day is 23 or 25
+  // hours long, and adding a fixed day across one lands on the wrong date.
+  const next = new Date(Date.UTC(today.year, today.month, today.day) + 86_400_000);
+  const days = [
+    today,
+    { year: next.getUTCFullYear(), month: next.getUTCMonth(), day: next.getUTCDate() },
+  ];
+  for (const d of days) {
+    const ts = zonedWallTimeToUtc({ ...d, hour, minute }, timeZone);
+    if (Number.isFinite(ts) && ts >= now - 60_000) return ts;
+  }
+  return null;
+}
+
+const YEAR_MS = 365 * 86_400_000;
+
 /** Best-effort parse of CLI /usage reset strings. null = unknown (no timed expiry). */
 export function parseResetAt(str, now = Date.now(), opts = {}) {
   if (!str || typeof str !== "string") return null;
   const trimmed = str.trim();
-  const direct = Date.parse(trimmed);
-  if (Number.isFinite(direct)) return direct;
   const timeZone = opts.timeZone ?? localTimeZone();
+  const direct = Date.parse(trimmed);
+  // `Date.parse` accepts partial dates and invents the missing year: "Sep 27"
+  // comes back as 2001-09-27, a reset permanently in the past. A real reset is
+  // always near now, so anything further out belongs to the branches below.
+  if (Number.isFinite(direct) && Math.abs(direct - now) < YEAR_MS) return direct;
   return (
-    parseClaudeResetLocal(trimmed, now) ?? parseCodexResetLocal(trimmed, now, timeZone)
+    parseClaudeResetLocal(trimmed, now) ??
+    parseCodexResetLocal(trimmed, now, timeZone) ??
+    parseMonthDayLocal(trimmed, now, timeZone) ??
+    parseBareTimeLocal(trimmed, now, timeZone)
   );
 }
 

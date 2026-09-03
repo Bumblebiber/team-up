@@ -141,11 +141,19 @@ function saveState(state) {
   fs.writeFileSync(watcherStatePath(), `${JSON.stringify(state, null, 2)}\n`);
 }
 
+/**
+ * Per-CLI ceiling for one collect. claude answers a plain `-p /usage`; codex
+ * and cursor each have to boot a full terminal UI first, and cursor was capped
+ * at the claude figure — every cursor collect died on ETIMEDOUT mid-boot, so
+ * its windows had not been updated in days.
+ */
+const COLLECT_TIMEOUT_MS = { claude: 120_000, codex: 300_000, cursor: 300_000 };
+
 function runCollect(cli) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "usage-collect.mjs");
   execFileSync(process.execPath, [script, "--cli", cli], {
     stdio: "inherit",
-    timeout: cli === "codex" ? 300_000 : 120_000,
+    timeout: COLLECT_TIMEOUT_MS[cli] ?? 120_000,
   });
 }
 

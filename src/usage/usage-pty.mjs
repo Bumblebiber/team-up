@@ -22,7 +22,9 @@ const SEQUENCES = {
     command: "/usage",
     ready: "Tip:",
     accept: "Show plan",
-    wait: "Included",
+    // The panel's closing line, not its first row: waiting on "Included" can
+    // return before the Auto and API rows beneath it have rendered.
+    wait: "Esc to close",
     exit: "/exit",
     cols: 120,
     rows: 40,
@@ -40,11 +42,16 @@ function spawnLine(seq) {
   return `stty cols ${cols} rows ${rows} 2>/dev/null; cd ${cwd} && exec env O9K_USAGE_COLLECT=1 TEAM_UP_USAGE_COLLECT=1 TERM=xterm-256color COLUMNS=${cols} LINES=${rows} ${seq.bin}`;
 }
 
-function cursorCommandBlock(seq, resultWaitSec) {
-  const resultPat = shellEscape(seq.wait || "Included");
+function cursorCommandBlock(seq) {
+  const resultPat = shellEscape(seq.wait || "Esc to close");
   const acceptPat = shellEscape(seq.accept || "Show plan");
   // cursor-agent slash autocomplete needs / then usage separately; a single
   // "/usage\\r" opens the menu but Enter fires before accept is ready.
+  //
+  // Waiting on the panel instead of sleeping a fixed span cuts the better part
+  // of a minute off the run — enough that the collect no longer outlives the
+  // watcher's timeout — and a slow render times out into whatever did arrive
+  // rather than aborting the whole collect.
   return `sleep 3
 send "/"
 sleep 0.5
@@ -55,11 +62,11 @@ expect {
 }
 sleep 1
 send "\\r"
-sleep ${resultWaitSec}
 expect {
   -re "${resultPat}" { }
-  timeout { exit 2 }
+  timeout { }
 }
+sleep 1
 `;
 }
 
@@ -90,7 +97,6 @@ expect eof
   if (cli === "cursor") {
     const bootTimeout = Math.max(90, Math.floor(timeoutSec * 0.6));
     const readyPat = shellEscape(seq.ready || "Tip:");
-    const resultWaitSec = Math.max(30, Math.floor(timeoutSec * 0.2));
     return `set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"
@@ -99,7 +105,7 @@ expect {
   -re "${readyPat}" { }
   timeout { exit 2 }
 }
-${cursorCommandBlock(seq, resultWaitSec)}send "${exitCmd}\\r"
+${cursorCommandBlock(seq)}send "${exitCmd}\\r"
 expect eof
 `;
   }
