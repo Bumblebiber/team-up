@@ -16,6 +16,42 @@ export function verificationRecordPath(adapterId, cliVersion, env = process.env)
   );
 }
 
+/**
+ * Every verification record on file for this adapter, newest check first.
+ *
+ * Drift is not visible from a single-key lookup: "no record for the installed
+ * version" reads identically whether the adapter was never checked or passed
+ * yesterday and has since updated itself. Telling those apart needs the
+ * directory, not the key — and it needs the failed records too, because an
+ * adapter whose newest verdict was a failure has not regressed, it is simply
+ * a known no.
+ */
+export function listVerificationRecords(adapterId, env = process.env) {
+  const dir = path.join(teamUpHome(env), "harness-verification", adapterId);
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    let record;
+    try {
+      record = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
+    } catch {
+      continue;
+    }
+    out.push({
+      version: name.slice(0, -5),
+      status: record?.status ?? null,
+      checked_at: record?.checked_at ?? null,
+    });
+  }
+  return out.sort((a, b) => String(b.checked_at).localeCompare(String(a.checked_at)));
+}
+
 export function loadVerificationRecord(adapterId, cliVersion, env = process.env) {
   const p = verificationRecordPath(adapterId, cliVersion, env);
   try {

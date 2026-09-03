@@ -275,3 +275,48 @@ test("a clean install reports ok", () => {
   assert.deepEqual(report.counts, { high: 0, medium: 0, low: 0 });
   assert.equal(report.checked.specialists, 1);
 });
+
+/**
+ * The drift finding exists because the old signal was indirect: drift showed
+ * up as `no_model_for_profile`, named after the roster, and only when a
+ * specialist with a model_profile happened to be installed. Uninstall the
+ * specialists and the host is equally unable to launch anything, with a clean
+ * report. This finding does not depend on any of that.
+ */
+test("a harness whose CLI updated past its verified version is reported", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    const dir = path.join(home, "harness-verification", "claude");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "2.1.252.json"),
+      JSON.stringify({
+        adapter: "claude",
+        cli_version: "2.1.252",
+        status: "verified",
+        checked_at: "2026-09-01T09:57:52.333Z",
+      })
+    );
+    const report = diagnose(homeEnv(home), { execFileSync: () => "2.1.259 (Claude Code)\n" });
+    const finding = report.findings.find((f) => f.kind === "harness_version_drift");
+    assert.ok(finding, "drift must be reported on its own, not via a specialist");
+    assert.equal(finding.severity, "high");
+    assert.equal(finding.installed, "2.1.259");
+    assert.equal(finding.last_verified, "2.1.252");
+    assert.match(finding.fix, /harness verify claude/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("an adapter with no record at all is not reported as drift", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    // Nothing planted: a fresh home has never verified anything, and saying
+    // "it stopped working" about that would be false.
+    const report = diagnose(homeEnv(home), { execFileSync: () => "2.1.259 (Claude Code)\n" });
+    assert.equal(report.findings.some((f) => f.kind === "harness_version_drift"), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

@@ -10,7 +10,7 @@ import {
   CONTEXT_ISOLATION_CAPABILITY,
   UNVERIFIED_CAPABILITIES,
 } from "./capabilities.mjs";
-import { loadVerificationRecord } from "./verify.mjs";
+import { loadVerificationRecord, listVerificationRecords } from "./verify.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
 
 const ADAPTERS = Object.freeze({
@@ -93,6 +93,78 @@ export function harnessCapabilities(
     native_shell: declared.native_shell,
     mcp: declared.mcp,
   };
+}
+
+/**
+ * Why an adapter grants what it grants.
+ *
+ * `harnessCapabilities` answers "what may this CLI do", and answers it
+ * fail-closed — which is right, but it returns the same empty grant set for
+ * four situations that need different responses from a human:
+ *
+ *   unsupported  no adapter exists for this CLI (cursor). Nothing to verify.
+ *   no_record    an adapter exists, nothing has been checked yet.
+ *   failed       the newest verdict on file is a failure. A known no.
+ *   drifted      the newest verdict was a PASS, and the installed build is not
+ *                the one it covers. It worked an hour ago and silently stopped.
+ *
+ * Only the last is an incident: verification is keyed by CLI version, so a
+ * self-update revokes every grant on the host. When claude went 2.1.252 →
+ * 2.1.259 the sole symptom was specialists becoming unlaunchable for reasons
+ * that named the roster, and only because specialists happened to be
+ * installed at all.
+ *
+ * This returns a verdict and never grants anything. Callers deciding what a
+ * launch may do keep using `harnessCapabilities`.
+ */
+export function harnessStatus(
+  cli,
+  { env = process.env, execFileSync = realExecFileSync } = {}
+) {
+  let adapter;
+  try {
+    adapter = getAdapter(cli);
+  } catch {
+    return { cli, status: "unsupported", installed_version: null };
+  }
+  if (adapter.unsupported) return { cli, status: "unsupported", installed_version: null };
+
+  let installed = null;
+  try {
+    installed = adapter.version({ execFileSync });
+  } catch {
+    // Not installed, or refuses to say. Nothing to verify against, and that is
+    // not drift.
+    return { cli, status: "not_installed", installed_version: null };
+  }
+
+  const records = listVerificationRecords(adapter.id, env);
+  const base = { cli, installed_version: installed };
+  const own = records.find((r) => r.version === installed);
+  if (own?.status === "verified") return { ...base, status: "verified" };
+  if (own) return { ...base, status: "failed", record_status: own.status };
+  if (!records.length) return { ...base, status: "no_record" };
+
+  const newest = records[0];
+  if (newest.status === "verified") {
+    return {
+      ...base,
+      status: "drifted",
+      last_verified_version: newest.version,
+      last_checked_at: newest.checked_at,
+    };
+  }
+  return { ...base, status: "failed", record_status: newest.status, record_version: newest.version };
+}
+
+/** The CLI ids this build has an adapter entry for. */
+export function listHarnessAdapters() {
+  return Object.keys(ADAPTERS);
+}
+
+/** Every adapter this build knows about, for a host-wide health check. */
+export function harnessStatusAll(opts = {}) {
+  return Object.keys(ADAPTERS).map((cli) => harnessStatus(cli, opts));
 }
 
 export function defaultHarnessCapabilities(cli, opts = {}) {

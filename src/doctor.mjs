@@ -11,6 +11,8 @@ import {
   CONTEXT_ISOLATION_CAPABILITY,
 } from "./harness/capabilities.mjs";
 import { configPath, loadJson, validateRoster } from "./roster/config.mjs";
+import { harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
+import { listVerificationRecords } from "./harness/verify.mjs";
 
 function readJson(file) {
   try {
@@ -30,7 +32,7 @@ function readJson(file) {
  * `exclude` the same staleness is worse: the exclusion stops applying and the
  * package reaches a specialist that was meant to be denied it.
  */
-export function diagnose(env = process.env) {
+export function diagnose(env = process.env, { execFileSync } = {}) {
   const findings = [];
   const installed = listInstalled(env).specialists ?? {};
   const ids = new Set(Object.keys(installed));
@@ -199,6 +201,34 @@ export function diagnose(env = process.env) {
         detail: "pinned checksum is not the installed one",
       });
     }
+  }
+
+  // Harness verification is keyed by CLI version, so a self-update silently
+  // revokes every grant on the host. Until now that surfaced only as
+  // `no_model_for_profile` — the symptom, named after the roster, and only
+  // when a specialist with a model_profile happened to be installed. This
+  // reports the cause directly and does not care whether anything is
+  // installed.
+  //
+  // Only adapters that already have a record are inspected: an adapter with
+  // none cannot have drifted, and skipping them keeps `diagnose` free of a
+  // subprocess per CLI in the common case (a fresh home has no records).
+  for (const cli of listHarnessAdapters()) {
+    if (!listVerificationRecords(cli, env).length) continue;
+    const status = harnessStatus(cli, execFileSync ? { env, execFileSync } : { env });
+    if (status.status !== "drifted") continue;
+    findings.push({
+      kind: "harness_version_drift",
+      severity: "high",
+      cli,
+      installed: status.installed_version,
+      last_verified: status.last_verified_version,
+      detail:
+        `${cli} ${status.installed_version} has no verification record ` +
+        `(${status.last_verified_version} passed on ${status.last_checked_at}); ` +
+        "every capability it granted is revoked until it is re-verified",
+      fix: `team-up harness verify ${cli} --fixture-project <path>`,
+    });
   }
 
   const count = (s) => findings.filter((f) => f.severity === s).length;
