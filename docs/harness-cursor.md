@@ -114,12 +114,18 @@ blocker above makes it moot for now.
 
 | adapter  | record for | installed  | grants |
 |----------|-----------|------------|--------|
-| claude   | 2.1.250   | 2.1.250    | broker + isolation |
-| codex    | 0.150.1   | 0.150.1    | nothing — re-verified 2026-08-29, `context_isolation: null` |
+| claude   | 2.1.259   | 2.1.259    | broker + isolation |
+| codex    | 0.150.1   | 0.152.1    | nothing — 0.150.1 was verified and failed; the installed build is newer |
 | opencode | 1.18.15   | 1.18.23    | nothing — version mismatch |
-| cursor   | —         | 2026.08.25 | nothing — no adapter |
+| cursor   | —         | 2026.09.02 | nothing — no adapter |
 
-The codex record is current and honest: 0.150.1 was verified and did not pass.
+Verification is keyed by CLI version, so a self-update silently revokes every
+grant until the new build is verified. Claude auto-updated 2.1.252 → 2.1.259 on
+2026-09-03 and for a few hours no adapter on this host could launch a
+specialist at all; re-verified the same day.
+
+The codex record is honest but no longer current: 0.150.1 was verified and did
+not pass, and 0.152.1 has not been checked.
 The opencode record is a leftover from the superseded branch-side isolation
 probe (`context_isolation_check` / `context_isolation_planted`, dated
 2026-08-15), a different and weaker contract than the one main uses; it is
