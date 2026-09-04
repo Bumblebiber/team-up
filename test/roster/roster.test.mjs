@@ -323,10 +323,25 @@ test("tmuxArgs builds a detached session with cwd and shell-quoted command", () 
     dir: "/tmp/task",
     argv: ["claude", "--model", "m", "it's a prompt"],
   });
-  assert.deepEqual(args.slice(0, 7), [
+  assert.deepEqual(args, [
     "new-session", "-d", "-s", "o9k-implementer-abc", "-c", "/tmp/task",
+    "-e", "TEAMUP_WORKER=1",
     `claude --model m 'it'\\''s a prompt'`,
   ]);
+});
+
+test("tmuxArgs marks a worker even when the caller passes no env", () => {
+  const args = tmuxArgs({ session: "s", dir: "/tmp/task", argv: ["claude"] });
+  assert.deepEqual(args, [
+    "new-session", "-d", "-s", "s", "-c", "/tmp/task",
+    "-e", "TEAMUP_WORKER=1",
+    "claude",
+  ]);
+});
+
+test("tmuxArgs adds the run id next to the default worker marker", () => {
+  const args = tmuxArgs({ session: "s", dir: "/tmp/task", argv: ["claude"], env: { TEAMUP_RUN_ID: "r7" } });
+  assert.deepEqual(args.slice(6, 10), ["-e", "TEAMUP_WORKER=1", "-e", "TEAMUP_RUN_ID=r7"]);
 });
 
 test("tmuxArgs passes the worker marker env before the command", () => {

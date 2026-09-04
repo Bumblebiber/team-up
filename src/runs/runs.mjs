@@ -811,6 +811,27 @@ export function pasteInject(session, text, {
   }
 }
 
+/**
+ * tmux argv for a resume spawn. Only a worker gets the TEAMUP_WORKER marker —
+ * a parent is the interface agent (INJECT.parent tells it to keep orchestrating
+ * and to re-surface the human question), and marking it would silence that.
+ * ponytail: resume cannot tell a nested-worker parent from a top-level one, so
+ * such a parent comes back unmarked — the safe direction (an over-reporting
+ * worker beats a silent interface).
+ */
+export function resumeTmuxArgs(action, state, argv) {
+  const env =
+    action.kind === "spawn_worker"
+      ? ["-e", "TEAMUP_WORKER=1", ...(state?.runId ? ["-e", `TEAMUP_RUN_ID=${state.runId}`] : [])]
+      : [];
+  return [
+    "new-session", "-d", "-s", action.tmux,
+    "-c", action.cwd || process.cwd(),
+    ...env,
+    argv.map(shellQuote).join(" "),
+  ];
+}
+
 export function executeResumeAction(action, state, {
   waitReady = waitTmuxReady,
   readyTimeoutMs = 10000,
@@ -834,10 +855,7 @@ export function executeResumeAction(action, state, {
     state.recovery = "cold_start";
     saveState(state);
   }
-  const cmd = argv.map(shellQuote).join(" ");
-  execFileSync("tmux", ["new-session", "-d", "-s", action.tmux, "-c", action.cwd || process.cwd(), cmd], {
-    stdio: "ignore",
-  });
+  execFileSync("tmux", resumeTmuxArgs(action, state, argv), { stdio: "ignore" });
   pasteInject(action.tmux, action.inject || "", { waitReady, readyTimeoutMs });
 }
 

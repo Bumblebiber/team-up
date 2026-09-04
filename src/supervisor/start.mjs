@@ -683,8 +683,8 @@ export function prepareArgvFromDescriptor(
   };
 }
 
-function defaultStartTmux({ session, dir, argv }) {
-  execFileSync("tmux", tmuxArgs({ session, dir, argv }), { stdio: "ignore" });
+function defaultStartTmux({ session, dir, argv, runId }) {
+  execFileSync("tmux", tmuxArgs({ session, dir, argv, env: { TEAMUP_RUN_ID: runId } }), { stdio: "ignore" });
 }
 
 function defaultKillTmux(session) {

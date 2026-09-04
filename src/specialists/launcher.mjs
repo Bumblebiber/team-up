@@ -549,8 +549,8 @@ export async function launch({
     const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
     const startTmux =
       sandbox?.startWorker ||
-      (({ argv, dir, sessionName }) => {
-        execFileSync("tmux", tmuxArgs({ session: sessionName, dir, argv }), {
+      (({ argv, dir, sessionName, runId }) => {
+        execFileSync("tmux", tmuxArgs({ session: sessionName, dir, argv, env: { TEAMUP_RUN_ID: runId } }), {
           stdio: "inherit",
         });
       });

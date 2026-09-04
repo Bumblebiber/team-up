@@ -10,7 +10,7 @@ import {
   classifyMailbox, writeAnswer, buildResumePlan, INJECT, buildCliArgv,
   setStatus, resumeAll, linkDispatchToRun, listActiveStates,
   buildColdStartArgv, acquireResumeLock, resumeLockPath, waitTmuxReady,
-  wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox,
+  wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
 } from "../../src/runs/runs.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
@@ -585,3 +585,18 @@ test("waitMailbox keeps worker tmux for a human question", withTempRuns(async ()
   assert.equal(result.classified.status, "question");
   assert.deepEqual(stopped, []);
 }));
+
+test("resumeTmuxArgs marks a respawned worker with run id, never the parent", () => {
+  const state = { runId: "r42" };
+  const worker = resumeTmuxArgs(
+    { kind: "spawn_worker", tmux: "w", cwd: "/tmp/task" }, state, ["claude", "--resume", "s1"],
+  );
+  assert.deepEqual(worker, [
+    "new-session", "-d", "-s", "w", "-c", "/tmp/task",
+    "-e", "TEAMUP_WORKER=1", "-e", "TEAMUP_RUN_ID=r42",
+    "claude --resume s1",
+  ]);
+
+  const parent = resumeTmuxArgs({ kind: "spawn_parent", tmux: "p", cwd: "/tmp/task" }, state, ["claude"]);
+  assert.deepEqual(parent, ["new-session", "-d", "-s", "p", "-c", "/tmp/task", "claude"]);
+});
