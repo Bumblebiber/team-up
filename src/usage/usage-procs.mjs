@@ -50,6 +50,63 @@ export function isAgentProcessCmdline(cmdline, cli, envMarker = "O9K_USAGE_COLLE
   return false;
 }
 
+/** ppid from /proc/<pid>/stat (comm can hold spaces, so scan past the last ")"). */
+export function readProcPpid(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+    return Number.isFinite(ppid) ? ppid : null;
+  } catch {
+    return null;
+  }
+}
+
+/** This process and every ancestor — the pids a sweep must never signal. */
+export function ancestorPids(pid = process.pid, readPpid = readProcPpid) {
+  const chain = new Set();
+  let cur = pid;
+  while (cur > 0 && !chain.has(cur)) {
+    chain.add(cur);
+    cur = readPpid(cur) || 0;
+  }
+  return chain;
+}
+
+/**
+ * Processes a collect left behind. The collect env marker is inherited by the
+ * whole tree — the CLI, its MCP servers (the telegram plugin's `bun`), their
+ * children — so anything still carrying it once the collect returned outlived
+ * it. Self + ancestors are excluded: without that, a collect started from a
+ * shell that exported the marker would kill the watcher, or systemd.
+ *
+ * ponytail: env marker, not process group — a detached MCP server escapes the
+ * group but not its environment. Blind spot: an unrelated session launched
+ * from a shell where the marker leaked is not an ancestor and would be swept.
+ */
+export function collectStrayPids({
+  envMarker = "O9K_USAGE_COLLECT",
+  listPids = listProcPids,
+  hasEnvMarker = procHasEnvMarker,
+  keepPids,
+} = {}) {
+  const keep = keepPids ? new Set(keepPids) : ancestorPids();
+  return listPids().filter((pid) => !keep.has(pid) && hasEnvMarker(pid, envMarker));
+}
+
+/** SIGKILL every stray (they are already orphaned; nothing to flush). */
+export function killCollectStrays(opts = {}) {
+  const pids = collectStrayPids(opts);
+  const kill = opts.kill || ((pid) => process.kill(pid, "SIGKILL"));
+  for (const pid of pids) {
+    try {
+      kill(pid);
+    } catch {
+      /* already gone */
+    }
+  }
+  return pids;
+}
+
 function readProcCmdline(pid) {
   try {
     const raw = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
