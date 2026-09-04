@@ -120,6 +120,7 @@
       "provider": "xai",
       "tier": "high",
       "cli": ["cursor", "opencode", "hermes"],
+      "cli_model": "cursor-grok-4.5-high",
       "account": "cursor",
       "reasoning": { "max": "high", "high": "high", "medium": null, "low": null },
       "priority": 4
@@ -127,7 +128,7 @@
     "deepseek-v4-pro": {
       "provider": "deepseek",
       "tier": "medium",
-      "cli": ["hermes", "opencode"],
+      "cli": ["hermes"],
       "account": "api",
       "reasoning": { "max": "high", "high": "high", "medium": "medium", "low": "low" },
       "priority": 5
@@ -135,7 +136,7 @@
     "deepseek-v4-flash": {
       "provider": "deepseek",
       "tier": "low",
-      "cli": ["hermes", "opencode"],
+      "cli": ["hermes"],
       "account": "api",
       "reasoning": { "max": "high", "high": "high", "medium": "medium", "low": "low" },
       "priority": 5

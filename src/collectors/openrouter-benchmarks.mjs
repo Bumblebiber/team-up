@@ -11,8 +11,20 @@ export function loadIdMap(mapPath = ID_MAP_PATH) {
   return JSON.parse(fs.readFileSync(mapPath, "utf8"));
 }
 
+/** AA permaslugs carry a release date; the model catalogue does not. */
+const DATED = /-(\d{8})$/;
+
+/**
+ * The benchmark feed names a model by dated permaslug
+ * (`x-ai/grok-4.6-20260810`) while the catalogue lists it undated
+ * (`x-ai/grok-4.6`). Collapse the date before the lookup, or the two halves
+ * never merge: the roster model keeps price and cli with no scores, every
+ * chain head ranks as unscored, and `refresh --apply` can promote nothing.
+ */
 export function mapId(openrouterId, idMap) {
-  return idMap[openrouterId] || openrouterId.replace(/\//g, "--");
+  if (idMap[openrouterId]) return idMap[openrouterId];
+  const undated = openrouterId.replace(DATED, "");
+  return idMap[undated] || undated.replace(/\//g, "--");
 }
 
 /** OpenRouter pricing fields are $/token strings; convert to $/1M tokens. */
@@ -28,10 +40,16 @@ export function perMillion(pricePerToken) {
 export function normalizeBenchmarks(payload, idMap = loadIdMap()) {
   const rows = payload?.data || [];
   const models = {};
+  const stamps = {};
   for (const row of rows) {
     const oid = row.model_permaslug || row.id;
     if (!oid) continue;
     const id = mapId(oid, idMap);
+    // Two dated snapshots of one model collapse onto the same id. Keep the
+    // newer, so the result does not depend on the order the feed lists them.
+    const stamp = DATED.exec(oid)?.[1] || "";
+    if (models[id] && stamp < (stamps[id] ?? "")) continue;
+    stamps[id] = stamp;
     const priceIn = perMillion(row.pricing?.prompt);
     const priceOut = perMillion(row.pricing?.completion);
     models[id] = {

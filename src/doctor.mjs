@@ -12,6 +12,7 @@ import {
 } from "./harness/capabilities.mjs";
 import { configPath, loadJson, validateRoster } from "./roster/config.mjs";
 import { harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
+import { checkModelAvailability } from "./roster/availability.mjs";
 import { listVerificationRecords } from "./harness/verify.mjs";
 
 function readJson(file) {
@@ -229,6 +230,32 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
         "every capability it granted is revoked until it is re-verified",
       fix: `team-up harness verify ${cli} --fixture-project <path>`,
     });
+  }
+
+  // A model a role chain names can be retired or renamed at the CLI without
+  // anything in the roster changing, and pick cannot see it — the cell
+  // resolves and only the spawned worker finds out. Ask the CLIs that can
+  // answer. Anything else stays silent: a CLI that cannot enumerate its
+  // models must not read as a missing model.
+  const rosterCfg = loadJson(configPath());
+  if (rosterCfg && execFileSync) {
+    const run = (bin, args) =>
+      execFileSync(bin, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
+    for (const cell of checkModelAvailability({ roster: rosterCfg, run })) {
+      if (cell.status !== "missing") continue;
+      findings.push({
+        kind: "model_unavailable",
+        severity: "high",
+        cli: cell.cli,
+        model: cell.model,
+        sent: cell.sent,
+        role: cell.role,
+        detail:
+          `role "${cell.role}" pins ${cell.cli}:${cell.model}, but ${cell.cli} ` +
+          `does not list "${cell.sent}" — dispatch fails at spawn`,
+        fix: `drop the chain entry, or set models.${cell.model}.cli_model to the id ${cell.cli} uses`,
+      });
+    }
   }
 
   const count = (s) => findings.filter((f) => f.severity === s).length;

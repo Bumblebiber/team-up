@@ -1,5 +1,6 @@
 export const VERSION = "0.1.0";
 
+import { execFileSync } from "node:child_process";
 import { pick } from "./roster/chain.mjs";
 import { loadJson, configPath, usagePath, requireRoster, validateRoster } from "./roster/config.mjs";
 import { resolveProfile, parseProfileString } from "./roster/profile.mjs";
@@ -196,7 +197,9 @@ export async function runCli(args, io = { out: console.log, err: console.error }
   if (cmd === "pick") return cmdPick(rest, io);
   if (cmd === "runs") return cmdRuns(rest, io);
   if (cmd === "doctor") {
-    const report = diagnose();
+    // Real runner: doctor stays hermetic when called without one (tests), and
+    // the CLI is the caller that may spawn `<cli> models` and `<cli> --version`.
+    const report = diagnose(process.env, { execFileSync });
     io.out(JSON.stringify(report, null, 2));
     // A stale exclusion delivers a capability that was meant to be denied, so
     // high findings are an error; the rest are reported without failing.

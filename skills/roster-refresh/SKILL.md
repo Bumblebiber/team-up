@@ -41,6 +41,22 @@ refresh replaces that config.
 `cli_model` aliases and `clis.claude.cmd` flags (`--dangerously-skip-permissions`)
 are manual config — refresh never touches them.
 
+## When a role reports "current head unscored"
+
+That means the head has no index to compare, so no promotion can happen — the
+role is effectively frozen. Two causes, both in `src/collectors/id-map.json`:
+
+- **No entry.** The AA feed names the model under an OpenRouter id the roster
+  does not use. Add `"<openrouter id>": "<roster model>"`.
+- **A stale entry** pointing at a superseded release or at a roster model that
+  no longer exists. These rot silently; the score simply never lands.
+
+The dated permaslug the benchmark feed uses (`x-ai/grok-4.6-20260810`) is
+collapsed onto the catalogue id automatically — no dated entries needed.
+
+A model missing from its CLI entirely is a different problem, and
+`team-up doctor` reports it as `model_unavailable`.
+
 ## Manual-only
 
 `team-up propose` — report without writing.
