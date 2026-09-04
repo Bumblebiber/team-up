@@ -10,7 +10,15 @@ import { subscriptionsFromRoster } from "./usage-collect.mjs";
 
 const DEFAULT_CONFIG = {
   tick_sec: 60,
-  intervals: { idle_heartbeat_hours: 24, active_min: 20, busy_min: 8 },
+  // idle_min keeps sampling while no local agent runs: the burn a second
+  // machine puts on the same account is invisible to the process count and
+  // only shows up as a rising window. It must stay under the 45min the burn
+  // rate reaches back, or an idle CLI never has two samples to draw a line
+  // through. ponytail: one codex collect measures 143s wall / 59MB, but the
+  // TUI itself boots in ~4s — the rest is `expect eof` waiting out its timeout
+  // on a codex that never closes the PTY. Fix that and the idle cadence gets
+  // much cheaper; until then this is ~2.5min per PTY-based CLI per interval.
+  intervals: { idle_heartbeat_hours: 24, idle_min: 30, active_min: 20, busy_min: 8 },
 };
 
 export function watcherConfig(roster) {
@@ -63,8 +71,10 @@ export function planCollect({
     if (prev > 0 && cur === 0) collect.add(cli);
   }
 
+  // No process-count gate: an idle CLI still samples on its (slower) due date,
+  // otherwise a trend only ever exists for CLIs busy on this machine.
   for (const cli of subscriptions) {
-    if ((counts[cli] ?? 0) === 0) continue;
+    if (collecting?.[cli]) continue;
     const due = parseIso(nextDue[cli]);
     if (due === null || now >= due) collect.add(cli);
   }
@@ -72,6 +82,11 @@ export function planCollect({
   const hbMs = DEFAULT_CONFIG.intervals.idle_heartbeat_hours * 3_600_000;
   for (const cli of subscriptions) {
     if (collecting?.[cli]) continue;
+    // A CLI that has never collected successfully has no last_collect, so the
+    // heartbeat alone would re-fire it every tick forever. An attempt already
+    // on the schedule is enough.
+    const due = parseIso(nextDue[cli]);
+    if (due !== null && now < due) continue;
     const t = parseIso(lastCollect[cli]);
     if (t === null || now - t >= hbMs) collect.add(cli);
   }
@@ -94,10 +109,14 @@ export function decideCollect(opts) {
 }
 
 /**
- * Advance last_collect/next_due only for CLIs whose collect succeeded.
+ * Journal a collect round. `next_due` moves for every CLI that was *tried* —
+ * without that, a CLI whose collect keeps failing is re-picked on every 60s
+ * tick and hogs the PTY lock. `last_collect` moves only on success, so the
+ * 24h heartbeat still notices a CLI that has produced nothing.
  */
 export function advanceSchedule({
   successful,
+  attempted = successful,
   state,
   lastCollect,
   nextDue,
@@ -105,27 +124,37 @@ export function advanceSchedule({
   config = DEFAULT_CONFIG,
 }) {
   const intervalMin =
-    state === "busy" ? config.intervals.busy_min : config.intervals.active_min;
-  const hbMs = config.intervals.idle_heartbeat_hours * 3_600_000;
+    state === "busy"
+      ? config.intervals.busy_min
+      : state === "idle"
+        ? (config.intervals.idle_min ?? DEFAULT_CONFIG.intervals.idle_min)
+        : config.intervals.active_min;
   const next = {
     last_collect: { ...lastCollect },
     next_due: { ...nextDue },
   };
 
+  for (const cli of attempted) {
+    next.next_due[cli] = new Date(now + intervalMin * 60_000).toISOString();
+  }
   for (const cli of successful) {
     next.last_collect[cli] = new Date(now).toISOString();
-    next.next_due[cli] =
-      state === "idle"
-        ? new Date(now + hbMs).toISOString()
-        : new Date(now + intervalMin * 60_000).toISOString();
   }
 
   return next;
 }
 
 function loadState() {
+  let doc = null;
+  try {
+    doc = loadJson(watcherStatePath());
+  } catch (e) {
+    // A kill mid-write used to leave 0 bytes here, and JSON.parse("") then
+    // threw on every tick until someone stopped the service. Start over.
+    console.error(`watcher state unreadable, starting fresh: ${e.message || e}`);
+  }
   return (
-    loadJson(watcherStatePath()) || {
+    doc || {
       counts: { claude: 0, codex: 0, cursor: 0 },
       prev_counts: { claude: 0, codex: 0, cursor: 0 },
       state: "idle",
@@ -136,9 +165,25 @@ function loadState() {
   );
 }
 
+/**
+ * A collect never spans ticks — the loop in tickOnce is synchronous — so a
+ * `collecting` flag found at startup belongs to a process that is gone, and
+ * planCollect would skip that CLI for good. (Cross-process overlap is the PTY
+ * lock's job, not this flag's.) Clearing them is what makes a restart mid
+ * collect recoverable instead of silently disabling a subscription.
+ */
+export function clearCollecting(state) {
+  const collecting = {};
+  for (const cli of Object.keys(state?.collecting || {})) collecting[cli] = false;
+  return { ...state, collecting };
+}
+
 function saveState(state) {
-  fs.mkdirSync(path.dirname(watcherStatePath()), { recursive: true });
-  fs.writeFileSync(watcherStatePath(), `${JSON.stringify(state, null, 2)}\n`);
+  const dest = watcherStatePath();
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const tmp = `${dest}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
+  fs.renameSync(tmp, dest);
 }
 
 /**
@@ -193,6 +238,7 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
     }
     const advanced = advanceSchedule({
       successful,
+      attempted: toCollect,
       state,
       lastCollect: stateDoc.last_collect || {},
       nextDue: stateDoc.next_due || {},
@@ -228,6 +274,8 @@ async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const roster = loadJson(configPath()) || {};
   const cfg = watcherConfig(roster);
+
+  if (!dryRun) saveState(clearCollecting(loadState()));
 
   if (once) {
     const r = tickOnce({ roster, dryRun });

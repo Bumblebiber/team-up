@@ -45,3 +45,10 @@ test("buildExpectScript cursor waits for the panel instead of sleeping a fixed s
     assert.ok(Number(secs) <= 3, `blind sleep of ${secs}s after the command`);
   }
 });
+
+test("codex boot dismisses the update dialog with escape, never the menu", () => {
+  const script = buildExpectScript("codex", 180);
+  assert.match(script, /-re "Update available" \{ sleep 2; send "\\033"; exp_continue \}/);
+  // Option 1 of that dialog shells out to the codex installer.
+  assert.equal(/Update available.*send "1/.test(script), false);
+});

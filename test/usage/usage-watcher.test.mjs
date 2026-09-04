@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { planCollect, advanceSchedule, computeState } from "../../src/usage/usage-watcher.mjs";
+import { planCollect, advanceSchedule, computeState, clearCollecting } from "../../src/usage/usage-watcher.mjs";
 
 const NOW = Date.parse("2026-07-17T12:00:00Z");
 const subs = ["claude", "codex", "cursor"];
 const DEFAULT_CONFIG = {
   tick_sec: 60,
-  intervals: { idle_heartbeat_hours: 24, active_min: 20, busy_min: 8 },
+  intervals: { idle_heartbeat_hours: 24, idle_min: 30, active_min: 20, busy_min: 8 },
 };
 
 test("computeState idle/active/busy", () => {
@@ -123,23 +123,36 @@ test("failed collect does not advance idle heartbeat schedule", () => {
   });
   const advanced = advanceSchedule({
     successful: [],
+    attempted: first.collect,
     state: first.state,
     lastCollect: { claude: null, codex: null, cursor: null },
     nextDue: { claude: null, codex: null, cursor: null },
     now: NOW,
     config: DEFAULT_CONFIG,
   });
-  const retry = planCollect({
+  assert.deepEqual(
+    advanced.last_collect,
+    { claude: null, codex: null, cursor: null },
+    "a failed collect must not journal a heartbeat",
+  );
+
+  const retryOpts = (now) => ({
     counts: { claude: 0, codex: 0, cursor: 0 },
     prevCounts: { claude: 0, codex: 0, cursor: 0 },
     state: "idle",
     collecting: { claude: false, codex: false, cursor: false },
     lastCollect: advanced.last_collect,
     nextDue: advanced.next_due,
-    now: NOW + 60_000,
+    now,
     subscriptions: subs,
   });
-  assert.equal(retry.collect.length, 3);
+  // Bounded retry: the next attempt waits for the idle interval instead of
+  // re-firing every tick and holding the PTY lock more or less continuously.
+  assert.deepEqual(planCollect(retryOpts(NOW + 60_000)).collect, []);
+  assert.equal(
+    planCollect(retryOpts(NOW + DEFAULT_CONFIG.intervals.idle_min * 60_000)).collect.length,
+    3,
+  );
 });
 
 test("usage-watcher.sh has no hardcoded install path", () => {
@@ -149,4 +162,25 @@ test("usage-watcher.sh has no hardcoded install path", () => {
   );
   assert.equal(sh.includes("projects/o9k"), false);
   assert.match(sh, /TEAM_UP_SCRIPTS/);
+});
+
+test("clearCollecting frees CLIs wedged by a restart mid-collect", () => {
+  const wedged = {
+    collecting: { claude: false, codex: true, cursor: true },
+    next_due: { claude: null, codex: null, cursor: null },
+    last_collect: { claude: null, codex: null, cursor: null },
+  };
+  const state = clearCollecting(wedged);
+  assert.deepEqual(state.collecting, { claude: false, codex: false, cursor: false });
+  const d = planCollect({
+    counts: { claude: 0, codex: 0, cursor: 0 },
+    prevCounts: { claude: 0, codex: 0, cursor: 0 },
+    state: "idle",
+    collecting: state.collecting,
+    lastCollect: state.last_collect,
+    nextDue: state.next_due,
+    now: NOW,
+    subscriptions: subs,
+  });
+  assert.deepEqual(d.collect.sort(), ["claude", "codex", "cursor"]);
 });

@@ -79,12 +79,18 @@ export function buildExpectScript(cli, timeoutSec = 45) {
     const bootTimeout = Math.max(90, Math.floor(timeoutSec * 0.6));
     const readyPat = shellEscape(seq.ready || "Tip:");
     const resultWaitSec = Math.max(20, Math.floor(timeoutSec * 0.15));
+    // A new codex release parks an "Update available" dialog in front of the
+    // TUI, and the banner we wait for never arrives — every collect then died
+    // on boot. Escape dismisses it; never answer the menu, option 1 runs a
+    // self-update, which a background collector has no business triggering.
     return `set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"
 expect {
+  -re "Update available" { sleep 2; send "\\033"; exp_continue }
   -re "Continue anyway" { send "y\\r"; exp_continue }
   -re "${readyPat}" { }
+  eof { exit 3 }
   timeout { exit 2 }
 }
 sleep 3
@@ -146,6 +152,14 @@ export function runPtyCollect(cli, opts = {}) {
       timeout: (timeoutSec + 60) * 1000,
       maxBuffer: 4 * 1024 * 1024,
     });
+  } catch (e) {
+    // expect exits non-zero on its own `exit 2`, and execFileSync then throws
+    // away everything the TUI printed. Hand back what did arrive: a partial
+    // render still parses, and a genuinely empty one surfaces as "empty-parse"
+    // instead of an opaque "Command failed: expect …".
+    const partial = typeof e?.stdout === "string" ? e.stdout : e?.stdout?.toString?.("utf8");
+    if (partial) return partial;
+    throw e;
   } finally {
     try {
       fs.unlinkSync(tmp);
