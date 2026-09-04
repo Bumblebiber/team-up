@@ -51,9 +51,16 @@ function shellQuote(s) {
   return /^[A-Za-z0-9_\-./=]+$/.test(s) ? s : "'" + s.replaceAll("'", "'\\''") + "'";
 }
 
-/** Pure tmux argv builder — spawn itself stays a one-liner around this. */
-export function tmuxArgs({ session, dir, argv }) {
-  return ["new-session", "-d", "-s", session, "-c", dir, argv.map(shellQuote).join(" ")];
+/**
+ * Pure tmux argv builder — spawn itself stays a one-liner around this.
+ * `env` becomes `-e K=V` flags: how a spawned worker proves to itself that it
+ * is a worker and not the interface agent talking to a human.
+ */
+export function tmuxArgs({ session, dir, argv, env = {} }) {
+  const envFlags = Object.entries(env)
+    .filter(([, v]) => v)
+    .flatMap(([k, v]) => ["-e", `${k}=${v}`]);
+  return ["new-session", "-d", "-s", session, "-c", dir, ...envFlags, argv.map(shellQuote).join(" ")];
 }
 
 /** Spawn a pinned CLI×model in detached tmux (no role chain / usage pick). */
@@ -73,7 +80,8 @@ export async function spawnPinnedInTmux({
   }
   const argv = buildCommand({ roster, model, cli, prompt, effort });
   const session = `${sessionPrefix}-${Date.now().toString(36)}`;
-  execFileSync("tmux", tmuxArgs({ session, dir, argv }), { stdio: "inherit" });
+  const env = { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: runId };
+  execFileSync("tmux", tmuxArgs({ session, dir, argv, env }), { stdio: "inherit" });
   linkDispatchToRun(runId, session);
   console.log(`model: ${model} (${cli})`);
   if (effort) console.log(`effort: ${effort}`);

@@ -329,6 +329,20 @@ test("tmuxArgs builds a detached session with cwd and shell-quoted command", () 
   ]);
 });
 
+test("tmuxArgs passes the worker marker env before the command", () => {
+  const args = tmuxArgs({
+    session: "s",
+    dir: "/tmp/task",
+    argv: ["claude", "p"],
+    env: { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: undefined },
+  });
+  assert.deepEqual(args, [
+    "new-session", "-d", "-s", "s", "-c", "/tmp/task",
+    "-e", "TEAMUP_WORKER=1",
+    "claude p",
+  ]);
+});
+
 test("pick skips fable model when fable-week hot but opus remains", () => {
   const roster = {
     ...ROSTER,
