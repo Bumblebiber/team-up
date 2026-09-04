@@ -120,7 +120,7 @@
       "provider": "xai",
       "tier": "high",
       "cli": ["cursor", "opencode", "hermes"],
-      "cli_model": "cursor-grok-4.5-high",
+      "cli_model": { "cursor": "cursor-grok-4.5-high", "opencode": "openrouter/x-ai/grok-4.5" },
       "account": "cursor",
       "reasoning": { "max": "high", "high": "high", "medium": null, "low": null },
       "priority": 4

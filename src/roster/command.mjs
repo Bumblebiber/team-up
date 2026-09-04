@@ -1,3 +1,4 @@
+import { cliModelFor } from "./config.mjs";
 import { execFileSync } from "node:child_process";
 import { linkDispatchToRun } from "../runs/runs.mjs";
 
@@ -26,7 +27,7 @@ export function resolveEffort({ roster, role, model, entryEffort, cellEffort }) 
 export function buildCommand({ roster, model, cli, prompt, effort = null }) {
   const template = roster.clis?.[cli]?.cmd;
   if (!template) throw new Error(`no cli template for "${cli}" in roster.json clis section`);
-  const cliModel = roster.models?.[model]?.cli_model || model;
+  const cliModel = cliModelFor(roster, model, cli);
   const hasSlot = template.some((p) => p.includes("{effort}"));
   if (effort && !hasSlot) {
     console.error(`roster: effort "${effort}" set but clis.${cli}.cmd has no {effort} — ignored`);

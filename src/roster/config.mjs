@@ -31,6 +31,41 @@ function isPlainObject(v) {
  * Structural sanity check for roster.json.
  * @returns {{ errors: string[], warnings: string[] }}
  */
+/**
+ * The model id a CLI expects for `{model}`.
+ *
+ * `cli_model` is either one alias for every CLI (a string) or a map keyed by
+ * CLI. The map exists because one logical model is spelled differently per
+ * CLI — cursor wants `cursor-grok-4.5-high`, opencode `openrouter/x-ai/grok-4.5`
+ * — and a single alias can only ever be right for one of them, silently
+ * sending a wrong id to the others. An unlisted CLI falls back to the roster's
+ * own model id, which is the correct answer whenever the CLI needs no alias.
+ */
+export function cliModelFor(roster, model, cli) {
+  return aliasFor(roster?.models?.[model], model, cli);
+}
+
+/** Same resolution against a model object the caller already holds. */
+export function aliasFor(modelDef, modelId, cli) {
+  const alias = modelDef?.cli_model;
+  if (typeof alias === "string" && alias) return alias;
+  if (alias && typeof alias === "object" && !Array.isArray(alias)) {
+    const hit = cli == null ? null : alias[cli];
+    return typeof hit === "string" && hit ? hit : modelId;
+  }
+  return modelId;
+}
+
+/** Every id a model answers to, for name resolution (pass-to). */
+export function cliModelAliases(modelDef, modelId) {
+  const alias = modelDef?.cli_model;
+  if (typeof alias === "string" && alias) return [alias];
+  if (alias && typeof alias === "object" && !Array.isArray(alias)) {
+    return [...new Set(Object.values(alias).filter((v) => typeof v === "string" && v))];
+  }
+  return [modelId];
+}
+
 export function validateRoster(roster) {
   const errors = [];
   const warnings = [];

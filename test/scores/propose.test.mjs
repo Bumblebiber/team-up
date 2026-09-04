@@ -7,6 +7,7 @@ import {
   proposeRoleChanges,
   applyProposals,
   buildCandidates,
+  unlistedHighScorers,
 } from "../../src/scores/propose.mjs";
 
 test("blendedPrice uses 3:1 AA convention", () => {
@@ -113,4 +114,59 @@ test("buildCandidates prefers hermes for open-weight", () => {
   const c = buildCandidates({ roster: ROSTER, scoresFile: SCORES, role: "implementer" });
   assert.equal(c[0].model, "deepseek-v4-pro");
   assert.equal(c[0].cli, "hermes");
+});
+
+test("unlistedHighScorers reports a newcomer once, against its widest gap", () => {
+  const roster = {
+    models: { "old-model": { cli: ["cursor"] } },
+    clis: { cursor: { cmd: ["cursor-agent", "{model}", "{prompt}"] } },
+    roles: {
+      implementer: { chain: ["cursor:old-model"] },
+      "test-writer": { chain: ["cursor:old-model"] },
+    },
+    scores: { min_delta: 2 },
+  };
+  const scoresFile = {
+    models: {
+      "old-model": { scores: { coding_index: 60 } },
+      "newcomer": { openrouter_id: "vendor/newcomer", scores: { coding_index: 75 } },
+      "barely-better": { openrouter_id: "vendor/barely", scores: { coding_index: 61 } },
+    },
+  };
+  const rows = unlistedHighScorers({ roster, scoresFile });
+  assert.equal(rows.length, 1, "one row per model, not per role");
+  assert.equal(rows[0].model, "vendor/newcomer");
+  assert.equal(rows[0].gap, 15);
+  assert.equal(rows[0].head, "cursor:old-model");
+  assert.equal(
+    rows.some((r) => r.model === "vendor/barely"),
+    false,
+    "a gain under min_delta is not worth reporting"
+  );
+});
+
+test("unlistedHighScorers ignores models the roster already has", () => {
+  const roster = {
+    models: { "old-model": { cli: ["cursor"] }, newcomer: { cli: ["cursor"] } },
+    clis: { cursor: { cmd: ["cursor-agent", "{model}", "{prompt}"] } },
+    roles: { implementer: { chain: ["cursor:old-model"] } },
+  };
+  const scoresFile = {
+    models: {
+      "old-model": { scores: { coding_index: 60 } },
+      newcomer: { scores: { coding_index: 90 } },
+    },
+  };
+  // Already in the roster, so buildCandidates can nominate it — not this report's job.
+  assert.deepEqual(unlistedHighScorers({ roster, scoresFile }), []);
+});
+
+test("unlistedHighScorers stays quiet when the head has no score to compare", () => {
+  const roster = {
+    models: { "old-model": { cli: ["cursor"] } },
+    clis: { cursor: { cmd: ["cursor-agent", "{model}", "{prompt}"] } },
+    roles: { implementer: { chain: ["cursor:old-model"] } },
+  };
+  const scoresFile = { models: { newcomer: { scores: { coding_index: 90 } } } };
+  assert.deepEqual(unlistedHighScorers({ roster, scoresFile }), []);
 });

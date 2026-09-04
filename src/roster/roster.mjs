@@ -352,7 +352,7 @@ async function cmdPassTo(args) {
   });
 }
 
-function printProposalReport(proposals) {
+function printProposalReport(proposals, unlisted = []) {
   console.log(`== roster scores report (${proposals.at}) ==`);
   console.log(`applied: ${proposals.applied.length}`);
   for (const a of proposals.applied) {
@@ -363,6 +363,14 @@ function printProposalReport(proposals) {
   console.log(`skipped: ${proposals.skipped.length}`);
   for (const s of proposals.skipped) {
     console.log(`  SKIP  ${s.role}: ${s.reason}`);
+  }
+  if (unlisted.length) {
+    console.log(`not in roster: ${unlisted.length}`);
+    for (const u of unlisted) {
+      console.log(
+        `  NEW   ${u.model} scores ${u.score} — ${u.gap.toFixed(1)} above ${u.head} (${u.headScore}) on ${u.role}; add it to models to make it a candidate`
+      );
+    }
   }
 }
 
@@ -377,7 +385,8 @@ function backupRoster(rosterFile) {
 async function cmdRefresh(args) {
   const { collectScores, buildRoleScores, writeScores } =
     await import("../scores/scores.mjs");
-  const { proposeRoleChanges, applyProposals } = await import("../scores/propose.mjs");
+  const { proposeRoleChanges, applyProposals, unlistedHighScorers } =
+    await import("../scores/propose.mjs");
 
   const fixtureDir = argValue(args, "--fixture-dir");
   const doApply = args.includes("--apply");
@@ -402,7 +411,7 @@ async function cmdRefresh(args) {
   }
 
   const proposals = proposeRoleChanges({ roster: rosterCfg, scoresFile: collected });
-  printProposalReport(proposals);
+  printProposalReport(proposals, unlistedHighScorers({ roster: rosterCfg, scoresFile: collected }));
 
   if (doApply && proposals.applied.length) {
     backupRoster(rosterWritePath());
@@ -418,19 +427,23 @@ async function cmdRefresh(args) {
 
 async function cmdPropose() {
   const { loadScores } = await import("../scores/scores.mjs");
-  const { proposeRoleChanges } = await import("../scores/propose.mjs");
+  const { proposeRoleChanges, unlistedHighScorers } = await import("../scores/propose.mjs");
   const rosterCfg = requireRoster();
   const scoresFile = loadScores();
   if (!scoresFile) {
     console.error(`no scores at scores path — run: team-up refresh`);
     process.exit(1);
   }
-  printProposalReport(proposeRoleChanges({ roster: rosterCfg, scoresFile }));
+  printProposalReport(
+    proposeRoleChanges({ roster: rosterCfg, scoresFile }),
+    unlistedHighScorers({ roster: rosterCfg, scoresFile })
+  );
 }
 
 async function cmdApplyScores() {
   const { loadScores } = await import("../scores/scores.mjs");
-  const { proposeRoleChanges, applyProposals } = await import("../scores/propose.mjs");
+  const { proposeRoleChanges, applyProposals, unlistedHighScorers } =
+    await import("../scores/propose.mjs");
   const rosterCfg = requireRoster();
   const scoresFile = loadScores();
   if (!scoresFile) {
@@ -438,7 +451,7 @@ async function cmdApplyScores() {
     process.exit(1);
   }
   const proposals = proposeRoleChanges({ roster: rosterCfg, scoresFile });
-  printProposalReport(proposals);
+  printProposalReport(proposals, unlistedHighScorers({ roster: rosterCfg, scoresFile }));
   if (!proposals.applied.length) {
     console.log("nothing to auto-apply");
     return;

@@ -2,6 +2,8 @@
 // session handoff. Roster-first (exact → fuzzy); heuristic only when no hits.
 // Pure: no I/O. Kept separate from roster.mjs to avoid circular imports.
 
+import { cliModelAliases } from "./config.mjs";
+
 const KNOWN_CLIS = new Set(["claude", "codex", "cursor", "opencode", "hermes"]);
 
 /** Parse "cli:model" pin; null if not that shape. */
@@ -124,19 +126,21 @@ export function findRosterMatches(query, roster) {
     if (!model || typeof model !== "object") continue;
     const cli = model.cli?.[0] ?? null;
     if (!cli) continue;
-    const cliModel = (model.cli_model || id).toLowerCase();
+    // A model may carry one alias per CLI, so match the query against all of
+    // them — the user names whichever spelling they have seen.
+    const aliases = cliModelAliases(model, id).map((a) => a.toLowerCase());
+    const aliasesN = aliases.map(alnumKey);
     const idL = id.toLowerCase();
     const labelL = `${cli}:${id}`.toLowerCase();
     const idN = alnumKey(idL);
-    const cliModelN = alnumKey(cliModel);
     const labelN = alnumKey(labelL);
 
     // Exact: literal or alnum-collapsed ("GPT 5.6 Sol" ≡ "gpt-5.6-sol")
     if (
       idL === ql ||
-      cliModel === ql ||
+      aliases.includes(ql) ||
       labelL === ql ||
-      (qn && (idN === qn || cliModelN === qn || labelN === qn))
+      (qn && (idN === qn || aliasesN.includes(qn) || labelN === qn))
     ) {
       push(exact, candidate(id, cli, "exact"));
       continue;
@@ -144,14 +148,12 @@ export function findRosterMatches(query, roster) {
     if (
       idL.includes(ql) ||
       ql.includes(idL) ||
-      cliModel.includes(ql) ||
-      ql.includes(cliModel) ||
+      aliases.some((a) => a.includes(ql) || ql.includes(a)) ||
       labelL.includes(ql) ||
       (qn.length >= 3 &&
         (idN.includes(qn) ||
           qn.includes(idN) ||
-          cliModelN.includes(qn) ||
-          qn.includes(cliModelN)))
+          aliasesN.some((a) => a.includes(qn) || qn.includes(a))))
     ) {
       push(fuzzy, candidate(id, cli, "fuzzy"));
     }

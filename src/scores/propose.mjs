@@ -195,6 +195,51 @@ export function proposeRoleChanges({ roster, scoresFile, now = Date.now() }) {
 }
 
 /**
+ * Models that outscore a role's head by min_delta but have no roster entry.
+ *
+ * `buildCandidates` can only nominate models the roster already knows — a
+ * brand-new release therefore stays invisible no matter how well it scores,
+ * which is how a chain quietly falls a generation behind. This cannot be
+ * automated the rest of the way: the id a CLI expects (`cursor-grok-4.6-medium`)
+ * is per-CLI naming the collector has no way to invent. So report it and let
+ * the user add the model.
+ *
+ * Reported once per model, against the role where the gap is widest — the
+ * same newcomer otherwise outscores a dozen heads and buries the report.
+ *
+ * @returns {Array<{ role: string, model: string, score: number, head: string, gap: number, headScore: number }>}
+ */
+export function unlistedHighScorers({ roster, scoresFile, limit = 5 }) {
+  const minDelta = roster.scores?.min_delta ?? 2.0;
+  const best = new Map();
+
+  for (const role of Object.keys(roster.roles || {})) {
+    const head = resolveHead(roster, role);
+    if (!head) continue;
+    const headScore = scoreForRole(scoresFile.models?.[head.model]?.scores, role);
+    if (headScore === null) continue;
+
+    for (const [modelId, mod] of Object.entries(scoresFile.models || {})) {
+      if (roster.models?.[modelId]) continue;
+      const score = scoreForRole(mod.scores, role);
+      if (score === null || score < headScore + minDelta) continue;
+      const row = {
+        role,
+        model: mod.openrouter_id || modelId,
+        score,
+        head: `${head.cli}:${head.model}`,
+        headScore,
+        gap: score - headScore,
+      };
+      const prev = best.get(row.model);
+      if (!prev || row.gap > prev.gap) best.set(row.model, row);
+    }
+  }
+
+  return [...best.values()].sort((a, b) => b.gap - a.gap).slice(0, limit);
+}
+
+/**
  * Apply gated changes onto a roster clone. Adds missing open-weight models
  * when auto_add_open_weight (default true).
  */

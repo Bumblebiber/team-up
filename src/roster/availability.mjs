@@ -7,6 +7,7 @@
 // watching. Ask the CLIs that can answer, once, from doctor.
 
 import { parseChainEntry } from "./chain.mjs";
+import { cliModelFor } from "./config.mjs";
 
 /**
  * Subcommand that makes a CLI list its models. The binary itself comes from
@@ -33,11 +34,6 @@ export function parseModelIds(text) {
   return ids;
 }
 
-/** The string buildCommand would hand the CLI for this model. */
-export function cliModelFor(roster, model) {
-  return roster?.models?.[model]?.cli_model || model;
-}
-
 /**
  * Every distinct CLI×model cell any role chain names.
  * @returns {Array<{ role: string, cli: string, model: string, sent: string }>}
@@ -57,7 +53,7 @@ export function referencedCells(roster) {
       if (!cli) continue;
       const key = `${cli}:${parsed.model}`;
       if (seen.has(key)) continue;
-      seen.set(key, { role, cli, model: parsed.model, sent: cliModelFor(roster, parsed.model) });
+      seen.set(key, { role, cli, model: parsed.model, sent: cliModelFor(roster, parsed.model, cli) });
     }
   }
   return [...seen.values()];

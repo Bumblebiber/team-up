@@ -2,6 +2,7 @@
 // observe.mjs — adaptive pane observation loop for waitMailbox.
 // Polls tmux, detects stalls, calls a roster observer judge, verifies proposals in code.
 
+import { cliModelFor } from "../roster/config.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -302,7 +303,7 @@ export function resolveObserverJudge(roster, usage, now = Date.now()) {
 }
 
 export function buildJudgeArgv({ roster, cli, model, prompt, effort = null }) {
-  const cliModel = roster.models?.[model]?.cli_model || model;
+  const cliModel = cliModelFor(roster, model, cli);
   if (cli === "cursor") {
     const argv = [
       "cursor-agent", "-p", "--output-format", "json",

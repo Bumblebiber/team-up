@@ -57,6 +57,15 @@ collapsed onto the catalogue id automatically — no dated entries needed.
 A model missing from its CLI entirely is a different problem, and
 `team-up doctor` reports it as `model_unavailable`.
 
+## The `not in roster` section
+
+`refresh` and `propose` also list models that outscore a role head but have no
+roster entry, so `buildCandidates` can never nominate them — this is how a
+chain falls a generation behind while every gate reports "already optimal".
+Adding them cannot be automated: the id a CLI expects is per-CLI naming the
+collector has no way to invent. Add the model (with its `cli_model`) and the
+next refresh treats it as a candidate like any other.
+
 ## Manual-only
 
 `team-up propose` — report without writing.

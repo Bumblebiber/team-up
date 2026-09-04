@@ -33,6 +33,21 @@ reject those strings on `--model` and want short aliases (`opus`, `sonnet`). Set
 "claude-opus": { "cli": ["claude"], "cli_model": "opus", "limit_windows": ["claude:5h", "claude:session", "claude:week"] }
 ```
 
+A model reachable through several CLIs is usually spelled differently in each,
+and one string can only be right for one of them — the others silently receive
+an id their CLI does not have. Give those a **map keyed by CLI**:
+
+```json
+"grok-4.5-high": {
+  "cli": ["cursor", "opencode", "hermes"],
+  "cli_model": { "cursor": "cursor-grok-4.5-high", "opencode": "openrouter/x-ai/grok-4.5" }
+}
+```
+
+A CLI the map omits (`hermes` here) falls back to the roster key, which is
+right whenever that CLI needs no alias. `team-up doctor` reports a cell whose
+resolved id the CLI does not list as `model_unavailable`.
+
 ### Headless Claude tmux workers (required cmd flag)
 
 Workers spawned by `team-up dispatch` run in detached tmux — no human on the
