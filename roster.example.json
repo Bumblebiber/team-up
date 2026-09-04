@@ -32,18 +32,6 @@
     "intervals": { "idle_heartbeat_hours": 24, "idle_min": 30, "active_min": 20, "busy_min": 8 }
   },
   "models": {
-    "claude-fable-5": {
-      "provider": "anthropic",
-      "tier": "frontier",
-      "cli": ["claude"],
-      "account": "claude",
-      "reasoning": { "max": "max", "high": "high", "medium": "medium", "low": "low" },
-      "limit_windows": ["claude:session", "claude:week", "claude:5h", "claude:fable-week"],
-      "priority": 1,
-      "price": { "in": null, "out": null, "note": "fill in per effort level" },
-      "strengths": ["architecture", "review"],
-      "weaknesses": ["cost"]
-    },
     "claude-opus": {
       "provider": "anthropic",
       "tier": "high",
@@ -160,7 +148,6 @@
     },
     "advisor": {
       "chain": [
-        "claude:claude-fable-5",
         "claude:claude-opus"
       ]
     },
