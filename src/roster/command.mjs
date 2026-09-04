@@ -84,8 +84,7 @@ export async function spawnPinnedInTmux({
   }
   const argv = buildCommand({ roster, model, cli, prompt, effort });
   const session = `${sessionPrefix}-${Date.now().toString(36)}`;
-  const env = { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: runId };
-  execFileSync("tmux", tmuxArgs({ session, dir, argv, env }), { stdio: "inherit" });
+  execFileSync("tmux", tmuxArgs({ session, dir, argv, env: { TEAMUP_RUN_ID: runId } }), { stdio: "inherit" });
   linkDispatchToRun(runId, session);
   console.log(`model: ${model} (${cli})`);
   if (effort) console.log(`effort: ${effort}`);
