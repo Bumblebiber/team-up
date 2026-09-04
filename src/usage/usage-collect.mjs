@@ -10,9 +10,10 @@ import { parseCodexStatus } from "../collectors/parse-codex-status.mjs";
 import { parseCursorUsage } from "../collectors/parse-cursor-usage.mjs";
 import { configPath, loadJson, usagePath } from "../roster/roster.mjs";
 import { usageWritePath } from "../paths.mjs";
-import { pushSample } from "./usage-windows.mjs";
+import { killCollectStrays } from "./usage-procs.mjs";
 import { withPtyLock } from "./usage-pty-lock.mjs";
 import { runPtyCollect, COLLECT_ENV } from "./usage-pty.mjs";
+import { pushSample } from "./usage-windows.mjs";
 
 const DEFAULT_SUBSCRIPTIONS = ["claude", "codex", "cursor"];
 
@@ -93,7 +94,17 @@ export async function collectUsageForCli(opts) {
   if (!isSubscriptionCli(cli, roster)) {
     return { cli, ok: false, reason: "not-subscription" };
   }
-  const lock = await withPtyLock(async () => collectCliTranscript(cli));
+  // A collect boots a whole CLI: MCP servers included (the telegram plugin's
+  // `bun`). Those outlive an expect that exits on `/exit` or on a boot
+  // timeout, and pile up in the watcher's cgroup. Sweep inside the lock, so a
+  // concurrent collect's tree is never the one being killed.
+  const lock = await withPtyLock(async () => {
+    try {
+      return collectCliTranscript(cli);
+    } finally {
+      killCollectStrays();
+    }
+  });
   if (!lock.ok) {
     return { cli, ok: false, reason: "pty-lock-contention" };
   }

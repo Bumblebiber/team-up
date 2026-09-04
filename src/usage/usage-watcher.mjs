@@ -5,7 +5,12 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { configPath, loadJson } from "../roster/roster.mjs";
-import { countAgentProcesses, countAgentProcessesOptsFromEnv, watcherStatePath } from "./usage-procs.mjs";
+import {
+  countAgentProcesses,
+  countAgentProcessesOptsFromEnv,
+  killCollectStrays,
+  watcherStatePath,
+} from "./usage-procs.mjs";
 import { subscriptionsFromRoster } from "./usage-collect.mjs";
 
 const DEFAULT_CONFIG = {
@@ -196,10 +201,24 @@ const COLLECT_TIMEOUT_MS = { claude: 120_000, codex: 300_000, cursor: 300_000 };
 
 function runCollect(cli) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "usage-collect.mjs");
-  execFileSync(process.execPath, [script, "--cli", cli], {
-    stdio: "inherit",
-    timeout: COLLECT_TIMEOUT_MS[cli] ?? 120_000,
-  });
+  try {
+    execFileSync(process.execPath, [script, "--cli", cli], {
+      stdio: "inherit",
+      timeout: COLLECT_TIMEOUT_MS[cli] ?? 120_000,
+    });
+  } catch (e) {
+    // Timeout only. There the child takes a SIGTERM and dies without running
+    // its own finally, so the CLI and its MCP servers leak into this service's
+    // cgroup, and the watcher is the only survivor that can sweep them. Any
+    // other exit already swept under the PTY lock — or never held it, and a
+    // sweep would kill the collect that does (a Stop hook's, say, which exits
+    // nonzero here as pty-lock-contention).
+    if (e?.code === "ETIMEDOUT") {
+      const killed = killCollectStrays();
+      if (killed.length) console.error(`swept ${killed.length} leftover ${cli} collect process(es)`);
+    }
+    throw e;
+  }
 }
 
 export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
