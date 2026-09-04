@@ -444,6 +444,7 @@ export async function launch({
 
   const wrapped = wrapWithSandbox({
     command: cliArgv,
+    setenv: { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: state.runId },
     permissions: effectivePerms,
     cwd: dest,
     writablePaths: workerWritable,
@@ -596,6 +597,7 @@ export async function launch({
       ? wrapped.argv
       : prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(state.runId), {
           probe,
+          runId: state.runId,
         }).argv,
     permissions: effectivePerms,
     budget: st.budget,
