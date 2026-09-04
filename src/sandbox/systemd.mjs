@@ -143,6 +143,7 @@ export function systemdSandboxArgv({
   extraReadWrite = [],
   writableProject = false,
   execPaths = [],
+  setenv = {},
 }) {
   const ro = new Set(asPropList(readOnlyPaths));
   const rw = new Set(asPropList(writablePaths));
@@ -207,6 +208,12 @@ export function systemdSandboxArgv({
     "--wait",
     "--collect",
     "--pipe",
+    // A transient unit starts with a clean environment: the caller's env (and a
+    // tmux session's -e) never reaches it. Anything the worker must see about
+    // itself has to ride along here.
+    ...Object.entries(setenv)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `--setenv=${k}=${v}`),
     ...properties.flatMap((p) => ["-p", p]),
     "--",
     ...command,

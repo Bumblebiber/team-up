@@ -55,9 +55,13 @@ function shellQuote(s) {
  * Pure tmux argv builder — spawn itself stays a one-liner around this.
  * `env` becomes `-e K=V` flags: how a spawned worker proves to itself that it
  * is a worker and not the interface agent talking to a human.
+ *
+ * TEAMUP_WORKER=1 is the default because every caller of this builder spawns a
+ * worker. Anything that spawns a parent/interface session must NOT route
+ * through here (see executeResumeAction in runs/runs.mjs).
  */
 export function tmuxArgs({ session, dir, argv, env = {} }) {
-  const envFlags = Object.entries(env)
+  const envFlags = Object.entries({ TEAMUP_WORKER: "1", ...env })
     .filter(([, v]) => v)
     .flatMap(([k, v]) => ["-e", `${k}=${v}`]);
   return ["new-session", "-d", "-s", session, "-c", dir, ...envFlags, argv.map(shellQuote).join(" ")];
@@ -80,8 +84,7 @@ export async function spawnPinnedInTmux({
   }
   const argv = buildCommand({ roster, model, cli, prompt, effort });
   const session = `${sessionPrefix}-${Date.now().toString(36)}`;
-  const env = { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: runId };
-  execFileSync("tmux", tmuxArgs({ session, dir, argv, env }), { stdio: "inherit" });
+  execFileSync("tmux", tmuxArgs({ session, dir, argv, env: { TEAMUP_RUN_ID: runId } }), { stdio: "inherit" });
   linkDispatchToRun(runId, session);
   console.log(`model: ${model} (${cli})`);
   if (effort) console.log(`effort: ${effort}`);

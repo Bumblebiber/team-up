@@ -48,3 +48,17 @@ test("a sandboxed read-only specialist still gets the network", () => {
   });
   assert.ok(!argv.some((a) => String(a).startsWith("PrivateNetwork")));
 });
+
+test("setenv rides into the transient unit, which starts with a clean environment", () => {
+  const argv = wrapWithSandbox({
+    command: ["claude"],
+    permissions: { writes: false },
+    cwd: "/tmp/work",
+    probe: () => true,
+    setenv: { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: "r42", TEAMUP_EMPTY: undefined },
+  }).argv;
+  assert.ok(argv.includes("--setenv=TEAMUP_WORKER=1"));
+  assert.ok(argv.includes("--setenv=TEAMUP_RUN_ID=r42"));
+  assert.ok(!argv.some((a) => String(a).includes("TEAMUP_EMPTY")));
+  assert.ok(argv.indexOf("--setenv=TEAMUP_WORKER=1") < argv.indexOf("--"));
+});

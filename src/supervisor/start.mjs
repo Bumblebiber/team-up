@@ -462,6 +462,7 @@ export function prepareArgvFromDescriptor(
     runtimeOverride = null,
     probe = systemdAvailable,
     descriptorPath = null,
+    runId = null,
     execFileSync: execFileSyncFn = execFileSync,
   } = {}
 ) {
@@ -651,6 +652,9 @@ export function prepareArgvFromDescriptor(
 
   const wrapped = wrapWithSandbox({
     command: argv,
+    // Worker marker for the sandboxed case; tmuxArgs carries it when the
+    // sandbox falls back to a plain argv.
+    setenv: { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: runId },
     permissions: descriptor.permissions || {},
     cwd: descriptor.context_dir || runPath,
     writablePaths: workerWritable,
@@ -683,8 +687,8 @@ export function prepareArgvFromDescriptor(
   };
 }
 
-function defaultStartTmux({ session, dir, argv }) {
-  execFileSync("tmux", tmuxArgs({ session, dir, argv }), { stdio: "ignore" });
+function defaultStartTmux({ session, dir, argv, runId }) {
+  execFileSync("tmux", tmuxArgs({ session, dir, argv, env: { TEAMUP_RUN_ID: runId } }), { stdio: "ignore" });
 }
 
 function defaultKillTmux(session) {
@@ -735,6 +739,7 @@ export function startFromLaunchDescriptor({
       runtimeOverride,
       probe,
       descriptorPath,
+      runId,
     });
     persistLaunchDescriptor(runId, nextDesc, env);
     descriptor = loadAuthoritativeLaunchDescriptor(runId, env);
@@ -744,6 +749,7 @@ export function startFromLaunchDescriptor({
     runtimeOverride,
     probe,
     descriptorPath,
+    runId,
   });
   const session =
     sessionName ||
