@@ -54,6 +54,22 @@ all-Claude with burst usage already ≥80% exhausts → exit non-zero, **dispatc
 fails**. There is no mid-flight vibe-picking; the agent must not substitute its
 own model.
 
+### Draining windows — a subscription someone else is burning
+
+A burst window under its threshold but *climbing* also skips the model:
+`limits.project_min` (default `30`) projects the window's recent burn rate
+that many minutes ahead, and a projected crossing of `handoff_at_burst` reads
+as **blocked** with a reason naming the rate (`codex:5h at 60% and burning
+1.0%/min — projected 90% in 30min (in use elsewhere)`). This is what keeps a
+dispatched worker off a CLI the user is working in — including from a second
+machine on the same account, which no local process count can see. It never
+projects past the window's reset, and `project_min: 0` disables it.
+
+The trend needs two samples inside 45 minutes, so it depends on the usage
+watcher running: `usage_watcher.intervals.idle_min` (default `30`) is what
+keeps sampling while no agent runs locally. Without the watcher there is one
+fresh reading at dispatch and no rate, and the gate stays silent.
+
 **Legitimate fix:** extend `roles.<role>.chain` in `roster.json` with non-Claude
 CLI×model pins the user curates — e.g. `cursor:composer-2.5`, `codex:gpt-5.6-sol`,
 `hermes:deepseek-v4-pro`. Config-time chain extension, not runtime improvisation.

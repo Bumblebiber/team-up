@@ -10,6 +10,7 @@ import { parseCodexStatus } from "../collectors/parse-codex-status.mjs";
 import { parseCursorUsage } from "../collectors/parse-cursor-usage.mjs";
 import { configPath, loadJson, usagePath } from "../roster/roster.mjs";
 import { usageWritePath } from "../paths.mjs";
+import { pushSample } from "./usage-windows.mjs";
 import { withPtyLock } from "./usage-pty-lock.mjs";
 import { runPtyCollect, COLLECT_ENV } from "./usage-pty.mjs";
 
@@ -33,7 +34,14 @@ export function mergeUsageWindows(existing, parsed) {
   const now = new Date().toISOString();
   for (const [key, info] of Object.entries(parsed)) {
     if (!info || typeof info.used !== "number") continue;
-    base.windows[key] = { ...info, updated: info.updated || now };
+    const updated = info.updated || now;
+    // The collectors rebuild each record from a fixed field list, so the
+    // sample ring only survives if the merge carries it across explicitly.
+    base.windows[key] = {
+      ...info,
+      updated,
+      history: pushSample(base.windows[key]?.history, { used: info.used, at: updated }),
+    };
   }
   base.updated = now;
   return base;

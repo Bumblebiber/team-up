@@ -293,6 +293,18 @@ export function modelUsageGate({ usage, limitWindows, provider, cli, limits, now
         const used = usage.windows[wkey].used;
         return { blocked: true, reason: `window ${wkey} at ${Math.round(used * 100)}%` };
       }
+      const drain = windowIsDraining(wkey, usage, limits, now);
+      if (drain) {
+        const used = usage.windows[wkey].used;
+        return {
+          blocked: true,
+          reason:
+            `window ${wkey} at ${Math.round(used * 100)}% and burning ` +
+            `${(drain.per_min * 100).toFixed(1)}%/min — projected ` +
+            `${Math.round(drain.projected * 100)}% in ${drain.horizon_min}min ` +
+            `(in use elsewhere)`,
+        };
+      }
     }
     return { blocked: false };
   }
@@ -318,4 +330,71 @@ export function isCliUsageFresh(cli, usage, maxAgeMs = 5 * 60_000, now = Date.no
     if (Number.isFinite(t)) newest = Math.max(newest, t);
   }
   return newest > 0 && now - newest < maxAgeMs;
+}
+
+/** Samples kept per window for the burn-rate trend. */
+const HISTORY_MAX = 12;
+const HISTORY_MAX_AGE_MS = 3 * 3_600_000;
+/** Oldest sample a rate may reach back to, and the shortest span it trusts. */
+const RATE_SPAN_MS = 45 * 60_000;
+const RATE_MIN_SPAN_MS = 5 * 60_000;
+
+/**
+ * Append one reading to a window's sample ring.
+ * A drop means the window reset — the old samples describe a spent quota, so
+ * the ring starts over rather than averaging across the boundary.
+ * ponytail: fail-open — for the first samples after a reset there is no rate,
+ * so the drain gate below stays quiet until a span rebuilds.
+ */
+export function pushSample(history, { used, at }) {
+  const t = typeof at === "number" ? at : Date.parse(at);
+  if (typeof used !== "number" || !Number.isFinite(t)) return history || [];
+  const prior = (Array.isArray(history) ? history : [])
+    .filter((s) => Number.isFinite(s?.at) && typeof s?.used === "number" && s.at < t)
+    .filter((s) => t - s.at <= HISTORY_MAX_AGE_MS);
+  const last = prior[prior.length - 1];
+  const kept = last && used < last.used ? [] : prior;
+  return [...kept, { at: t, used }].slice(-HISTORY_MAX);
+}
+
+/**
+ * Usage burn per millisecond over the recent samples, or null when unknown.
+ * Never negative: a decrease is a reset, not negative consumption.
+ */
+export function burnRate(w, now = Date.now()) {
+  const samples = (Array.isArray(w?.history) ? w.history : []).filter(
+    (s) => Number.isFinite(s?.at) && typeof s?.used === "number" && now - s.at <= RATE_SPAN_MS
+  );
+  if (samples.length < 2) return null;
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  const dt = last.at - first.at;
+  if (dt < RATE_MIN_SPAN_MS) return null;
+  return Math.max(0, (last.used - first.used) / dt);
+}
+
+/**
+ * Routing-only gate: a burst window that reaches its handoff threshold within
+ * the projection horizon at the current burn rate. Catches a subscription
+ * someone else is draining right now — another session, or another machine on
+ * the same account, which no local process count can see. Deliberately not
+ * part of windowIsBlocking: checkThresholds would turn a merely climbing
+ * window into a full handoff and stop work that still has quota.
+ * @returns {{ projected: number, per_min: number, horizon_min: number }|null}
+ */
+export function windowIsDraining(wkey, usage, limits, now = Date.now()) {
+  if (!isBurstWindow(wkey)) return null;
+  const w = usage?.windows?.[wkey];
+  if (!w || typeof w.used !== "number") return null;
+  const horizonMs = (limits?.project_min ?? 30) * 60_000;
+  if (!(horizonMs > 0)) return null;
+  const resetAt = effectiveResetAt(w, wkey, limits, now);
+  if (resetAt !== null && now >= resetAt) return null;
+  // Never project past the reset: quota the window gets back is not burnt.
+  const horizon = resetAt === null ? horizonMs : Math.min(horizonMs, resetAt - now);
+  const rate = burnRate(w, now);
+  if (rate === null || rate <= 0) return null;
+  const projected = w.used + rate * horizon;
+  if (projected < resolveHandoffAt(wkey, limits)) return null;
+  return { projected, per_min: rate * 60_000, horizon_min: Math.round(horizon / 60_000) };
 }

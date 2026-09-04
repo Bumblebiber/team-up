@@ -5,7 +5,15 @@ import { resolveEffort } from "./command.mjs";
 export { resolveEffort };
 
 export function limits(roster) {
-  return { warn_at: 0.9, handoff_at: 0.95, handoff_at_burst: 0.8, ...(roster.limits || {}) };
+  return {
+    warn_at: 0.9,
+    handoff_at: 0.95,
+    handoff_at_burst: 0.8,
+    // How far ahead a burst window's burn rate is projected when routing.
+    // 0 disables the trend gate.
+    project_min: 30,
+    ...(roster.limits || {}),
+  };
 }
 
 function markedUntil(usage, key, now) {
@@ -54,7 +62,7 @@ export function resolveLimitWindows(_roster, modelId, model) {
     out.push("claude:session", "claude:week", "claude:5h");
     if (modelId.includes("fable")) out.push("claude:fable-week");
   }
-  if (clis.includes("codex")) out.push("codex:weekly");
+  if (clis.includes("codex")) out.push("codex:weekly", "codex:5h");
   if (clis.includes("cursor")) out.push("cursor:included");
   return out;
 }
