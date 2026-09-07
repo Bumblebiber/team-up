@@ -6,7 +6,7 @@
 // tmux worker, and the CLI rejects the model minutes later with nobody
 // watching. Ask the CLIs that can answer, once, from doctor.
 
-import { parseChainEntry } from "./chain.mjs";
+import { parseChainEntry, accountBlockReason } from "./chain.mjs";
 import { cliModelFor } from "./config.mjs";
 
 /**
@@ -49,6 +49,9 @@ export function referencedCells(roster) {
         continue;
       }
       const mod = roster.models?.[parsed.model];
+      // A disabled account is never spawned, so whether its models still exist
+      // at the CLI is not a finding — probing them is pure noise in doctor.
+      if (accountBlockReason(roster, mod?.account)) continue;
       const cli = parsed.cli ?? mod?.cli?.[0] ?? null;
       if (!cli) continue;
       const key = `${cli}:${parsed.model}`;

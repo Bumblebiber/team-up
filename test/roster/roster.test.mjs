@@ -71,6 +71,24 @@ test("pick skips marks on a provider name (mark-limited <provider>)", () => {
   assert.equal(r2.model, "model-c");
 });
 
+test("pick skips a disabled account but keeps the chain order", () => {
+  const roster = {
+    ...ROSTER,
+    accounts: { moonshot: { kind: "credit", enabled: false, remaining: 5 } },
+    models: { ...ROSTER.models, "model-c": { ...ROSTER.models["model-c"], account: "moonshot" } },
+    roles: { planner: { chain: ["model-c", "model-a"] } },
+  };
+  const r = pick({ roster, usage: null, role: "planner", now: NOW });
+  assert.equal(r.model, "model-a");
+  assert.deepEqual(r.skipped, [{ model: "model-c", reason: "account disabled" }]);
+});
+
+test("pick allows a model whose account the roster does not declare", () => {
+  const roster = { ...ROSTER, accounts: { other: { kind: "subscription", enabled: false } } };
+  const r = pick({ roster, usage: null, role: "planner", now: NOW });
+  assert.equal(r.model, "model-a");
+});
+
 test("pick skips chain entries missing from models", () => {
   const roster = { ...ROSTER, roles: { planner: { chain: ["ghost", "model-a"] } } };
   const r = pick({ roster, usage: null, role: "planner", now: NOW });

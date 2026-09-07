@@ -1,5 +1,5 @@
 import { modelUsageGate } from "../usage/usage-windows.mjs";
-import { limits } from "./chain.mjs";
+import { limits, accountBlockReason } from "./chain.mjs";
 import { defaultHarnessCapabilities } from "../harness/registry.mjs";
 import { COMMAND_BROKER_CAPABILITY } from "../harness/capabilities.mjs";
 
@@ -112,16 +112,12 @@ export function resolveProfile({
       skipped.push({ model, reason: "no account" });
       continue;
     }
-    {
-      const account = roster.accounts?.[accountId];
-      if (!account?.enabled) {
-        skipped.push({ model, reason: "account unavailable" });
-        continue;
-      }
-      if (account.kind === "credit" && !(account.remaining > 0)) {
-        skipped.push({ model, reason: "account unavailable" });
-        continue;
-      }
+    // Unlike the chain path, an account the roster does not declare is a deny
+    // here: resolveProfile discovers models by tier, so an undeclared account
+    // means "not vetted for specialist use".
+    if (!roster.accounts?.[accountId] || accountBlockReason(roster, accountId)) {
+      skipped.push({ model, reason: "account unavailable" });
+      continue;
     }
 
     const reasoningMap = spec.reasoning || {};

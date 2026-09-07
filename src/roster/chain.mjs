@@ -47,6 +47,21 @@ export function parseChainEntry(entry) {
 }
 
 
+/**
+ * Why the account behind a model bars it, or null.
+ *
+ * An unknown account id is *not* a block here: a chain entry is human intent,
+ * and rosters predating `accounts` have none. `resolveProfile` discovers models
+ * by tier instead and denies those separately.
+ */
+export function accountBlockReason(roster, accountId) {
+  const account = roster?.accounts?.[accountId];
+  if (!account) return null;
+  if (!account.enabled) return "account disabled";
+  if (account.kind === "credit" && !(account.remaining > 0)) return "account out of credit";
+  return null;
+}
+
 function entryLabel(model, cli) {
   return cli ? `${cli}:${model}` : model;
 }
@@ -111,6 +126,12 @@ export function evaluatePickCell({
 
   if (!model) {
     skipped.push({ model: label, reason: "not in models" });
+    return { model: null, cli: null, effort: null, skipped };
+  }
+
+  const acctReason = accountBlockReason(roster, model.account);
+  if (acctReason) {
+    skipped.push({ model: label, reason: acctReason });
     return { model: null, cli: null, effort: null, skipped };
   }
 
@@ -189,6 +210,12 @@ export function pick({ roster, usage, role, now = Date.now() }) {
 
     const cli = parsed.cli ?? model.cli?.[0] ?? null;
     const label = entryLabel(name, parsed.cli);
+
+    const acctReason = accountBlockReason(roster, model.account);
+    if (acctReason) {
+      skipped.push({ model: label, reason: acctReason });
+      continue;
+    }
 
     if (!cli) {
       skipped.push({ model: label, reason: "no cli resolved" });
