@@ -9,7 +9,7 @@ worker launch. o9k keeps a thin compatibility adapter only.
 ## Quick start
 
 ```bash
-node bin/team-up.mjs version   # 0.1.0
+node bin/team-up.mjs version   # 0.3.0
 node bin/team-up.mjs validate
 node bin/team-up.mjs pick --role <role>
 node bin/team-up.mjs pick --profile frontier:max

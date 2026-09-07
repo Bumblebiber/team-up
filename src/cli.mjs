@@ -1,4 +1,4 @@
-export const VERSION = "0.1.0";
+export const VERSION = "0.3.0";
 
 import { execFileSync } from "node:child_process";
 import { pick } from "./roster/chain.mjs";

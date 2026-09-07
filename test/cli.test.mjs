@@ -9,7 +9,7 @@ test("version prints package version", async () => {
   const lines = [];
   const code = await runCli(["version"], { out: line => lines.push(line) });
   assert.equal(code, 0);
-  assert.deepEqual(lines, ["0.1.0"]);
+  assert.deepEqual(lines, ["0.3.0"]);
 });
 
 test("runs gc --dry-run reports without mutating temp runs", async () => {
