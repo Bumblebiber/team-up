@@ -1,7 +1,7 @@
 {
   "name": "team-up",
   "displayName": "team-up",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The multi-specialist pipeline, subagent dispatch, role-based model selection and cross-CLI mailbox runs: deterministic pick/dispatch by role, limit-aware fallback chains, session-limit handoff, and durable runs that survive a reboot.",
   "author": { "name": "Bumblebiber" },
   "repository": "https://github.com/Bumblebiber/team-up",
