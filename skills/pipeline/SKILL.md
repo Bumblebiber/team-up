@@ -40,6 +40,15 @@ edit is one edit.
 
 ## Invariants
 
+### Budgets belong to tickets; capacity belongs to live workers
+
+Before dispatching specialists, charging reviews, or declaring a limit stop,
+read [Ticket budgets and worker capacity](references/ticket-budgets.md).
+Use a run ledger per ticket (or explicitly scoped integration ticket), exclude
+watchers and pre-work launch failures, and pause only the capped scope and its
+dependents. Independent ready tickets continue. Terminal tmux cleanup frees
+capacity, not the cumulative ticket budget.
+
 These are not style preferences. Each one is here because the alternative was
 measured and lost something.
 
@@ -138,9 +147,10 @@ write outside its remit, and only the prompt tells it not to.
 
 ### Depth is capped at 3
 
-`normalizeRequest` rejects a request past `MAX_DEPTH`. The cap exists so a
-writer→reviewer→writer ping-pong terminates. If you find yourself on cycle
-three, the ticket is wrong — go back to the spec rather than around again.
+`normalizeRequest` rejects a request past `MAX_DEPTH`. This bounds nested
+delegation, not sequential review rounds or the number of live workers.
+Keep correction rounds within the ticket's separate review budget; repeated
+failures call for revisiting that ticket's spec, not stopping unrelated work.
 
 ## Orchestrate always, integrate while it is trivial
 
