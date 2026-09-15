@@ -471,7 +471,6 @@ export function prepareArgvFromDescriptor(
   const model = runtimeOverride?.model || descriptor.model;
   const effort = runtimeOverride?.effort ?? descriptor.effort;
   const prompt = readPrompt(descriptor);
-  let argv = buildCommand({ roster: r, model, cli, prompt, effort });
 
   const brokerRequired = Boolean(descriptor.harness_requirements?.command_broker);
   const isolationRequired = Boolean(
@@ -507,6 +506,11 @@ export function prepareArgvFromDescriptor(
     descriptor.capsule_launch?.run_root ||
     (descriptor.context_dir ? path.dirname(descriptor.context_dir) : null) ||
     path.dirname(descriptor.prompt_path || ".");
+
+  let argv = buildCommand({
+    roster: r, model, cli, prompt, effort,
+    dir: descriptor.context_dir || broker?.runDir || harnessRunDir,
+  });
 
   const needsHarnessPrepare =
     Boolean(capsule) ||

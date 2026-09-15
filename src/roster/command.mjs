@@ -1,5 +1,7 @@
 import { cliModelFor } from "./config.mjs";
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { linkDispatchToRun } from "../runs/runs.mjs";
 
 /** First non-flag argv token; skips values that belong to --flags. */
@@ -24,7 +26,7 @@ export function resolveEffort({ roster, role, model, entryEffort, cellEffort }) 
   return entryEffort || cellEffort || roster?.roles?.[role]?.effort || roster?.models?.[model]?.effort || null;
 }
 
-export function buildCommand({ roster, model, cli, prompt, effort = null }) {
+export function buildCommand({ roster, model, cli, prompt, effort = null, dir = null }) {
   const template = roster.clis?.[cli]?.cmd;
   if (!template) throw new Error(`no cli template for "${cli}" in roster.json clis section`);
   const cliModel = cliModelFor(roster, model, cli);
@@ -33,17 +35,38 @@ export function buildCommand({ roster, model, cli, prompt, effort = null }) {
     console.error(`roster: effort "${effort}" set but clis.${cli}.cmd has no {effort} — ignored`);
   }
   const argv = [];
+  let promptIndex = null;
   for (let i = 0; i < template.length; i++) {
     const part = template[i];
     if (part.includes("{effort}") && !effort) {
       if (argv.length && template[i - 1]?.startsWith("-")) argv.pop();
       continue;
     }
+    if (promptIndex === null && part.includes("{prompt}")) promptIndex = argv.length;
     argv.push(
       part.replaceAll("{model}", cliModel)
         .replaceAll("{prompt}", prompt)
         .replaceAll("{effort}", effort ?? "")
     );
+  }
+  if (cli === "codex" && dir) {
+    let cwd = path.resolve(dir);
+    try {
+      cwd = fs.realpathSync(cwd);
+    } catch (error) {
+      // Dry-run descriptors can name directories that have not been materialized yet.
+      if (error.code !== "ENOENT") throw error;
+    }
+    // The dotted projects."<path>".trust_level override did not suppress the
+    // trust prompt in Codex 0.153.4; a TOML table value did. This preserves
+    // paths containing dots and quotes. The invocation-only override never
+    // edits the user's shared config.toml.
+    const options = [
+      "-c", `projects={${JSON.stringify(cwd)}={trust_level="trusted"}}`,
+      "-c", "check_for_update_on_startup=false",
+    ];
+    const delimiter = argv.indexOf("--");
+    argv.splice(delimiter < 0 ? (promptIndex ?? argv.length) : delimiter, 0, ...options);
   }
   return argv;
 }
@@ -83,7 +106,7 @@ export async function spawnPinnedInTmux({
     console.error(`no cli template for "${cli}" in roster.json clis section`);
     process.exit(1);
   }
-  const argv = buildCommand({ roster, model, cli, prompt, effort });
+  const argv = buildCommand({ roster, model, cli, prompt, effort, dir });
   const session = `${sessionPrefix}-${Date.now().toString(36)}`;
   execFileSync("tmux", tmuxArgs({ session, dir, argv, env: { TEAMUP_RUN_ID: runId } }), { stdio: "inherit" });
   linkDispatchToRun(runId, session);

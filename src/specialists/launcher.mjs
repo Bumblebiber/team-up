@@ -383,6 +383,7 @@ export async function launch({
     cli: cell.cli,
     prompt: workerPrompt,
     effort: cell.effort,
+    dir: dest,
   });
 
   const runPath = runDir(state.runId);
