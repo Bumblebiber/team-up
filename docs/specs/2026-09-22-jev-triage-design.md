@@ -74,7 +74,7 @@ the role name, and the role's description if one exists. No repo contents.
   "source": "jev" | "fallback",
   "profile": { "tier": "high", "reasoning": "medium" } | null,
   "confidence": { "tier": 0.81, "reasoning": 0.64 },
-  "fallback_reason": null | "no_key" | "timeout" | "http_4xx" | "http_5xx" | "low_confidence" | "invalid_answer",
+  "fallback_reason": null | "disabled" | "role_not_allowlisted" | "no_key" | "timeout" | "http_4xx" | "http_5xx" | "low_confidence" | "invalid_answer",
   "latency_ms": 212
 }
 ```

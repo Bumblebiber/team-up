@@ -305,6 +305,7 @@ test("role not in allowlist skips triage call", async () => {
   assert.equal(called, false);
   assert.equal(result.source, "fallback");
   assert.equal(result.profile, null);
+  assert.equal(result.fallback_reason, "role_not_allowlisted");
   assert.equal(isRoleTriagable(baseRoster, "planner"), false);
 });
 
@@ -332,6 +333,7 @@ test("triage disabled returns fallback without fetch", async () => {
   });
   assert.equal(called, false);
   assert.equal(result.source, "fallback");
+  assert.equal(result.fallback_reason, "disabled");
 });
 
 function withTempRoster(roster, fn) {

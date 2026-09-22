@@ -158,10 +158,10 @@ export async function triage({
   const cfg = triageConfig(roster);
 
   if (!isTriageEnabled(roster)) {
-    return fallbackOutput(null, 0);
+    return fallbackOutput("disabled", 0);
   }
   if (role && !isRoleTriagable(roster, role)) {
-    return fallbackOutput(null, 0);
+    return fallbackOutput("role_not_allowlisted", 0);
   }
 
   const keyName = cfg.key_env || DEFAULT_TRIAGE.key_env;
