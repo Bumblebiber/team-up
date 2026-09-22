@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { normalizeTier, resolveProfile } from "./profile.mjs";
 import { evaluatePickCell } from "./chain.mjs";
 
@@ -39,6 +42,74 @@ export function isTriageEnabled(roster) {
 export function isRoleTriagable(roster, role) {
   const cfg = triageConfig(roster);
   return !role || cfg.roles.includes(role);
+}
+
+/**
+ * Whether dispatch should run triage for this spawn.
+ * `--triage` is accepted as a no-op when auto-triage would already run.
+ */
+export function shouldRunTriage({ roster, role, modelPin, noTriage = false }) {
+  if (noTriage) return false;
+  if (modelPin) return false;
+  if (!isTriageEnabled(roster)) return false;
+  if (!isRoleTriagable(roster, role)) return false;
+  return true;
+}
+
+function expandHome(filePath) {
+  if (!filePath || typeof filePath !== "string") return filePath;
+  if (filePath.startsWith("~/")) return path.join(os.homedir(), filePath.slice(2));
+  if (filePath === "~") return os.homedir();
+  return filePath;
+}
+
+function parseEnvFileLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) return null;
+  const eq = trimmed.indexOf("=");
+  if (eq <= 0) return null;
+  const name = trimmed.slice(0, eq).trim();
+  let value = trimmed.slice(eq + 1).trim();
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+  return { name, value };
+}
+
+/**
+ * Resolve triage API key without mutating process.env.
+ * Env wins over key_file. Refuses group/world-readable key files.
+ */
+export function lookupTriageKey({ roster, env = {}, warn = (msg) => console.error(msg) }) {
+  const cfg = triageConfig(roster);
+  const keyName = cfg.key_env || DEFAULT_TRIAGE.key_env;
+
+  const fromEnv = env[keyName];
+  if (fromEnv) return { key: fromEnv, source: "env" };
+
+  const keyFile = cfg.key_file;
+  if (!keyFile) return { key: null };
+
+  const resolved = expandHome(keyFile);
+  try {
+    const stat = fs.statSync(resolved);
+    const mode = stat.mode & 0o777;
+    if (mode & 0o077) {
+      warn(`triage: key file ${resolved} is group- or world-readable; refusing`);
+      return { key: null };
+    }
+    const content = fs.readFileSync(resolved, "utf8");
+    for (const line of content.split("\n")) {
+      const parsed = parseEnvFileLine(line);
+      if (parsed?.name === keyName) return { key: parsed.value, source: "file" };
+    }
+    return { key: null };
+  } catch {
+    return { key: null };
+  }
 }
 
 export function shouldUseActiveTriage(roster, random = Math.random) {
@@ -176,8 +247,7 @@ export async function triage({
     return fallbackOutput("role_not_allowlisted", 0);
   }
 
-  const keyName = cfg.key_env || DEFAULT_TRIAGE.key_env;
-  const apiKey = env[keyName];
+  const { key: apiKey } = lookupTriageKey({ roster, env });
   if (!apiKey) {
     return fallbackOutput("no_key", 0);
   }

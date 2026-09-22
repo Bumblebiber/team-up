@@ -221,6 +221,9 @@ export function validateRoster(roster) {
       if (roster.triage.key_env !== undefined && typeof roster.triage.key_env !== "string") {
         errors.push("triage.key_env must be a string");
       }
+      if (roster.triage.key_file !== undefined && typeof roster.triage.key_file !== "string") {
+        errors.push("triage.key_file must be a string");
+      }
       if (roster.triage.model !== undefined && typeof roster.triage.model !== "string") {
         errors.push("triage.model must be a string");
       }

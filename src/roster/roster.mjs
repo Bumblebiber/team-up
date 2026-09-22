@@ -27,6 +27,7 @@ import {
   triage as runTriage,
   isTriageEnabled,
   isRoleTriagable,
+  shouldRunTriage,
   shouldUseActiveTriage,
   resolveTriageDispatch,
 } from "./triage.mjs";
@@ -329,11 +330,13 @@ async function cmdDispatch(args) {
   const promptFile = argValue(args, "--prompt-file");
   const runId = argValue(args, "--run-id");
   const modelPin = argValue(args, "--model");
-  const useTriage = args.includes("--triage");
+  const noTriage = args.includes("--no-triage");
+  const rosterCfg = requireRoster();
+  const useTriage = shouldRunTriage({ roster: rosterCfg, role, modelPin, noTriage });
   const dir = resolveDispatchDir({ dir: argValue(args, "--dir"), runId });
   if (!role || (!promptFile && !runId)) {
     console.error(
-      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>] [--triage]",
+      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>] [--no-triage]",
     );
     console.error("  with --run-id: prefers ~/.team-up/runs/<id>/mailbox/PROMPT.md (mailbox-wrapped)");
     console.error("  --model: pin CLI×model (no role-chain fallback); same query language as pass-to");
@@ -370,7 +373,7 @@ async function cmdDispatch(args) {
     prompt = fs.readFileSync(promptFile, "utf8").trim();
   }
   await spawnInTmux({
-    roster: requireRoster(),
+    roster: rosterCfg,
     role,
     dir,
     prompt,

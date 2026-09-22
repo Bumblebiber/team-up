@@ -11,7 +11,9 @@ import {
   applyLowConfidenceRoundUp,
   bumpTier,
   shouldUseActiveTriage,
+  shouldRunTriage,
   isRoleTriagable,
+  lookupTriageKey,
 } from "../../src/roster/triage.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { spawnInTmux } from "../../src/roster/roster.mjs";
@@ -534,4 +536,94 @@ test("validateRoster accepts triage block without api_key", () => {
     },
   });
   assert.equal(errors.length, 0);
+});
+
+test("validateRoster accepts triage.key_file", () => {
+  const { errors } = validateRoster({
+    triage: {
+      enabled: false,
+      key_file: "~/.hermes/.env",
+    },
+  });
+  assert.equal(errors.length, 0);
+});
+
+test("shouldRunTriage runs when enabled, allowlisted, no pin, no opt-out", () => {
+  const roster = { triage: { enabled: true, roles: ["implementer"] } };
+  assert.equal(shouldRunTriage({ roster, role: "implementer" }), true);
+  assert.equal(shouldRunTriage({ roster, role: "implementer", noTriage: true }), false);
+  assert.equal(shouldRunTriage({ roster, role: "implementer", modelPin: "cursor:mediumA" }), false);
+  assert.equal(shouldRunTriage({ roster, role: "planner" }), false);
+  assert.equal(shouldRunTriage({ roster: { triage: { enabled: false, roles: ["implementer"] } }, role: "implementer" }), false);
+});
+
+test("lookupTriageKey prefers env over key_file", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-key-"));
+  const keyFile = path.join(home, "secrets.env");
+  fs.writeFileSync(keyFile, 'OPENROUTER_API_KEY="file-key"\n', { mode: 0o600 });
+  const roster = {
+    triage: {
+      key_env: "OPENROUTER_API_KEY",
+      key_file: keyFile,
+    },
+  };
+  const fromEnv = lookupTriageKey({ roster, env: { OPENROUTER_API_KEY: "env-key" } });
+  assert.equal(fromEnv.key, "env-key");
+  assert.equal(fromEnv.source, "env");
+
+  const fromFile = lookupTriageKey({ roster, env: {} });
+  assert.equal(fromFile.key, "file-key");
+  assert.equal(fromFile.source, "file");
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("lookupTriageKey parses comments, blanks, and quoted values", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-key-"));
+  const keyFile = path.join(home, "secrets.env");
+  fs.writeFileSync(
+    keyFile,
+    "# comment\n\nOTHER=x\nOPENROUTER_API_KEY=\'quoted-key\'\n",
+    { mode: 0o600 },
+  );
+  const roster = { triage: { key_env: "OPENROUTER_API_KEY", key_file: keyFile } };
+  const hit = lookupTriageKey({ roster, env: {} });
+  assert.equal(hit.key, "quoted-key");
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("lookupTriageKey refuses group/world-readable files", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-key-"));
+  const keyFile = path.join(home, "leaky.env");
+  fs.writeFileSync(keyFile, "OPENROUTER_API_KEY=secret-value\n", { mode: 0o644 });
+  const roster = { triage: { key_env: "OPENROUTER_API_KEY", key_file: keyFile } };
+  const warnings = [];
+  const hit = lookupTriageKey({
+    roster,
+    env: {},
+    warn: (msg) => warnings.push(msg),
+  });
+  assert.equal(hit.key, null);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /leaky\.env/);
+  assert.doesNotMatch(warnings.join("\n"), /secret-value/);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("triage reads key from key_file without env", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-key-"));
+  const keyFile = path.join(home, "secrets.env");
+  fs.writeFileSync(keyFile, "OPENROUTER_API_KEY=test-key\n", { mode: 0o600 });
+  const roster = {
+    ...baseRoster,
+    triage: { ...baseRoster.triage, key_file: keyFile },
+  };
+  const result = await triage({
+    roster,
+    prompt: "x",
+    role: "implementer",
+    env: {},
+    fetch: fakeFetch(jevResponse(1, 1)),
+  });
+  assert.equal(result.source, "jev");
+  fs.rmSync(home, { recursive: true, force: true });
 });

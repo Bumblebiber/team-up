@@ -11,6 +11,7 @@ import {
   setStatus, resumeAll, linkDispatchToRun, recordRunEscalation, listActiveStates,
   buildColdStartArgv, acquireResumeLock, resumeLockPath, waitTmuxReady,
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
+  resolveGitBase,
 } from "../../src/runs/runs.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
@@ -605,6 +606,65 @@ test("waitMailbox keeps worker tmux for a human question", withTempRuns(async ()
 
   assert.equal(result.classified.status, "question");
   assert.deepEqual(stopped, []);
+}));
+
+test("resolveGitBase returns nulls for non-git directory", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "o9k-nogit-"));
+  const base = resolveGitBase(dir);
+  assert.equal(base.base_commit, null);
+  assert.equal(base.base_dirty, null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveGitBase records clean commit in temp git repo", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "o9k-git-"));
+  execFileSync("git", ["init"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "t@example.com"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "test"], { cwd: dir });
+  fs.writeFileSync(path.join(dir, "README"), "hi\n");
+  execFileSync("git", ["add", "README"], { cwd: dir });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir });
+  const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+  const base = resolveGitBase(dir);
+  assert.equal(base.base_commit, head);
+  assert.equal(base.base_dirty, false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveGitBase records dirty working tree", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "o9k-git-dirty-"));
+  execFileSync("git", ["init"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "t@example.com"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "test"], { cwd: dir });
+  fs.writeFileSync(path.join(dir, "README"), "hi\n");
+  execFileSync("git", ["add", "README"], { cwd: dir });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir });
+  fs.writeFileSync(path.join(dir, "dirty.txt"), "change\n");
+  const base = resolveGitBase(dir);
+  assert.equal(base.base_dirty, true);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("createRun stores base_commit and base_dirty", withTempRuns(async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "o9k-create-git-"));
+  execFileSync("git", ["init"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "t@example.com"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "test"], { cwd: dir });
+  fs.writeFileSync(path.join(dir, "README"), "hi\n");
+  execFileSync("git", ["add", "README"], { cwd: dir });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir });
+  const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+
+  const state = createRun({
+    cwd: dir,
+    role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex", tmux: "t1" },
+    prompt: "x",
+  });
+  assert.equal(state.base_commit, head);
+  assert.equal(state.base_dirty, false);
+  fs.rmSync(dir, { recursive: true, force: true });
 }));
 
 test("resumeTmuxArgs marks a respawned worker with run id, never the parent", () => {

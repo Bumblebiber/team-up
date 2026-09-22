@@ -47,7 +47,7 @@ prompt ──► team-up triage ──► {tier, reasoning} ──► resolvePro
 In:
 1. `team-up pick --json` (shared prerequisite, also used by the dashboard spec).
 2. `team-up triage --prompt-file <f> [--role <role>] [--json]` → prints the profile decision.
-3. `team-up dispatch --role <role> --triage` → runs triage, resolves the profile, pins the resulting `cli:model` + effort for this dispatch.
+3. `team-up dispatch --role <role>` → runs triage automatically when `triage.enabled` and the role is allowlisted (no `--model` pin). `--no-triage` opts out for one dispatch. `--triage` remains accepted as a harmless no-op. Active mode resolves the profile and pins the resulting `cli:model` + effort; shadow mode logs only.
 4. Shadow mode + decision log for measurement.
 
 Out (YAGNI until the measurement says otherwise):
@@ -81,7 +81,8 @@ the role name, and the role's description if one exists. No repo contents.
 
 ## Fallback rules
 
-- No `TYPESAFE_API_KEY`, timeout (`triage.timeout_ms`, default 1500), non-2xx, or an answer outside the enum → `source: "fallback"`, profile `null`, caller uses the role chain exactly as today. Triage must never make dispatch fail.
+- No API key (neither `triage.key_env` in the dispatch env nor a readable `triage.key_file` entry), timeout (`triage.timeout_ms`, default 1500), non-2xx, or an answer outside the enum → `source: "fallback"`, profile `null`, caller uses the role chain exactly as today. Triage must never make dispatch fail.
+- Key lookup order: env var named by `triage.key_env` first; else parse `triage.key_file` (`KEY=VALUE` lines, comments/blank lines ignored, optional surrounding quotes stripped) and take the line for `key_env`. Refuse the file (→ `no_key`, stderr warning naming the file, never the value) if group- or world-readable (`mode & 0o077`). Read at call time; do not put the key into `process.env` or child env.
 - **Low confidence rounds up, not down.** A too-low tier burns a whole run and then escalates; a too-high tier wastes a little money. If `confidence.tier < triage.min_confidence` (roster config, default 0.6), bump tier one level (`frontier` stays `frontier`). Same for reasoning. Record `fallback_reason: "low_confidence"` but keep `source: "jev"`.
 - `resolveProfile` returns `PROFILE_UNAVAILABLE` or an empty chain (all cells quota-blocked) → try the next tier **up**, then fall back to the role chain. Never go down.
 - "Picked, but no effort" is a normal outcome, not an error: e.g. `composer-2.5` has `reasoning.medium: null`, and `'medium' in {medium: null}` is true, so it resolves with a null effort. `buildCommand` already drops the `{effort}` slot when effort is null.
@@ -94,6 +95,7 @@ the role name, and the role's description if one exists. No repo contents.
   "mode": "shadow",
   "endpoint": "https://openrouter.ai/api/alpha/decisions",
   "key_env": "OPENROUTER_API_KEY",
+  "key_file": "~/.hermes/.env",
   "model": "jev-latest",
   "timeout_ms": 1500,
   "min_confidence": 0.6,
@@ -102,9 +104,10 @@ the role name, and the role's description if one exists. No repo contents.
 }
 ```
 
-- `mode: "shadow"` — triage runs and logs, dispatch still uses the role chain. `mode: "active"` — dispatch uses the triage profile.
+- `mode: "shadow"` — triage runs and logs, dispatch still uses the role chain. `mode: "active"` — dispatch uses the triage profile when `active_share` selects the run.
 - `roles` — allowlist. `planner`, `reviewer`, `advisor` stay on their fixed chains; they are frontier-by-design and their cost is the point.
-- The API key is **env only** (name from `triage.key_env`). Never in `roster.json`. `config.mjs` validation rejects a `triage.api_key` field.
+- Dispatch runs triage whenever `enabled === true`, the role is in `roles`, and there is no `--model` pin. `--no-triage` opts out for one dispatch.
+- API key: env var from `triage.key_env`, or optional `triage.key_file` (path, `~` expanded) as fallback — see Fallback rules. Never in `roster.json`. `config.mjs` validation rejects `triage.api_key`.
 
 ## Measurement (gate from shadow to active)
 
@@ -112,9 +115,9 @@ Replay over past runs is only a sanity check: of 227 runs in `~/.team-up/runs`,
 139 record `worker.model`, **none** record effort, and there is no counterfactual
 ("would a lower tier have passed?"). So:
 
-1. Dispatch records the actual `worker.cli`, `worker.model`, `worker.tier`, and `worker.effort`, plus a `triage` object in `STATE.json` when triage ran. The stored triage object extends the CLI output with `mode` and `applied`, so shadow/control runs can be separated from active runs. A worker's `handoff` or `pass-to` command records an escalation event in its run state.
+1. `runs create` records `base_commit` (`git rev-parse HEAD` in `--cwd`, or `null` if not git / git fails) and `base_dirty` (bool from `git status --porcelain`, `null` if not git) in `STATE.json`. Dispatch records `worker.cli`, `worker.model`, `worker.tier`, and `worker.effort`, plus a `triage` object when triage ran. The stored triage object extends the CLI output with `mode` and `applied`, so shadow/control runs can be separated from active runs. A worker's `handoff` or `pass-to` command records an escalation event in its run state.
 2. Shadow mode for ≥ 2 weeks or ≥ 50 triaged runs.
-3. Run `node scripts/triage-shadow-report.mjs [--runs-dir <dir>] [--json]`. It reads `STATE.json` only and reports per role how often triage would downgrade vs. upgrade, plus failed and escalated counts for high/frontier versus low/medium triage tiers. Escalation includes recorded worker `pass-to`/`handoff` events and `waiting_human`. Legacy runs without `worker.tier` remain unclassified for upgrade/downgrade. Shadow cannot prove a lower tier *would have* passed — it only shows whether JEV's signal tracks difficulty at all. No correlation → stop here.
+3. Run `node scripts/triage-shadow-report.mjs [--runs-dir <dir>] [--format md|json] [--json] [--min-runs N] [--min-group N] [--min-diff F]`. It reads `STATE.json` only. **Bad outcome** = `status` `failed`, or `waiting_human`, or a recorded `pass-to`/`handoff` escalation (`escalations[]`). Shadow verdict over JEV shadow runs (`triage.source === "jev"`, `triage.applied !== true`): `COLLECTING` (insufficient data), `DECISION_DUE` (high/frontier bad-rate − low/medium bad-rate ≥ min-diff), `STOP` (enough data, no signal). Active verdict compares `triage.applied === true` vs control (`applied === false`): `REGRESSION`, `OK`, or `INSUFFICIENT`. Also reports `fallback_reason` counts and per-role downgrade/upgrade stats. Exit code 0 always when the report ran.
 4. Signal present → canary: `mode: "active"` for a fraction of dispatches (`triage.active_share`, e.g. 0.3), rest stays on the role chain as control. Go fully active per role when the canary's failure + escalation rate is not worse than control and cost per run is lower. Thresholds recorded in TIM Decisions before the canary starts.
 
 ## Changes by file
@@ -123,7 +126,7 @@ Replay over past runs is only a sanity check: of 227 runs in `~/.team-up/runs`,
 |---|---|
 | `src/cli.mjs` | `pick --json` for both `--role` and `--profile`: `{model, cli, effort, skipped[], quota_blocked[]}`; new `triage` command |
 | `src/roster/triage.mjs` (new) | `triage({roster, prompt, role, env, fetch})` → contract above; `fetch` injected for tests |
-| `src/roster/roster.mjs` | `dispatch --triage`: call triage, `resolveProfile`, pin the first cell like `--model` does |
+| `src/roster/roster.mjs` | dispatch auto-triage when enabled + allowlisted; `--no-triage` opt-out |
 | `src/roster/config.mjs` | validate optional `triage` block; reject `api_key` |
 | `src/runs/runs.mjs` | persist `worker.effort` and `triage` in state |
 | `roster.example.json` | commented `triage` block, `enabled: false` |

@@ -116,6 +116,25 @@ export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory, r
   return tpl.endsWith("\n") ? tpl : `${tpl}\n`;
 }
 
+/** Git snapshot at run creation; null fields when cwd is not a git repo or git fails. */
+export function resolveGitBase(cwd, timeoutMs = 5000) {
+  const opts = { cwd, encoding: "utf8", timeout: timeoutMs };
+  let base_commit = null;
+  let base_dirty = null;
+  try {
+    base_commit = execFileSync("git", ["rev-parse", "HEAD"], opts).trim();
+  } catch {
+    base_commit = null;
+  }
+  try {
+    const porcelain = execFileSync("git", ["status", "--porcelain"], opts);
+    base_dirty = porcelain.trim().length > 0;
+  } catch {
+    base_dirty = null;
+  }
+  return { base_commit, base_dirty };
+}
+
 export function createRun({
   cwd, project, role, parent, worker, prompt, now = new Date(),
   result_protocol,
@@ -123,12 +142,15 @@ export function createRun({
 }) {
   const runId = newRunId(now);
   const attach = parent.attach || (parent.tmux ? "tmux" : "manual");
+  const { base_commit, base_dirty } = resolveGitBase(cwd);
   const state = {
     runId,
     version: 1,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     cwd,
+    base_commit,
+    base_dirty,
     project: project || null,
     role,
     status: "starting",
