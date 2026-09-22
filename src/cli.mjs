@@ -1,9 +1,11 @@
 export const VERSION = "0.3.0";
 
+import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { pick } from "./roster/chain.mjs";
 import { loadJson, configPath, usagePath, requireRoster, validateRoster } from "./roster/config.mjs";
 import { resolveProfile, parseProfileString } from "./roster/profile.mjs";
+import { triage } from "./roster/triage.mjs";
 import { runRosterCli } from "./roster/roster.mjs";
 import {
   validateManifest,
@@ -26,7 +28,18 @@ function argValue(args, flag) {
   return i === -1 ? undefined : args[i + 1];
 }
 
+function pickJsonPayload({ model, cli, effort, skipped, quota_blocked = [] }) {
+  return {
+    model: model ?? null,
+    cli: cli ?? null,
+    effort: effort ?? null,
+    skipped,
+    quota_blocked,
+  };
+}
+
 async function cmdPick(args, io) {
+  const json = args.includes("--json");
   const profileStr = argValue(args, "--profile");
   const role = argValue(args, "--role");
   if (profileStr) {
@@ -34,34 +47,109 @@ async function cmdPick(args, io) {
     const roster = requireRoster();
     const usage = loadJson(usagePath());
     const result = resolveProfile({ roster, usage, profile });
-    for (const s of result.skipped) io.out(`skipped ${s.model}: ${s.reason}`);
+    if (!json) {
+      for (const s of result.skipped) io.out(`skipped ${s.model}: ${s.reason}`);
+    }
     if (result.code !== "OK" || !result.chain.length) {
-      io.err(`PROFILE_UNAVAILABLE for ${profile.tier}:${profile.reasoning}`);
+      if (json) {
+        io.out(JSON.stringify(pickJsonPayload({
+          model: null,
+          cli: null,
+          effort: null,
+          skipped: result.skipped,
+          quota_blocked: result.quota_blocked ?? [],
+        })));
+      } else {
+        io.err(`PROFILE_UNAVAILABLE for ${profile.tier}:${profile.reasoning}`);
+      }
       return 2;
     }
     const top = result.chain[0];
+    if (json) {
+      io.out(JSON.stringify(pickJsonPayload({
+        model: top.model,
+        cli: top.cli,
+        effort: top.effort,
+        skipped: result.skipped,
+        quota_blocked: result.quota_blocked ?? [],
+      })));
+      return 0;
+    }
     io.out(`model: ${top.model}`);
     io.out(`cli: ${top.cli}`);
     if (top.effort != null && top.effort !== "") io.out(`effort: ${top.effort}`);
     return 0;
   }
   if (role) {
-    // Delegate to roster pick via shared logic
     const roster = requireRoster();
     const usage = loadJson(usagePath());
     const r = pick({ roster, usage, role });
-    for (const s of r.skipped) io.out(`skipped ${s.model}: ${s.reason}`);
+    if (!json) {
+      for (const s of r.skipped) io.out(`skipped ${s.model}: ${s.reason}`);
+    }
     if (!r.model) {
-      io.err(`chain exhausted for role ${role} — no viable model`);
+      if (json) {
+        io.out(JSON.stringify(pickJsonPayload({
+          model: null,
+          cli: null,
+          effort: null,
+          skipped: r.skipped,
+          quota_blocked: [],
+        })));
+      } else {
+        io.err(`chain exhausted for role ${role} — no viable model`);
+      }
       return 2;
+    }
+    if (json) {
+      io.out(JSON.stringify(pickJsonPayload({
+        model: r.model,
+        cli: r.cli,
+        effort: r.effort,
+        skipped: r.skipped,
+        quota_blocked: [],
+      })));
+      return 0;
     }
     io.out(`model: ${r.model}`);
     io.out(`cli: ${r.cli}`);
     if (r.effort) io.out(`effort: ${r.effort}`);
     return 0;
   }
-  io.err("usage: team-up pick --role <role> | --profile <tier>:<reasoning>");
+  io.err("usage: team-up pick --role <role> | --profile <tier>:<reasoning> [--json]");
   return 1;
+}
+
+async function cmdTriage(args, io) {
+  const promptFile = argValue(args, "--prompt-file");
+  const role = argValue(args, "--role");
+  const json = args.includes("--json");
+  if (!promptFile) {
+    io.err("usage: team-up triage --prompt-file <file> [--role <role>] [--json]");
+    return 1;
+  }
+  const prompt = fs.readFileSync(promptFile, "utf8");
+  const roster = requireRoster();
+  const result = await triage({
+    roster,
+    prompt,
+    role,
+    env: process.env,
+    fetch: globalThis.fetch,
+  });
+  if (json) {
+    io.out(JSON.stringify(result));
+    return 0;
+  }
+  if (result.source === "fallback" || !result.profile) {
+    io.out(`triage fallback${result.fallback_reason ? `: ${result.fallback_reason}` : ""}`);
+    return 0;
+  }
+  io.out(`profile: ${result.profile.tier}:${result.profile.reasoning}`);
+  io.out(`source: ${result.source}`);
+  if (result.fallback_reason) io.out(`note: ${result.fallback_reason}`);
+  io.out(`latency_ms: ${result.latency_ms}`);
+  return 0;
 }
 
 async function cmdValidate(args, io) {
@@ -195,6 +283,7 @@ export async function runCli(args, io = { out: console.log, err: console.error }
   }
   if (cmd === "validate") return cmdValidate(rest, io);
   if (cmd === "pick") return cmdPick(rest, io);
+  if (cmd === "triage") return cmdTriage(rest, io);
   if (cmd === "runs") return cmdRuns(rest, io);
   if (cmd === "doctor") {
     // Real runner: doctor stays hermetic when called without one (tests), and
@@ -230,7 +319,7 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     return runRosterCli(args);
   }
   io.err(
-    "usage: team-up <version|init|validate|doctor|pick|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness>"
+    "usage: team-up <version|init|validate|doctor|pick|triage|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness>"
   );
   return 1;
 }
