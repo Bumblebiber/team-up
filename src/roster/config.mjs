@@ -178,6 +178,55 @@ export function validateRoster(roster) {
     }
   }
 
+  if (roster.triage !== undefined) {
+    if (!isPlainObject(roster.triage)) {
+      errors.push("triage must be an object");
+    } else {
+      if (roster.triage.api_key !== undefined) {
+        errors.push("triage.api_key must not be set — use triage.key_env and an environment variable");
+      }
+      if (roster.triage.enabled !== undefined && typeof roster.triage.enabled !== "boolean") {
+        errors.push("triage.enabled must be boolean");
+      }
+      if (roster.triage.mode !== undefined &&
+        roster.triage.mode !== "shadow" &&
+        roster.triage.mode !== "active") {
+        errors.push('triage.mode must be "shadow" or "active"');
+      }
+      if (roster.triage.active_share !== undefined) {
+        const share = roster.triage.active_share;
+        if (typeof share !== "number" || share < 0 || share > 1) {
+          errors.push("triage.active_share must be a number in [0, 1]");
+        }
+      }
+      if (roster.triage.timeout_ms !== undefined &&
+        (typeof roster.triage.timeout_ms !== "number" || roster.triage.timeout_ms <= 0)) {
+        errors.push("triage.timeout_ms must be a positive number");
+      }
+      if (roster.triage.min_confidence !== undefined) {
+        const mc = roster.triage.min_confidence;
+        if (typeof mc !== "number" || mc < 0 || mc > 1) {
+          errors.push("triage.min_confidence must be a number in [0, 1]");
+        }
+      }
+      if (roster.triage.roles !== undefined) {
+        if (!Array.isArray(roster.triage.roles) ||
+          roster.triage.roles.some((r) => typeof r !== "string" || !r)) {
+          errors.push("triage.roles must be a non-empty array of strings");
+        }
+      }
+      if (roster.triage.endpoint !== undefined && typeof roster.triage.endpoint !== "string") {
+        errors.push("triage.endpoint must be a string");
+      }
+      if (roster.triage.key_env !== undefined && typeof roster.triage.key_env !== "string") {
+        errors.push("triage.key_env must be a string");
+      }
+      if (roster.triage.model !== undefined && typeof roster.triage.model !== "string") {
+        errors.push("triage.model must be a string");
+      }
+    }
+  }
+
   return { errors, warnings };
 }
 
