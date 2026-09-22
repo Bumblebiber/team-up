@@ -154,6 +154,23 @@ test("known tmux session returns pane", () =>
     server.close();
   }));
 
+test("pane endpoint captures each session once per second", () =>
+  withHome(async ({ token }) => {
+    let captures = 0;
+    const { server } = createDashboardServer({
+      token,
+      listSessions: () => ["known-session"],
+      capturePane: () => { captures++; return "pane output\n"; },
+    });
+    const port = await listen(server);
+    const first = await req(port, "/api/tmux/known-session/pane", { token });
+    const second = await req(port, "/api/tmux/known-session/pane", { token });
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(captures, 1);
+    server.close();
+  }));
+
 test("non-GET methods return 405 except login POST", () =>
   withHome(async ({ token }) => {
     const { server } = createDashboardServer({ token });
@@ -202,6 +219,27 @@ test("mailbox read stops at 256 KB", () =>
     assert.equal(r.status, 200);
     assert.match(r.json.mailbox["RESULT.md"], /\[truncated\]$/);
     assert.ok(!r.json.mailbox["RESULT.md"].includes("TAIL_SENTINEL"));
+    server.close();
+  }));
+
+test("mailbox directory symlink cannot read outside the run", () =>
+  withHome(async ({ home, token }) => {
+    const state = createRun({
+      cwd: "/tmp", role: "planner",
+      parent: { cli: "claude", attach: "manual" },
+      worker: { cli: "claude" }, prompt: "hello task",
+    });
+    const outside = path.join(home, "outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "PROMPT.md"), "OUTSIDE_SENTINEL");
+    const mailbox = path.join(home, "runs", state.runId, "mailbox");
+    fs.rmSync(mailbox, { recursive: true });
+    fs.symlinkSync(outside, mailbox);
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const r = await req(port, `/api/runs/${state.runId}`, { token });
+    assert.notEqual(r.status, 200);
+    assert.ok(!r.text.includes("OUTSIDE_SENTINEL"));
     server.close();
   }));
 

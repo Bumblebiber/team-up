@@ -7,6 +7,7 @@ import {
   linkDispatchToRun,
   runDir,
   loadState,
+  recordRunEscalation,
   wrapPromptWithMailboxProtocol,
   promptHasMailboxProtocol,
   atomicWriteText,
@@ -141,7 +142,7 @@ async function cmdUsageRefresh(args) {
   if (!results.some((r) => r.ok)) process.exit(1);
 }
 
-async function spawnInTmux({
+export async function spawnInTmux({
   roster: rosterCfg,
   role,
   dir,
@@ -151,19 +152,25 @@ async function spawnInTmux({
   useTriage = false,
   random = Math.random,
   fetchFn = globalThis.fetch,
+  env = process.env,
+  usageSnapshot,
+  readUsage = () => loadJson(usagePath()),
+  refreshUsage,
+  spawn = spawnPinnedInTmux,
 }) {
   const now = Date.now();
-  let usage = loadJson(usagePath());
+  let usage = usageSnapshot ?? loadJson(usagePath());
   let r;
   let pinResolved = null;
   let triageResult = null;
+  let triageSelected = false;
 
-  if (useTriage && isTriageEnabled(rosterCfg) && isRoleTriagable(rosterCfg, role)) {
+  if (useTriage && !modelPin && isTriageEnabled(rosterCfg) && isRoleTriagable(rosterCfg, role)) {
     triageResult = await runTriage({
       roster: rosterCfg,
       prompt,
       role,
-      env: process.env,
+      env,
       fetch: fetchFn,
       now,
       random,
@@ -187,12 +194,13 @@ async function spawnInTmux({
       });
       if (!dispatch.useRoleChain && dispatch.cell?.model) {
         r = dispatch.cell;
+        triageSelected = true;
         for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
       }
     }
   }
 
-  if (!r && modelPin) {
+  if (modelPin) {
     const { resolvePassTo } = await import("./pass-to.mjs");
     const resolved = resolvePassTo(modelPin, rosterCfg);
     if (resolved.status === "ambiguous") {
@@ -228,7 +236,7 @@ async function spawnInTmux({
       console.error(`pinned model "${modelPin}" cannot run`);
       process.exit(2);
     }
-  } else {
+  } else if (!r) {
     r = pick({ roster: rosterCfg, usage, role, now });
     for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
     if (!r.model) {
@@ -245,10 +253,10 @@ async function spawnInTmux({
       isSubscriptionCli(r.cli, rosterCfg) &&
       !isCliUsageFresh(r.cli, usage, dispatchFreshnessMs(rosterCfg) * 1000, now)
     ) {
-      const refreshed = await collectUsageForCli({ cli: r.cli, roster: rosterCfg });
+      const refreshed = await (refreshUsage ?? collectUsageForCli)({ cli: r.cli, roster: rosterCfg });
       if (refreshed.ok) {
         const preUsage = usage;
-        usage = loadJson(usagePath());
+        usage = readUsage();
         if (modelPin && pinResolved) {
           const entryEffort = chainEntryEffortForPin(
             rosterCfg,
@@ -265,6 +273,18 @@ async function spawnInTmux({
             entryEffort,
             now,
           });
+        } else if (triageSelected) {
+          const dispatch = resolveTriageDispatch({
+            roster: rosterCfg,
+            usage,
+            triageOutput: triageResult,
+            role,
+            now,
+          });
+          r = dispatch.useRoleChain
+            ? pick({ roster: rosterCfg, usage, role, now })
+            : dispatch.cell;
+          triageSelected = !dispatch.useRoleChain;
         } else {
           r = resolvePickAfterRefresh({
             roster: rosterCfg,
@@ -289,7 +309,7 @@ async function spawnInTmux({
   } catch {
     // stale cache — proceed with pick above
   }
-  await spawnPinnedInTmux({
+  return spawn({
     roster: rosterCfg,
     model: r.model,
     cli: r.cli,
@@ -297,7 +317,9 @@ async function spawnInTmux({
     prompt,
     runId,
     effort: r.effort,
-    triage: triageResult ?? undefined,
+    triage: triageResult
+      ? { ...triageResult, mode: rosterCfg.triage?.mode ?? "shadow", applied: triageSelected }
+      : undefined,
     sessionPrefix: `team-up-${role}`,
   });
 }
@@ -375,6 +397,7 @@ async function cmdHandoff(args) {
     dir,
     prompt: "Read HANDOFF.md in this directory and continue the task it describes.",
   });
+  recordRunEscalation(process.env.TEAMUP_RUN_ID, "handoff");
 }
 
 async function cmdPassTo(args) {
@@ -412,6 +435,7 @@ async function cmdPassTo(args) {
     prompt: "Read HANDOFF.md in this directory and continue the task it describes.",
     sessionPrefix: "team-up-pass",
   });
+  recordRunEscalation(process.env.TEAMUP_RUN_ID, "pass-to");
 }
 
 function printProposalReport(proposals, unlisted = []) {

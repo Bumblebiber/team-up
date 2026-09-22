@@ -135,6 +135,11 @@ function safeReadMailboxFile(name, runRoot, maxBytes = 256 * 1024) {
   if (name.includes("..") || name.includes("/") || name.includes("\\")) {
     throw new Error("invalid mailbox file name");
   }
+  const realRunsRoot = fs.realpathSync(path.dirname(runRoot));
+  const realRunRoot = fs.realpathSync(runRoot);
+  const realMailbox = fs.realpathSync(path.join(runRoot, "mailbox"));
+  assertPathInsideRoot(realRunRoot, realRunsRoot);
+  assertPathInsideRoot(realMailbox, realRunRoot);
   const filePath = assertPathInsideRoot(path.join(runRoot, "mailbox", name), runRoot);
   let fd;
   try {
@@ -337,11 +342,12 @@ export function createDashboardServer({
         jsonResponse(res, 400, { error: "invalid session" });
         return;
       }
-      if (!listSessions().includes(session)) {
+      const sessions = memo.get("tmux-sessions", () => listSessions());
+      if (!sessions.includes(session)) {
         jsonResponse(res, 404, { error: "session not found" });
         return;
       }
-      const pane = capturePane(session);
+      const pane = memo.get(`pane:${session}`, () => capturePane(session));
       if (pane === null) {
         jsonResponse(res, 404, { error: "session not found" });
         return;

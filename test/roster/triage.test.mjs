@@ -14,6 +14,7 @@ import {
   isRoleTriagable,
 } from "../../src/roster/triage.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
+import { spawnInTmux } from "../../src/roster/roster.mjs";
 
 const TEST_KEY = "test-key";
 
@@ -290,6 +291,60 @@ test("PROFILE_UNAVAILABLE after bump falls back to role chain", () => {
   assert.equal(dispatch.cell, null);
 });
 
+test("active triage selection survives subscription usage refresh", async () => {
+  let refreshes = 0;
+  let launched;
+  await spawnInTmux({
+    roster: {
+      ...baseRoster,
+      subscriptions: ["cursor"],
+      triage: { ...baseRoster.triage, mode: "active", active_share: 1 },
+    },
+    role: "implementer",
+    dir: "/tmp",
+    prompt: "Implement complex feature",
+    useTriage: true,
+    env: envWithKey(),
+    usageSnapshot: { windows: {}, marked: {} },
+    readUsage: () => ({
+      windows: { "cursor:included": { used: 0.1, updated_at: new Date().toISOString() } },
+      marked: {},
+    }),
+    refreshUsage: async () => { refreshes++; return { ok: true }; },
+    fetchFn: fakeFetch(jevResponse(2, 1)),
+    spawn: async (options) => { launched = options; },
+  });
+  assert.equal(refreshes, 1);
+  assert.equal(launched.model, "highA");
+  assert.equal(launched.cli, "cursor");
+  assert.deepEqual(launched.triage.profile, { tier: "high", reasoning: "medium" });
+  assert.equal(launched.triage.mode, "active");
+  assert.equal(launched.triage.applied, true);
+});
+
+test("explicit model pin takes precedence over active triage", async () => {
+  let launched;
+  await spawnInTmux({
+    roster: {
+      ...baseRoster,
+      subscriptions: ["none"],
+      triage: { ...baseRoster.triage, mode: "active", active_share: 1 },
+    },
+    role: "implementer",
+    dir: "/tmp",
+    prompt: "Implement complex feature",
+    modelPin: "cursor:mediumA",
+    useTriage: true,
+    env: envWithKey(),
+    usageSnapshot: { windows: {}, marked: {} },
+    fetchFn: async () => { throw new Error("triage must not run for hard pin"); },
+    spawn: async (options) => { launched = options; },
+  });
+  assert.equal(launched.model, "mediumA");
+  assert.equal(launched.cli, "cursor");
+  assert.equal(launched.triage, undefined);
+});
+
 test("missing key returns no_key fallback", async () => {
   const result = await triage({
     roster: baseRoster,
@@ -403,6 +458,16 @@ const pickRoster = {
     },
   },
 };
+
+test("pick rejects role and profile together", async () => {
+  const errors = [];
+  const code = await runCli(["pick", "--role", "implementer", "--profile", "high:medium", "--json"], {
+    out: () => {},
+    err: (line) => errors.push(line),
+  });
+  assert.equal(code, 1);
+  assert.match(errors[0], /usage: team-up pick/);
+});
 
 test("pick --json role path matches output shape", async () => {
   await withTempRoster(pickRoster, async () => {

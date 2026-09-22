@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   runsRoot, runDir, atomicWriteJson, atomicWriteText, createRun, loadState, saveState, updateState,
   classifyMailbox, writeAnswer, buildResumePlan, INJECT, buildCliArgv,
-  setStatus, resumeAll, linkDispatchToRun, listActiveStates,
+  setStatus, resumeAll, linkDispatchToRun, recordRunEscalation, listActiveStates,
   buildColdStartArgv, acquireResumeLock, resumeLockPath, waitTmuxReady,
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
 } from "../../src/runs/runs.mjs";
@@ -389,14 +389,35 @@ test("linkDispatchToRun sets worker.tmux and watching", withTempRuns(async () =>
   const s = createRun({
     cwd: "/tmp/p", role: "implementer",
     parent: { cli: "claude", attach: "manual" },
-    worker: { cli: "codex", tmux: null },
+    worker: { cli: "codex", model: "old-model", tmux: null },
     prompt: "x",
   });
-  assert.equal(linkDispatchToRun(s.runId, "o9k-sess-1"), true);
+  assert.equal(linkDispatchToRun(s.runId, "o9k-sess-1", {
+    cli: "cursor", model: "new-model", tier: "high", effort: "high",
+  }), true);
   const st = loadState(s.runId);
   assert.equal(st.worker.tmux, "o9k-sess-1");
+  assert.equal(st.worker.cli, "cursor");
+  assert.equal(st.worker.model, "new-model");
+  assert.equal(st.worker.tier, "high");
+  assert.equal(st.worker.effort, "high");
   assert.equal(st.status, "watching");
   assert.equal(st.watcher.attached, true);
+}));
+
+test("recordRunEscalation stores handoff and pass-to events", withTempRuns(async () => {
+  const state = createRun({
+    cwd: "/tmp/p", role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex" }, prompt: "x",
+  });
+  assert.equal(recordRunEscalation(null, "handoff"), false);
+  recordRunEscalation(state.runId, "handoff", new Date("2026-09-22T10:00:00Z"));
+  recordRunEscalation(state.runId, "pass-to", new Date("2026-09-22T10:01:00Z"));
+  assert.deepEqual(loadState(state.runId).escalations, [
+    { kind: "handoff", at: "2026-09-22T10:00:00.000Z" },
+    { kind: "pass-to", at: "2026-09-22T10:01:00.000Z" },
+  ]);
 }));
 
 test("CLI wait ceiling returns exit 2", withTempRuns(async (dir) => {

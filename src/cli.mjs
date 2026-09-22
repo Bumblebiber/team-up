@@ -43,6 +43,10 @@ async function cmdPick(args, io) {
   const json = args.includes("--json");
   const profileStr = argValue(args, "--profile");
   const role = argValue(args, "--role");
+  if (profileStr && role) {
+    io.err("usage: team-up pick --role <role> | --profile <tier>:<reasoning> [--json]");
+    return 1;
+  }
   if (profileStr) {
     const profile = parseProfileString(profileStr);
     const roster = requireRoster();

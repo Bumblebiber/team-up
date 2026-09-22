@@ -112,9 +112,9 @@ Replay over past runs is only a sanity check: of 227 runs in `~/.team-up/runs`,
 139 record `worker.model`, **none** record effort, and there is no counterfactual
 ("would a lower tier have passed?"). So:
 
-1. Dispatch records `worker.effort` and, when triage ran, a `triage` object (the JSON above) in `STATE.json`. Small change in `linkDispatchToRun` / dispatch path.
+1. Dispatch records the actual `worker.cli`, `worker.model`, `worker.tier`, and `worker.effort`, plus a `triage` object in `STATE.json` when triage ran. The stored triage object extends the CLI output with `mode` and `applied`, so shadow/control runs can be separated from active runs. A worker's `handoff` or `pass-to` command records an escalation event in its run state.
 2. Shadow mode for ≥ 2 weeks or ≥ 50 triaged runs.
-3. Shadow report per role (script in `scripts/`, reads `STATE.json` only): how often triage would downgrade vs. upgrade, and whether a high triage tier correlates with `failed` / escalation (`pass-to`, `handoff`) on the role chain. Shadow cannot prove a lower tier *would have* passed — it only shows whether JEV's signal tracks difficulty at all. No correlation → stop here.
+3. Run `node scripts/triage-shadow-report.mjs [--runs-dir <dir>] [--json]`. It reads `STATE.json` only and reports per role how often triage would downgrade vs. upgrade, plus failed and escalated counts for high/frontier versus low/medium triage tiers. Escalation includes recorded worker `pass-to`/`handoff` events and `waiting_human`. Legacy runs without `worker.tier` remain unclassified for upgrade/downgrade. Shadow cannot prove a lower tier *would have* passed — it only shows whether JEV's signal tracks difficulty at all. No correlation → stop here.
 4. Signal present → canary: `mode: "active"` for a fraction of dispatches (`triage.active_share`, e.g. 0.3), rest stays on the role chain as control. Go fully active per role when the canary's failure + escalation rate is not worse than control and cost per run is lower. Thresholds recorded in TIM Decisions before the canary starts.
 
 ## Changes by file

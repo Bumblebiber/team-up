@@ -116,6 +116,7 @@ th, td {
   border-bottom: 1px solid var(--border);
 }
 th { color: var(--muted); font-weight: 600; }
+td.path { max-width: 18rem; overflow-wrap: anywhere; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover { background: var(--border); }
 tr.orphan td:first-child { color: var(--orphan); }

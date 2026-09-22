@@ -568,17 +568,32 @@ export function setStatus(runId, status) {
 }
 
 /** After roster dispatch spawns tmux, link session to run registry. */
-export function linkDispatchToRun(runId, session, { effort, triage: triageResult } = {}) {
+export function linkDispatchToRun(runId, session, { model, cli, tier, effort, triage: triageResult } = {}) {
   if (!runId) return false;
   const st = loadState(runId);
   if (!st) return false;
   st.worker = st.worker || {};
   st.worker.tmux = session;
+  if (model !== undefined) st.worker.model = model;
+  if (cli !== undefined) st.worker.cli = cli;
+  if (tier !== undefined) st.worker.tier = tier;
   if (effort !== undefined) st.worker.effort = effort ?? null;
   if (triageResult !== undefined) st.triage = triageResult;
   st.watcher = { ...(st.watcher || { kind: "internal_subagent" }), attached: true };
   saveState(st);
   setStatus(runId, "watching");
+  return true;
+}
+
+/** Record an escalation launched from a worker that has TEAMUP_RUN_ID. */
+export function recordRunEscalation(runId, kind, at = new Date()) {
+  if (!runId) return false;
+  if (kind !== "handoff" && kind !== "pass-to") throw new Error(`unknown escalation ${kind}`);
+  updateState(runId, (state) => {
+    state.escalations = state.escalations || [];
+    state.escalations.push({ kind, at: at.toISOString() });
+    return state;
+  });
   return true;
 }
 

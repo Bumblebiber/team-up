@@ -84,12 +84,14 @@ async function refreshRuns() {
       <td>${esc(r.role)}</td>
       <td>${esc(r.status)}</td>
       <td>${esc(r.worker || "—")}</td>
+      <td>${esc(r.project || "—")}</td>
+      <td class="path">${esc(r.cwd || "—")}</td>
       <td>${esc(r.age || "—")}</td>
       <td>${esc(r.heartbeatAge || "—")}</td>
     </tr>`).join("");
   $("#runs-table").innerHTML = `<table>
-    <thead><tr><th>Run</th><th>Role</th><th>Status</th><th>Worker</th><th>Age</th><th>HB</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="6">No runs</td></tr>'}</tbody></table>`;
+    <thead><tr><th>Run</th><th>Role</th><th>Status</th><th>Worker</th><th>Project</th><th>CWD</th><th>Age</th><th>HB</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="8">No runs</td></tr>'}</tbody></table>`;
   $("#runs-table").querySelectorAll("tr[data-run]").forEach((tr) => {
     tr.addEventListener("click", () => selectRun(tr.dataset.run));
   });
