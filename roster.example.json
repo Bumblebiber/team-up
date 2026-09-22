@@ -206,5 +206,17 @@
       ]
     }
   },
-  "limits": { "warn_at": 0.9, "handoff_at": 0.95, "handoff_at_burst": 0.8, "project_min": 30 }
+  "limits": { "warn_at": 0.9, "handoff_at": 0.95, "handoff_at_burst": 0.8, "project_min": 30 },
+  "triage": {
+    "$comment": "JEV task-difficulty triage via OpenRouter. Key from env only (triage.key_env). enabled:false until shadow measurement completes.",
+    "enabled": false,
+    "mode": "shadow",
+    "endpoint": "https://openrouter.ai/api/alpha/decisions",
+    "key_env": "OPENROUTER_API_KEY",
+    "model": "jev-latest",
+    "timeout_ms": 1500,
+    "min_confidence": 0.6,
+    "active_share": 0,
+    "roles": ["implementer", "researcher", "test-writer"]
+  }
 }

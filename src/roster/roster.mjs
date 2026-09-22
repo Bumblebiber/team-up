@@ -22,6 +22,13 @@ import {
 import {
   firstPositional, buildCommand, tmuxArgs, spawnPinnedInTmux, resolveEffort,
 } from "./command.mjs";
+import {
+  triage as runTriage,
+  isTriageEnabled,
+  isRoleTriagable,
+  shouldUseActiveTriage,
+  resolveTriageDispatch,
+} from "./triage.mjs";
 
 export {
   configPath, usagePath, loadJson, validateRoster, requireRoster, rosterWritePath, usageWritePath,
@@ -134,13 +141,58 @@ async function cmdUsageRefresh(args) {
   if (!results.some((r) => r.ok)) process.exit(1);
 }
 
-async function spawnInTmux({ roster: rosterCfg, role, dir, prompt, runId, modelPin }) {
+async function spawnInTmux({
+  roster: rosterCfg,
+  role,
+  dir,
+  prompt,
+  runId,
+  modelPin,
+  useTriage = false,
+  random = Math.random,
+  fetchFn = globalThis.fetch,
+}) {
   const now = Date.now();
   let usage = loadJson(usagePath());
   let r;
   let pinResolved = null;
+  let triageResult = null;
 
-  if (modelPin) {
+  if (useTriage && isTriageEnabled(rosterCfg) && isRoleTriagable(rosterCfg, role)) {
+    triageResult = await runTriage({
+      roster: rosterCfg,
+      prompt,
+      role,
+      env: process.env,
+      fetch: fetchFn,
+      now,
+      random,
+    });
+    console.log(
+      `triage: ${triageResult.source}${triageResult.profile ? ` → ${triageResult.profile.tier}:${triageResult.profile.reasoning}` : ""}${triageResult.fallback_reason ? ` (${triageResult.fallback_reason})` : ""}`,
+    );
+
+    const mode = rosterCfg.triage?.mode ?? "shadow";
+    if (
+      mode === "active" &&
+      shouldUseActiveTriage(rosterCfg, random) &&
+      triageResult.profile
+    ) {
+      const dispatch = resolveTriageDispatch({
+        roster: rosterCfg,
+        usage,
+        triageOutput: triageResult,
+        role,
+        now,
+      });
+      if (!dispatch.useRoleChain && dispatch.cell?.model) {
+        r = dispatch.cell;
+        for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
+      }
+    }
+  }
+
+  if (!r && modelPin) {
     const { resolvePassTo } = await import("./pass-to.mjs");
     const resolved = resolvePassTo(modelPin, rosterCfg);
     if (resolved.status === "ambiguous") {
@@ -245,6 +297,7 @@ async function spawnInTmux({ roster: rosterCfg, role, dir, prompt, runId, modelP
     prompt,
     runId,
     effort: r.effort,
+    triage: triageResult ?? undefined,
     sessionPrefix: `team-up-${role}`,
   });
 }
@@ -254,10 +307,11 @@ async function cmdDispatch(args) {
   const promptFile = argValue(args, "--prompt-file");
   const runId = argValue(args, "--run-id");
   const modelPin = argValue(args, "--model");
+  const useTriage = args.includes("--triage");
   const dir = resolveDispatchDir({ dir: argValue(args, "--dir"), runId });
   if (!role || (!promptFile && !runId)) {
     console.error(
-      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>]",
+      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>] [--triage]",
     );
     console.error("  with --run-id: prefers ~/.team-up/runs/<id>/mailbox/PROMPT.md (mailbox-wrapped)");
     console.error("  --model: pin CLI×model (no role-chain fallback); same query language as pass-to");
@@ -293,7 +347,15 @@ async function cmdDispatch(args) {
     }
     prompt = fs.readFileSync(promptFile, "utf8").trim();
   }
-  await spawnInTmux({ roster: requireRoster(), role, dir, prompt, runId, modelPin });
+  await spawnInTmux({
+    roster: requireRoster(),
+    role,
+    dir,
+    prompt,
+    runId,
+    modelPin,
+    useTriage,
+  });
 }
 
 async function cmdHandoff(args) {
