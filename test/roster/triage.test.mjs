@@ -126,7 +126,7 @@ function envWithKey(key = TEST_KEY) {
   return { OPENROUTER_API_KEY: key };
 }
 
-test("happy path maps score indices to tier and reasoning labels", async () => {
+test("happy path maps score levels to tier and reasoning labels", async () => {
   const fetchFn = fakeFetch(jevResponse(2, 1)); // high, medium
   const result = await triage({
     roster: baseRoster,
@@ -140,6 +140,18 @@ test("happy path maps score indices to tier and reasoning labels", async () => {
   assert.deepEqual(result.profile, { tier: "high", reasoning: "medium" });
   assert.equal(result.fallback_reason, null);
   assert.ok(result.latency_ms >= 0);
+});
+
+test("fractional scores round to nearest level", async () => {
+  const result = await triage({
+    roster: baseRoster,
+    prompt: "Implement feature X",
+    role: "implementer",
+    env: envWithKey(),
+    fetch: fakeFetch(jevResponse(1.43, 0.48)),
+  });
+  assert.equal(result.source, "jev");
+  assert.deepEqual(result.profile, { tier: "medium", reasoning: "low" });
 });
 
 test("timeout returns fallback", async () => {

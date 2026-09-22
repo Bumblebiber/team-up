@@ -4,8 +4,18 @@ import { evaluatePickCell } from "./chain.mjs";
 const TIER_LEVELS = ["low", "medium", "high", "frontier"];
 const REASONING_LEVELS = ["low", "medium", "high", "max"];
 
-const TIER_CRITERIA = ["low", "medium", "high", "frontier"];
-const REASONING_CRITERIA = ["low", "medium", "high", "max"];
+const TIER_CRITERIA = [
+  "Small, isolated task with clear steps and low risk; a small model can finish it.",
+  "Moderate task across a few files using familiar patterns and clear acceptance criteria.",
+  "Complex implementation or debugging across interacting modules with significant tradeoffs.",
+  "Novel, ambiguous, or high-risk system work requiring the strongest available model.",
+];
+const REASONING_CRITERIA = [
+  "Direct execution with little planning or analysis needed.",
+  "Several familiar steps or modest tradeoffs require some reasoning.",
+  "Subtle failure modes or many interacting components require deep reasoning.",
+  "Exceptional reasoning is needed for novel architecture or unusually difficult correctness problems.",
+];
 
 const DEFAULT_TRIAGE = {
   endpoint: "https://openrouter.ai/api/alpha/decisions",
@@ -77,12 +87,14 @@ function buildState({ prompt, role, roster }) {
   };
 }
 
-function scoreAtIndex(answer, criteria) {
+function scoreAtLevel(answer, criteria) {
   if (!answer || answer.type !== "score") return null;
-  const idx = answer.score;
-  if (typeof idx !== "number" || !Number.isInteger(idx)) return null;
-  if (idx < 0 || idx >= criteria.length) return null;
-  return { label: criteria[idx], confidence: answer.confidence ?? 0 };
+  const score = answer.score;
+  if (typeof score !== "number" || !Number.isFinite(score)) return null;
+  if (score < 0 || score > criteria.length - 1) return null;
+  // Score is a probability-weighted position and may fall between levels.
+  const idx = Math.round(score);
+  return { index: idx, confidence: answer.confidence ?? 0 };
 }
 
 export function applyLowConfidenceRoundUp(profile, confidence, minConfidence) {
@@ -227,15 +239,15 @@ export async function triage({
     return fallbackOutput("invalid_answer", latency_ms);
   }
 
-  const tierHit = scoreAtIndex(payload?.answers?.tier, TIER_CRITERIA);
-  const reasoningHit = scoreAtIndex(payload?.answers?.reasoning, REASONING_CRITERIA);
+  const tierHit = scoreAtLevel(payload?.answers?.tier, TIER_CRITERIA);
+  const reasoningHit = scoreAtLevel(payload?.answers?.reasoning, REASONING_CRITERIA);
   if (!tierHit || !reasoningHit) {
     return fallbackOutput("invalid_answer", latency_ms);
   }
 
   let tier;
   try {
-    tier = normalizeTier(tierHit.label);
+    tier = normalizeTier(TIER_LEVELS[tierHit.index]);
   } catch {
     return fallbackOutput("invalid_answer", latency_ms);
   }
@@ -244,7 +256,7 @@ export async function triage({
   const minConfidence = cfg.min_confidence ?? DEFAULT_TRIAGE.min_confidence;
 
   const { profile, lowConfidence } = applyLowConfidenceRoundUp(
-    { tier, reasoning: reasoningHit.label },
+    { tier, reasoning: REASONING_LEVELS[reasoningHit.index] },
     confidence,
     minConfidence,
   );

@@ -40,7 +40,7 @@ prompt ──► team-up triage ──► {tier, reasoning} ──► resolvePro
          "usage":{"input_tokens":333,"output_tokens":17,"cost":0.000013986},"provider":"TypeSafe"}
   ```
 
-  Model id is `jev-latest` (not `typesafe/…`). `score` needs `instructions` + `criteria[]` (the ordered levels); `noul` needs `instructions`. `score` answers are **indices** into `criteria` — map back by index, not by label.
+  Model id is `jev-latest` (not `typesafe/…`). `score` needs `instructions` + `criteria[]` (the ordered levels); `noul` needs `instructions`. `score` answers are probability-weighted positions on the `criteria` scale and can be fractional. Round to the nearest level index before mapping to a label. Each criterion describes a concrete task situation; terse labels alone give Jev little evidence to match. See [TypeSafe's Score documentation](https://docs.typesafe.ai/primitives/score).
 
 ## Scope
 
