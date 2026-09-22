@@ -118,7 +118,7 @@ export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory, r
 
 /** Git snapshot at run creation; null fields when cwd is not a git repo or git fails. */
 export function resolveGitBase(cwd, timeoutMs = 5000) {
-  const opts = { cwd, encoding: "utf8", timeout: timeoutMs };
+  const opts = { cwd, encoding: "utf8", timeout: timeoutMs, stdio: ["ignore", "pipe", "ignore"] };
   let base_commit = null;
   let base_dirty = null;
   try {

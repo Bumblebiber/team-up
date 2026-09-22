@@ -105,6 +105,23 @@ test("active REGRESSION when applied bad-rate exceeds control", () => {
   assert.equal(report.active.verdict, "REGRESSION");
 });
 
+test("active control includes fallback runs without a JEV profile", () => {
+  const states = [
+    ...Array.from({ length: 10 }, () => ({
+      status: "failed",
+      triage: { source: "jev", applied: true, profile: { tier: "high" } },
+    })),
+    ...Array.from({ length: 10 }, () => ({
+      status: "done",
+      triage: { source: "fallback", applied: false, fallback_reason: "timeout", profile: null },
+    })),
+  ];
+  const report = buildTriageVerdictReport(states, { minGroup: 10, minDiff: 0.10 });
+  assert.deepEqual(report.active.control, { n: 10, bad: 0 });
+  assert.equal(report.active.verdict, "REGRESSION");
+  assert.equal(report.shadow.total, 0);
+});
+
 test("active OK when both groups large enough and no regression", () => {
   const states = [
     ...Array.from({ length: 10 }, () => ({

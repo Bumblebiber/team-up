@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -610,9 +610,11 @@ test("waitMailbox keeps worker tmux for a human question", withTempRuns(async ()
 
 test("resolveGitBase returns nulls for non-git directory", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "o9k-nogit-"));
-  const base = resolveGitBase(dir);
-  assert.equal(base.base_commit, null);
-  assert.equal(base.base_dirty, null);
+  const script = `import { resolveGitBase } from ${JSON.stringify(new URL("../../src/runs/runs.mjs", import.meta.url).href)}; console.log(JSON.stringify(resolveGitBase(process.argv[1])))`;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", script, dir], { encoding: "utf8" });
+  assert.equal(child.status, 0);
+  assert.deepEqual(JSON.parse(child.stdout), { base_commit: null, base_dirty: null });
+  assert.equal(child.stderr, "");
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

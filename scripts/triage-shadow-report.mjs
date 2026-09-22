@@ -124,6 +124,11 @@ export function buildTriageVerdictReport(states, {
       continue;
     }
 
+    if (triage.applied === false) {
+      control.n++;
+      if (isBadOutcome(state)) control.bad++;
+    }
+
     if (triage.source === "jev" && triage.profile?.tier) {
       const group = tierGroup(triage.profile.tier);
       if (group === "high") {
@@ -133,8 +138,6 @@ export function buildTriageVerdictReport(states, {
         shadowLow.n++;
         if (isBadOutcome(state)) shadowLow.bad++;
       }
-      control.n++;
-      if (isBadOutcome(state)) control.bad++;
     }
   }
 
