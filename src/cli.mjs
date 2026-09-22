@@ -22,6 +22,7 @@ import { loadEvalSuite, runEvalSuite } from "./specialists/evals.mjs";
 import { runHarnessVerify } from "./harness/cli-verify.mjs";
 import { diagnose } from "./doctor.mjs";
 import { runCapabilityCli } from "./capabilities/cli.mjs";
+import { startDashboard } from "./dashboard/server.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -302,6 +303,17 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     io.err("usage: team-up harness verify <claude> --fixture-project <path>");
     return 1;
   }
+  if (cmd === "dashboard") {
+    const port = Number(argValue(rest, "--port") || 8556);
+    const host = argValue(rest, "--host") || "127.0.0.1";
+    const rotateToken = rest.includes("--rotate-token");
+    if (!Number.isFinite(port) || port < 0 || port > 65535) {
+      io.err("usage: team-up dashboard [--port N] [--host H] [--rotate-token]");
+      return 1;
+    }
+    await startDashboard({ host, port, rotateToken, io });
+    return 0;
+  }
   if (
     [
       "init",
@@ -319,7 +331,7 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     return runRosterCli(args);
   }
   io.err(
-    "usage: team-up <version|init|validate|doctor|pick|triage|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness>"
+    "usage: team-up <version|init|validate|doctor|pick|triage|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness|dashboard>"
   );
   return 1;
 }

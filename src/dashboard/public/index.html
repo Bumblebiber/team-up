@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>team-up dashboard</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <h1>team-up dashboard</h1>
+    <p>Enter the token from <code>~/.team-up/dashboard-token</code></p>
+    <form id="login-form">
+      <input type="password" id="token-input" autocomplete="off" placeholder="Bearer token" required>
+      <button type="submit">Login</button>
+    </form>
+    <p id="login-error" class="error hidden"></p>
+  </div>
+
+  <div id="app" class="app hidden">
+    <header>
+      <h1>team-up</h1>
+      <nav>
+        <a href="#panel-usage">Usage</a>
+        <a href="#panel-runs">Runs</a>
+        <a href="#panel-tmux">tmux</a>
+        <a href="#panel-pick">Pick</a>
+      </nav>
+    </header>
+
+    <main>
+      <section id="panel-usage" class="panel">
+        <h2>Usage</h2>
+        <div id="usage-grid" class="usage-grid"></div>
+        <div id="marked-list"></div>
+      </section>
+
+      <section id="panel-runs" class="panel">
+        <h2>Runs</h2>
+        <div class="toolbar">
+          <label><input type="checkbox" id="active-only" checked> Active only</label>
+        </div>
+        <div id="runs-table" class="table-wrap"></div>
+        <div id="run-detail" class="detail hidden"></div>
+      </section>
+
+      <section id="panel-tmux" class="panel">
+        <h2>tmux</h2>
+        <div id="tmux-table" class="table-wrap"></div>
+        <pre id="pane-output" class="pane hidden"></pre>
+      </section>
+
+      <section id="panel-pick" class="panel">
+        <h2>Pick preview</h2>
+        <div id="pick-table" class="table-wrap"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
