@@ -4,7 +4,11 @@ import {
   buildExpectScript,
   redactPaneExcerpt,
   formatPtyTimeoutError,
+  isClosedSpawnExit,
+  shouldReturnPtyTranscript,
   CODEX_LIMIT_READY_RE,
+  CODEX_LIMIT_WAIT,
+  CODEX_LIMIT_WAIT_ALT,
   CODEX_HIT_LIMIT_WAIT,
   codexTrustFlag,
 } from "../../src/usage/usage-pty.mjs";
@@ -42,6 +46,41 @@ test("buildExpectScript codex uses fast exit instead of long expect eof", () => 
   assert.ok(script.includes('send "/exit\\r"'));
   assert.match(script, /set timeout 3/);
   assert.equal(/expect eof/.test(script), false);
+});
+
+test("buildExpectScript codex fast exit catches send to closed spawn", () => {
+  const script = buildExpectScript("codex", 180);
+  assert.match(script, /catch \{ send "\/exit\\r" \}/);
+});
+
+test("buildExpectScript codex waits for Weekly/5h limit lines on second /status", () => {
+  const script = buildExpectScript("codex", 180);
+  assert.ok(script.includes(CODEX_LIMIT_WAIT));
+  assert.ok(script.includes(CODEX_LIMIT_WAIT_ALT));
+  assert.ok(script.includes(CODEX_LIMIT_READY_RE));
+  const afterSecondStatus = script.split('send "/status\\r"').slice(2).join("");
+  assert.equal(/weekly .*% left/.test(afterSecondStatus), false);
+});
+
+test("closed-spawn exit is benign when transcript was captured", () => {
+  assert.equal(isClosedSpawnExit('send: spawn id exp3 not open\n    while executing\n"send "/exit\\r""'), true);
+  assert.equal(
+    shouldReturnPtyTranscript({
+      status: 1,
+      stdout: "Weekly limit: 50% left (resets tomorrow)",
+      stderr: 'send: spawn id exp3 not open',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldReturnPtyTranscript({
+      status: 2,
+      stdout: "partial",
+      stderr: "PTY_TIMEOUT_TAIL:\nfoo",
+      combined: "partial\nPTY_TIMEOUT_TAIL:\nfoo",
+    }),
+    false,
+  );
 });
 
 test("buildExpectScript claude waits on Current session without blind sleeps after command", () => {

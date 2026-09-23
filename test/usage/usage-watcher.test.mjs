@@ -9,6 +9,7 @@ import {
   computeState,
   clearCollecting,
   intervalMinForCli,
+  DEFAULT_CONFIG as WATCHER_DEFAULT_CONFIG,
 } from "../../src/usage/usage-watcher.mjs";
 
 const NOW = Date.parse("2026-07-17T12:00:00Z");
@@ -198,8 +199,9 @@ test("clearCollecting frees CLIs wedged by a restart mid-collect", () => {
   assert.deepEqual(d.collect.sort(), ["claude", "codex", "cursor"]);
 });
 
-test("intervalMinForCli keeps cursor on slower cadence", () => {
-  assert.equal(intervalMinForCli("claude", "idle", DEFAULT_CONFIG), 10);
-  assert.equal(intervalMinForCli("cursor", "idle", DEFAULT_CONFIG), 30);
-  assert.equal(intervalMinForCli("cursor", "busy", DEFAULT_CONFIG), 8);
+test("intervalMinForCli keeps codex and cursor on slower cadence", () => {
+  assert.equal(intervalMinForCli("claude", "idle", WATCHER_DEFAULT_CONFIG), 10);
+  assert.equal(intervalMinForCli("codex", "idle", WATCHER_DEFAULT_CONFIG), 30);
+  assert.equal(intervalMinForCli("cursor", "idle", WATCHER_DEFAULT_CONFIG), 30);
+  assert.equal(intervalMinForCli("cursor", "busy", WATCHER_DEFAULT_CONFIG), 8);
 });

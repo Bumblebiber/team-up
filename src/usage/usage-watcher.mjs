@@ -16,9 +16,10 @@ import { subscriptionsFromRoster } from "./usage-collect.mjs";
 export const DEFAULT_CONFIG = {
   tick_sec: 60,
   intervals: { idle_heartbeat_hours: 24, idle_min: 10, active_min: 10, busy_min: 5 },
-  // cursor-agent still boots a full TUI and measured ~110s/collect after the
-  // PTY fast-exit fix — keep its pre-fix cadence until that path speeds up.
+  // cursor-agent and codex each boot a full TUI; measured ~32s/collect for codex
+  // and ~110s for cursor after the PTY fast-exit fix — keep pre-fix cadence.
   cli_intervals: {
+    codex: { idle_min: 30, active_min: 20, busy_min: 8 },
     cursor: { idle_min: 30, active_min: 20, busy_min: 8 },
   },
 };

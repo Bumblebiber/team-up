@@ -91,11 +91,15 @@ function dialogBranches() {
 /** After quota data is captured: exit quickly instead of waiting for graceful eof. */
 function fastExitBlock(exitCmd) {
   const cmd = shellEscape(exitCmd);
-  return `send "${cmd}\\r"
+  // Spawn may already be dead (codex closed the PTY after /status). A send to a
+  // closed spawn must not turn a successful capture into a non-zero collect.
+  return `catch { send "${cmd}\\r" }
 set timeout 3
-expect {
-  eof { }
-  timeout { }
+catch {
+  expect {
+    eof { }
+    timeout { }
+  }
 }
 catch { close }
 exit 0
@@ -132,6 +136,24 @@ export function formatPtyTimeoutError(cli, transcript = "", stderr = "") {
   return `${cli} collect timed out — last pane lines:\n${redactPaneExcerpt(excerpt)}`;
 }
 
+/** expect stderr when /exit is sent after codex already closed the PTY. */
+export function isClosedSpawnExit(stderr = "") {
+  return /spawn id .* not open/i.test(stderr);
+}
+
+/**
+ * Whether a failed expect run still captured a usable transcript.
+ * Genuine timeouts (exit 2 + PTY_TIMEOUT_TAIL) stay fatal; everything else with
+ * stdout is handed to the parser like main always did.
+ */
+export function shouldReturnPtyTranscript({ status, stdout = "", stderr = "", combined = "" } = {}) {
+  const blob = combined || `${stdout}\n${stderr}`;
+  if (/PTY_TIMEOUT_TAIL:/.test(blob) || status === 2) return false;
+  if (stdout && isClosedSpawnExit(stderr)) return true;
+  if (stdout) return true;
+  return false;
+}
+
 function cursorCommandBlock(seq) {
   const resultPat = shellEscape(seq.wait || "Esc to close");
   const acceptPat = shellEscape(seq.accept || "Show plan");
@@ -165,10 +187,12 @@ export function buildExpectScript(cli, timeoutSec = 45) {
   if (cli === "codex") {
     const readyPat = shellEscape(seq.ready || "Tip:");
     const limitReadyPat = shellEscape(CODEX_LIMIT_READY_RE);
-    const statusBarPat = shellEscape(CODEX_STATUS_BAR_RE);
+    const weeklyPat = shellEscape(CODEX_LIMIT_WAIT);
+    const fiveHourPat = shellEscape(CODEX_LIMIT_WAIT_ALT);
     const waitHitPat = shellEscape(seq.waitHit || CODEX_HIT_LIMIT_WAIT);
-    const panelTimeout = Math.max(45, Math.floor(timeoutSec * 0.25));
-    return `set timeout 90
+    const panelTimeout = Math.max(60, Math.floor(timeoutSec * 0.35));
+    const bootTimeout = Math.max(90, Math.floor(timeoutSec * 0.6));
+    return `set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"
 expect {
@@ -177,17 +201,16 @@ ${dialogs}  -re "${readyPat}" { }
 ${timeoutTail()}}
 sleep 3
 send "${cmd}\\r"
-set timeout 15
+set timeout 20
 expect {
-${dialogs}  -re "${limitReadyPat}" { }
-  -re "${waitHitPat}" { }
-  -re "${statusBarPat}" { }
-  timeout { }
+${dialogs}  timeout { }
 }
 send "${cmd}\\r"
 set timeout ${panelTimeout}
 expect {
-${dialogs}  -re "${limitReadyPat}" { }
+${dialogs}  -re "${weeklyPat}" { }
+  -re "${fiveHourPat}" { }
+  -re "${limitReadyPat}" { }
   -re "${waitHitPat}" { }
 ${timeoutTail()}}
 ${fastExitBlock(exitCmd)}`;
@@ -244,10 +267,16 @@ export function runPtyCollect(cli, opts = {}) {
     if (/PTY_TIMEOUT_TAIL:/.test(combined) || e?.status === 2) {
       throw new Error(formatPtyTimeoutError(cli, stdout, stderr));
     }
-    if (stdout && e?.status !== 0 && e?.status != null) {
-      throw new Error(formatPtyTimeoutError(cli, stdout, stderr));
+    if (
+      shouldReturnPtyTranscript({
+        status: e?.status,
+        stdout,
+        stderr,
+        combined,
+      })
+    ) {
+      return stdout;
     }
-    if (stdout) return stdout;
     throw e;
   } finally {
     try {
