@@ -309,6 +309,53 @@ test("a harness whose CLI updated past its verified version is reported", () => 
   }
 });
 
+test("a chain cell whose CLI no longer lists the model is model_unavailable", () => {
+  const roster = {
+    clis: {
+      cursor: { cmd: ["cursor-agent", "--model", "{model}", "{prompt}"] },
+      claude: { cmd: ["claude", "--model", "{model}", "{prompt}"] },
+    },
+    models: {
+      "grok-4.6": { cli: ["cursor"], cli_model: "cursor-grok-4.6-medium" },
+      "claude-opus": { cli: ["claude"] },
+    },
+    roles: { planner: { chain: ["cursor:grok-4.6", "claude:claude-opus"] } },
+  };
+  const listing = "cursor-grok-4.5-high - Grok 4.5\n";
+  const report = withHome(
+    { "roster.json": roster },
+    (env) => diagnose(env, {
+      execFileSync: (_bin, args) => {
+        if (args[0] === "models") return listing;
+        return "";
+      },
+    })
+  );
+  const finding = report.findings.find((f) => f.kind === "model_unavailable");
+  assert.ok(finding, "gone chain cell must be reported");
+  assert.equal(finding.cli, "cursor");
+  assert.equal(finding.model, "grok-4.6");
+  assert.equal(finding.severity, "high");
+  assert.equal(report.findings.some((f) => f.kind === "model_unavailable" && f.cli === "claude"), false);
+});
+
+test("doctor skips model check when CLI listing fails", () => {
+  const roster = {
+    clis: { cursor: { cmd: ["cursor-agent", "--model", "{model}"] } },
+    models: { "grok-4.6": { cli: ["cursor"], cli_model: "cursor-grok-4.6-medium" } },
+    roles: { planner: { chain: ["cursor:grok-4.6"] } },
+  };
+  const report = withHome(
+    { "roster.json": roster },
+    (env) => diagnose(env, {
+      execFileSync: () => {
+        throw new Error("timeout");
+      },
+    })
+  );
+  assert.equal(report.findings.some((f) => f.kind === "model_unavailable"), false);
+});
+
 test("an adapter with no record at all is not reported as drift", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
   try {

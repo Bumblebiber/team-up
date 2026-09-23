@@ -13,6 +13,7 @@ import {
 import { configPath, loadJson, validateRoster } from "./roster/config.mjs";
 import { harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
 import { checkModelAvailability } from "./roster/availability.mjs";
+import { LIST_TIMEOUT_MS } from "./collectors/cli-models.mjs";
 import { listVerificationRecords } from "./harness/verify.mjs";
 import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
 import { handoffsDir } from "./paths.mjs";
@@ -239,10 +240,14 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
   // resolves and only the spawned worker finds out. Ask the CLIs that can
   // answer. Anything else stays silent: a CLI that cannot enumerate its
   // models must not read as a missing model.
-  const rosterCfg = loadJson(configPath());
+  const rosterCfg = loadJson(configPath(env));
   if (rosterCfg && execFileSync) {
     const run = (bin, args) =>
-      execFileSync(bin, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
+      execFileSync(bin, args, {
+        encoding: "utf8",
+        timeout: LIST_TIMEOUT_MS,
+        maxBuffer: 8 * 1024 * 1024,
+      });
     for (const cell of checkModelAvailability({ roster: rosterCfg, run })) {
       if (cell.status !== "missing") continue;
       findings.push({

@@ -64,7 +64,7 @@ test("a CLI that cannot enumerate is unknown, never missing", () => {
   // claude has no listing subcommand — a false "missing" here would be noise
   // on every run and get the whole check tuned out.
   assert.equal(by["claude:claude-opus"].status, "unknown");
-  assert.match(by["claude:claude-opus"].reason, /cannot list/);
+  assert.match(by["claude:claude-opus"].reason, /no models listing/);
 });
 
 test("a failed listing is unknown too, and reports why", () => {

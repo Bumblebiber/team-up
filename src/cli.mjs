@@ -23,6 +23,8 @@ import { runHarnessVerify } from "./harness/cli-verify.mjs";
 import { diagnose } from "./doctor.mjs";
 import { runCapabilityCli } from "./capabilities/cli.mjs";
 import { startDashboard } from "./dashboard/server.mjs";
+import { runModelsScan } from "./commands/models-scan.mjs";
+import { defaultRun } from "./collectors/cli-models.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -157,6 +159,16 @@ async function cmdTriage(args, io) {
   return 0;
 }
 
+async function cmdModels(args, io) {
+  const [sub, ...rest] = args;
+  if (sub === "scan") {
+    const roster = requireRoster();
+    return runModelsScan(rest, io, { roster, run: defaultRun });
+  }
+  io.err("usage: team-up models scan [--cli <id>] [--json]");
+  return 1;
+}
+
 async function cmdValidate(args, io) {
   const roster = loadJson(configPath());
   if (!roster) {
@@ -286,6 +298,7 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     io.out(VERSION);
     return 0;
   }
+  if (cmd === "models") return cmdModels(rest, io);
   if (cmd === "validate") return cmdValidate(rest, io);
   if (cmd === "pick") return cmdPick(rest, io);
   if (cmd === "triage") return cmdTriage(rest, io);
@@ -335,7 +348,7 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     return runRosterCli(args);
   }
   io.err(
-    "usage: team-up <version|init|validate|doctor|pick|triage|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness|dashboard>"
+    "usage: team-up <version|init|validate|doctor|pick|triage|models|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness|dashboard>"
   );
   return 1;
 }
