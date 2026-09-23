@@ -18,6 +18,7 @@ import {
   installLogPath,
   installExitPath,
   installSessionName,
+  enrichCliRow,
 } from "../../src/dashboard/installers.mjs";
 import { HARNESS_VERIFY_CLIS, UNVERIFIABLE_ISOLATION_REASONS } from "../../src/harness/cli-verify.mjs";
 import { createDashboardServer, ensureDashboardToken } from "../../src/dashboard/server.mjs";
@@ -321,4 +322,32 @@ test("unknown cli id on install returns 400", () =>
 
 test("install session name is deterministic mutex", () => {
   assert.equal(installSessionName("claude"), "team-up-install-claude");
+});
+
+
+/**
+ * The verdict is not only a post-update fact. Before this, a CLI that can
+ * never be verified sat in the list reading "installed, capabilities denied"
+ * — the wording for something a rerun could fix — with the honest verdict
+ * only appearing after somebody pressed update.
+ */
+test("a CLI that can never be verified says so in the steady state", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-dash-"));
+  try {
+    const env = { TEAM_UP_HOME: home, HOME: home };
+    const roster = { clis: { opencode: { cmd: ["opencode"] } } };
+    const row = enrichCliRow(
+      { cli: "opencode", harness_label: "installed, capabilities denied" },
+      roster,
+      { env },
+    );
+    assert.equal(row.verification_verdict.verdict, "harness_verification_unsupported");
+    assert.equal(row.verification_verdict.rerun_helps, false);
+    assert.match(row.harness_label, /not verifiable/);
+    assert.doesNotMatch(row.harness_label, /capabilities denied/);
+    // No update was run, so the post-update slot stays empty.
+    assert.equal(row.post_update_verdict, null);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

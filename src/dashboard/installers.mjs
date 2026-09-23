@@ -421,8 +421,18 @@ export function enrichCliRow(row, roster, { allowInstall = false, env = process.
   } catch {
     /* no log */
   }
+  // The verdict is not only a post-update fact: a CLI that can never be
+  // verified reads that way in the steady state too, and the row must not
+  // call that "capabilities denied" — that is the wording for something a
+  // rerun could fix.
+  const verdict = classifyVerificationVerdict(cli, { env, logLines });
+  const unsupported = verdict?.verdict === "harness_verification_unsupported";
   return {
     ...row,
+    ...(unsupported
+      ? { harness_label: `not verifiable — ${verdict.reason}` }
+      : {}),
+    verification_verdict: verdict,
     install_available: boot.available,
     install_command: boot.available ? boot.command : null,
     install_disabled_reason: boot.available ? null : boot.reason,
@@ -432,8 +442,6 @@ export function enrichCliRow(row, roster, { allowInstall = false, env = process.
     login_command: login.available ? login.command : null,
     install_state: state.state,
     job_session: state.session,
-    post_update_verdict: state.state === "succeeded" && upd.available
-      ? classifyVerificationVerdict(cli, { env, logLines })
-      : null,
+    post_update_verdict: state.state === "succeeded" && upd.available ? verdict : null,
   };
 }
