@@ -386,7 +386,6 @@ async function cmdDispatch(args) {
 async function cmdHandoff(args) {
   const {
     closeHandoff,
-    missingHandoffMessage,
     resolveHandoffForSpawn,
     successorPrompt,
   } = await import("../handoff/store.mjs");
@@ -422,10 +421,11 @@ async function cmdHandoff(args) {
   let handoffPath;
   try {
     handoffPath = resolveHandoffForSpawn({ dir, handoffFile, label: role });
-  } catch {
-    console.error(missingHandoffMessage(dir));
+  } catch (error) {
+    console.error(String(error.message || error));
     process.exit(1);
   }
+  console.log(`handoff stored: ${handoffPath}`);
   await spawnInTmux({
     roster: rosterCfg,
     role,
@@ -438,7 +438,6 @@ async function cmdHandoff(args) {
 async function cmdPassTo(args) {
   const { resolvePassTo } = await import("./pass-to.mjs");
   const {
-    missingHandoffMessage,
     resolveHandoffForSpawn,
     successorPrompt,
   } = await import("../handoff/store.mjs");
@@ -466,10 +465,11 @@ async function cmdPassTo(args) {
   let handoffPath;
   try {
     handoffPath = resolveHandoffForSpawn({ dir, handoffFile, label: resolved.model });
-  } catch {
-    console.error(missingHandoffMessage(dir));
+  } catch (error) {
+    console.error(String(error.message || error));
     process.exit(1);
   }
+  console.log(`handoff stored: ${handoffPath}`);
   console.log(`resolved: ${resolved.label} (via ${resolved.source})`);
   await spawnPinnedInTmux({
     roster: rosterCfg,

@@ -322,11 +322,11 @@ export function checkThresholds({ roster, usage, now = Date.now() }) {
   if (handoff) {
     const rosterScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "roster.mjs");
     lines.push(
-      "Do this now: (1) write the handoff into ~/.team-up/handoffs/ via " +
-      `node ${rosterScript} handoff --role <your role> --dir "$PWD" ` +
-      "(or pass --handoff-file <path>); include current state, done steps, open steps, verification commands — " +
-      "do not leave HANDOFF.md in the working directory, " +
-      `(2) run that handoff command, ` +
+      "Do this now: (1) write the handoff content (HANDOFF.md in the task dir, or any file for --handoff-file); " +
+      "include current state, done steps, open steps, verification commands — " +
+      "do not leave HANDOFF.md in the working directory after step (2), " +
+      `(2) run node ${rosterScript} handoff --role <your role> --dir "$PWD" ` +
+      "(or pass --handoff-file <path>), " +
       "(3) report the printed tmux session + attach command to the user, (4) stop working in this session."
     );
   }

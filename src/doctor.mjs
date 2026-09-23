@@ -14,7 +14,7 @@ import { configPath, loadJson, validateRoster } from "./roster/config.mjs";
 import { harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
 import { checkModelAvailability } from "./roster/availability.mjs";
 import { listVerificationRecords } from "./harness/verify.mjs";
-import { listOpenHandoffs } from "./handoff/store.mjs";
+import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
 import { handoffsDir } from "./paths.mjs";
 
 function readJson(file) {
@@ -258,6 +258,18 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
         fix: `drop the chain entry, or set models.${cell.model}.cli_model to the id ${cell.cli} uses`,
       });
     }
+  }
+
+  for (const bad of listUnreadableOpenHandoffs(env)) {
+    findings.push({
+      kind: "unreadable_handoff",
+      severity: "medium",
+      path: bad.path,
+      detail:
+        `handoff store entry ${path.basename(bad.path)} is unreadable ` +
+        `(${bad.error || bad.reason})`,
+      fix: `remove or repair ${bad.path}`,
+    });
   }
 
   for (const stale of listOpenHandoffs(env)) {
