@@ -22,7 +22,8 @@ import {
 } from "./tmux.mjs";
 import { readLease, releaseAttemptLease } from "../supervisor/attempts.mjs";
 import { gcHandoffs, readHandoffRetentionDays } from "../handoff/store.mjs";
-import { loadJson, configPath } from "../roster/config.mjs";
+import { loadJson, configPath, usagePath, usageWritePath } from "../roster/config.mjs";
+import { pruneExpiredMarks } from "../roster/chain.mjs";
 
 export const IDLE_MS = 30 * 60 * 1000;
 export const GRACE_MS = 10 * 60 * 1000;
@@ -1002,6 +1003,18 @@ export function gcRuns({
     report.handoffs = gcHandoffs({ now, retentionDays, dryRun });
   } catch (error) {
     report.handoffs = { error: String(error.message || error) };
+  }
+
+  try {
+    const { usage, pruned } = pruneExpiredMarks({ usage: loadJson(usagePath()), now: nowMs });
+    if (pruned.length && !dryRun) {
+      const out = usageWritePath();
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      fs.writeFileSync(out, `${JSON.stringify(usage, null, 2)}\n`);
+    }
+    report.expired_marks = { pruned, dry_run: Boolean(dryRun) };
+  } catch (error) {
+    report.expired_marks = { error: String(error.message || error) };
   }
 
   try {

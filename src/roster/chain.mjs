@@ -292,6 +292,21 @@ export function markLimited({ usage, target, ttlMs, now = Date.now(), reason }) 
   return base;
 }
 
+/** Pure: drops marks whose `until` passed more than graceMs ago. */
+export function pruneExpiredMarks({ usage, now = Date.now(), graceMs = 24 * 60 * 60_000 }) {
+  const marked = usage?.marked;
+  if (!marked) return { usage, pruned: [] };
+  const pruned = [];
+  const kept = {};
+  for (const [target, mark] of Object.entries(marked)) {
+    const until = Date.parse(mark?.until ?? "");
+    if (Number.isFinite(until) && now - until > graceMs) pruned.push(target);
+    else kept[target] = mark;
+  }
+  if (!pruned.length) return { usage, pruned };
+  return { usage: { ...usage, marked: kept }, pruned };
+}
+
 function cliFromWindowKey(wkey) {
   const i = wkey.indexOf(":");
   return i > 0 ? wkey.slice(0, i) : null;
