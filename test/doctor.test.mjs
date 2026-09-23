@@ -309,6 +309,66 @@ test("a harness whose CLI updated past its verified version is reported", () => 
   }
 });
 
+/**
+ * A finding whose fix cannot work is worse than none: this cron runs daily and
+ * a permanently-red high teaches the reader to skip the report. Drift on a CLI
+ * `harness verify` has no runner for, and a codex record that can never pass
+ * context-isolation/v1, are both facts to record, not work to do.
+ */
+test("drift on a CLI with no verify runner is low and says no command helps", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    const dir = path.join(home, "harness-verification", "opencode");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "1.18.15.json"),
+      JSON.stringify({
+        adapter: "opencode",
+        cli_version: "1.18.15",
+        status: "verified",
+        checked_at: "2026-08-15T10:18:18.847Z",
+      })
+    );
+    const report = diagnose(homeEnv(home), { execFileSync: () => "1.18.23\n" });
+    assert.equal(report.findings.some((f) => f.kind === "harness_version_drift"), false);
+    const finding = report.findings.find((f) => f.kind === "harness_verification_unsupported");
+    assert.ok(finding, "drift on an unverifiable CLI must still be reported");
+    assert.equal(finding.severity, "low");
+    assert.equal(finding.cli, "opencode");
+    assert.doesNotMatch(finding.fix, /team-up harness verify/);
+    assert.match(finding.fix, /no runner/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a codex record that can never pass is low, not a high with a dead fix", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    const dir = path.join(home, "harness-verification", "codex");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "0.156.1.json"),
+      JSON.stringify({
+        adapter: "codex",
+        cli_version: "0.156.1",
+        status: "unverified",
+        checked_at: "2026-09-23T12:00:00.000Z",
+        context_isolation_reason: { code: "codex_no_live_collector" },
+      })
+    );
+    const report = diagnose(homeEnv(home), { execFileSync: () => "codex-cli 0.156.1\n" });
+    assert.equal(report.findings.some((f) => f.kind === "harness_verification_failed"), false);
+    const finding = report.findings.find((f) => f.kind === "harness_verification_unsupported");
+    assert.ok(finding, "an unverifiable codex record must still be reported");
+    assert.equal(finding.severity, "low");
+    assert.equal(finding.context_isolation_reason, "codex_no_live_collector");
+    assert.doesNotMatch(finding.fix, /team-up harness verify/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("a chain cell whose CLI no longer lists the model is model_unavailable", () => {
   const roster = {
     clis: {

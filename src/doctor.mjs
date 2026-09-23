@@ -15,6 +15,7 @@ import { harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
 import { checkModelAvailability } from "./roster/availability.mjs";
 import { LIST_TIMEOUT_MS } from "./collectors/cli-models.mjs";
 import { listVerificationRecords, loadVerificationRecord } from "./harness/verify.mjs";
+import { HARNESS_VERIFY_CLIS, UNVERIFIABLE_ISOLATION_REASONS } from "./harness/cli-verify.mjs";
 import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
 import { handoffsDir } from "./paths.mjs";
 
@@ -217,13 +218,29 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
   // Only adapters that already have a record are inspected: an adapter with
   // none cannot have drifted, and skipping them keeps `diagnose` free of a
   // subprocess per CLI in the common case (a fresh home has no records).
+  // A finding whose fix cannot work is worse than no finding: this cron runs
+  // daily, and two permanently-red highs teach the reader to skip the report.
+  // `harness verify` has a runner for claude and codex only, and codex can
+  // never pass context-isolation/v1 (it has no plugin/framework surface). Both
+  // are real — capabilities stay revoked — but they are facts to record, not
+  // work to do, so they get their own kind and a fix line that says so.
+  const unverifiable = (cli, isoReason) =>
+    !HARNESS_VERIFY_CLIS.has(cli) || UNVERIFIABLE_ISOLATION_REASONS.has(isoReason);
+  const unverifiableFix = (cli, isoReason) =>
+    HARNESS_VERIFY_CLIS.has(cli)
+      ? `none — ${cli} cannot satisfy context-isolation/v1 (${isoReason}); `
+        + "grants stay revoked until it grows the surface or the contract changes"
+      : `none — \`harness verify\` has no runner for ${cli}; `
+        + "grants stay revoked until one is written";
+
   for (const cli of listHarnessAdapters()) {
     if (!listVerificationRecords(cli, env).length) continue;
     const status = harnessStatus(cli, execFileSync ? { env, execFileSync } : { env });
     if (status.status === "drifted") {
+      const cannotVerify = unverifiable(cli, null);
       findings.push({
-        kind: "harness_version_drift",
-        severity: "high",
+        kind: cannotVerify ? "harness_verification_unsupported" : "harness_version_drift",
+        severity: cannotVerify ? "low" : "high",
         cli,
         installed: status.installed_version,
         last_verified: status.last_verified_version,
@@ -231,7 +248,9 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
           `${cli} ${status.installed_version} has no verification record ` +
           `(${status.last_verified_version} passed on ${status.last_checked_at}); ` +
           "every capability it granted is revoked until it is re-verified",
-        fix: `team-up harness verify ${cli} --fixture-project <path>`,
+        fix: cannotVerify
+          ? unverifiableFix(cli, null)
+          : `team-up harness verify ${cli} --fixture-project <path>`,
       });
       continue;
     }
@@ -264,9 +283,10 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
         }`
       );
     }
+    const cannotVerify = unverifiable(cli, isoReason);
     findings.push({
-      kind: "harness_verification_failed",
-      severity: "high",
+      kind: cannotVerify ? "harness_verification_unsupported" : "harness_verification_failed",
+      severity: cannotVerify ? "low" : "high",
       cli,
       installed: status.installed_version,
       status: record.status,
@@ -275,7 +295,9 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
       detail:
         `${cli} ${status.installed_version} harness verification ${record.status}` +
         (reasonBits.length ? ` — ${reasonBits.join("; ")}` : ""),
-      fix: `team-up harness verify ${cli} --fixture-project <path>`,
+      fix: cannotVerify
+        ? unverifiableFix(cli, isoReason)
+        : `team-up harness verify ${cli} --fixture-project <path>`,
     });
   }
 

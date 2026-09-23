@@ -550,9 +550,24 @@ export async function liveCodexVerifyRunner({ adapter, fixtureProject, cliVersio
     isolation_status: isolation.isolation_status,
     context_isolation: isolation.context_isolation ?? null,
     cli_version: cliVersion || String(versionOut).trim(),
-    ...(isolation.error ? { error: isolation.error } : {}),
+    ...(isolation.isolation_reason
+      ? { context_isolation_reason: isolation.isolation_reason }
+      : {}),
+    ...(isolation.error ? { isolation_error: isolation.error } : {}),
   };
 }
+
+/**
+ * CLIs `harness verify` has a live runner for. Anything else has no way to be
+ * verified at all, so telling a user to run the command is a dead end.
+ */
+export const HARNESS_VERIFY_CLIS = new Set(["claude", "codex"]);
+
+/**
+ * Reason codes that mean "this CLI cannot pass, ever" rather than "it did not
+ * pass this time". Re-running the command changes nothing.
+ */
+export const UNVERIFIABLE_ISOLATION_REASONS = new Set(["codex_no_live_collector"]);
 
 export async function runHarnessVerify(args, io = { out: console.log, err: console.error }) {
   const [cli, ...rest] = args;
@@ -577,7 +592,7 @@ export async function runHarnessVerify(args, io = { out: console.log, err: conso
     io.err(String(e.message || e));
     return 1;
   }
-  if (cli !== "claude" && cli !== "codex") {
+  if (!HARNESS_VERIFY_CLIS.has(cli)) {
     io.err(`harness verify unsupported for ${cli}`);
     return 2;
   }
