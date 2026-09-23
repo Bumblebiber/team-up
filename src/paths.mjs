@@ -183,3 +183,12 @@ export function handoffsDir(env = process.env) {
 export function handoffsDoneDir(env = process.env) {
   return path.join(handoffsDir(env), "done");
 }
+
+export function secretsPath(env = process.env) {
+  if (env.TEAM_UP_SECRETS) return env.TEAM_UP_SECRETS;
+  if (env.TEAM_UP_HOME) return path.join(env.TEAM_UP_HOME, "secrets.env");
+  if (env === process.env) {
+    return path.join(teamUpHome(env), "secrets.env");
+  }
+  return null;
+}

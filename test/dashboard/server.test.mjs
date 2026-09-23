@@ -4,7 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createDashboardServer, ensureDashboardToken } from "../../src/dashboard/server.mjs";
+import { createAdminGate } from "../../src/dashboard/admin.mjs";
 import { createRun, atomicWriteText } from "../../src/runs/runs.mjs";
+import { secretsPath } from "../../src/paths.mjs";
 
 function withHome(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-dash-"));
@@ -37,12 +39,14 @@ async function listen(server) {
   return port;
 }
 
-async function req(port, urlPath, { method = "GET", token, cookie, body } = {}) {
+async function req(port, urlPath, { method = "GET", token, cookie, body, csrf, origin, host = "127.0.0.1" } = {}) {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (cookie) headers.Cookie = cookie;
   if (body) headers["Content-Type"] = "application/json";
-  const res = await fetch(`http://127.0.0.1:${port}${urlPath}`, {
+  if (csrf) headers["X-Team-Up-CSRF"] = "1";
+  if (origin) headers.Origin = origin;
+  const res = await fetch(`http://${host}:${port}${urlPath}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -175,10 +179,158 @@ test("non-GET methods return 405 except login POST", () =>
   withHome(async ({ token }) => {
     const { server } = createDashboardServer({ token });
     const port = await listen(server);
-    for (const method of ["POST", "PUT", "DELETE", "PATCH"]) {
+    for (const method of ["PUT", "DELETE", "PATCH"]) {
       const r = await req(port, "/api/runs", { method, token });
       assert.equal(r.status, 405, method);
     }
+    server.close();
+  }));
+
+async function loginCookie(port, token) {
+  const login = await req(port, "/api/login", { method: "POST", body: { token } });
+  return login.headers.get("set-cookie")?.split(";")[0] || "";
+}
+
+async function grantAdmin(port, cookie, adminGate, { viaHttp = true } = {}) {
+  const gate = adminGate || createAdminGate({ log: () => {} });
+  const challenge = gate.issueChallenge();
+  assert.equal(challenge.ok, true);
+  const code = gate.peekChallengeCode();
+  assert.ok(code, "expected confirmation code on gate");
+  if (viaHttp) {
+    const confirm = await req(port, "/api/admin/confirm", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      body: { challenge_id: challenge.challenge_id, code },
+    });
+    assert.equal(confirm.status, 200);
+  } else {
+    const cookieToken = cookie.includes("=") ? cookie.slice(cookie.indexOf("=") + 1) : cookie;
+    const result = gate.confirm({
+      challenge_id: challenge.challenge_id,
+      code,
+      cookieToken,
+    });
+    assert.equal(result.ok, true);
+  }
+  return gate;
+}
+
+test("POST without CSRF header is refused", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/refresh", { method: "POST", cookie, body: {} });
+    assert.equal(r.status, 403);
+    assert.match(r.json.error, /csrf/i);
+    server.close();
+  }));
+
+test("foreign Origin on POST is refused", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/refresh", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      origin: "http://evil.example",
+      body: {},
+    });
+    assert.equal(r.status, 403);
+    server.close();
+  }));
+
+test("write without admin capability is refused", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/refresh", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      body: {},
+    });
+    assert.equal(r.status, 403);
+    assert.match(r.json.error, /admin confirmation/i);
+    server.close();
+  }));
+
+test("expired admin capability is refused", () =>
+  withHome(async ({ token }) => {
+    let ts = Date.now();
+    const adminGate = createAdminGate({ now: () => ts });
+    const { server } = createDashboardServer({ token, adminGate });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    await grantAdmin(port, cookie, adminGate);
+    ts += adminGate.CAPABILITY_TTL_MS + 1;
+    const r = await req(port, "/api/refresh", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      body: {},
+    });
+    assert.equal(r.status, 403);
+    server.close();
+  }));
+
+test("write endpoint on non-loopback bind is refused", () =>
+  withHome(async ({ token }) => {
+    const adminGate = createAdminGate({ log: () => {} });
+    const { server } = createDashboardServer({ token, host: "0.0.0.0", adminGate });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    await grantAdmin(port, cookie, adminGate, { viaHttp: false });
+    const r = await req(port, "/api/refresh", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      body: {},
+    });
+    assert.equal(r.status, 403);
+    assert.match(r.json.error, /non-loopback/i);
+    server.close();
+  }));
+
+test("malformed cookie does not 500", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const r = await req(port, "/api/runs", { cookie: "%%%bad" });
+    assert.equal(r.status, 401);
+    server.close();
+  }));
+
+test("openrouter key write never returns full value", () =>
+  withHome(async ({ token }) => {
+    const adminGate = createAdminGate({ log: () => {} });
+    const example = "sk-EXAMPLE-abcdef91f";
+    const fetchFn = async (url) => {
+      if (String(url).includes("/key")) {
+        return { ok: true, status: 200, json: async () => ({ data: { label: "t" } }) };
+      }
+      throw new Error("unexpected fetch");
+    };
+    const { server } = createDashboardServer({ token, adminGate, fetchFn });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    await grantAdmin(port, cookie, adminGate);
+    const r = await req(port, "/api/providers/openrouter/key", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      body: { key: example },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.hint, "…f91f");
+    assert.ok(!r.text.includes(example));
+    const mode = fs.statSync(secretsPath()).mode & 0o777;
+    assert.equal(mode, 0o600);
     server.close();
   }));
 

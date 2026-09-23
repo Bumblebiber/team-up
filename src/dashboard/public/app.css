@@ -166,6 +166,33 @@ tr.orphan td:first-child { color: var(--orphan); }
 
 .skipped { color: var(--muted); font-size: 0.8rem; }
 
+.setup-panel h3 { margin: 1rem 0 0.5rem; font-size: 0.95rem; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+.mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+.provider-card {
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.provider-form { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
+.provider-form input { flex: 1; min-width: 12rem; padding: 0.35rem; }
+.provider-form button, #admin-challenge-btn, #refresh-scores-btn {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.admin-gate {
+  padding: 0.5rem;
+  margin-bottom: 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+}
+tr.greyed td { opacity: 0.55; }
+
 @media (max-width: 400px) {
   .app header { flex-direction: column; align-items: flex-start; }
   nav { width: 100%; }

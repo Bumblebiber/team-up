@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { lookupKey, openRouterKeyFiles } from "../keys.mjs";
 
 const ID_MAP_PATH = fileURLToPath(new URL("./id-map.json", import.meta.url));
 
@@ -77,16 +78,25 @@ export function normalizeBenchmarks(payload, idMap = loadIdMap()) {
 }
 
 export async function fetchBenchmarks({
-  apiKey = process.env.OPENROUTER_API_KEY,
+  apiKey,
+  env = process.env,
+  roster,
   fetchFn = globalThis.fetch,
   maxResults = 100,
 } = {}) {
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY required for live benchmark fetch");
+  const resolved =
+    apiKey ??
+    lookupKey({
+      keyName: "OPENROUTER_API_KEY",
+      keyFiles: openRouterKeyFiles(env, roster),
+      env,
+    }).key;
+  if (!resolved) throw new Error("OPENROUTER_API_KEY required for live benchmark fetch");
   const url = new URL("https://openrouter.ai/api/v1/benchmarks");
   url.searchParams.set("source", "artificial-analysis");
   url.searchParams.set("max_results", String(maxResults));
   const res = await fetchFn(url, {
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    headers: { Authorization: `Bearer ${resolved}`, Accept: "application/json" },
   });
   if (!res.ok) throw new Error(`openrouter benchmarks HTTP ${res.status}`);
   return res.json();

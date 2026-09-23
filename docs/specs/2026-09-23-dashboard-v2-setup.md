@@ -340,10 +340,12 @@ that is the whole access story for v2. Consequences, so nobody re-derives them:
   **refuses** every write/exec endpoint when the bind is not loopback. Read
   views still work.
 
-If a proxy is ever put in front, two v1 defects must be fixed first: the cookie
+If a proxy is ever put in front, three v1 defects must be fixed first: the cookie
 has no `Secure` flag, and the cookie value *is* the token (no session id, so a
 proxy log or a `Set-Cookie` leak is a full credential leak and rotation cannot
-invalidate a session). Both are listed as v1 defects, neither is v2's job.
+invalidate a session), and the in-memory admin capability is not bound to the
+caller's cookie (§4's "bound to the caller's cookie" buys nothing until the
+session/token split is fixed). All are listed as v1 defects, none is v2's job.
 
 ### Audit trail
 
@@ -386,7 +388,7 @@ pass. v2 is already the version that crosses from read to write; it crosses once
 | `src/roster/triage.mjs` | `lookupTriageKey` becomes a wrapper over `lookupKey`; file list `[secrets.env, triage.key_file]` |
 | `src/collectors/openrouter-models.mjs`, `-benchmarks.mjs` | default `apiKey` via `lookupKey` instead of `process.env` only |
 | `src/json-store.mjs` | `atomicWriteText(path, text, {mode})` — mode set on tmp before rename |
-| `src/paths.mjs` | `secretsPath(env)` → `~/.team-up/secrets.env`; `installLogPath(cli, env)` |
+| `src/paths.mjs` | `secretsPath(env)` → `~/.team-up/secrets.env` |
 | `src/dashboard/providers.mjs` (new) | read/write/remove one `KEY=VALUE` line; validate via `GET /api/v1/key` |
 | `src/dashboard/installers.mjs` (new) | hardcoded per-cli bootstrap/update/login table; `detectClis(roster)`; `installState(cli)` |
 | `src/dashboard/audit.mjs` (new) | `appendAudit(event)` → JSONL, 0600 |

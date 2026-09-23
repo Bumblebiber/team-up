@@ -25,6 +25,7 @@
         <a href="#panel-runs">Runs</a>
         <a href="#panel-tmux">tmux</a>
         <a href="#panel-pick">Pick</a>
+        <a href="#panel-setup">Setup</a>
       </nav>
     </header>
 
@@ -53,6 +54,39 @@
       <section id="panel-pick" class="panel">
         <h2>Pick preview</h2>
         <div id="pick-table" class="table-wrap"></div>
+      </section>
+
+      <section id="panel-setup" class="panel setup-panel">
+        <h2>Setup</h2>
+        <div id="admin-gate" class="admin-gate hidden">
+          <p>Write actions need a confirmation code from the terminal running <code>team-up dashboard</code>.</p>
+          <button type="button" id="admin-challenge-btn">Request code</button>
+          <form id="admin-confirm-form" class="hidden">
+            <input type="text" id="admin-code-input" placeholder="123-456" autocomplete="off">
+            <button type="submit">Confirm</button>
+          </form>
+          <p id="admin-status" class="muted"></p>
+        </div>
+
+        <h3>Providers</h3>
+        <div id="providers-list"></div>
+
+        <h3>Models</h3>
+        <div class="toolbar">
+          <input type="search" id="models-search" placeholder="Filter models…">
+          <label><input type="checkbox" id="models-roster-only"> In roster only</label>
+          <button type="button" id="refresh-scores-btn">Refresh catalogue</button>
+        </div>
+        <p id="models-meta" class="muted"></p>
+        <div class="toolbar">
+          <button type="button" id="models-prev">Previous</button>
+          <button type="button" id="models-next">Next</button>
+        </div>
+        <div id="models-table" class="table-wrap"></div>
+        <p id="apply-cli-hint" class="muted"></p>
+
+        <h3>CLIs</h3>
+        <div id="clis-table" class="table-wrap"></div>
       </section>
     </main>
   </div>

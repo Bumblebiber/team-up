@@ -4,6 +4,7 @@ import {
   joinTmuxSessions,
   buildUsageView,
   buildPickAllView,
+  buildModelsView,
   sanitizeForDashboard,
   isValidRunId,
   usageStaleThresholdMs,
@@ -127,6 +128,36 @@ test("pick-all over fake roster includes skipped reasons", () => {
   assert.ok(!json.includes("FAKE-SECRET-should-never-appear"));
   assert.ok(!json.includes("api_key"));
   assert.ok(!json.includes("secret-acct"));
+});
+
+test("buildModelsView joins scores with roster and proposals", () => {
+  const scoresFile = {
+    models: {
+      "model-a": {
+        display_name: "A",
+        provider: "anthropic",
+        scores: { coding_index: 90 },
+        price: { in: 1, out: 2 },
+      },
+      "new-hot": {
+        display_name: "New",
+        provider: "xai",
+        openrouter_id: "x-ai/new-hot",
+        scores: { coding_index: 99 },
+      },
+    },
+  };
+  const roster = {
+    ...ROSTER,
+    roles: { planner: { chain: ["model-a"] } },
+    scores: { min_delta: 2 },
+  };
+  const view = buildModelsView(scoresFile, roster);
+  assert.equal(view.total, 2);
+  const hot = view.models.find((m) => m.model === "new-hot");
+  assert.ok(hot?.proposal);
+  const inRoster = buildModelsView(scoresFile, roster, { in_roster: true });
+  assert.equal(inRoster.total, 1);
 });
 
 test("sanitizeForDashboard strips secret-looking keys", () => {

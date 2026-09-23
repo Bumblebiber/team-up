@@ -357,6 +357,7 @@ test("missing key returns no_key fallback", async () => {
   });
   assert.equal(result.source, "fallback");
   assert.equal(result.fallback_reason, "no_key");
+  assert.ok(Array.isArray(result.key_files_checked));
 });
 
 test("role not in allowlist skips triage call", async () => {
@@ -571,7 +572,7 @@ test("lookupTriageKey prefers env over key_file", () => {
   assert.equal(fromEnv.key, "env-key");
   assert.equal(fromEnv.source, "env");
 
-  const fromFile = lookupTriageKey({ roster, env: {} });
+  const fromFile = lookupTriageKey({ roster, env: { TEAM_UP_HOME: home } });
   assert.equal(fromFile.key, "file-key");
   assert.equal(fromFile.source, "file");
   fs.rmSync(home, { recursive: true, force: true });
@@ -586,7 +587,7 @@ test("lookupTriageKey parses comments, blanks, and quoted values", () => {
     { mode: 0o600 },
   );
   const roster = { triage: { key_env: "OPENROUTER_API_KEY", key_file: keyFile } };
-  const hit = lookupTriageKey({ roster, env: {} });
+  const hit = lookupTriageKey({ roster, env: { TEAM_UP_HOME: home } });
   assert.equal(hit.key, "quoted-key");
   fs.rmSync(home, { recursive: true, force: true });
 });
@@ -599,7 +600,7 @@ test("lookupTriageKey refuses group/world-readable files", async () => {
   const warnings = [];
   const hit = lookupTriageKey({
     roster,
-    env: {},
+    env: { TEAM_UP_HOME: home },
     warn: (msg) => warnings.push(msg),
   });
   assert.equal(hit.key, null);
@@ -607,6 +608,41 @@ test("lookupTriageKey refuses group/world-readable files", async () => {
   assert.match(warnings[0], /leaky\.env/);
   assert.doesNotMatch(warnings.join("\n"), /secret-value/);
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("lookupTriageKey with partial env does not read operator home secrets", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-key-"));
+  const operatorHome = fs.mkdtempSync(path.join(os.tmpdir(), "tu-op-"));
+  const operatorSecretsDir = path.join(operatorHome, ".team-up");
+  fs.mkdirSync(operatorSecretsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(operatorSecretsDir, "secrets.env"),
+    "OPENROUTER_API_KEY=operator-leak-key\n",
+    { mode: 0o600 },
+  );
+  const keyFile = path.join(home, "fixture.env");
+  fs.writeFileSync(keyFile, "OPENROUTER_API_KEY=fixture-key\n", { mode: 0o600 });
+  const roster = { triage: { key_env: "OPENROUTER_API_KEY", key_file: keyFile } };
+
+  const prevHome = process.env.HOME;
+  process.env.HOME = operatorHome;
+  try {
+    const fromFixture = lookupTriageKey({ roster, env: {} });
+    assert.equal(fromFixture.key, "fixture-key");
+    assert.equal(fromFixture.source, "file");
+
+    fs.writeFileSync(path.join(home, "secrets.env"), "OPENROUTER_API_KEY=team-up-key\n", {
+      mode: 0o600,
+    });
+    const fromSecrets = lookupTriageKey({ roster, env: { TEAM_UP_HOME: home } });
+    assert.equal(fromSecrets.key, "team-up-key");
+    assert.equal(fromSecrets.filePath, path.join(home, "secrets.env"));
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(operatorHome, { recursive: true, force: true });
+  }
 });
 
 test("triage reads key from key_file without env", async () => {
