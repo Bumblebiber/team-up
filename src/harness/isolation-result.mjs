@@ -16,22 +16,16 @@ export function isIsoFailure(result) {
   return result != null && typeof result === "object" && result.ok === false;
 }
 
-export function isoValue(result) {
-  return isIsoFailure(result) ? null : result;
+/** Cap safe diagnostic detail length (matches cli-verify isolation_error truncation). */
+export function truncateIsoDetail(text, max = 500) {
+  const s = String(text ?? "");
+  return s.length <= max ? s : s.slice(0, max);
 }
 
 export function formatIsoFailure(result) {
   if (!isIsoFailure(result)) return null;
   const detail = result.detail ? `: ${result.detail}` : "";
   return `${result.reason}${detail}`;
-}
-
-/** First failure in a chain; pass through success values unchanged. */
-export function firstIsoFailure(...results) {
-  for (const r of results) {
-    if (isIsoFailure(r)) return r;
-  }
-  return null;
 }
 
 export function capabilityReasonFromFailure(result) {

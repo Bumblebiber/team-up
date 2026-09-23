@@ -15,6 +15,7 @@ import {
   isIsoFailure,
   formatIsoFailure,
   capabilityReasonFromFailure,
+  truncateIsoDetail,
 } from "./isolation-result.mjs";
 
 export { isIsoFailure, isoFail } from "./isolation-result.mjs";
@@ -61,6 +62,10 @@ export const CLAUDE_HARNESS_BUILTIN_MCP_SERVERS = Object.freeze([
 /**
  * Claude Code 2.1.220 built-in skills visible in system/init of a clean harness.
  * Deliberate allowlist — add entries only when a CLI version introduces new built-ins.
+ * ponytail: flat name list — no provenance; user skill with same name as built-in is
+ * indistinguishable at init. Not exploitable today (probe runs in fresh temp cwd;
+ * verifyProbeHomeClosedWorld rejects unexpected skill dirs). Upgrade path: tag entries
+ * with {name, source: "builtin"|"user"} when init exposes provenance.
  */
 export const CLAUDE_HARNESS_BUILTIN_SKILLS = Object.freeze([
   "design",
@@ -580,47 +585,6 @@ export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.t
     cleanup() {
       fs.rmSync(root, { recursive: true, force: true });
     },
-  };
-}
-
-export function parseIsolationObservationJson(text) {
-  if (text == null) return isoFail("no_stream_output", "observation text missing");
-  const raw = String(text).trim();
-  if (!raw) return isoFail("no_stream_output", "observation text empty");
-  let obj = null;
-  try {
-    obj = JSON.parse(raw);
-  } catch {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) return isoFail("parse_json_failed", "no JSON object in observation text");
-    try {
-      obj = JSON.parse(match[0]);
-    } catch {
-      return isoFail("parse_json_failed", "embedded JSON object invalid");
-    }
-  }
-  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
-    return isoFail("parse_json_failed", "observation root not an object");
-  }
-  for (const key of ["skills", "plugins", "mcp_tools", "frameworks", "absent"]) {
-    if (!Array.isArray(obj[key])) {
-      return isoFail("missing_required_field", `observation.${key} not an array`);
-    }
-  }
-  const content_nonces = obj.content_nonces;
-  if (content_nonces != null
-    && (typeof content_nonces !== "object" || Array.isArray(content_nonces))) {
-    return isoFail("invalid_content_nonces", "content_nonces not an object");
-  }
-  return {
-    skills: obj.skills.map(String),
-    plugins: obj.plugins.map(String),
-    mcp_tools: obj.mcp_tools.map(String),
-    frameworks: obj.frameworks.map(String),
-    absent: obj.absent.map(String),
-    ...(content_nonces ? { content_nonces: Object.fromEntries(
-      Object.entries(content_nonces).map(([k, v]) => [k, String(v)])
-    ) } : {}),
   };
 }
 
@@ -1475,6 +1439,10 @@ export function collectLiveIsolationObservation({
   const mcpNonce = expectedNonces?.mcp;
   if (!selectedToolName || !mcpNonce) return isoFail("nonces_missing", "selected MCP tool or mcp nonce missing");
 
+  if (!prepared.argv.includes("--strict-mcp-config")) {
+    return isoFail("strict_mcp_missing", "--strict-mcp-config not set");
+  }
+
   const surface = collectLaunchIsolationObservation({ prepared, capsule, adapterId });
   if (!surface) return isoFail("launch_surface_incomplete", "launch surface incomplete or malformed");
 
@@ -1483,9 +1451,6 @@ export function collectLiveIsolationObservation({
   const mcpPath = flagValues(prepared.argv, "--mcp-config")[0];
   if (!mcpPath || !fs.existsSync(mcpPath)) {
     return isoFail("mcp_config_missing", "mcp config path missing or not on disk");
-  }
-  if (!prepared.argv.includes("--strict-mcp-config")) {
-    return isoFail("strict_mcp_missing", "--strict-mcp-config not set");
   }
   // Production capsule launches set HOME to an auth-only run home (not --bare).
   const probeHome = prepared.env?.HOME;
@@ -1530,7 +1495,10 @@ export function collectLiveIsolationObservation({
       env: buildIsolationProbeEnv(authHome),
     });
     if (inventoryRun.error) {
-      return isoFail("inventory_spawn_error", inventoryRun.error.message || "spawn failed");
+      return isoFail(
+        "inventory_spawn_error",
+        truncateIsoDetail(inventoryRun.error.message || "spawn failed")
+      );
     }
     const inventoryText = `${inventoryRun.stdout || ""}`;
     if (/not logged in|please run \/login/i.test(inventoryText)) {
@@ -1582,7 +1550,7 @@ export function collectLiveIsolationObservation({
     }
     return observed;
   } catch (e) {
-    return isoFail("unexpected_error", e?.message || "live observation failed");
+    return isoFail("unexpected_error", truncateIsoDetail(e?.message || "live observation failed"));
   } finally {
     try { fs.rmSync(neutralDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
@@ -1689,6 +1657,7 @@ export function observeContextIsolation({
         context_isolation: null,
         expected,
         error: "codex lacks native plugin/framework surfaces for generic context-isolation/v1",
+        isolation_reason: { code: "codex_no_live_collector" },
       });
     }
 
@@ -1707,7 +1676,11 @@ export function observeContextIsolation({
         isolation_status: "unverified",
         context_isolation: null,
         expected,
-        error: e.message,
+        error: truncateIsoDetail(e.message),
+        isolation_reason: {
+          code: "prepare_launch_failed",
+          detail: truncateIsoDetail(e.message),
+        },
       });
     }
 
@@ -1722,6 +1695,7 @@ export function observeContextIsolation({
         context_isolation: null,
         expected,
         error: "isolation launch surface incomplete or malformed",
+        isolation_reason: { code: "launch_surface_incomplete" },
         prepared,
       });
     }
@@ -1743,6 +1717,7 @@ export function observeContextIsolation({
           context_isolation: null,
           expected,
           error: "live isolation probe skipped or incomplete",
+          isolation_reason: { code: "live_probe_skipped" },
           prepared,
         });
       }
@@ -1752,6 +1727,10 @@ export function observeContextIsolation({
           context_isolation: null,
           expected,
           error: live.error,
+          isolation_reason: live.isolation_reason || {
+            code: "live_probe_error",
+            detail: truncateIsoDetail(live.error),
+          },
           prepared,
         });
       }
@@ -1762,6 +1741,7 @@ export function observeContextIsolation({
           context_isolation: null,
           expected,
           error: "liveProbe missing stream_text for structured re-proof",
+          isolation_reason: { code: "live_probe_no_stream" },
           prepared,
         });
       }
@@ -1786,6 +1766,7 @@ export function observeContextIsolation({
           context_isolation: null,
           expected,
           error: "liveProbe stream_text failed structured capability re-proof",
+          isolation_reason: { code: "structured_proof_failed" },
           prepared,
         });
       }
@@ -1816,6 +1797,7 @@ export function observeContextIsolation({
         context_isolation: null,
         expected,
         error: "live isolation observation missing, malformed, or skipped",
+        isolation_reason: { code: "live_observation_missing" },
         prepared,
       });
     }
@@ -1845,7 +1827,11 @@ export function observeContextIsolation({
       isolation_status: "unverified",
       context_isolation: null,
       expected: fixture.expected,
-      error: e.message,
+      error: truncateIsoDetail(e.message),
+      isolation_reason: {
+        code: "unexpected_error",
+        detail: truncateIsoDetail(e.message),
+      },
     });
   }
 }

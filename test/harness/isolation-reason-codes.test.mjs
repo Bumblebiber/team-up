@@ -10,30 +10,30 @@ import {
   buildIsolationCanaryFixture,
   decideContextIsolationCapability,
   ISOLATION_FORBIDDEN_CANARIES,
+  extractStructuredInitInventory,
   parseClaudeStructuredCapabilityProofs,
-  parseIsolationObservationJson,
 } from "../../src/harness/isolation-canary.mjs";
 import { isIsoFailure } from "../../src/harness/isolation-result.mjs";
 import { assertIsoFailure } from "../helpers/isolation-assert.mjs";
 import { loadVerificationRecord, verifyHarness } from "../../src/harness/verify.mjs";
 
-test("parseIsolationObservationJson emits parse_json_failed for invalid text", () => {
-  const result = parseIsolationObservationJson("not-json");
-  assertIsoFailure(result, "parse_json_failed");
+test("extractStructuredInitInventory emits init_inventory_missing for invalid stream", () => {
+  const result = extractStructuredInitInventory("not-json");
+  assertIsoFailure(result, "init_inventory_missing");
 });
 
-test("parseIsolationObservationJson grants unchanged observation shape on valid JSON", () => {
-  const payload = {
+test("extractStructuredInitInventory parses system/init from stream", () => {
+  const parsed = extractStructuredInitInventory(JSON.stringify({
+    type: "system",
+    subtype: "init",
+    session_id: "sess-1",
+    tools: ["Skill"],
     skills: ["capsule.selected-skill"],
     plugins: ["capsule.selected-plugin"],
-    mcp_tools: ["mcp__selected__lookup"],
-    frameworks: ["capsule.selected-framework"],
-    absent: ["global.canary-skill"],
-    content_nonces: { mcp: "nonce-1" },
-  };
-  const parsed = parseIsolationObservationJson(JSON.stringify(payload));
+    mcp_servers: ["selected"],
+  }));
   assert.equal(isIsoFailure(parsed), false);
-  assert.deepEqual(parsed.skills, payload.skills);
+  assert.deepEqual(parsed.skills, ["capsule.selected-skill"]);
 });
 
 test("structured proof without tool pairs emits no_tool_pairs", () => {

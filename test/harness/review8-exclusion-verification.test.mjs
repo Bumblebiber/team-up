@@ -132,8 +132,8 @@ test("ambient skills materialized into probe HOME deny live observation", () => 
       adapterId: "claude",
       spawnSyncFn: () => ({ status: 0, stdout: "", stderr: "" }),
     });
-    assertIsoFailure(observed);
-    assertIsoFailure(decideContextIsolationCapability({ expected: fixture.expected, observed }));
+    assertIsoFailure(observed, "closed_world_failed");
+    assertIsoFailure(decideContextIsolationCapability({ expected: fixture.expected, observed }), "closed_world_failed");
   } finally {
     fixture.cleanup();
   }
@@ -188,7 +188,7 @@ test("codex live collector path removed — collectLiveIsolationObservation retu
       adapterId: "codex",
       spawnSyncFn: () => ({ status: 0, stdout: "", stderr: "" }),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "codex_no_live_collector");
   } finally {
     fixture.cleanup();
   }
