@@ -17,6 +17,7 @@ import {
   PLUGIN_CANARY_SKILL,
   ISOLATION_FORBIDDEN_CANARIES,
 } from "../../src/harness/isolation-canary.mjs";
+import { assertIsoFailure } from "../helpers/isolation-assert.mjs";
 
 const SESSION = "sess-grant-guards";
 
@@ -305,10 +306,7 @@ test("decide denies when content_nonces disagree with expected", () => {
         mcp: "tampered-nonce",
       },
     };
-    assert.equal(
-      decideContextIsolationCapability({ expected: fixture.expected, observed }),
-      null
-    );
+    assertIsoFailure(decideContextIsolationCapability({ expected: fixture.expected, observed }));
     const validation = validateIsolationObservation({
       expected: fixture.expected,
       observed,
@@ -325,20 +323,14 @@ test("decide denies when observed matrix fields are not arrays", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const base = buildHappyInventory(fixture);
-    assert.equal(
-      decideContextIsolationCapability({
+    assertIsoFailure(decideContextIsolationCapability({
         expected: fixture.expected,
         observed: { ...base, skills: "not-an-array" },
-      }),
-      null
-    );
-    assert.equal(
-      decideContextIsolationCapability({
+      }));
+    assertIsoFailure(decideContextIsolationCapability({
         expected: fixture.expected,
         observed: { ...base, absent: null },
-      }),
-      null
-    );
+      }));
   } finally {
     fixture.cleanup();
   }
@@ -350,14 +342,11 @@ test("structured proof without MCP invocation does not grant", () => {
   try {
     const prepared = prepareClaudeLaunch(fixture);
     const stream = proofsWithoutMcp(fixture).join("\n");
-    assert.equal(
-      parseClaudeStructuredCapabilityProofs(stream, {
-        expected: fixture.expected,
-        capsule: fixture.capsule,
-        prepared,
-      }),
-      null
-    );
+    assertIsoFailure(parseClaudeStructuredCapabilityProofs(stream, {
+      expected: fixture.expected,
+      capsule: fixture.capsule,
+      prepared,
+    }));
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
@@ -366,11 +355,8 @@ test("structured proof without MCP invocation does not grant", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { streamLines: proofsWithoutMcp(fixture) }),
     });
-    assert.equal(observed, null);
-    assert.equal(
-      decideContextIsolationCapability({ expected: fixture.expected, observed }),
-      null
-    );
+    assertIsoFailure(observed);
+    assertIsoFailure(decideContextIsolationCapability({ expected: fixture.expected, observed }));
   } finally {
     fixture.cleanup();
   }
@@ -411,14 +397,11 @@ test("parseClaudeStructuredCapabilityProofs denies when init omits selected skil
       })
     );
     const stream = streamLines.join("\n");
-    assert.equal(
-      parseClaudeStructuredCapabilityProofs(stream, {
+    assertIsoFailure(parseClaudeStructuredCapabilityProofs(stream, {
         expected: fixture.expected,
         capsule: fixture.capsule,
         prepared,
-      }),
-      null
-    );
+      }));
   } finally {
     fixture.cleanup();
   }
@@ -458,14 +441,11 @@ test("parseClaudeStructuredCapabilityProofs denies when init omits selected plug
       })
     );
     const stream = streamLines.join("\n");
-    assert.equal(
-      parseClaudeStructuredCapabilityProofs(stream, {
+    assertIsoFailure(parseClaudeStructuredCapabilityProofs(stream, {
         expected: fixture.expected,
         capsule: fixture.capsule,
         prepared,
-      }),
-      null
-    );
+      }));
   } finally {
     fixture.cleanup();
   }
@@ -506,14 +486,11 @@ test("parseClaudeStructuredCapabilityProofs denies unselected skill in init inve
       })
     );
     const stream = streamLines.join("\n");
-    assert.equal(
-      parseClaudeStructuredCapabilityProofs(stream, {
+    assertIsoFailure(parseClaudeStructuredCapabilityProofs(stream, {
         expected: fixture.expected,
         capsule: fixture.capsule,
         prepared,
-      }),
-      null
-    );
+      }));
   } finally {
     fixture.cleanup();
   }
@@ -588,7 +565,7 @@ test("parseClaudeStructuredCapabilityProofs is unaffected by probe HOME leaks", 
       adapterId: "claude",
       spawnSyncFn: () => ({ status: 0, stdout: `${stream}\n`, stderr: "" }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -628,7 +605,7 @@ test("live observation requires --strict-mcp-config on prepared argv", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -651,7 +628,7 @@ test("live observation rejects stderr-only inventory output", () => {
         stderr: '{"type":"system","subtype":"init"}\n',
       }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -674,7 +651,7 @@ test("live observation rejects stream with no system/init", () => {
         stderr: "",
       }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -722,7 +699,7 @@ test("live observation denies when init lists global.canary-skill", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { streamLines }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -742,7 +719,7 @@ test("live observation requires planted global canary fixture home", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
     fs.rmSync(emptyHome, { recursive: true, force: true });
@@ -765,16 +742,13 @@ test("launch surface omits visible forbidden canaries from absent list", () => {
     assert.ok(surface);
     assert.ok(surface.skills.includes("global.canary-skill"));
     assert.ok(!surface.absent.includes("global.canary-skill"));
-    assert.equal(
-      decideContextIsolationCapability({
+    assertIsoFailure(decideContextIsolationCapability({
         expected: fixture.expected,
         observed: {
           ...buildHappyInventory(fixture),
           skills: [...fixture.expected.skills, "global.canary-skill"],
         },
-      }),
-      null
-    );
+      }));
   } finally {
     fixture.cleanup();
   }

@@ -16,6 +16,7 @@ import {
   PLUGIN_CANARY_SKILL,
   parseClaudeStructuredCapabilityProofs,
 } from "../../src/harness/isolation-canary.mjs";
+import { assertIsoFailure } from "../helpers/isolation-assert.mjs";
 
 function prepareClaudeLaunch(fixture) {
   return claudeAdapter.prepareLaunch({
@@ -131,11 +132,8 @@ test("ambient skills materialized into probe HOME deny live observation", () => 
       adapterId: "claude",
       spawnSyncFn: () => ({ status: 0, stdout: "", stderr: "" }),
     });
-    assert.equal(observed, null);
-    assert.equal(
-      decideContextIsolationCapability({ expected: fixture.expected, observed }),
-      null
-    );
+    assertIsoFailure(observed);
+    assertIsoFailure(decideContextIsolationCapability({ expected: fixture.expected, observed }));
   } finally {
     fixture.cleanup();
   }
@@ -190,7 +188,7 @@ test("codex live collector path removed — collectLiveIsolationObservation retu
       adapterId: "codex",
       spawnSyncFn: () => ({ status: 0, stdout: "", stderr: "" }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
