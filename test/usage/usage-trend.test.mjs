@@ -22,12 +22,12 @@ function climbing({ used, perMin, spanMin = 30, resetsAt = "2026-09-04T15:00:00Z
   return { windows: { "codex:5h": { used, resets_at: resetsAt, history } } };
 }
 
-test("pushSample keeps an ordered ring and starts over on a reset", () => {
+test("pushSample keeps an ordered ring through drops for jump detection", () => {
   let h = pushSample(undefined, { used: 0.2, at: NOW - min(20) });
   h = pushSample(h, { used: 0.5, at: NOW - min(10) });
   assert.deepEqual(h.map((s) => s.used), [0.2, 0.5]);
   h = pushSample(h, { used: 0.01, at: NOW });
-  assert.deepEqual(h.map((s) => s.used), [0.01], "a drop means the window reset");
+  assert.deepEqual(h.map((s) => s.used), [0.2, 0.5, 0.01], "drops stay visible in history");
 });
 
 test("burnRate ignores a span too short to trust and never goes negative", () => {

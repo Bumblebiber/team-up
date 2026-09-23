@@ -280,7 +280,7 @@ test("finding 3: gcRuns with invalid retention does not delete fresh handoffs", 
     process.env.TEAM_UP_ROSTER = rosterPath;
     process.env.TEAM_UP_HOME = home;
     try {
-      const report = gcRuns({ now: new Date(), states: [], dryRun: false });
+      const report = gcRuns({ now: new Date(), states: [], listSessions: () => [], dryRun: false });
       assert.equal(fs.existsSync(fresh), true);
       assert.deepEqual(report.handoffs.deleted, []);
       assert.equal(report.handoffs.retentionDays, 14);

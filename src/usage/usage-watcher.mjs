@@ -13,21 +13,35 @@ import {
 } from "./usage-procs.mjs";
 import { subscriptionsFromRoster } from "./usage-collect.mjs";
 
-const DEFAULT_CONFIG = {
+export const DEFAULT_CONFIG = {
   tick_sec: 60,
-  // idle_min keeps sampling while no local agent runs: the burn a second
-  // machine puts on the same account is invisible to the process count and
-  // only shows up as a rising window. It must stay under the 45min the burn
-  // rate reaches back, or an idle CLI never has two samples to draw a line
-  // through. ponytail: one codex collect measures 143s wall / 59MB, but the
-  // TUI itself boots in ~4s — the rest is `expect eof` waiting out its timeout
-  // on a codex that never closes the PTY. Fix that and the idle cadence gets
-  // much cheaper; until then this is ~2.5min per PTY-based CLI per interval.
-  intervals: { idle_heartbeat_hours: 24, idle_min: 30, active_min: 20, busy_min: 8 },
+  intervals: { idle_heartbeat_hours: 24, idle_min: 10, active_min: 10, busy_min: 5 },
+  // cursor-agent and codex each boot a full TUI; measured ~32s/collect for codex
+  // and ~110s for cursor after the PTY fast-exit fix — keep pre-fix cadence.
+  cli_intervals: {
+    codex: { idle_min: 30, active_min: 20, busy_min: 8 },
+    cursor: { idle_min: 30, active_min: 20, busy_min: 8 },
+  },
 };
 
+export function intervalMinForCli(cli, state, config = DEFAULT_CONFIG) {
+  const perCli = config.cli_intervals?.[cli];
+  const intervals = perCli
+    ? { ...DEFAULT_CONFIG.intervals, ...(config.intervals || {}), ...perCli }
+    : { ...DEFAULT_CONFIG.intervals, ...(config.intervals || {}) };
+  if (state === "busy") return intervals.busy_min;
+  if (state === "idle") return intervals.idle_min ?? DEFAULT_CONFIG.intervals.idle_min;
+  return intervals.active_min;
+}
+
 export function watcherConfig(roster) {
-  return { ...DEFAULT_CONFIG, ...(roster?.usage_watcher || {}) };
+  const raw = roster?.usage_watcher || {};
+  const intervals = { ...DEFAULT_CONFIG.intervals, ...(raw.intervals || {}) };
+  const cli_intervals = { ...DEFAULT_CONFIG.cli_intervals };
+  for (const [cli, perCli] of Object.entries(raw.cli_intervals || {})) {
+    cli_intervals[cli] = { ...(cli_intervals[cli] || {}), ...perCli };
+  }
+  return { ...DEFAULT_CONFIG, ...raw, intervals, cli_intervals };
 }
 
 /**
@@ -128,18 +142,13 @@ export function advanceSchedule({
   now = Date.now(),
   config = DEFAULT_CONFIG,
 }) {
-  const intervalMin =
-    state === "busy"
-      ? config.intervals.busy_min
-      : state === "idle"
-        ? (config.intervals.idle_min ?? DEFAULT_CONFIG.intervals.idle_min)
-        : config.intervals.active_min;
   const next = {
     last_collect: { ...lastCollect },
     next_due: { ...nextDue },
   };
 
   for (const cli of attempted) {
+    const intervalMin = intervalMinForCli(cli, state, config);
     next.next_due[cli] = new Date(now + intervalMin * 60_000).toISOString();
   }
   for (const cli of successful) {
@@ -166,8 +175,26 @@ function loadState() {
       collecting: { claude: false, codex: false, cursor: false },
       last_collect: { claude: null, codex: null, cursor: null },
       next_due: { claude: null, codex: null, cursor: null },
+      collect_failures: { claude: [], codex: [], cursor: [] },
     }
   );
+}
+
+const COLLECT_FAILURE_RING = 5;
+
+function classifyCollectFailure(error) {
+  const msg = String(error?.message || error);
+  if (/not logged in|unauthorized|authentication failed/i.test(msg)) return "auth_failure";
+  return msg.slice(0, 500);
+}
+
+function journalCollectFailure(stateDoc, cli, reason, now = Date.now()) {
+  stateDoc.collect_failures = stateDoc.collect_failures || {};
+  const prior = Array.isArray(stateDoc.collect_failures[cli]) ? stateDoc.collect_failures[cli] : [];
+  stateDoc.collect_failures[cli] = [
+    ...prior,
+    { at: new Date(now).toISOString(), reason },
+  ].slice(-COLLECT_FAILURE_RING);
 }
 
 /**
@@ -249,8 +276,12 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
       try {
         runCollect(cli);
         successful.push(cli);
+        stateDoc.collect_failures = stateDoc.collect_failures || {};
+        stateDoc.collect_failures[cli] = [];
       } catch (e) {
-        console.error(`collect failed ${cli}:`, e.message || e);
+        const reason = classifyCollectFailure(e);
+        console.error(`collect failed ${cli}:`, reason);
+        journalCollectFailure(stateDoc, cli, reason, now);
       } finally {
         stateDoc.collecting = { ...stateDoc.collecting, [cli]: false };
       }

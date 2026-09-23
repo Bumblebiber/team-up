@@ -5,6 +5,7 @@ import {
   windowIsBlocking,
   modelUsageGate,
   isCliUsageFresh,
+  isWindowUsageFresh,
   effectiveResetAt,
   resolveHandoffAt,
   WINDOW_MAX_AGE_MS,
@@ -150,6 +151,17 @@ test("isCliUsageFresh respects per-cli window updated timestamps", () => {
   };
   assert.equal(isCliUsageFresh("claude", usage, 5 * 60_000, NOW), true);
   assert.equal(isCliUsageFresh("codex", usage, 5 * 60_000, NOW), false);
+});
+
+test("isWindowUsageFresh checks only the window reading", () => {
+  assert.equal(
+    isWindowUsageFresh({ updated_at: "2026-07-17T11:58:00Z" }, 5 * 60_000, NOW),
+    true,
+  );
+  assert.equal(
+    isWindowUsageFresh({ updated_at: "2026-07-17T10:00:00Z" }, 5 * 60_000, NOW),
+    false,
+  );
 });
 
 /**

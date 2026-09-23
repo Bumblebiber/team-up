@@ -251,7 +251,7 @@ test("markLimited adds an until entry without mutating input", () => {
 
 test("checkThresholds is silent below warn_at", () => {
   const usage = { providers: { anthropic: { used: 0.5 } } };
-  assert.equal(checkThresholds({ roster: ROSTER, usage, now: NOW }), "");
+  assert.equal(checkThresholds({ roster: ROSTER, usage, now: NOW }).message, "");
 });
 
 test("checkThresholds warns at warn_at and instructs handoff at handoff_at", () => {
@@ -260,21 +260,21 @@ test("checkThresholds warns at warn_at and instructs handoff at handoff_at", () 
     usage: { providers: { anthropic: { used: 0.91 } } },
     now: NOW,
   });
-  assert.match(warn, /anthropic at 91%/);
-  assert.match(warn, /prepare for handoff/i);
-  assert.doesNotMatch(warn, /HANDOFF\.md/);
+  assert.match(warn.message, /anthropic at 91%/);
+  assert.match(warn.message, /prepare for handoff/i);
+  assert.doesNotMatch(warn.message, /HANDOFF\.md/);
 
   const handoff = checkThresholds({
     roster: ROSTER,
     usage: { providers: { anthropic: { used: 0.96 } } },
     now: NOW,
   });
-  assert.match(handoff, /HANDOFF\.md in the task dir/);
-  assert.match(handoff, /--handoff-file/);
+  assert.match(handoff.message, /HANDOFF\.md in the task dir/);
+  assert.match(handoff.message, /--handoff-file/);
   const rosterScript = fileURLToPath(new URL("../../src/roster/roster.mjs", import.meta.url));
   const handoffCmd = `node ${rosterScript} handoff`;
-  assert.equal((handoff.match(new RegExp(handoffCmd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length, 1);
-  assert.doesNotMatch(handoff, /<o9k>/);
+  assert.equal((handoff.message.match(new RegExp(handoffCmd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length, 1);
+  assert.doesNotMatch(handoff.message, /<o9k>/);
 });
 
 test("buildCommand substitutes model and prompt per argv element", () => {
@@ -452,10 +452,10 @@ test("resolveLimitWindows adds fable-week only for fable models", () => {
 test("checkThresholds warns on hot usage windows", () => {
   const warn = checkThresholds({
     roster: ROSTER,
-    usage: { windows: { "claude:5h": { used: 0.92 } } },
+    usage: { windows: { "claude:week": { used: 0.92, updated_at: new Date(NOW).toISOString() } } },
     now: NOW,
   });
-  assert.match(warn, /claude:5h at 92%/);
+  assert.match(warn.message, /claude:week at 92%/);
 });
 
 test("pick uses provider fallback when only other-cli windows exist", () => {
@@ -496,7 +496,7 @@ test("checkThresholds ignores expired windows at resets_at", () => {
     },
     now: NOW,
   });
-  assert.equal(out, "");
+  assert.equal(out.message, "");
 });
 
 test("resolvePickAfterRefresh re-picks with fresh usage", () => {

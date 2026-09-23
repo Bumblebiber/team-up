@@ -105,15 +105,22 @@ function cmdMarkLimited(args) {
   console.log(`marked ${target} limited until ${usage.marked[target].until}`);
 }
 
-function cmdUsage(args) {
+async function cmdUsage(args) {
   const rosterCfg = requireRoster();
   if (args.includes("--refresh")) {
     return cmdUsageRefresh(args);
   }
   const usage = loadJson(usagePath());
   if (args.includes("--check")) {
-    const out = checkThresholds({ roster: rosterCfg, usage });
-    if (out) console.log(out);
+    const { checkThresholdsWithRefresh } = await import("./chain.mjs");
+    const { collectUsageForCli } = await import("../usage/usage-collect.mjs");
+    const out = await checkThresholdsWithRefresh({
+      roster: rosterCfg,
+      usage,
+      collectCli: (cli) => collectUsageForCli({ cli, roster: rosterCfg }),
+      readUsage: () => loadJson(usagePath()),
+    });
+    if (out.message) console.log(out.message);
     return;
   }
   if (!usage) {
@@ -310,13 +317,25 @@ export async function spawnInTmux({
   } catch {
     // stale cache — proceed with pick above
   }
+  let effectiveRunId = runId;
+  if (!effectiveRunId) {
+    const { createRun } = await import("../runs/runs.mjs");
+    const state = createRun({
+      cwd: dir,
+      role,
+      parent: { cli: "manual", attach: "manual" },
+      worker: { cli: r.cli, model: r.model },
+      prompt,
+    });
+    effectiveRunId = state.runId;
+  }
   return spawn({
     roster: rosterCfg,
     model: r.model,
     cli: r.cli,
     dir,
     prompt,
-    runId,
+    runId: effectiveRunId,
     effort: r.effort,
     triage: triageResult
       ? { ...triageResult, mode: rosterCfg.triage?.mode ?? "shadow", applied: triageSelected }

@@ -8,7 +8,7 @@ test("a session tmux reports as empty does not exist", () => {
   // exits 0 and prints nothing. Only `has-session` reports absence as failure,
   // so catching a thrown error is not enough to decide a session is gone.
   const observed = inspectTmuxSession("gone", { exec: () => "" });
-  assert.deepEqual(observed, { exists: false, activityMs: null, sessionId: null });
+  assert.deepEqual(observed, { exists: false, activityMs: null, sessionId: null, attached: false });
 });
 
 test("whitespace-only output is absence too", () => {
@@ -25,11 +25,12 @@ test("a thrown error is still absence", () => {
 });
 
 test("a live session keeps its activity and id", () => {
-  const observed = inspectTmuxSession("alive", { exec: () => "1788005239 $5\n" });
+  const observed = inspectTmuxSession("alive", { exec: () => "1788005239 $5 0\n" });
   assert.deepEqual(observed, {
     exists: true,
     activityMs: 1788005239000,
     sessionId: "$5",
+    attached: false,
   });
 });
 
@@ -44,7 +45,7 @@ test("a finished run whose terminal is already gone is skipped, not killed forev
     { kind: "skip" }
   );
 
-  const alive = inspectTmuxSession("alive", { exec: () => "1788005239 $5\n" });
+  const alive = inspectTmuxSession("alive", { exec: () => "1788005239 $5 0\n" });
   assert.deepEqual(
     evaluateGcAction({ state, nowMs: Date.now(), heartbeatMs: 0, tmux: alive }),
     { kind: "kill_terminal" }

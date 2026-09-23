@@ -102,15 +102,28 @@ export async function spawnPinnedInTmux({
   effort = null,
   triage = undefined,
   sessionPrefix = "team-up-pass",
+  role = "pass-to",
 }) {
   if (!roster.clis?.[cli]?.cmd) {
     console.error(`no cli template for "${cli}" in roster.json clis section`);
     process.exit(1);
   }
+  let effectiveRunId = runId;
+  if (!effectiveRunId) {
+    const { createRun } = await import("../runs/runs.mjs");
+    const state = createRun({
+      cwd: dir,
+      role,
+      parent: { cli: "manual", attach: "manual" },
+      worker: { cli, model },
+      prompt,
+    });
+    effectiveRunId = state.runId;
+  }
   const argv = buildCommand({ roster, model, cli, prompt, effort, dir });
   const session = `${sessionPrefix}-${Date.now().toString(36)}`;
-  execFileSync("tmux", tmuxArgs({ session, dir, argv, env: { TEAMUP_RUN_ID: runId } }), { stdio: "inherit" });
-  linkDispatchToRun(runId, session, {
+  execFileSync("tmux", tmuxArgs({ session, dir, argv, env: { TEAMUP_RUN_ID: effectiveRunId } }), { stdio: "inherit" });
+  linkDispatchToRun(effectiveRunId, session, {
     model,
     cli,
     tier: roster.models?.[model]?.tier ?? null,

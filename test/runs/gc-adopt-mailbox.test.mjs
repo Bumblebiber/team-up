@@ -45,7 +45,7 @@ function statusOf(home, runId) {
 test("a run that finished while waiting for a human adopts its mailbox", async () => {
   await withHome(async ({ home, gc }) => {
     plant(home, "r-waited", { status: "waiting_human", mailboxStatus: "done" });
-    await gc.gcRuns({ now: new Date() });
+    await gc.gcRuns({ now: new Date(), listSessions: () => [] });
     assert.equal(statusOf(home, "r-waited"), "done");
   });
 });
@@ -53,7 +53,7 @@ test("a run that finished while waiting for a human adopts its mailbox", async (
 test("a run that finished mid-handoff adopts it too", async () => {
   await withHome(async ({ home, gc }) => {
     plant(home, "r-handoff", { status: "handing_off", mailboxStatus: "done" });
-    await gc.gcRuns({ now: new Date() });
+    await gc.gcRuns({ now: new Date(), listSessions: () => [] });
     assert.equal(statusOf(home, "r-handoff"), "done");
   });
 });
@@ -67,7 +67,7 @@ test("a run still genuinely waiting is left alone", async () => {
       mailboxStatus: "waiting_human",
       result: null,
     });
-    await gc.gcRuns({ now: new Date() });
+    await gc.gcRuns({ now: new Date(), listSessions: () => [] });
     assert.equal(statusOf(home, "r-asking"), "waiting_human");
   });
 });
@@ -75,7 +75,7 @@ test("a run still genuinely waiting is left alone", async () => {
 test("a dry run changes nothing", async () => {
   await withHome(async ({ home, gc }) => {
     plant(home, "r-dry", { status: "waiting_human", mailboxStatus: "done" });
-    await gc.gcRuns({ now: new Date(), dryRun: true });
+    await gc.gcRuns({ now: new Date(), listSessions: () => [], dryRun: true });
     assert.equal(statusOf(home, "r-dry"), "waiting_human");
   });
 });
@@ -83,7 +83,7 @@ test("a dry run changes nothing", async () => {
 test("adoption is reported so the change is visible in the log", async () => {
   await withHome(async ({ home, gc }) => {
     plant(home, "r-seen", { status: "waiting_human", mailboxStatus: "done" });
-    const report = await gc.gcRuns({ now: new Date() });
+    const report = await gc.gcRuns({ now: new Date(), listSessions: () => [] });
     const entry = report.runs.find((r) => r.runId === "r-seen");
     assert.equal(entry.adopted_from_mailbox, "done");
   });
