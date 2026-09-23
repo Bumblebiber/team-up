@@ -95,7 +95,7 @@ test("closed-spawn exit is benign when transcript was captured", () => {
 
 test("normalizeForRedaction strips ANSI and unwraps continuation lines", () => {
   assert.equal(normalizeForRedaction("\x1b[31mvisible\x1b[0m"), "visible");
-  assert.equal(normalizeForRedaction("token-part\ncontinuation"), "token-partcontinuation");
+  assert.equal(normalizeForRedaction("line one\n line two"), "line one line two");
 });
 
 test("buildExpectScript claude waits on Current session without blind sleeps after command", () => {
