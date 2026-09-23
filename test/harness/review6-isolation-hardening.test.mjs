@@ -14,6 +14,7 @@ import {
   parseClaudeStreamToolProof,
   ISOLATION_FORBIDDEN_CANARIES,
 } from "../../src/harness/isolation-canary.mjs";
+import { assertIsoFailure } from "../helpers/isolation-assert.mjs";
 import {
   buildCapsuleContentManifest,
   listDirectoryNoFollow,
@@ -125,10 +126,7 @@ test("stream proof rejects same-event tool_use+tool_result (Claude 2.1.220 envel
       },
     }),
   ].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("stream proof rejects tool_use on user and tool_result on assistant", () => {
@@ -151,10 +149,7 @@ test("stream proof rejects tool_use on user and tool_result on assistant", () =>
       },
     }),
   ].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(badUseRole, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(badUseRole, { toolName: TOOL, nonce: NONCE }));
 
   const badResultRole = [
     initEvent(),
@@ -175,10 +170,7 @@ test("stream proof rejects tool_use on user and tool_result on assistant", () =>
       },
     }),
   ].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(badResultRole, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(badResultRole, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("stream proof rejects duplicate tool_use ids", () => {
@@ -206,10 +198,7 @@ test("stream proof rejects duplicate tool_use ids", () => {
       },
     }),
   ].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("observeContextIsolation Claude expected keeps full four-type matrix", () => {
@@ -319,9 +308,8 @@ test("MCP-only structured proof without live skill inventory does not grant v1",
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
     });
-    assert.equal(observed, null);
-    assert.equal(
-      decideContextIsolationCapability({
+    assertIsoFailure(observed);
+    assertIsoFailure(decideContextIsolationCapability({
         expected: fixture.expected,
         observed: {
           skills: [],
@@ -336,9 +324,7 @@ test("MCP-only structured proof without live skill inventory does not grant v1",
             mcp: fixture.expected.nonces.mcp,
           },
         },
-      }),
-      null
-    );
+      }));
   } finally {
     fixture.cleanup();
   }
@@ -363,7 +349,7 @@ test("guessed model content_nonces fail closed without disk/config nonce fill", 
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -405,7 +391,7 @@ test("Codex MCP-only JSONL without model skill inventory does not grant v1", () 
       adapterId: "codex",
       spawnSyncFn: () => ({ status: 0, stdout: `${jsonl}\n`, stderr: "" }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }

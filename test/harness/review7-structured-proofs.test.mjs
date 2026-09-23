@@ -13,6 +13,7 @@ import {
   PLUGIN_CANARY_SKILL,
   ISOLATION_FORBIDDEN_CANARIES,
 } from "../../src/harness/isolation-canary.mjs";
+import { assertIsoFailure } from "../helpers/isolation-assert.mjs";
 
 const SESSION = "sess-struct-220";
 
@@ -242,13 +243,10 @@ test("init-only without Skill/plugin/Read/MCP invocation does not grant", () => 
         },
       }),
     ].join("\n");
-    assert.equal(
-      parseClaudeStructuredCapabilityProofs(stream, {
-        expected: fixture.expected,
-        capsule: fixture.capsule,
-      }),
-      null
-    );
+    assertIsoFailure(parseClaudeStructuredCapabilityProofs(stream, {
+      expected: fixture.expected,
+      capsule: fixture.capsule,
+    }));
   } finally {
     fixture.cleanup();
   }
@@ -268,22 +266,16 @@ test("wrong skill id or nonce fails structured proof", () => {
       assistantUse("tu-mcp", "mcp__selected__lookup", {}),
       userResult("tu-mcp", `team-up-canary-ok:${fixture.expected.nonces.mcp}`),
     ].join("\n");
-    assert.equal(
-      parseClaudeStructuredCapabilityProofs(badSkill, {
+    assertIsoFailure(parseClaudeStructuredCapabilityProofs(badSkill, {
         expected: fixture.expected,
         capsule: fixture.capsule,
-      }),
-      null
-    );
+      }));
 
     const badNonce = fullStructuredStream(fixture, { skillNonce: "wrong-nonce" });
-    assert.equal(
-      parseClaudeStructuredCapabilityProofs(badNonce, {
+    assertIsoFailure(parseClaudeStructuredCapabilityProofs(badNonce, {
         expected: fixture.expected,
         capsule: fixture.capsule,
-      }),
-      null
-    );
+      }));
   } finally {
     fixture.cleanup();
   }
@@ -295,24 +287,18 @@ test("wrong plugin skill/result/nonce or wrong framework Read path fails", () =>
     const badPlugin = fullStructuredStream(fixture, {
       pluginNonce: "not-the-plugin-nonce",
     });
-    assert.equal(
-      parseClaudeStructuredCapabilityProofs(badPlugin, {
+    assertIsoFailure(parseClaudeStructuredCapabilityProofs(badPlugin, {
         expected: fixture.expected,
         capsule: fixture.capsule,
-      }),
-      null
-    );
+      }));
 
     const badPath = fullStructuredStream(fixture, {
       frameworkFilePath: "/tmp/evil/framework.json",
     });
-    assert.equal(
-      parseClaudeStructuredCapabilityProofs(badPath, {
+    assertIsoFailure(parseClaudeStructuredCapabilityProofs(badPath, {
         expected: fixture.expected,
         capsule: fixture.capsule,
-      }),
-      null
-    );
+      }));
   } finally {
     fixture.cleanup();
   }

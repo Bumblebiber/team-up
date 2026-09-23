@@ -14,7 +14,7 @@ import { configPath, loadJson, validateRoster } from "./roster/config.mjs";
 import { harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
 import { checkModelAvailability } from "./roster/availability.mjs";
 import { LIST_TIMEOUT_MS } from "./collectors/cli-models.mjs";
-import { listVerificationRecords } from "./harness/verify.mjs";
+import { listVerificationRecords, loadVerificationRecord } from "./harness/verify.mjs";
 import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
 import { handoffsDir } from "./paths.mjs";
 
@@ -220,17 +220,58 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
   for (const cli of listHarnessAdapters()) {
     if (!listVerificationRecords(cli, env).length) continue;
     const status = harnessStatus(cli, execFileSync ? { env, execFileSync } : { env });
-    if (status.status !== "drifted") continue;
+    if (status.status === "drifted") {
+      findings.push({
+        kind: "harness_version_drift",
+        severity: "high",
+        cli,
+        installed: status.installed_version,
+        last_verified: status.last_verified_version,
+        detail:
+          `${cli} ${status.installed_version} has no verification record ` +
+          `(${status.last_verified_version} passed on ${status.last_checked_at}); ` +
+          "every capability it granted is revoked until it is re-verified",
+        fix: `team-up harness verify ${cli} --fixture-project <path>`,
+      });
+      continue;
+    }
+    if (status.status !== "failed" || !status.installed_version) continue;
+    const record = loadVerificationRecord(cli, status.installed_version, env);
+    if (!record || record.status === "verified") continue;
+    const isoReason = record.context_isolation_reason?.code;
+    const brokerReason = record.command_broker_reason?.code;
+    const reasonBits = [];
+    if (isoReason) {
+      reasonBits.push(
+        `context_isolation: ${isoReason}${
+          record.context_isolation_reason.detail
+            ? ` (${record.context_isolation_reason.detail})`
+            : ""
+        }`
+      );
+    } else if (record.status === "unverified" || record.status === "failed") {
+      reasonBits.push(`context_isolation: ${record.status}`);
+    }
+    if (brokerReason) {
+      reasonBits.push(
+        `command_broker: ${brokerReason}${
+          record.command_broker_reason.detail
+            ? ` (${record.command_broker_reason.detail})`
+            : ""
+        }`
+      );
+    }
     findings.push({
-      kind: "harness_version_drift",
+      kind: "harness_verification_failed",
       severity: "high",
       cli,
       installed: status.installed_version,
-      last_verified: status.last_verified_version,
+      status: record.status,
+      ...(isoReason ? { context_isolation_reason: isoReason } : {}),
+      ...(brokerReason ? { command_broker_reason: brokerReason } : {}),
       detail:
-        `${cli} ${status.installed_version} has no verification record ` +
-        `(${status.last_verified_version} passed on ${status.last_checked_at}); ` +
-        "every capability it granted is revoked until it is re-verified",
+        `${cli} ${status.installed_version} harness verification ${record.status}` +
+        (reasonBits.length ? ` — ${reasonBits.join("; ")}` : ""),
       fix: `team-up harness verify ${cli} --fixture-project <path>`,
     });
   }

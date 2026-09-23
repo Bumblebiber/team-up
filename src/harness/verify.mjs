@@ -127,6 +127,30 @@ export async function verifyHarness({
   } else {
     status = "failed";
   }
+  const capabilityReasons = {};
+  if (checks.context_isolation_reason) {
+    capabilityReasons.context_isolation_reason = checks.context_isolation_reason;
+  }
+  if (checks.command_broker_reason) {
+    capabilityReasons.command_broker_reason = checks.command_broker_reason;
+  } else if (
+    !isolationOnly
+    && checks.native_shell === "denied"
+    && checks.broker_tool === "passed"
+    && status !== "verified"
+  ) {
+    // Broker probe passed but full verification did not — name why broker token withheld.
+    capabilityReasons.command_broker_reason = checks.context_isolation_reason
+      ? {
+        code: "blocked_by_context_isolation",
+        detail: checks.context_isolation_reason.code,
+      }
+      : {
+        code: "verification_incomplete",
+        detail: checks.isolation_status || status,
+      };
+  }
+
   const record = {
     adapter: adapter.id,
     cli_version: cliVersion,
@@ -140,6 +164,7 @@ export async function verifyHarness({
         ? CONTEXT_ISOLATION_CAPABILITY
         : null,
     status,
+    ...capabilityReasons,
   };
   saveVerificationRecord(record, env);
   return record;

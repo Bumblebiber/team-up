@@ -475,6 +475,9 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       argv_sample: shellPrepared.argv.slice(0, 12),
       isolation_status: isolation.isolation_status,
       context_isolation: isolation.context_isolation ?? null,
+      ...(isolation.isolation_reason
+        ? { context_isolation_reason: isolation.isolation_reason }
+        : {}),
       ...(isolation.error ? { isolation_error: isolation.error } : {}),
     };
   } finally {
@@ -597,6 +600,18 @@ export async function runHarnessVerify(args, io = { out: console.log, err: conso
     io.out(`cli_version: ${record.cli_version}`);
     io.out(`context_isolation: ${record.context_isolation}`);
     io.out(`command_broker: ${record.command_broker}`);
+    if (record.context_isolation_reason?.code) {
+      const detail = record.context_isolation_reason.detail
+        ? ` (${record.context_isolation_reason.detail})`
+        : "";
+      io.out(`context_isolation_reason: ${record.context_isolation_reason.code}${detail}`);
+    }
+    if (record.command_broker_reason?.code) {
+      const detail = record.command_broker_reason.detail
+        ? ` (${record.command_broker_reason.detail})`
+        : "";
+      io.out(`command_broker_reason: ${record.command_broker_reason.code}${detail}`);
+    }
     return record.status === "verified" ? 0 : 2;
   } catch (e) {
     io.err(`BLOCKED: ${e.message}`);

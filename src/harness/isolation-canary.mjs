@@ -10,6 +10,14 @@ import {
 } from "../capabilities/capsule.mjs";
 import { randomContentNonce } from "../capabilities/mcp-schema.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "./capabilities.mjs";
+import {
+  isoFail,
+  isIsoFailure,
+  formatIsoFailure,
+  capabilityReasonFromFailure,
+} from "./isolation-result.mjs";
+
+export { isIsoFailure, isoFail } from "./isolation-result.mjs";
 
 const CANARY_MCP_SERVER = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -55,6 +63,7 @@ export const CLAUDE_HARNESS_BUILTIN_MCP_SERVERS = Object.freeze([
  * Deliberate allowlist — add entries only when a CLI version introduces new built-ins.
  */
 export const CLAUDE_HARNESS_BUILTIN_SKILLS = Object.freeze([
+  "design",
   "design-sync",
   "dataviz",
   "update-config",
@@ -575,29 +584,33 @@ export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.t
 }
 
 export function parseIsolationObservationJson(text) {
-  if (text == null) return null;
+  if (text == null) return isoFail("no_stream_output", "observation text missing");
   const raw = String(text).trim();
-  if (!raw) return null;
+  if (!raw) return isoFail("no_stream_output", "observation text empty");
   let obj = null;
   try {
     obj = JSON.parse(raw);
   } catch {
     const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) return null;
+    if (!match) return isoFail("parse_json_failed", "no JSON object in observation text");
     try {
       obj = JSON.parse(match[0]);
     } catch {
-      return null;
+      return isoFail("parse_json_failed", "embedded JSON object invalid");
     }
   }
-  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+    return isoFail("parse_json_failed", "observation root not an object");
+  }
   for (const key of ["skills", "plugins", "mcp_tools", "frameworks", "absent"]) {
-    if (!Array.isArray(obj[key])) return null;
+    if (!Array.isArray(obj[key])) {
+      return isoFail("missing_required_field", `observation.${key} not an array`);
+    }
   }
   const content_nonces = obj.content_nonces;
   if (content_nonces != null
     && (typeof content_nonces !== "object" || Array.isArray(content_nonces))) {
-    return null;
+    return isoFail("invalid_content_nonces", "content_nonces not an object");
   }
   return {
     skills: obj.skills.map(String),
@@ -632,7 +645,9 @@ function toolResultText(content) {
  * - Reject same-event use+result, wrong roles, duplicate uses/results, wrong order
  */
 export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {}) {
-  if (!streamText || !toolName || !nonce) return null;
+  if (!streamText || !toolName || !nonce) {
+    return isoFail("no_stream_output", "stream text, toolName, or nonce missing");
+  }
   const expectedPayload = `team-up-canary-ok:${nonce}`;
   let sessionId = null;
   let toolUseId = null;
@@ -653,15 +668,21 @@ export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {})
     eventIndex += 1;
 
     if (evt.type === "system" && evt.subtype === "init") {
-      if (typeof evt.session_id !== "string" || !evt.session_id) return null;
-      if (sessionId && sessionId !== evt.session_id) return null;
+      if (typeof evt.session_id !== "string" || !evt.session_id) {
+        return isoFail("session_id_missing", "system/init missing session_id");
+      }
+      if (sessionId && sessionId !== evt.session_id) {
+        return isoFail("session_id_mismatch", "conflicting session_id in system/init");
+      }
       sessionId = evt.session_id;
       continue;
     }
 
     if (!sessionId) continue;
     // Tool events must carry the bound session_id (missing is invalid).
-    if (evt.session_id !== sessionId) return null;
+    if (evt.session_id !== sessionId) {
+      return isoFail("session_id_mismatch", "tool event session_id does not match init");
+    }
 
     const content = evt.message?.content;
     if (!Array.isArray(content)) continue;
@@ -672,10 +693,14 @@ export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {})
     for (const block of content) {
       if (!block || typeof block !== "object") continue;
       if (block.type === "tool_use" && block.name === toolName) {
-        if (evt.type !== "assistant") return null;
-        if (typeof block.id !== "string" || !block.id) return null;
-        if (toolUseId) return null; // duplicate selected tool_use
-        if (sawToolResult) return null;
+        if (evt.type !== "assistant") {
+          return isoFail("wrong_event_type", "tool_use not on assistant event");
+        }
+        if (typeof block.id !== "string" || !block.id) {
+          return isoFail("tool_use_id_missing", "tool_use missing id");
+        }
+        if (toolUseId) return isoFail("duplicate_tool_use", "duplicate selected tool_use");
+        if (sawToolResult) return isoFail("tool_result_before_use", "tool_result before tool_use");
         toolUseId = block.id;
         toolUseEventIndex = eventIndex;
         sawUseInThisEvent = true;
@@ -687,22 +712,30 @@ export function parseClaudeStreamToolProof(streamText, { toolName, nonce } = {})
           continue;
         }
         if (block.tool_use_id !== toolUseId) continue;
-        if (evt.type !== "user") return null;
-        if (eventIndex <= toolUseEventIndex) return null; // same or earlier event
-        if (sawToolResult) return null; // duplicate matching result
+        if (evt.type !== "user") {
+          return isoFail("wrong_event_type", "tool_result not on user event");
+        }
+        if (eventIndex <= toolUseEventIndex) {
+          return isoFail("tool_result_wrong_order", "tool_result same or earlier than tool_use");
+        }
+        if (sawToolResult) return isoFail("duplicate_tool_result", "duplicate matching tool_result");
         const text = toolResultText(block.content);
         if (text === expectedPayload || text.trim() === expectedPayload) {
           sawToolResult = true;
           sawResultInThisEvent = true;
         } else {
-          return null;
+          return isoFail("tool_result_wrong_payload", "tool_result payload nonce mismatch");
         }
       }
     }
-    if (sawUseInThisEvent && sawResultInThisEvent) return null;
+    if (sawUseInThisEvent && sawResultInThisEvent) {
+      return isoFail("same_event_use_result", "tool_use and tool_result in same event");
+    }
   }
 
-  if (!sessionId || !toolUseId || !sawToolResult) return null;
+  if (!sessionId || !toolUseId || !sawToolResult) {
+    return isoFail("proof_incomplete", "missing session_id, tool_use, or matching tool_result");
+  }
   return {
     tool: toolName,
     nonce,
@@ -747,14 +780,20 @@ function collectStrictOrderedToolPairs(streamText, { sessionId: boundSessionId }
     eventIndex += 1;
 
     if (evt.type === "system" && evt.subtype === "init") {
-      if (typeof evt.session_id !== "string" || !evt.session_id) return null;
-      if (sessionId && sessionId !== evt.session_id) return null;
+      if (typeof evt.session_id !== "string" || !evt.session_id) {
+        return isoFail("session_id_missing", "system/init missing session_id");
+      }
+      if (sessionId && sessionId !== evt.session_id) {
+        return isoFail("session_id_mismatch", "conflicting session_id in system/init");
+      }
       sessionId = evt.session_id;
       continue;
     }
 
     if (!sessionId) continue;
-    if (evt.session_id !== sessionId) return null;
+    if (evt.session_id !== sessionId) {
+      return isoFail("session_id_mismatch", "tool event session_id does not match init");
+    }
 
     const content = evt.message?.content;
     if (!Array.isArray(content)) continue;
@@ -777,10 +816,18 @@ function collectStrictOrderedToolPairs(streamText, { sessionId: boundSessionId }
     for (const block of content) {
       if (!block || typeof block !== "object") continue;
       if (block.type === "tool_use") {
-        if (evt.type !== "assistant") return null;
-        if (typeof block.id !== "string" || !block.id) return null;
-        if (typeof block.name !== "string" || !block.name) return null;
-        if (seenToolUseIds.has(block.id)) return null;
+        if (evt.type !== "assistant") {
+          return isoFail("wrong_event_type", "tool_use not on assistant event");
+        }
+        if (typeof block.id !== "string" || !block.id) {
+          return isoFail("tool_use_id_missing", "tool_use missing id");
+        }
+        if (typeof block.name !== "string" || !block.name) {
+          return isoFail("tool_use_name_missing", "tool_use missing name");
+        }
+        if (seenToolUseIds.has(block.id)) {
+          return isoFail("duplicate_tool_use", "duplicate tool_use id");
+        }
         seenToolUseIds.add(block.id);
         pending = {
           id: block.id,
@@ -792,8 +839,12 @@ function collectStrictOrderedToolPairs(streamText, { sessionId: boundSessionId }
       }
       if (block.type === "tool_result" && pending) {
         if (block.tool_use_id !== pending.id) continue;
-        if (evt.type !== "user") return null;
-        if (eventIndex <= pending.eventIndex) return null;
+        if (evt.type !== "user") {
+          return isoFail("wrong_event_type", "tool_result not on user event");
+        }
+        if (eventIndex <= pending.eventIndex) {
+          return isoFail("tool_result_wrong_order", "tool_result same or earlier than tool_use");
+        }
         pairs.push({
           ...pending,
           resultText: toolResultText(block.content),
@@ -803,10 +854,12 @@ function collectStrictOrderedToolPairs(streamText, { sessionId: boundSessionId }
         sawResultInThisEvent = true;
       }
     }
-    if (sawUseInThisEvent && sawResultInThisEvent) return null;
+    if (sawUseInThisEvent && sawResultInThisEvent) {
+      return isoFail("same_event_use_result", "tool_use and tool_result in same event");
+    }
   }
 
-  if (!sessionId) return null;
+  if (!sessionId) return isoFail("session_id_missing", "no system/init session_id in stream");
   return { sessionId, pairs, syntheticTexts };
 }
 
@@ -848,7 +901,7 @@ function findSkillLaunchProof(pairs, syntheticTexts, skillName, nonce) {
       || /Base directory for this skill:/i.test(s.text)
     )
   );
-  if (!body) return null;
+  if (!body) return isoFail("skill_body_missing", `no synthetic text with nonce for ${skillName}`);
   return { ...launch, skillBodyText: body.text };
 }
 
@@ -862,49 +915,67 @@ export function parseClaudeStructuredCapabilityProofs(streamText, {
   capsule = null,
   prepared = null,
 } = {}) {
-  if (!expected?.nonces || !capsule) return null;
+  if (!expected?.nonces || !capsule) {
+    return isoFail("expected_matrix_incomplete", "expected.nonces or capsule missing");
+  }
   const init = extractStructuredInitInventory(streamText);
-  if (!init) return null;
+  if (isIsoFailure(init)) return init;
+  if (!init) return isoFail("init_inventory_missing", "no system/init in stream");
 
   const exclusion = verifyInitSurfaceExclusion(init, { expected, prepared });
-  if (!exclusion.ok) return null;
+  if (!exclusion.ok) {
+    const first = exclusion.violations?.[0];
+    return isoFail(
+      "init_surface_exclusion",
+      first ? `${first.kind}:${first.name}` : "init lists disallowed surface"
+    );
+  }
 
   for (const bad of ISOLATION_FORBIDDEN_CANARIES) {
     if ((init.skills || []).includes(bad) || (init.plugins || []).includes(bad)) {
-      return null;
+      return isoFail("forbidden_canary_present", bad);
     }
   }
   if ((init.mcp_servers || []).includes("global")
     || (init.mcp_servers || []).includes("excluded")) {
-    return null;
+    return isoFail("forbidden_mcp_present", "global or excluded mcp_server in init");
   }
   if ((init.tools || []).includes("mcp__global__canary")
     || (init.tools || []).includes("mcp__excluded__lookup")) {
-    return null;
+    return isoFail("forbidden_mcp_present", "global or excluded mcp tool in init");
   }
 
   const wantSkill = (expected.skills || [])[0];
   const wantPlugin = (expected.plugins || [])[0];
   const wantFramework = (expected.frameworks || [])[0];
   const wantMcp = (expected.mcp_tools || [])[0];
-  if (!wantSkill || !wantPlugin || !wantFramework || !wantMcp) return null;
-  if (!(init.skills || []).includes(wantSkill)) return null;
-  if (!(init.plugins || []).includes(wantPlugin)) return null;
+  if (!wantSkill || !wantPlugin || !wantFramework || !wantMcp) {
+    return isoFail("expected_matrix_incomplete", "expected capability matrix incomplete");
+  }
+  if (!(init.skills || []).includes(wantSkill)) {
+    return isoFail("init_skill_missing", wantSkill);
+  }
+  if (!(init.plugins || []).includes(wantPlugin)) {
+    return isoFail("init_plugin_missing", wantPlugin);
+  }
 
   const strict = collectStrictOrderedToolPairs(streamText, { sessionId: init.session_id });
-  if (!strict) return null;
+  if (isIsoFailure(strict)) return strict;
+  if (!strict) return isoFail("strict_pairs_missing", "stream tool pairs unavailable");
   const { pairs, syntheticTexts } = strict;
-  if (!pairs.length) return null;
+  if (!pairs.length) return isoFail("no_tool_pairs", "no ordered tool_use/tool_result pairs");
 
   const skillPair = findSkillLaunchProof(
     pairs, syntheticTexts, wantSkill, expected.nonces.skill
   );
-  if (!skillPair) return null;
+  if (isIsoFailure(skillPair)) return skillPair;
+  if (!skillPair) return isoFail("skill_proof_missing", wantSkill);
 
   const pluginPair = findSkillLaunchProof(
     pairs, syntheticTexts, PLUGIN_CANARY_SKILL, expected.nonces.plugin
   );
-  if (!pluginPair) return null;
+  if (isIsoFailure(pluginPair)) return pluginPair;
+  if (!pluginPair) return isoFail("plugin_proof_missing", PLUGIN_CANARY_SKILL);
 
   const frameworkRoots = (capsule.frameworkDirs || []).map((d) => path.resolve(d));
   const expectedFwPaths = new Set(
@@ -920,25 +991,27 @@ export function parseClaudeStructuredCapabilityProofs(streamText, {
     if (!expectedFwPaths.has(filePath)) return false;
     return resultContainsExactNonce(p.resultText, expected.nonces.framework);
   });
-  if (!frameworkPair) return null;
+  if (!frameworkPair) return isoFail("framework_proof_missing", wantFramework);
 
   const mcpPair = pairs.find((p) =>
     p.name === wantMcp
     && resultContainsExactNonce(p.resultText, expected.nonces.mcp)
   );
-  if (!mcpPair) return null;
+  if (!mcpPair) return isoFail("mcp_proof_missing", wantMcp);
 
   // Prove no forbidden skill/plugin/MCP/framework result was produced.
   for (const pair of pairs) {
     const skillName = String(pair.input.skill || "");
     if (skillName === "global.canary-skill" || skillName === "pool.unselected-skill") {
-      return null;
+      return isoFail("forbidden_tool_invoked", skillName);
     }
     if (pair.name === "mcp__global__canary" || pair.name === "mcp__excluded__lookup") {
-      return null;
+      return isoFail("forbidden_tool_invoked", pair.name);
     }
     const readPath = String(pair.input.file_path || pair.input.path || "");
-    if (/pool\.unselected-framework|global\.canary/i.test(readPath)) return null;
+    if (/pool\.unselected-framework|global\.canary/i.test(readPath)) {
+      return isoFail("forbidden_tool_invoked", readPath);
+    }
   }
 
   const mcpTools = (init.tools || []).filter((t) => String(t).startsWith("mcp__"));
@@ -965,7 +1038,7 @@ export function parseClaudeStructuredCapabilityProofs(streamText, {
     }
     return true;
   });
-  if (!absentListComplete(absent)) return null;
+  if (!absentListComplete(absent)) return isoFail("absent_list_incomplete");
 
   return {
     skills: [wantSkill],
@@ -1004,7 +1077,9 @@ export function extractStructuredInitInventory(streamText) {
       continue;
     }
     if (evt?.type !== "system" || evt.subtype !== "init") continue;
-    if (typeof evt.session_id !== "string" || !evt.session_id) return null;
+    if (typeof evt.session_id !== "string" || !evt.session_id) {
+      return isoFail("session_id_missing", "system/init missing session_id");
+    }
     const tools = Array.isArray(evt.tools) ? evt.tools.map(String) : [];
     const skills = Array.isArray(evt.skills)
       ? evt.skills.map((s) => (typeof s === "string" ? s : String(s?.name || ""))).filter(Boolean)
@@ -1026,7 +1101,7 @@ export function extractStructuredInitInventory(streamText) {
       claude_code_version: evt.claude_code_version || null,
     };
   }
-  return null;
+  return isoFail("init_inventory_missing", "no system/init in stream");
 }
 
 function probeMcpServerDoc(serverName, resultText) {
@@ -1385,36 +1460,48 @@ export function collectLiveIsolationObservation({
   spawnSyncFn,
   authSourceHome = os.homedir(),
 } = {}) {
-  if (typeof spawnSyncFn !== "function") return null;
-  if (!prepared?.argv || !capsule) return null;
+  if (typeof spawnSyncFn !== "function") return isoFail("spawn_sync_unavailable");
+  if (!prepared?.argv || !capsule) return isoFail("prepared_invalid", "prepared argv or capsule missing");
 
   // Codex lacks native plugin/framework surfaces — no live collector (R4).
-  if (adapterId === "codex") return null;
+  if (adapterId === "codex") return isoFail("codex_no_live_collector");
 
-  if (!globalHome || !globalsPlanted(globalHome, adapterId)) return null;
+  if (!globalHome || !globalsPlanted(globalHome, adapterId)) {
+    return isoFail("globals_not_planted", "ambient globals not planted in globalHome");
+  }
 
   const expectedNonces = expected?.nonces ?? capsule.nonces ?? null;
   const selectedToolName = (expected?.mcp_tools ?? ["mcp__selected__lookup"])[0];
   const mcpNonce = expectedNonces?.mcp;
-  if (!selectedToolName || !mcpNonce) return null;
+  if (!selectedToolName || !mcpNonce) return isoFail("nonces_missing", "selected MCP tool or mcp nonce missing");
 
   const surface = collectLaunchIsolationObservation({ prepared, capsule, adapterId });
-  if (!surface) return null;
+  if (!surface) return isoFail("launch_surface_incomplete", "launch surface incomplete or malformed");
 
   const pluginDirs = flagValues(prepared.argv, "--plugin-dir");
-  if (!pluginDirs.length) return null;
+  if (!pluginDirs.length) return isoFail("no_plugin_dir", "no --plugin-dir on prepared argv");
   const mcpPath = flagValues(prepared.argv, "--mcp-config")[0];
-  if (!mcpPath || !fs.existsSync(mcpPath)) return null;
-  if (!prepared.argv.includes("--strict-mcp-config")) return null;
+  if (!mcpPath || !fs.existsSync(mcpPath)) {
+    return isoFail("mcp_config_missing", "mcp config path missing or not on disk");
+  }
+  if (!prepared.argv.includes("--strict-mcp-config")) {
+    return isoFail("strict_mcp_missing", "--strict-mcp-config not set");
+  }
   // Production capsule launches set HOME to an auth-only run home (not --bare).
   const probeHome = prepared.env?.HOME;
   if (!probeHome || !fs.existsSync(path.join(probeHome, ".claude", ".credentials.json"))) {
-    return null;
+    return isoFail("probe_home_invalid", "probe HOME missing or lacks .claude/.credentials.json");
   }
   const homeCheck = verifyProbeHomeClosedWorld(probeHome, {
     expectedSkills: expected?.skills || [],
   });
-  if (!homeCheck.ok) return null;
+  if (!homeCheck.ok) {
+    const v = homeCheck.violations?.[0];
+    return isoFail(
+      "closed_world_failed",
+      v ? `${v.kind}:${v.name}` : "probe HOME not closed-world"
+    );
+  }
 
   const authHome = probeHome;
   const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-neutral-"));
@@ -1442,34 +1529,39 @@ export function collectLiveIsolationObservation({
       cwd: neutralDir,
       env: buildIsolationProbeEnv(authHome),
     });
-    if (inventoryRun.error) return null;
+    if (inventoryRun.error) {
+      return isoFail("inventory_spawn_error", inventoryRun.error.message || "spawn failed");
+    }
     const inventoryText = `${inventoryRun.stdout || ""}`;
-    if (/not logged in|please run \/login/i.test(inventoryText)) return null;
+    if (/not logged in|please run \/login/i.test(inventoryText)) {
+      return isoFail("not_logged_in");
+    }
     // stderr-only text cannot prove isolation.
-    if (!inventoryRun.stdout) return null;
+    if (!inventoryRun.stdout) return isoFail("inventory_no_stdout", "inventory probe produced no stdout");
 
     const init = extractStructuredInitInventory(inventoryText);
-    if (!init) return null;
+    if (isIsoFailure(init)) return init;
+    if (!init) return isoFail("init_inventory_missing", "no system/init in inventory stream");
 
     // Structured negatives: forbidden canaries must not appear in init inventory.
     for (const bad of ["global.canary-skill", "global.canary-plugin"]) {
       if ((init.skills || []).includes(bad) || (init.plugins || []).includes(bad)) {
-        return null;
+        return isoFail("forbidden_canary_present", bad);
       }
     }
     if ((init.mcp_servers || []).includes("global")
       || (init.mcp_servers || []).includes("excluded")) {
-      return null;
+      return isoFail("forbidden_mcp_present", "global or excluded mcp_server in init");
     }
     if ((init.tools || []).includes("mcp__global__canary")
       || (init.tools || []).includes("mcp__excluded__lookup")) {
-      return null;
+      return isoFail("forbidden_mcp_present", "global or excluded mcp tool in init");
     }
     if (!(init.plugins || []).includes("capsule.selected-plugin")
       && !(init.tools || []).includes(selectedToolName)
       && !(init.tools || []).includes("ToolSearch")
       && !(init.tools || []).includes("Skill")) {
-      return null;
+      return isoFail("selected_surface_missing", "init lacks selected plugin/tools surface");
     }
 
     // Full matrix proof comes from correlated Skill/plugin/Read/MCP events —
@@ -1479,13 +1571,18 @@ export function collectLiveIsolationObservation({
       capsule,
       prepared,
     });
-    if (!observed) return null;
-    if (!observed.mcp_tools.includes("mcp__selected__lookup")) return null;
-    if (!absentListComplete(observed.absent)) return null;
-    if (!contentNoncesMatch(expectedNonces, observed.content_nonces)) return null;
+    if (isIsoFailure(observed)) return observed;
+    if (!observed) return isoFail("structured_proof_failed", "structured capability proof missing");
+    if (!observed.mcp_tools.includes("mcp__selected__lookup")) {
+      return isoFail("mcp_tool_missing", "mcp__selected__lookup not in observed tools");
+    }
+    if (!absentListComplete(observed.absent)) return isoFail("absent_list_incomplete");
+    if (!contentNoncesMatch(expectedNonces, observed.content_nonces)) {
+      return isoFail("nonces_mismatch", "observed content_nonces do not match expected");
+    }
     return observed;
-  } catch {
-    return null;
+  } catch (e) {
+    return isoFail("unexpected_error", e?.message || "live observation failed");
   } finally {
     try { fs.rmSync(neutralDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
@@ -1544,14 +1641,20 @@ export function parseCodexJsonlToolProof(streamText, { nonce } = {}) {
 }
 
 export function decideContextIsolationCapability({ expected, observed } = {}) {
-  if (!expected || !observed) return null;
-  for (const key of ["skills", "plugins", "mcp_tools", "frameworks", "absent"]) {
-    if (!Array.isArray(observed[key])) return null;
+  if (!expected || !observed) {
+    return isoFail("observation_missing", "expected or observed missing");
   }
-  if (expected.nonces && !observed.content_nonces) return null;
-  if (!absentListComplete(observed.absent)) return null;
+  if (isIsoFailure(observed)) return observed;
+  for (const key of ["skills", "plugins", "mcp_tools", "frameworks", "absent"]) {
+    if (!Array.isArray(observed[key])) {
+      return isoFail("observation_arrays_missing", `observed.${key} not an array`);
+    }
+  }
+  if (expected.nonces && !observed.content_nonces) return isoFail("nonces_missing");
+  if (!absentListComplete(observed.absent)) return isoFail("absent_list_incomplete");
   const result = validateIsolationObservation({ expected, observed });
-  return result.ok ? CONTEXT_ISOLATION_CAPABILITY : null;
+  if (result.ok) return CONTEXT_ISOLATION_CAPABILITY;
+  return isoFail("isolation_mismatch", result.errors?.[0] || "observation does not match expected");
 }
 
 /**
@@ -1667,6 +1770,16 @@ export function observeContextIsolation({
         capsule: fixture.capsule,
         prepared,
       });
+      if (isIsoFailure(observed)) {
+        return finish({
+          isolation_status: "unverified",
+          context_isolation: null,
+          expected,
+          error: formatIsoFailure(observed),
+          isolation_reason: capabilityReasonFromFailure(observed),
+          prepared,
+        });
+      }
       if (!observed) {
         return finish({
           isolation_status: "unverified",
@@ -1687,6 +1800,16 @@ export function observeContextIsolation({
       });
     }
 
+    if (isIsoFailure(observed)) {
+      return finish({
+        isolation_status: "unverified",
+        context_isolation: null,
+        expected,
+        error: formatIsoFailure(observed),
+        isolation_reason: capabilityReasonFromFailure(observed),
+        prepared,
+      });
+    }
     if (!observed) {
       return finish({
         isolation_status: "unverified",
@@ -1698,6 +1821,17 @@ export function observeContextIsolation({
     }
 
     const token = decideContextIsolationCapability({ expected, observed });
+    if (isIsoFailure(token)) {
+      return finish({
+        isolation_status: "failed",
+        context_isolation: null,
+        observed,
+        expected,
+        prepared,
+        error: formatIsoFailure(token),
+        isolation_reason: capabilityReasonFromFailure(token),
+      });
+    }
     return finish({
       isolation_status: token ? "passed" : "failed",
       context_isolation: token,

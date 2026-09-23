@@ -21,6 +21,7 @@ import {
   validateIsolationObservation,
   ISOLATION_FORBIDDEN_CANARIES,
 } from "../../src/harness/isolation-canary.mjs";
+import { assertIsoFailure } from "../helpers/isolation-assert.mjs";
 
 function prepareClaudeLaunch(fixture) {
   return claudeAdapter.prepareLaunch({
@@ -306,15 +307,15 @@ test("parseClaudeStreamToolProof requires exact tool and nonce", () => {
     toolName: "mcp__selected__lookup",
     nonce,
   }));
-  assert.equal(parseClaudeStreamToolProof(stream, {
+  assertIsoFailure(parseClaudeStreamToolProof(stream, {
     toolName: "mcp__global__canary",
     nonce,
-  }), null);
-  assert.equal(parseClaudeStreamToolProof(stream, {
+  }));
+  assertIsoFailure(parseClaudeStreamToolProof(stream, {
     toolName: "mcp__selected__lookup",
     nonce: "wrong-nonce",
-  }), null);
-  assert.equal(parseClaudeStreamToolProof("", { toolName: "x", nonce: "y" }), null);
+  }));
+  assertIsoFailure(parseClaudeStreamToolProof("", { toolName: "x", nonce: "y" }));
 });
 
 test("launch-surface observation alone does not grant isolation without live probe", () => {
@@ -362,7 +363,7 @@ test("disk or config-only Claude observation does not grant isolation token", ()
         return { status: 1, stdout: "", stderr: "skip" };
       },
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -404,7 +405,7 @@ test("Node MCP preflight alone does not satisfy live model proof", () => {
         return { status: 1, stdout: "", stderr: "no model" };
       },
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -451,7 +452,7 @@ test("global MCP positive control requires neutral-cwd claude mcp list visibilit
         return { status: 0, stdout: "", stderr: "" };
       },
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -479,7 +480,7 @@ test("isolated negative control requires global absent under bare strict mcp lis
         return { status: 0, stdout: "", stderr: "" };
       },
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -557,7 +558,7 @@ test("adversarial: structured init listing a forbidden plugin fails closed", () 
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -625,7 +626,7 @@ test("adversarial: guessed final JSON without structured Skill/plugin/Read proof
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
 
     // Wrong MCP structured nonce still fails closed even with otherwise-happy stream.
     const bad = collectLiveIsolationObservation({
@@ -639,7 +640,7 @@ test("adversarial: guessed final JSON without structured Skill/plugin/Read proof
         mcpNonce: "wrong-nonce",
       }),
     });
-    assert.equal(bad, null);
+    assertIsoFailure(bad);
   } finally {
     fixture.cleanup();
   }
@@ -664,7 +665,7 @@ test("adversarial: no tool_use in stream fails closed", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -701,7 +702,7 @@ test("adversarial: wrong tool or result nonce fails closed", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
     });
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
   } finally {
     fixture.cleanup();
   }
@@ -718,10 +719,7 @@ test("adversarial: structural-only report without content_nonces fails closed", 
       frameworks: expected.frameworks,
       absent: [...ISOLATION_FORBIDDEN_CANARIES],
     };
-    assert.equal(
-      decideContextIsolationCapability({ expected, observed }),
-      null
-    );
+    assertIsoFailure(decideContextIsolationCapability({ expected, observed }));
     const validation = validateIsolationObservation({ expected, observed });
     assert.equal(validation.ok, false);
     assert.ok(validation.errors.some((e) => /content_nonces/.test(e)));
@@ -742,10 +740,7 @@ test("adversarial: partial absent list fails closed without repair", () => {
       absent: ["global.canary-skill"],
       content_nonces: { ...expected.nonces },
     };
-    assert.equal(
-      decideContextIsolationCapability({ expected, observed }),
-      null
-    );
+    assertIsoFailure(decideContextIsolationCapability({ expected, observed }));
   } finally {
     fixture.cleanup();
   }
@@ -806,20 +801,16 @@ test("malformed skipped or partial observation withholds isolation token", () =>
       mcp: "m1",
     },
   };
-  assert.equal(decideContextIsolationCapability({ expected, observed: null }), null);
-  assert.equal(parseIsolationObservationJson("not-json"), null);
-  assert.equal(parseIsolationObservationJson("{"), null);
-  assert.equal(
-    decideContextIsolationCapability({
+  assertIsoFailure(decideContextIsolationCapability({ expected, observed: null }));
+  assertIsoFailure(parseIsolationObservationJson("not-json"));
+  assertIsoFailure(parseIsolationObservationJson("{"));
+  assertIsoFailure(decideContextIsolationCapability({
       expected,
       observed: parseIsolationObservationJson(JSON.stringify({
         skills: ["capsule.selected-skill"],
       })),
-    }),
-    null
-  );
-  assert.equal(
-    decideContextIsolationCapability({
+    }));
+  assertIsoFailure(decideContextIsolationCapability({
       expected,
       observed: {
         skills: ["capsule.selected-skill"],
@@ -829,9 +820,7 @@ test("malformed skipped or partial observation withholds isolation token", () =>
         absent: ["global.canary-skill"],
         content_nonces: expected.nonces,
       },
-    }),
-    null
-  );
+    }));
 });
 
 test("verifyHarness stores context_isolation only on exact runner token", async () => {
@@ -896,7 +885,7 @@ test("Codex live canary cannot grant generic v1 without plugin/framework surface
       adapterId: "codex",
       spawnSyncFn: () => ({ status: 0, stdout: '{"type":"thread.started"}\n', stderr: "" }),
     });
-    assert.equal(incomplete, null);
+    assertIsoFailure(incomplete);
 
     const nonce = fixture.expected.nonces.mcp;
     const happyJsonl = [
@@ -942,7 +931,7 @@ test("Codex live canary cannot grant generic v1 without plugin/framework surface
       spawnSyncFn: () => ({ status: 0, stdout: `${happyJsonl}\n`, stderr: "" }),
     });
     // Full expected matrix includes plugins/frameworks Codex cannot natively prove.
-    assert.equal(observed, null);
+    assertIsoFailure(observed);
     assert.equal(prepared.env.CODEX_HOME, fixture.capsule.codexHome);
   } finally {
     fixture.cleanup();

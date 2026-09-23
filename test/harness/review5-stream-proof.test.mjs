@@ -4,6 +4,7 @@ import {
   parseClaudeStreamToolProof,
   extractStructuredInitInventory,
 } from "../../src/harness/isolation-canary.mjs";
+import { assertIsoFailure } from "../helpers/isolation-assert.mjs";
 
 const SESSION = "sess-fixture-220";
 const NONCE = "nonce-abc-123";
@@ -60,18 +61,12 @@ test("stream proof accepts real Claude 2.1.220 tool_use then matching tool_resul
 
 test("stream proof rejects tool_result before tool_use", () => {
   const stream = [initEvent(), toolResult(), toolUse()].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("stream proof rejects mismatched tool_use_id", () => {
   const stream = [initEvent(), toolUse("tu-1"), toolResult("tu-OTHER")].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("stream proof rejects arbitrary top-level JSON without init session", () => {
@@ -80,10 +75,7 @@ test("stream proof rejects arbitrary top-level JSON without init session", () =>
     toolUse(),
     toolResult(),
   ].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("stream proof rejects stale/non-matching session_id", () => {
@@ -96,10 +88,7 @@ test("stream proof rejects stale/non-matching session_id", () => {
     }),
     toolResult(),
   ].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("stream proof rejects substring-only nonce match", () => {
@@ -108,17 +97,11 @@ test("stream proof rejects substring-only nonce match", () => {
     toolUse(),
     toolResult("tu-1", `prefix-${NONCE}-suffix-without-exact-payload`),
   ].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("stream proof rejects stderr-only text", () => {
-  assert.equal(
-    parseClaudeStreamToolProof(`error: ${NONCE}\n`, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(`error: ${NONCE}\n`, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("stream proof rejects duplicate conflicting tool_use ids for same tool", () => {
@@ -128,10 +111,7 @@ test("stream proof rejects duplicate conflicting tool_use ids for same tool", ()
     toolUse("tu-2"),
     toolResult("tu-1"),
   ].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("stream proof rejects tool events missing session_id after init", () => {
@@ -145,10 +125,7 @@ test("stream proof rejects tool events missing session_id after init", () => {
     }),
     toolResult(),
   ].join("\n");
-  assert.equal(
-    parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }),
-    null
-  );
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
 });
 
 test("codex proof rejects agent_message echo without MCP result content", async () => {
