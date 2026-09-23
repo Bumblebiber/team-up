@@ -156,6 +156,33 @@ Nothing on this host is `verified`. The UI must therefore render `failed` as
 "installed, capabilities denied — run `team-up harness verify <cli>`", not as a
 broken install, or every row on a healthy host reads red.
 
+### Update is the primary button — and it must chain into verification
+
+Updating is the action this dashboard will actually be used for (installing
+happens once per machine), and it is the safe half: every adapter CLI ships its
+own `update` subcommand, verified on this host, so nothing is piped from the
+network by us.
+
+The catch is that an update **invalidates the harness verification record**,
+which is keyed by CLI version (`~/.team-up/harness-verification/<cli>/<version>.json`).
+A one-click update that stops at "updated" walks the roster straight into
+`failed` for that CLI and its specialists become unlaunchable — exactly the
+state this host is in after claude went 2.1.259 → 2.1.267. So:
+
+- The update job is `<cli> update` **followed by** `team-up harness verify <cli>`
+  in the same tmux session and the same log, reported as one operation with two
+  phases.
+- The row shows the new version *and* the new verification verdict. "Updated,
+  capabilities denied" is a visible, expected outcome — not a silent one.
+- If verification fails, the UI links the log and says which specialists are
+  now blocked. It does **not** offer a rollback: no CLI here supports pinning a
+  previous version through its own updater.
+
+Precondition, and it is not met today: `team-up harness verify claude` currently
+returns `unverified` without saying why, because the isolation canary bails out
+silently. One-click update is only honest once that reports a reason — it is
+tracked as its own ticket and blocks this button, not the rest of v2.
+
 ### Install commands are hardcoded per CLI
 
 A table in `src/dashboard/installers.mjs`, keyed by roster cli id. The browser
