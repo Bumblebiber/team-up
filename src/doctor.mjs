@@ -236,7 +236,10 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
       continue;
     }
     if (status.status !== "failed" || !status.installed_version) continue;
-    const record = loadVerificationRecord(cli, status.installed_version, env);
+    const record = loadVerificationRecord(cli, status.installed_version, env)
+      ?? (status.record_version
+        ? loadVerificationRecord(cli, status.record_version, env)
+        : null);
     if (!record || record.status === "verified") continue;
     const isoReason = record.context_isolation_reason?.code;
     const brokerReason = record.command_broker_reason?.code;

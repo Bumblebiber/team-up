@@ -246,7 +246,7 @@ test("init-only without Skill/plugin/Read/MCP invocation does not grant", () => 
     assertIsoFailure(parseClaudeStructuredCapabilityProofs(stream, {
       expected: fixture.expected,
       capsule: fixture.capsule,
-    }));
+    }), "no_tool_pairs");
   } finally {
     fixture.cleanup();
   }
@@ -269,13 +269,13 @@ test("wrong skill id or nonce fails structured proof", () => {
     assertIsoFailure(parseClaudeStructuredCapabilityProofs(badSkill, {
         expected: fixture.expected,
         capsule: fixture.capsule,
-      }));
+      }), "skill_proof_missing");
 
     const badNonce = fullStructuredStream(fixture, { skillNonce: "wrong-nonce" });
     assertIsoFailure(parseClaudeStructuredCapabilityProofs(badNonce, {
         expected: fixture.expected,
         capsule: fixture.capsule,
-      }));
+      }), "skill_body_missing");
   } finally {
     fixture.cleanup();
   }
@@ -290,7 +290,7 @@ test("wrong plugin skill/result/nonce or wrong framework Read path fails", () =>
     assertIsoFailure(parseClaudeStructuredCapabilityProofs(badPlugin, {
         expected: fixture.expected,
         capsule: fixture.capsule,
-      }));
+      }), "skill_body_missing");
 
     const badPath = fullStructuredStream(fixture, {
       frameworkFilePath: "/tmp/evil/framework.json",
@@ -298,7 +298,7 @@ test("wrong plugin skill/result/nonce or wrong framework Read path fails", () =>
     assertIsoFailure(parseClaudeStructuredCapabilityProofs(badPath, {
         expected: fixture.expected,
         capsule: fixture.capsule,
-      }));
+      }), "framework_proof_missing");
   } finally {
     fixture.cleanup();
   }

@@ -6,6 +6,7 @@ import {
   COMMAND_BROKER_CAPABILITY,
   CONTEXT_ISOLATION_CAPABILITY,
 } from "./capabilities.mjs";
+import { truncateIsoDetail } from "./isolation-result.mjs";
 
 export function verificationRecordPath(adapterId, cliVersion, env = process.env) {
   return path.join(
@@ -130,6 +131,11 @@ export async function verifyHarness({
   const capabilityReasons = {};
   if (checks.context_isolation_reason) {
     capabilityReasons.context_isolation_reason = checks.context_isolation_reason;
+  } else if (checks.isolation_error) {
+    capabilityReasons.context_isolation_reason = {
+      code: "isolation_error",
+      detail: truncateIsoDetail(checks.isolation_error),
+    };
   }
   if (checks.command_broker_reason) {
     capabilityReasons.command_broker_reason = checks.command_broker_reason;

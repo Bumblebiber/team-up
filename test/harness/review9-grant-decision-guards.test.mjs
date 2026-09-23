@@ -306,7 +306,7 @@ test("decide denies when content_nonces disagree with expected", () => {
         mcp: "tampered-nonce",
       },
     };
-    assertIsoFailure(decideContextIsolationCapability({ expected: fixture.expected, observed }));
+    assertIsoFailure(decideContextIsolationCapability({ expected: fixture.expected, observed }), "isolation_mismatch");
     const validation = validateIsolationObservation({
       expected: fixture.expected,
       observed,
@@ -326,11 +326,11 @@ test("decide denies when observed matrix fields are not arrays", () => {
     assertIsoFailure(decideContextIsolationCapability({
         expected: fixture.expected,
         observed: { ...base, skills: "not-an-array" },
-      }));
+      }), "observation_arrays_missing");
     assertIsoFailure(decideContextIsolationCapability({
         expected: fixture.expected,
         observed: { ...base, absent: null },
-      }));
+      }), "observation_arrays_missing");
   } finally {
     fixture.cleanup();
   }
@@ -346,7 +346,7 @@ test("structured proof without MCP invocation does not grant", () => {
       expected: fixture.expected,
       capsule: fixture.capsule,
       prepared,
-    }));
+    }), "mcp_proof_missing");
     const observed = collectLiveIsolationObservation({
       prepared,
       capsule: fixture.capsule,
@@ -355,8 +355,8 @@ test("structured proof without MCP invocation does not grant", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { streamLines: proofsWithoutMcp(fixture) }),
     });
-    assertIsoFailure(observed);
-    assertIsoFailure(decideContextIsolationCapability({ expected: fixture.expected, observed }));
+    assertIsoFailure(observed, "mcp_proof_missing");
+    assertIsoFailure(decideContextIsolationCapability({ expected: fixture.expected, observed }), "mcp_proof_missing");
   } finally {
     fixture.cleanup();
   }
@@ -401,7 +401,7 @@ test("parseClaudeStructuredCapabilityProofs denies when init omits selected skil
         expected: fixture.expected,
         capsule: fixture.capsule,
         prepared,
-      }));
+      }), "init_skill_missing");
   } finally {
     fixture.cleanup();
   }
@@ -445,7 +445,7 @@ test("parseClaudeStructuredCapabilityProofs denies when init omits selected plug
         expected: fixture.expected,
         capsule: fixture.capsule,
         prepared,
-      }));
+      }), "init_plugin_missing");
   } finally {
     fixture.cleanup();
   }
@@ -490,7 +490,7 @@ test("parseClaudeStructuredCapabilityProofs denies unselected skill in init inve
         expected: fixture.expected,
         capsule: fixture.capsule,
         prepared,
-      }));
+      }), "init_surface_exclusion");
   } finally {
     fixture.cleanup();
   }
@@ -565,7 +565,7 @@ test("parseClaudeStructuredCapabilityProofs is unaffected by probe HOME leaks", 
       adapterId: "claude",
       spawnSyncFn: () => ({ status: 0, stdout: `${stream}\n`, stderr: "" }),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "closed_world_failed");
   } finally {
     fixture.cleanup();
   }
@@ -605,7 +605,7 @@ test("live observation requires --strict-mcp-config on prepared argv", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "strict_mcp_missing");
   } finally {
     fixture.cleanup();
   }
@@ -628,7 +628,7 @@ test("live observation rejects stderr-only inventory output", () => {
         stderr: '{"type":"system","subtype":"init"}\n',
       }),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "inventory_no_stdout");
   } finally {
     fixture.cleanup();
   }
@@ -651,7 +651,7 @@ test("live observation rejects stream with no system/init", () => {
         stderr: "",
       }),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "init_inventory_missing");
   } finally {
     fixture.cleanup();
   }
@@ -699,7 +699,7 @@ test("live observation denies when init lists global.canary-skill", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { streamLines }),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "forbidden_canary_present");
   } finally {
     fixture.cleanup();
   }
@@ -719,7 +719,7 @@ test("live observation requires planted global canary fixture home", () => {
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "globals_not_planted");
   } finally {
     fixture.cleanup();
     fs.rmSync(emptyHome, { recursive: true, force: true });
@@ -748,7 +748,7 @@ test("launch surface omits visible forbidden canaries from absent list", () => {
           ...buildHappyInventory(fixture),
           skills: [...fixture.expected.skills, "global.canary-skill"],
         },
-      }));
+      }), "isolation_mismatch");
   } finally {
     fixture.cleanup();
   }

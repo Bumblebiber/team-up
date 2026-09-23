@@ -126,7 +126,7 @@ test("stream proof rejects same-event tool_use+tool_result (Claude 2.1.220 envel
       },
     }),
   ].join("\n");
-  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }), "wrong_event_type");
 });
 
 test("stream proof rejects tool_use on user and tool_result on assistant", () => {
@@ -149,7 +149,7 @@ test("stream proof rejects tool_use on user and tool_result on assistant", () =>
       },
     }),
   ].join("\n");
-  assertIsoFailure(parseClaudeStreamToolProof(badUseRole, { toolName: TOOL, nonce: NONCE }));
+  assertIsoFailure(parseClaudeStreamToolProof(badUseRole, { toolName: TOOL, nonce: NONCE }), "wrong_event_type");
 
   const badResultRole = [
     initEvent(),
@@ -170,7 +170,7 @@ test("stream proof rejects tool_use on user and tool_result on assistant", () =>
       },
     }),
   ].join("\n");
-  assertIsoFailure(parseClaudeStreamToolProof(badResultRole, { toolName: TOOL, nonce: NONCE }));
+  assertIsoFailure(parseClaudeStreamToolProof(badResultRole, { toolName: TOOL, nonce: NONCE }), "wrong_event_type");
 });
 
 test("stream proof rejects duplicate tool_use ids", () => {
@@ -198,7 +198,7 @@ test("stream proof rejects duplicate tool_use ids", () => {
       },
     }),
   ].join("\n");
-  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }));
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }), "duplicate_tool_use");
 });
 
 test("observeContextIsolation Claude expected keeps full four-type matrix", () => {
@@ -308,7 +308,7 @@ test("MCP-only structured proof without live skill inventory does not grant v1",
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory, streamLines }),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "init_skill_missing");
     assertIsoFailure(decideContextIsolationCapability({
         expected: fixture.expected,
         observed: {
@@ -324,7 +324,7 @@ test("MCP-only structured proof without live skill inventory does not grant v1",
             mcp: fixture.expected.nonces.mcp,
           },
         },
-      }));
+      }), "isolation_mismatch");
   } finally {
     fixture.cleanup();
   }
@@ -349,7 +349,7 @@ test("guessed model content_nonces fail closed without disk/config nonce fill", 
       adapterId: "claude",
       spawnSyncFn: buildHappySpawnSync(fixture, { inventory }),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "skill_proof_missing");
   } finally {
     fixture.cleanup();
   }
@@ -391,7 +391,7 @@ test("Codex MCP-only JSONL without model skill inventory does not grant v1", () 
       adapterId: "codex",
       spawnSyncFn: () => ({ status: 0, stdout: `${jsonl}\n`, stderr: "" }),
     });
-    assertIsoFailure(observed);
+    assertIsoFailure(observed, "codex_no_live_collector");
   } finally {
     fixture.cleanup();
   }
