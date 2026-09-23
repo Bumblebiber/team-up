@@ -13,18 +13,23 @@ import {
 } from "./usage-procs.mjs";
 import { subscriptionsFromRoster } from "./usage-collect.mjs";
 
-const DEFAULT_CONFIG = {
+export const DEFAULT_CONFIG = {
   tick_sec: 60,
-  // idle_min keeps sampling while no local agent runs: the burn a second
-  // machine puts on the same account is invisible to the process count and
-  // only shows up as a rising window. It must stay under the 45min the burn
-  // rate reaches back, or an idle CLI never has two samples to draw a line
-  // through. ponytail: one codex collect measures 143s wall / 59MB, but the
-  // TUI itself boots in ~4s — the rest is `expect eof` waiting out its timeout
-  // on a codex that never closes the PTY. Fix that and the idle cadence gets
-  // much cheaper; until then this is ~2.5min per PTY-based CLI per interval.
-  intervals: { idle_heartbeat_hours: 24, idle_min: 30, active_min: 20, busy_min: 8 },
+  intervals: { idle_heartbeat_hours: 24, idle_min: 10, active_min: 10, busy_min: 5 },
+  // cursor-agent still boots a full TUI and measured ~110s/collect after the
+  // PTY fast-exit fix — keep its pre-fix cadence until that path speeds up.
+  cli_intervals: {
+    cursor: { idle_min: 30, active_min: 20, busy_min: 8 },
+  },
 };
+
+export function intervalMinForCli(cli, state, config = DEFAULT_CONFIG) {
+  const perCli = config.cli_intervals?.[cli];
+  const intervals = perCli || config.intervals || DEFAULT_CONFIG.intervals;
+  if (state === "busy") return intervals.busy_min;
+  if (state === "idle") return intervals.idle_min ?? DEFAULT_CONFIG.intervals.idle_min;
+  return intervals.active_min;
+}
 
 export function watcherConfig(roster) {
   return { ...DEFAULT_CONFIG, ...(roster?.usage_watcher || {}) };
@@ -128,18 +133,13 @@ export function advanceSchedule({
   now = Date.now(),
   config = DEFAULT_CONFIG,
 }) {
-  const intervalMin =
-    state === "busy"
-      ? config.intervals.busy_min
-      : state === "idle"
-        ? (config.intervals.idle_min ?? DEFAULT_CONFIG.intervals.idle_min)
-        : config.intervals.active_min;
   const next = {
     last_collect: { ...lastCollect },
     next_due: { ...nextDue },
   };
 
   for (const cli of attempted) {
+    const intervalMin = intervalMinForCli(cli, state, config);
     next.next_due[cli] = new Date(now + intervalMin * 60_000).toISOString();
   }
   for (const cli of successful) {
@@ -166,8 +166,20 @@ function loadState() {
       collecting: { claude: false, codex: false, cursor: false },
       last_collect: { claude: null, codex: null, cursor: null },
       next_due: { claude: null, codex: null, cursor: null },
+      collect_failures: { claude: [], codex: [], cursor: [] },
     }
   );
+}
+
+const COLLECT_FAILURE_RING = 5;
+
+function journalCollectFailure(stateDoc, cli, reason, now = Date.now()) {
+  stateDoc.collect_failures = stateDoc.collect_failures || {};
+  const prior = Array.isArray(stateDoc.collect_failures[cli]) ? stateDoc.collect_failures[cli] : [];
+  stateDoc.collect_failures[cli] = [
+    ...prior,
+    { at: new Date(now).toISOString(), reason },
+  ].slice(-COLLECT_FAILURE_RING);
 }
 
 /**
@@ -250,7 +262,9 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
         runCollect(cli);
         successful.push(cli);
       } catch (e) {
-        console.error(`collect failed ${cli}:`, e.message || e);
+        const reason = String(e.message || e);
+        console.error(`collect failed ${cli}:`, reason);
+        journalCollectFailure(stateDoc, cli, reason, now);
       } finally {
         stateDoc.collecting = { ...stateDoc.collecting, [cli]: false };
       }

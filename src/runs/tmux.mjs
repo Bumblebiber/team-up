@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
 
 export function inspectTmuxSession(session, { exec = execFileSync } = {}) {
-  if (!session) return { exists: false, activityMs: null, sessionId: null };
+  if (!session) return { exists: false, activityMs: null, sessionId: null, attached: false };
   try {
     const raw = exec(
       "tmux",
-      ["display-message", "-p", "-t", session, "#{window_activity} #{session_id}"],
+      ["display-message", "-p", "-t", session, "#{window_activity} #{session_id} #{session_attached}"],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     ).trim();
     // `display-message -t` exits 0 for a session that does not exist and simply
@@ -14,16 +14,19 @@ export function inspectTmuxSession(session, { exec = execFileSync } = {}) {
     // told the collector to kill a terminal that was already gone, which then
     // could not be marked cleaned, so the same runs came back every five
     // minutes forever.
-    if (!raw) return { exists: false, activityMs: null, sessionId: null };
-    const [activityRaw, sessionId] = raw.split(/\s+/, 2);
-    const seconds = Number(activityRaw);
+    if (!raw) return { exists: false, activityMs: null, sessionId: null, attached: false };
+    const parts = raw.split(/\s+/);
+    const seconds = Number(parts[0]);
+    const sessionId = parts[1] || null;
+    const attached = parts[2] === "1";
     return {
       exists: true,
       activityMs: Number.isFinite(seconds) ? seconds * 1000 : null,
-      sessionId: sessionId || null,
+      sessionId,
+      attached,
     };
   } catch {
-    return { exists: false, activityMs: null, sessionId: null };
+    return { exists: false, activityMs: null, sessionId: null, attached: false };
   }
 }
 

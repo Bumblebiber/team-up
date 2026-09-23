@@ -14,7 +14,12 @@ import {
   resolveRunState,
   updateState,
 } from "./runs.mjs";
-import { inspectTmuxSession, stopTmuxSession, tmuxSessionExists } from "./tmux.mjs";
+import {
+  inspectTmuxSession,
+  listTmuxSessions,
+  stopTmuxSession,
+  tmuxSessionExists,
+} from "./tmux.mjs";
 import { readLease, releaseAttemptLease } from "../supervisor/attempts.mjs";
 import { gcHandoffs, readHandoffRetentionDays } from "../handoff/store.mjs";
 import { loadJson, configPath } from "../roster/config.mjs";
@@ -55,6 +60,77 @@ function markTerminalTmuxCleanedState(state, nowIso, sessionId = null) {
 
 function markTerminalTmuxCleaned(runId, nowIso, sessionId = null) {
   return updateState(runId, latest => markTerminalTmuxCleanedState(latest, nowIso, sessionId));
+}
+
+const TERMINAL_RUN = new Set(["done", "failed", "cancelled"]);
+const TEAM_UP_SESSION_PREFIX = "team-up-";
+
+export function claimedWorkerSessions(states) {
+  const claimed = new Set();
+  for (const state of states || []) {
+    if (TERMINAL_RUN.has(state.status)) continue;
+    if (state.worker?.tmux) claimed.add(state.worker.tmux);
+  }
+  return claimed;
+}
+
+export function evaluateIdleSessionAction({
+  sessionName,
+  attached = false,
+  activityMs,
+  nowMs,
+  idleSessionMs,
+  claimedSessions,
+}) {
+  if (!sessionName?.startsWith(TEAM_UP_SESSION_PREFIX)) return { kind: "skip" };
+  if (claimedSessions?.has(sessionName)) return { kind: "skip" };
+  if (attached) return { kind: "skip" };
+  if (!Number.isFinite(activityMs)) return { kind: "skip" };
+  if (nowMs - activityMs < idleSessionMs) return { kind: "skip" };
+  return { kind: "kill_idle", session: sessionName };
+}
+
+export function gcIdleSessions({
+  now = new Date(),
+  states = [],
+  listSessions = listTmuxSessions,
+  inspectTmux = inspectTmuxSession,
+  stopTmux = stopTmuxSession,
+  idleSessionHours = 2,
+  dryRun = false,
+} = {}) {
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+  const idleSessionMs = idleSessionHours * 3_600_000;
+  const claimed = claimedWorkerSessions(states);
+  const killed = [];
+  const skipped = [];
+
+  for (const name of listSessions()) {
+    const tmux = inspectTmux(name);
+    const decision = evaluateIdleSessionAction({
+      sessionName: name,
+      attached: tmux.attached,
+      activityMs: tmux.activityMs,
+      nowMs,
+      idleSessionMs,
+      claimedSessions: claimed,
+    });
+    if (decision.kind === "skip") {
+      skipped.push(name);
+      continue;
+    }
+    if (decision.kind === "kill_idle") {
+      if (!dryRun) {
+        try {
+          stopTmux(name);
+        } catch (error) {
+          return { error: String(error.message || error), killed, skipped };
+        }
+      }
+      killed.push(name);
+    }
+  }
+  return { killed, skipped, dryRun };
 }
 
 export function evaluateGcAction({
@@ -905,6 +981,19 @@ export function gcRuns({
     report.handoffs = gcHandoffs({ now, retentionDays, dryRun });
   } catch (error) {
     report.handoffs = { error: String(error.message || error) };
+  }
+
+  try {
+    const roster = loadJson(configPath()) || {};
+    const idleHours = Number(roster?.limits?.idle_session_hours);
+    report.idle_sessions = gcIdleSessions({
+      now,
+      states: input,
+      idleSessionHours: Number.isFinite(idleHours) && idleHours > 0 ? idleHours : 2,
+      dryRun,
+    });
+  } catch (error) {
+    report.idle_sessions = { error: String(error.message || error) };
   }
 
   return report;

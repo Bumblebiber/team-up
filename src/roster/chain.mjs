@@ -1,6 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { modelUsageGate, windowIsBlocking, effectiveResetAt } from "../usage/usage-windows.mjs";
+import {
+  modelUsageGate,
+  windowIsBlocking,
+  effectiveResetAt,
+  isCliUsageFresh,
+} from "../usage/usage-windows.mjs";
 import { resolveEffort } from "./command.mjs";
 export { resolveEffort };
 
@@ -12,6 +17,8 @@ export function limits(roster) {
     // How far ahead a burst window's burn rate is projected when routing.
     // 0 disables the trend gate.
     project_min: 30,
+    // Blocking handoffs require usage no older than this (minutes).
+    usage_max_age_min: 10,
     ...(roster.limits || {}),
   };
 }
@@ -283,11 +290,31 @@ export function markLimited({ usage, target, ttlMs, now = Date.now(), reason }) 
   return base;
 }
 
-export function checkThresholds({ roster, usage, now = Date.now() }) {
+function cliFromWindowKey(wkey) {
+  const i = wkey.indexOf(":");
+  return i > 0 ? wkey.slice(0, i) : null;
+}
+
+function usageMaxAgeMs(thresholds) {
+  const min = Number(thresholds?.usage_max_age_min);
+  return (Number.isFinite(min) && min > 0 ? min : 10) * 60_000;
+}
+
+/**
+ * @param {object} opts
+ * @param {object} opts.roster
+ * @param {object|null} opts.usage
+ * @param {number} [opts.now]
+ * @param {(cli: string) => Promise<object>|object} [opts.collectCli] injectable collect (tests)
+ * @returns {{ message: string, needsRefresh: string[] }}
+ */
+export function checkThresholds({ roster, usage, now = Date.now(), collectCli }) {
   const thresholds = limits(roster);
   const { warn_at, handoff_at } = thresholds;
+  const maxAgeMs = usageMaxAgeMs(thresholds);
   const lines = [];
   let handoff = false;
+  const needsRefresh = new Set();
 
   if (hasWindowsData(usage)) {
     for (const [wkey, info] of Object.entries(usage.windows)) {
@@ -295,9 +322,15 @@ export function checkThresholds({ roster, usage, now = Date.now() }) {
       const resetAt = effectiveResetAt(info, wkey, thresholds, now);
       if (resetAt !== null && now >= resetAt) continue;
       const pct = Math.round(info.used * 100);
-      if (windowIsBlocking(wkey, usage, thresholds, now)) {
-        lines.push(`⛔ team-up roster: ${wkey} at ${pct}% — session limit reached.`);
-        handoff = true;
+      const cli = cliFromWindowKey(wkey);
+      const wouldBlock = windowIsBlocking(wkey, usage, thresholds, now);
+      if (wouldBlock) {
+        if (cli && !isCliUsageFresh(cli, usage, maxAgeMs, now)) {
+          needsRefresh.add(cli);
+        } else {
+          lines.push(`⛔ team-up roster: ${wkey} at ${pct}% — session limit reached.`);
+          handoff = true;
+        }
       } else if (info.used >= warn_at) {
         lines.push(`⚠️ team-up roster: ${wkey} at ${pct}% — prepare for handoff: converge to a checkpointable state.`);
       }
@@ -330,7 +363,30 @@ export function checkThresholds({ roster, usage, now = Date.now() }) {
       "(3) report the printed tmux session + attach command to the user, (4) stop working in this session."
     );
   }
-  return lines.join("\n");
+  void collectCli;
+  return { message: lines.join("\n"), needsRefresh: [...needsRefresh] };
+}
+
+/** Collect stale CLIs then re-evaluate blocking thresholds. */
+export async function checkThresholdsWithRefresh({
+  roster,
+  usage,
+  now = Date.now(),
+  collectCli,
+  readUsage,
+}) {
+  let currentUsage = usage;
+  let result = checkThresholds({ roster, usage: currentUsage, now, collectCli });
+  if (!result.needsRefresh.length || !collectCli) return result;
+  for (const cli of result.needsRefresh) {
+    await collectCli(cli);
+  }
+  currentUsage = readUsage ? readUsage() : currentUsage;
+  const retry = checkThresholds({ roster, usage: currentUsage, now, collectCli });
+  return {
+    message: retry.message || result.message,
+    needsRefresh: retry.needsRefresh,
+  };
 }
 
 function modelUsageBlocked({ roster, usage, modelName, cli, limits: limitsArg, now }) {

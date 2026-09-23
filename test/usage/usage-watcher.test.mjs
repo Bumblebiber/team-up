@@ -3,13 +3,20 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { planCollect, advanceSchedule, computeState, clearCollecting } from "../../src/usage/usage-watcher.mjs";
+import {
+  planCollect,
+  advanceSchedule,
+  computeState,
+  clearCollecting,
+  intervalMinForCli,
+} from "../../src/usage/usage-watcher.mjs";
 
 const NOW = Date.parse("2026-07-17T12:00:00Z");
 const subs = ["claude", "codex", "cursor"];
 const DEFAULT_CONFIG = {
   tick_sec: 60,
-  intervals: { idle_heartbeat_hours: 24, idle_min: 30, active_min: 20, busy_min: 8 },
+  intervals: { idle_heartbeat_hours: 24, idle_min: 10, active_min: 10, busy_min: 5 },
+  cli_intervals: { cursor: { idle_min: 30, active_min: 20, busy_min: 8 } },
 };
 
 test("computeState idle/active/busy", () => {
@@ -149,8 +156,14 @@ test("failed collect does not advance idle heartbeat schedule", () => {
   // Bounded retry: the next attempt waits for the idle interval instead of
   // re-firing every tick and holding the PTY lock more or less continuously.
   assert.deepEqual(planCollect(retryOpts(NOW + 60_000)).collect, []);
+  const atIdleMin = planCollect(retryOpts(NOW + DEFAULT_CONFIG.intervals.idle_min * 60_000));
+  assert.equal(atIdleMin.collect.length, 2);
+  assert.ok(atIdleMin.collect.includes("claude"));
+  assert.ok(atIdleMin.collect.includes("codex"));
   assert.equal(
-    planCollect(retryOpts(NOW + DEFAULT_CONFIG.intervals.idle_min * 60_000)).collect.length,
+    planCollect(
+      retryOpts(NOW + DEFAULT_CONFIG.cli_intervals.cursor.idle_min * 60_000),
+    ).collect.length,
     3,
   );
 });
@@ -183,4 +196,10 @@ test("clearCollecting frees CLIs wedged by a restart mid-collect", () => {
     subscriptions: subs,
   });
   assert.deepEqual(d.collect.sort(), ["claude", "codex", "cursor"]);
+});
+
+test("intervalMinForCli keeps cursor on slower cadence", () => {
+  assert.equal(intervalMinForCli("claude", "idle", DEFAULT_CONFIG), 10);
+  assert.equal(intervalMinForCli("cursor", "idle", DEFAULT_CONFIG), 30);
+  assert.equal(intervalMinForCli("cursor", "busy", DEFAULT_CONFIG), 8);
 });

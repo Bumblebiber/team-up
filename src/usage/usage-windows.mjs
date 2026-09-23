@@ -326,7 +326,7 @@ export function isCliUsageFresh(cli, usage, maxAgeMs = 5 * 60_000, now = Date.no
   let newest = 0;
   for (const [k, v] of Object.entries(usage?.windows || {})) {
     if (!k.startsWith(prefix)) continue;
-    const t = Date.parse(v?.updated || "");
+    const t = Date.parse(v?.updated_at || v?.updated || "");
     if (Number.isFinite(t)) newest = Math.max(newest, t);
   }
   return newest > 0 && now - newest < maxAgeMs;

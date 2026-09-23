@@ -105,15 +105,22 @@ function cmdMarkLimited(args) {
   console.log(`marked ${target} limited until ${usage.marked[target].until}`);
 }
 
-function cmdUsage(args) {
+async function cmdUsage(args) {
   const rosterCfg = requireRoster();
   if (args.includes("--refresh")) {
     return cmdUsageRefresh(args);
   }
   const usage = loadJson(usagePath());
   if (args.includes("--check")) {
-    const out = checkThresholds({ roster: rosterCfg, usage });
-    if (out) console.log(out);
+    const { checkThresholdsWithRefresh } = await import("./chain.mjs");
+    const { collectUsageForCli } = await import("../usage/usage-collect.mjs");
+    const out = await checkThresholdsWithRefresh({
+      roster: rosterCfg,
+      usage,
+      collectCli: (cli) => collectUsageForCli({ cli, roster: rosterCfg }),
+      readUsage: () => loadJson(usagePath()),
+    });
+    if (out.message) console.log(out.message);
     return;
   }
   if (!usage) {

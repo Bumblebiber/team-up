@@ -7,12 +7,23 @@ import path from "node:path";
 
 const COLLECT_ENV = { O9K_USAGE_COLLECT: "1", TEAM_UP_USAGE_COLLECT: "1", TERM: "xterm-256color" };
 
+/** Mirrors parse-codex-status.mjs LIMIT_LINE_RE — wait for real quota output. */
+const CODEX_LIMIT_WAIT = "Weekly limit:";
+const CODEX_LIMIT_WAIT_ALT = "5h limit:";
+const CODEX_HIT_LIMIT_WAIT = "hit your usage limit";
+/** Full line with resets — short "5h limit:" false-matches ANSI fragments like "[?25h". */
+const CODEX_LIMIT_READY_RE = "limit:.*% left.*resets";
+const CODEX_STATUS_BAR_RE = "weekly .*% left";
+
 const SEQUENCES = {
   claude: { bin: "claude", command: "/usage", wait: "Current session", exit: "/exit" },
   codex: {
     bin: "codex",
     command: "/status",
     ready: "Tip:",
+    wait: CODEX_LIMIT_WAIT,
+    waitAlt: CODEX_LIMIT_WAIT_ALT,
+    waitHit: CODEX_HIT_LIMIT_WAIT,
     exit: "/exit",
     cols: 120,
     rows: 40,
@@ -31,42 +42,115 @@ const SEQUENCES = {
   },
 };
 
+const SECRET_RE =
+  /sk-or-[A-Za-z0-9_-]+|sk-ant-[A-Za-z0-9_-]+|sk-proj-[A-Za-z0-9_-]+|Bearer [A-Za-z0-9_-]{20,}|[0-9a-f]{48,}/gi;
+
 function shellEscape(s) {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function bashSingleQuote(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
+function homeDir() {
+  return process.env.HOME || os.homedir();
+}
+
+function codexTrustFlag(home) {
+  return `projects={${JSON.stringify(home)}={trust_level="trusted"}}`;
 }
 
 function spawnLine(seq) {
   const cols = seq.cols ?? 120;
   const rows = seq.rows ?? 40;
-  const cwd = shellEscape(process.env.HOME || os.homedir());
-  return `stty cols ${cols} rows ${rows} 2>/dev/null; cd ${cwd} && exec env O9K_USAGE_COLLECT=1 TEAM_UP_USAGE_COLLECT=1 TERM=xterm-256color COLUMNS=${cols} LINES=${rows} ${seq.bin}`;
+  const home = shellEscape(homeDir());
+  const env =
+    `O9K_USAGE_COLLECT=1 TEAM_UP_USAGE_COLLECT=1 TERM=xterm-256color COLUMNS=${cols} LINES=${rows}`;
+  if (seq.bin === "codex") {
+    // Single-quote -c values inside bash -c — double-quoted TOML tables break spawn otherwise.
+    // Match dispatch trust argv; omit COLUMNS/LINES env — extra vars slow /status on some builds.
+    return (
+      `stty cols ${cols} rows ${rows} 2>/dev/null; cd ${bashSingleQuote(homeDir())} && ` +
+      `exec env O9K_USAGE_COLLECT=1 TERM=xterm-256color ` +
+      `${seq.bin} -c ${bashSingleQuote(codexTrustFlag(homeDir()))} ` +
+      `-c ${bashSingleQuote("check_for_update_on_startup=false")}`
+    );
+  }
+  return `stty cols ${cols} rows ${rows} 2>/dev/null; cd ${home} && exec env ${env} ${seq.bin}`;
+}
+
+/** Shared dialog branches — never pick update menu option 1 (self-update). */
+function dialogBranches() {
+  return `  -re "Update available" { sleep 0.5; send "\\033"; exp_continue }
+  -re "Continue anyway" { send "y\\r"; exp_continue }
+  -re "Do you trust the contents of this directory" { send "Yes, continue\\r"; exp_continue }
+`;
+}
+
+/** After quota data is captured: exit quickly instead of waiting for graceful eof. */
+function fastExitBlock(exitCmd) {
+  const cmd = shellEscape(exitCmd);
+  return `send "${cmd}\\r"
+set timeout 3
+expect {
+  eof { }
+  timeout { }
+}
+catch { close }
+exit 0
+`;
+}
+
+function timeoutTail() {
+  // expect runs this on timeout — JS formats the final error with redaction.
+  return `  timeout {
+    set _buf ""
+    catch { set _buf $expect_out(buffer) }
+    set _lines [split $_buf "\\n"]
+    set _n [llength $_lines]
+    set _start [expr {$_n > 15 ? $_n - 15 : 0}]
+    set _tail [join [lrange $_lines $_start end] "\\n"]
+    puts stderr "PTY_TIMEOUT_TAIL:\\n$_tail"
+    exit 2
+  }
+`;
+}
+
+export function redactPaneExcerpt(text, lineCount = 15) {
+  if (!text || typeof text !== "string") return "(empty pane)";
+  const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim().length > 0);
+  const tail = lines.slice(-lineCount).join("\n");
+  return tail.replace(SECRET_RE, "[REDACTED]");
+}
+
+export function formatPtyTimeoutError(cli, transcript = "", stderr = "") {
+  const raw = [transcript, stderr].filter(Boolean).join("\n");
+  const marker = "PTY_TIMEOUT_TAIL:\n";
+  const idx = raw.lastIndexOf(marker);
+  const excerpt = idx >= 0 ? raw.slice(idx + marker.length) : raw;
+  return `${cli} collect timed out — last pane lines:\n${redactPaneExcerpt(excerpt)}`;
 }
 
 function cursorCommandBlock(seq) {
   const resultPat = shellEscape(seq.wait || "Esc to close");
   const acceptPat = shellEscape(seq.accept || "Show plan");
-  // cursor-agent slash autocomplete needs / then usage separately; a single
-  // "/usage\\r" opens the menu but Enter fires before accept is ready.
-  //
-  // Waiting on the panel instead of sleeping a fixed span cuts the better part
-  // of a minute off the run — enough that the collect no longer outlives the
-  // watcher's timeout — and a slow render times out into whatever did arrive
-  // rather than aborting the whole collect.
-  return `sleep 3
+  const readyPat = shellEscape(seq.ready || "Tip:");
+  return `expect {
+  -re "${readyPat}" { }
+${timeoutTail()}}
 send "/"
-sleep 0.5
+expect {
+  -re "${acceptPat}" { }
+${timeoutTail()}}
 send "usage"
 expect {
   -re "${acceptPat}" { }
-  timeout { exit 2 }
-}
-sleep 1
+${timeoutTail()}}
 send "\\r"
 expect {
   -re "${resultPat}" { }
-  timeout { }
-}
-sleep 1
+${timeoutTail()}}
 `;
 }
 
@@ -75,64 +159,62 @@ export function buildExpectScript(cli, timeoutSec = 45) {
   if (!seq) throw new Error(`no PTY sequence for cli: ${cli}`);
   const cmd = shellEscape(seq.command);
   const exitCmd = shellEscape(seq.exit);
+  const dialogs = dialogBranches();
+  const bootTimeout = Math.max(45, Math.floor(timeoutSec * 0.6));
+
   if (cli === "codex") {
-    const bootTimeout = Math.max(90, Math.floor(timeoutSec * 0.6));
     const readyPat = shellEscape(seq.ready || "Tip:");
-    const resultWaitSec = Math.max(20, Math.floor(timeoutSec * 0.15));
-    // A new codex release parks an "Update available" dialog in front of the
-    // TUI, and the banner we wait for never arrives — every collect then died
-    // on boot. Escape dismisses it; never answer the menu, option 1 runs a
-    // self-update, which a background collector has no business triggering.
-    return `set timeout ${bootTimeout}
+    const limitReadyPat = shellEscape(CODEX_LIMIT_READY_RE);
+    const statusBarPat = shellEscape(CODEX_STATUS_BAR_RE);
+    const waitHitPat = shellEscape(seq.waitHit || CODEX_HIT_LIMIT_WAIT);
+    const panelTimeout = Math.max(45, Math.floor(timeoutSec * 0.25));
+    return `set timeout 90
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"
 expect {
-  -re "Update available" { sleep 2; send "\\033"; exp_continue }
-  -re "Continue anyway" { send "y\\r"; exp_continue }
-  -re "${readyPat}" { }
+${dialogs}  -re "${readyPat}" { }
   eof { exit 3 }
-  timeout { exit 2 }
-}
+${timeoutTail()}}
 sleep 3
 send "${cmd}\\r"
-sleep ${resultWaitSec}
-send "${exitCmd}\\r"
-expect eof
-`;
+set timeout 15
+expect {
+${dialogs}  -re "${limitReadyPat}" { }
+  -re "${waitHitPat}" { }
+  -re "${statusBarPat}" { }
+  timeout { }
+}
+send "${cmd}\\r"
+set timeout ${panelTimeout}
+expect {
+${dialogs}  -re "${limitReadyPat}" { }
+  -re "${waitHitPat}" { }
+${timeoutTail()}}
+${fastExitBlock(exitCmd)}`;
   }
+
   if (cli === "cursor") {
-    const bootTimeout = Math.max(90, Math.floor(timeoutSec * 0.6));
     const readyPat = shellEscape(seq.ready || "Tip:");
     return `set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"
 expect {
-  -re "Continue anyway" { send "y\\r"; exp_continue }
-  -re "${readyPat}" { }
-  timeout { exit 2 }
-}
-${cursorCommandBlock(seq)}send "${exitCmd}\\r"
-expect eof
-`;
+${dialogs}  -re "${readyPat}" { }
+${timeoutTail()}}
+${cursorCommandBlock(seq)}${fastExitBlock(exitCmd)}`;
   }
+
   const waitPat = shellEscape(seq.wait);
   return `set timeout ${timeoutSec}
 spawn env O9K_USAGE_COLLECT=1 TERM=xterm-256color ${seq.bin}
 expect {
-  -re "Continue anyway" { send "y\\r"; exp_continue }
-  -re "${waitPat}" { }
-  timeout { exit 2 }
-}
-sleep 1
+${dialogs}  -re "${waitPat}" { }
+${timeoutTail()}}
 send "${cmd}\\r"
 expect {
   -re "${waitPat}" { }
-  timeout { }
-}
-sleep 1
-send "${exitCmd}\\r"
-expect eof
-`;
+${timeoutTail()}}
+${fastExitBlock(exitCmd)}`;
 }
 
 /**
@@ -146,19 +228,26 @@ export function runPtyCollect(cli, opts = {}) {
   const tmp = path.join(os.tmpdir(), `team-up-usage-pty-${cli}-${process.pid}.exp`);
   fs.writeFileSync(tmp, script);
   try {
+    // Strip collect markers from expect's environment — if the parent is already a
+    // collector child, inherited TEAM_UP_USAGE_COLLECT makes codex refuse /status.
+    const { TEAM_UP_USAGE_COLLECT, O9K_USAGE_COLLECT, ...parentEnv } = process.env;
     return execFileSync("expect", [tmp], {
       encoding: "utf8",
-      env: { ...process.env, ...COLLECT_ENV },
-      timeout: (timeoutSec + 60) * 1000,
+      env: { ...parentEnv, TERM: COLLECT_ENV.TERM },
+      timeout: (timeoutSec + 30) * 1000,
       maxBuffer: 4 * 1024 * 1024,
     });
   } catch (e) {
-    // expect exits non-zero on its own `exit 2`, and execFileSync then throws
-    // away everything the TUI printed. Hand back what did arrive: a partial
-    // render still parses, and a genuinely empty one surfaces as "empty-parse"
-    // instead of an opaque "Command failed: expect …".
-    const partial = typeof e?.stdout === "string" ? e.stdout : e?.stdout?.toString?.("utf8");
-    if (partial) return partial;
+    const stdout = typeof e?.stdout === "string" ? e.stdout : e?.stdout?.toString?.("utf8") || "";
+    const stderr = typeof e?.stderr === "string" ? e.stderr : e?.stderr?.toString?.("utf8") || "";
+    const combined = `${stdout}\n${stderr}`;
+    if (/PTY_TIMEOUT_TAIL:/.test(combined) || e?.status === 2) {
+      throw new Error(formatPtyTimeoutError(cli, stdout, stderr));
+    }
+    if (stdout && e?.status !== 0 && e?.status != null) {
+      throw new Error(formatPtyTimeoutError(cli, stdout, stderr));
+    }
+    if (stdout) return stdout;
     throw e;
   } finally {
     try {
@@ -169,4 +258,11 @@ export function runPtyCollect(cli, opts = {}) {
   }
 }
 
-export { COLLECT_ENV };
+export {
+  COLLECT_ENV,
+  CODEX_LIMIT_WAIT,
+  CODEX_LIMIT_WAIT_ALT,
+  CODEX_HIT_LIMIT_WAIT,
+  CODEX_LIMIT_READY_RE,
+  codexTrustFlag,
+};

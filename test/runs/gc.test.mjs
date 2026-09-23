@@ -5,7 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import {
   evaluateGcAction,
+  evaluateIdleSessionAction,
+  gcIdleSessions,
   gcRuns,
+  claimedWorkerSessions,
   IDLE_MS,
   GRACE_MS,
 } from "../../src/runs/gc.mjs";
@@ -1210,3 +1213,76 @@ test("identity mismatch at final confirmation clears candidate and never stops r
   assert.equal(latest.cleanup?.stale_publication_claim, undefined);
   assert.deepEqual(stopped, []);
 }));
+
+test("evaluateIdleSessionAction kills unattached idle team-up session not claimed by a run", () => {
+  const nowMs = NOW;
+  const idleMs = 2 * 3_600_000;
+  const decision = evaluateIdleSessionAction({
+    sessionName: "team-up-handoff-planner",
+    attached: false,
+    activityMs: nowMs - idleMs - 1,
+    nowMs,
+    idleSessionMs: idleMs,
+    claimedSessions: new Set(),
+  });
+  assert.equal(decision.kind, "kill_idle");
+});
+
+test("evaluateIdleSessionAction skips attached or claimed sessions", () => {
+  const nowMs = NOW;
+  const idleMs = 2 * 3_600_000;
+  assert.equal(
+    evaluateIdleSessionAction({
+      sessionName: "team-up-handoff-planner",
+      attached: true,
+      activityMs: nowMs - idleMs - 1,
+      nowMs,
+      idleSessionMs: idleMs,
+      claimedSessions: new Set(),
+    }).kind,
+    "skip",
+  );
+  assert.equal(
+    evaluateIdleSessionAction({
+      sessionName: "team-up-worker-r1",
+      attached: false,
+      activityMs: nowMs - idleMs - 1,
+      nowMs,
+      idleSessionMs: idleMs,
+      claimedSessions: new Set(["team-up-worker-r1"]),
+    }).kind,
+    "skip",
+  );
+});
+
+test("claimedWorkerSessions ignores terminal runs", () => {
+  const claimed = claimedWorkerSessions([
+    { status: "done", worker: { tmux: "team-up-old" } },
+    { status: "watching", worker: { tmux: "team-up-live" } },
+  ]);
+  assert.deepEqual([...claimed], ["team-up-live"]);
+});
+
+test("gcIdleSessions honours dry-run and kills only idle orphans", () => {
+  const nowMs = NOW;
+  const idleMs = 2 * 3_600_000;
+  const stopped = [];
+  const report = gcIdleSessions({
+    now: new Date(nowMs),
+    states: [{ status: "watching", worker: { tmux: "team-up-live" } }],
+    listSessions: () => ["team-up-live", "team-up-idle-handoff", "other"],
+    inspectTmux: (name) => ({
+      exists: true,
+      attached: name === "team-up-live",
+      activityMs: nowMs - idleMs - 1,
+      sessionId: `$${name}`,
+    }),
+    stopTmux: (name) => {
+      stopped.push(name);
+      return true;
+    },
+    dryRun: true,
+  });
+  assert.deepEqual(report.killed, ["team-up-idle-handoff"]);
+  assert.deepEqual(stopped, []);
+});

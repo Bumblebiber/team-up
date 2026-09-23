@@ -3,7 +3,7 @@
 // Contract: silent + exit 0 in every failure mode.
 
 import { loadJson, configPath, usagePath } from "./config.mjs";
-import { checkThresholds } from "./chain.mjs";
+import { checkThresholdsWithRefresh } from "./chain.mjs";
 import { debugLog } from "../debug.mjs";
 
 try {
@@ -15,8 +15,17 @@ try {
     } catch (e) {
       debugLog("team-up limit-watch usage", e);
     }
-    const out = checkThresholds({ roster, usage });
-    if (out) console.log(out);
+    const collectCli = async (cli) => {
+      const { collectUsageForCli } = await import("../usage/usage-collect.mjs");
+      return collectUsageForCli({ cli, roster });
+    };
+    const result = await checkThresholdsWithRefresh({
+      roster,
+      usage,
+      collectCli,
+      readUsage: () => loadJson(usagePath()),
+    });
+    if (result.message) console.log(result.message);
   }
 } catch (e) {
   debugLog("team-up limit-watch", e);
