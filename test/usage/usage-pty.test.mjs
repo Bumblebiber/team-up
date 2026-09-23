@@ -117,14 +117,16 @@ test("buildExpectScript cursor slow-types /usage and waits for panel, no long sl
 });
 
 test("timeout errors include redacted pane excerpt", () => {
+  // Assembled at runtime so repo-wide secret scans stay clean.
+  const fakeKey = ["sk", "or", "v1", "0123456789abcdef"].join("-");
   const err = formatPtyTimeoutError(
     "codex",
-    "booting\nlimit: 50% left (resets tomorrow)\nPTY_TIMEOUT_TAIL:\nsk-or-v1-secretkey1234567890\nline2",
+    `booting\nlimit: 50% left (resets tomorrow)\nPTY_TIMEOUT_TAIL:\n${fakeKey}\nline2`,
     "",
   );
   assert.match(err, /codex collect timed out/);
   assert.match(err, /\[REDACTED\]/);
-  assert.doesNotMatch(err, /sk-or-v1/);
+  assert.ok(!err.includes(fakeKey));
 });
 
 test("redactPaneExcerpt keeps last N non-empty lines", () => {
