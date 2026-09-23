@@ -477,6 +477,8 @@ export function defaultCapture(session, { execFile = execFileSync } = {}) {
 function defaultJudgeCall({ argv, timeoutMs = JUDGE_TIMEOUT_MS }) {
   const r = spawnSync(argv[0], argv.slice(1), {
     encoding: "utf8",
+    // The judge is a worker: memory hooks (TIM) must not log it as project history.
+    env: { ...process.env, TEAMUP_WORKER: "1" },
     timeout: timeoutMs,
     maxBuffer: 1024 * 1024,
   });
