@@ -9,6 +9,7 @@ import {
   computeState,
   clearCollecting,
   intervalMinForCli,
+  watcherConfig,
   DEFAULT_CONFIG as WATCHER_DEFAULT_CONFIG,
 } from "../../src/usage/usage-watcher.mjs";
 
@@ -204,4 +205,19 @@ test("intervalMinForCli keeps codex and cursor on slower cadence", () => {
   assert.equal(intervalMinForCli("codex", "idle", WATCHER_DEFAULT_CONFIG), 30);
   assert.equal(intervalMinForCli("cursor", "idle", WATCHER_DEFAULT_CONFIG), 30);
   assert.equal(intervalMinForCli("cursor", "busy", WATCHER_DEFAULT_CONFIG), 8);
+});
+
+test("watcherConfig deep-merges intervals and per-cli overrides", () => {
+  const cfg = watcherConfig({
+    usage_watcher: {
+      intervals: { busy_min: 7 },
+      cli_intervals: { codex: { active_min: 15 } },
+    },
+  });
+  assert.equal(cfg.intervals.idle_min, 10);
+  assert.equal(cfg.intervals.active_min, 10);
+  assert.equal(cfg.intervals.busy_min, 7);
+  assert.equal(cfg.cli_intervals.cursor.busy_min, 8);
+  assert.equal(intervalMinForCli("codex", "active", cfg), 15);
+  assert.equal(intervalMinForCli("codex", "busy", cfg), 8);
 });

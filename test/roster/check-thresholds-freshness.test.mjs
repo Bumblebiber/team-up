@@ -26,7 +26,7 @@ test("checkThresholds warns from stale data but does not block", () => {
   assert.deepEqual(out.needsRefresh, []);
 });
 
-test("checkThresholds requests refresh instead of blocking on stale hot window", () => {
+test("checkThresholds blocks stale hot window with staleness marker", () => {
   const out = checkThresholds({
     roster: ROSTER,
     usage: {
@@ -39,11 +39,13 @@ test("checkThresholds requests refresh instead of blocking on stale hot window",
     },
     now: NOW,
   });
-  assert.equal(out.message, "");
+  assert.match(out.message, /session limit reached/);
+  assert.match(out.message, /120 min old/);
+  assert.match(out.message, /team-up usage --refresh/);
   assert.deepEqual(out.needsRefresh, ["claude"]);
 });
 
-test("checkThresholds blocks on fresh hot window", () => {
+test("checkThresholds blocks on fresh hot window without staleness marker", () => {
   const out = checkThresholds({
     roster: ROSTER,
     usage: {
@@ -57,7 +59,24 @@ test("checkThresholds blocks on fresh hot window", () => {
     now: NOW,
   });
   assert.match(out.message, /session limit reached/);
+  assert.doesNotMatch(out.message, /min old/);
   assert.deepEqual(out.needsRefresh, []);
+});
+
+test("checkThresholds uses per-window freshness not sibling windows", () => {
+  const out = checkThresholds({
+    roster: ROSTER,
+    usage: {
+      windows: {
+        "codex:weekly": { used: 0.1, updated_at: "2026-09-23T11:59:00.000Z" },
+        "codex:5h": { used: 0.99, updated_at: "2026-09-23T10:00:00.000Z" },
+      },
+    },
+    now: NOW,
+  });
+  assert.match(out.message, /codex:5h at 99%/);
+  assert.match(out.message, /min old/);
+  assert.deepEqual(out.needsRefresh, ["codex"]);
 });
 
 test("checkThresholds ignores expired resets", () => {
@@ -73,7 +92,7 @@ test("checkThresholds ignores expired resets", () => {
   assert.equal(out.message, "");
 });
 
-test("checkThresholdsWithRefresh collects stale cli then re-evaluates", async () => {
+test("checkThresholdsWithRefresh schedules refresh but keeps stale block", async () => {
   let collected = [];
   const out = await checkThresholdsWithRefresh({
     roster: ROSTER,
@@ -83,17 +102,44 @@ test("checkThresholdsWithRefresh collects stale cli then re-evaluates", async ()
       },
     },
     now: NOW,
-    collectCli: async (cli) => {
+    scheduleRefresh: (cli) => {
       collected.push(cli);
-      return { ok: true };
     },
-    readUsage: () => ({
-      windows: {
-        "codex:5h": { used: 0.2, updated_at: "2026-09-23T11:59:00.000Z" },
-      },
-    }),
   });
   assert.deepEqual(collected, ["codex"]);
-  assert.equal(out.message, "");
-  assert.deepEqual(out.needsRefresh, []);
+  assert.match(out.message, /session limit reached/);
+  assert.match(out.message, /min old/);
+});
+
+test("checkThresholdsWithRefresh keeps block when refresh fails", async () => {
+  const out = await checkThresholdsWithRefresh({
+    roster: ROSTER,
+    usage: {
+      windows: {
+        "codex:weekly": { used: 0.97, updated_at: "2026-09-23T10:00:00.000Z" },
+      },
+    },
+    now: NOW,
+    scheduleRefresh: () => {},
+    collectCli: async () => ({ ok: false, reason: "pty-lock-contention" }),
+  });
+  assert.match(out.message, /codex:weekly at 97%/);
+  assert.match(out.message, /session limit reached/);
+});
+
+test("checkThresholdsWithRefresh keeps block when refresh returns unchanged usage", async () => {
+  const usage = {
+    windows: {
+      "codex:5h": { used: 0.99, updated_at: "2026-09-23T10:00:00.000Z" },
+    },
+  };
+  const out = await checkThresholdsWithRefresh({
+    roster: ROSTER,
+    usage,
+    now: NOW,
+    scheduleRefresh: () => {},
+    collectCli: async () => ({ ok: true }),
+  });
+  assert.match(out.message, /codex:5h at 99%/);
+  assert.match(out.message, /session limit reached/);
 });

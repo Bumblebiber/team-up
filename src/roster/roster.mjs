@@ -317,13 +317,25 @@ export async function spawnInTmux({
   } catch {
     // stale cache — proceed with pick above
   }
+  let effectiveRunId = runId;
+  if (!effectiveRunId) {
+    const { createRun } = await import("../runs/runs.mjs");
+    const state = createRun({
+      cwd: dir,
+      role,
+      parent: { cli: "manual", attach: "manual" },
+      worker: { cli: r.cli, model: r.model },
+      prompt,
+    });
+    effectiveRunId = state.runId;
+  }
   return spawn({
     roster: rosterCfg,
     model: r.model,
     cli: r.cli,
     dir,
     prompt,
-    runId,
+    runId: effectiveRunId,
     effort: r.effort,
     triage: triageResult
       ? { ...triageResult, mode: rosterCfg.triage?.mode ?? "shadow", applied: triageSelected }

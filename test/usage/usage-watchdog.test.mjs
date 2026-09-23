@@ -82,7 +82,21 @@ test("detectUnexplainedUsageJumps flags large delta", () => {
   assert.ok(issues.some((i) => i.includes("20% → 50%")));
 });
 
-test("detectCollectFailures flags repeated failures and auth errors", () => {
+test("detectUnexplainedUsageJumps flags plan downgrade 97% to 19%", () => {
+  const issues = detectUnexplainedUsageJumps({
+    usage: {
+      windows: {
+        "codex:weekly": {
+          used: 0.19,
+          history: [{ at: 1, used: 0.97 }, { at: 2, used: 0.19 }],
+        },
+      },
+    },
+  });
+  assert.ok(issues.some((i) => i.includes("97% → 19%")));
+});
+
+test("detectCollectFailures flags repeated failures and structured auth errors", () => {
   const issues = detectCollectFailures({
     watcher: {
       collect_failures: {
@@ -91,7 +105,7 @@ test("detectCollectFailures flags repeated failures and auth errors", () => {
           { at: "t2", reason: "pty-lock-contention" },
           { at: "t3", reason: "pty-lock-contention" },
         ],
-        claude: [{ at: "t4", reason: "not logged in to Anthropic" }],
+        claude: [{ at: "t4", reason: "auth_failure" }],
       },
     },
   });
@@ -99,16 +113,18 @@ test("detectCollectFailures flags repeated failures and auth errors", () => {
   assert.ok(issues.some((i) => i.includes("auth/login")));
 });
 
-test("detectMarkedEntries reports active and just-expired marks", () => {
+test("detectMarkedEntries ignores active marks and recent expiry", () => {
   const issues = detectMarkedEntries({
     usage: {
       marked: {
         active: { until: "2026-09-23T13:00:00.000Z" },
         expired: { until: "2026-09-23T11:30:00.000Z" },
+        stale: { until: "2026-09-22T10:00:00.000Z" },
       },
     },
     now: NOW,
   });
-  assert.ok(issues.some((i) => i.includes("active until")));
-  assert.ok(issues.some((i) => i.includes("expired")));
+  assert.equal(issues.some((i) => i.includes("active until")), false);
+  assert.equal(issues.some((i) => i.includes("expired") && i.includes("2026-09-23T11:30")), false);
+  assert.ok(issues.some((i) => i.includes("stale") && i.includes("2026-09-22")));
 });

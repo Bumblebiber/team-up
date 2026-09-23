@@ -26,14 +26,22 @@ export const DEFAULT_CONFIG = {
 
 export function intervalMinForCli(cli, state, config = DEFAULT_CONFIG) {
   const perCli = config.cli_intervals?.[cli];
-  const intervals = perCli || config.intervals || DEFAULT_CONFIG.intervals;
+  const intervals = perCli
+    ? { ...DEFAULT_CONFIG.intervals, ...(config.intervals || {}), ...perCli }
+    : { ...DEFAULT_CONFIG.intervals, ...(config.intervals || {}) };
   if (state === "busy") return intervals.busy_min;
   if (state === "idle") return intervals.idle_min ?? DEFAULT_CONFIG.intervals.idle_min;
   return intervals.active_min;
 }
 
 export function watcherConfig(roster) {
-  return { ...DEFAULT_CONFIG, ...(roster?.usage_watcher || {}) };
+  const raw = roster?.usage_watcher || {};
+  const intervals = { ...DEFAULT_CONFIG.intervals, ...(raw.intervals || {}) };
+  const cli_intervals = { ...DEFAULT_CONFIG.cli_intervals };
+  for (const [cli, perCli] of Object.entries(raw.cli_intervals || {})) {
+    cli_intervals[cli] = { ...(cli_intervals[cli] || {}), ...perCli };
+  }
+  return { ...DEFAULT_CONFIG, ...raw, intervals, cli_intervals };
 }
 
 /**
@@ -174,6 +182,12 @@ function loadState() {
 
 const COLLECT_FAILURE_RING = 5;
 
+function classifyCollectFailure(error) {
+  const msg = String(error?.message || error);
+  if (/not logged in|unauthorized|authentication failed/i.test(msg)) return "auth_failure";
+  return msg.slice(0, 500);
+}
+
 function journalCollectFailure(stateDoc, cli, reason, now = Date.now()) {
   stateDoc.collect_failures = stateDoc.collect_failures || {};
   const prior = Array.isArray(stateDoc.collect_failures[cli]) ? stateDoc.collect_failures[cli] : [];
@@ -262,8 +276,10 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
       try {
         runCollect(cli);
         successful.push(cli);
+        stateDoc.collect_failures = stateDoc.collect_failures || {};
+        stateDoc.collect_failures[cli] = [];
       } catch (e) {
-        const reason = String(e.message || e);
+        const reason = classifyCollectFailure(e);
         console.error(`collect failed ${cli}:`, reason);
         journalCollectFailure(stateDoc, cli, reason, now);
       } finally {

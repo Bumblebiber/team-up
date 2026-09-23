@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildExpectScript,
   redactPaneExcerpt,
+  normalizeForRedaction,
   formatPtyTimeoutError,
   isClosedSpawnExit,
   shouldReturnPtyTranscript,
@@ -10,19 +11,20 @@ import {
   CODEX_LIMIT_WAIT,
   CODEX_LIMIT_WAIT_ALT,
   CODEX_HIT_LIMIT_WAIT,
+  CODEX_STATUS_BAR_RE,
   codexTrustFlag,
 } from "../../src/usage/usage-pty.mjs";
 
 const HOME = process.env.HOME || "/home/test";
 
-test("buildExpectScript codex waits for limit line, not flat sleep", () => {
+test("buildExpectScript codex waits for quota patterns with retry on timeout", () => {
   const script = buildExpectScript("codex", 180);
   assert.equal(script.split('send "/status\\r"').length - 1, 2);
   assert.ok(script.includes(CODEX_LIMIT_READY_RE));
   assert.ok(script.includes(CODEX_HIT_LIMIT_WAIT));
-  const afterStatus = script.split('send "/status\\r"').slice(1).join("");
-  // Dialog dismissals may sleep 0.5s; no multi-second blind waits after /status.
-  assert.equal(/sleep [2-9]/.test(afterStatus.split('send "/exit')[0]), false);
+  assert.ok(script.includes(CODEX_STATUS_BAR_RE));
+  assert.match(script, /timeout \{\s*send "\/status\\r"/);
+  assert.equal(/sleep [1-9]/.test(script.split('send "/status\\r"')[1].split('send "/exit')[0]), false);
 });
 
 test("buildExpectScript codex passes invocation-only trust override from HOME", () => {
@@ -53,13 +55,13 @@ test("buildExpectScript codex fast exit catches send to closed spawn", () => {
   assert.match(script, /catch \{ send "\/exit\\r" \}/);
 });
 
-test("buildExpectScript codex waits for Weekly/5h limit lines on second /status", () => {
+test("buildExpectScript codex retry block repeats quota patterns", () => {
   const script = buildExpectScript("codex", 180);
   assert.ok(script.includes(CODEX_LIMIT_WAIT));
   assert.ok(script.includes(CODEX_LIMIT_WAIT_ALT));
-  assert.ok(script.includes(CODEX_LIMIT_READY_RE));
-  const afterSecondStatus = script.split('send "/status\\r"').slice(2).join("");
-  assert.equal(/weekly .*% left/.test(afterSecondStatus), false);
+  const retryBlock = script.split("timeout {")[1] || "";
+  assert.ok(retryBlock.includes(CODEX_LIMIT_WAIT));
+  assert.ok(retryBlock.includes(CODEX_STATUS_BAR_RE));
 });
 
 test("closed-spawn exit is benign when transcript was captured", () => {
@@ -81,6 +83,19 @@ test("closed-spawn exit is benign when transcript was captured", () => {
     }),
     false,
   );
+  assert.equal(
+    shouldReturnPtyTranscript({
+      status: 3,
+      stdout: "partial panel",
+      stderr: "",
+    }),
+    false,
+  );
+});
+
+test("normalizeForRedaction strips ANSI and unwraps continuation lines", () => {
+  assert.equal(normalizeForRedaction("\x1b[31mvisible\x1b[0m"), "visible");
+  assert.equal(normalizeForRedaction("token-part\ncontinuation"), "token-partcontinuation");
 });
 
 test("buildExpectScript claude waits on Current session without blind sleeps after command", () => {

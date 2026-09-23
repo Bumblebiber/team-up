@@ -5,6 +5,8 @@ import {
   windowIsBlocking,
   effectiveResetAt,
   isCliUsageFresh,
+  isWindowUsageFresh,
+  windowUsageAgeMinutes,
 } from "../usage/usage-windows.mjs";
 import { resolveEffort } from "./command.mjs";
 export { resolveEffort };
@@ -325,12 +327,13 @@ export function checkThresholds({ roster, usage, now = Date.now(), collectCli })
       const cli = cliFromWindowKey(wkey);
       const wouldBlock = windowIsBlocking(wkey, usage, thresholds, now);
       if (wouldBlock) {
-        if (cli && !isCliUsageFresh(cli, usage, maxAgeMs, now)) {
-          needsRefresh.add(cli);
-        } else {
-          lines.push(`⛔ team-up roster: ${wkey} at ${pct}% — session limit reached.`);
-          handoff = true;
-        }
+        const stale = !isWindowUsageFresh(info, maxAgeMs, now);
+        const staleNote = stale
+          ? ` (reading is ${windowUsageAgeMinutes(info, now) ?? "?"} min old — run \`team-up usage --refresh\`)`
+          : "";
+        lines.push(`⛔ team-up roster: ${wkey} at ${pct}% — session limit reached.${staleNote}`);
+        handoff = true;
+        if (cli && stale) needsRefresh.add(cli);
       } else if (info.used >= warn_at) {
         lines.push(`⚠️ team-up roster: ${wkey} at ${pct}% — prepare for handoff: converge to a checkpointable state.`);
       }
@@ -363,30 +366,32 @@ export function checkThresholds({ roster, usage, now = Date.now(), collectCli })
       "(3) report the printed tmux session + attach command to the user, (4) stop working in this session."
     );
   }
-  void collectCli;
   return { message: lines.join("\n"), needsRefresh: [...needsRefresh] };
 }
 
-/** Collect stale CLIs then re-evaluate blocking thresholds. */
+/**
+ * Evaluate thresholds, then schedule background refresh for stale blocking CLIs.
+ * Never suppresses a block while refresh runs — stale data downgrades confidence only.
+ */
 export async function checkThresholdsWithRefresh({
   roster,
   usage,
   now = Date.now(),
   collectCli,
-  readUsage,
+  scheduleRefresh,
 }) {
-  let currentUsage = usage;
-  let result = checkThresholds({ roster, usage: currentUsage, now, collectCli });
-  if (!result.needsRefresh.length || !collectCli) return result;
-  for (const cli of result.needsRefresh) {
-    await collectCli(cli);
+  const result = checkThresholds({ roster, usage, now, collectCli });
+  if (!result.needsRefresh.length) return result;
+  const schedule = scheduleRefresh
+    || (collectCli
+      ? (cli) => {
+        void collectCli(cli).catch(() => {});
+      }
+      : null);
+  if (schedule) {
+    for (const cli of result.needsRefresh) schedule(cli);
   }
-  currentUsage = readUsage ? readUsage() : currentUsage;
-  const retry = checkThresholds({ roster, usage: currentUsage, now, collectCli });
-  return {
-    message: retry.message || result.message,
-    needsRefresh: retry.needsRefresh,
-  };
+  return result;
 }
 
 function modelUsageBlocked({ roster, usage, modelName, cli, limits: limitsArg, now }) {

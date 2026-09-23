@@ -43,7 +43,25 @@ const SEQUENCES = {
 };
 
 const SECRET_RE =
-  /sk-or-[A-Za-z0-9_-]+|sk-ant-[A-Za-z0-9_-]+|sk-proj-[A-Za-z0-9_-]+|Bearer [A-Za-z0-9_-]{20,}|[0-9a-f]{48,}/gi;
+  /sk-[A-Za-z0-9_-]{16,}|sk-ant-[A-Za-z0-9_-]+|sk-proj-[A-Za-z0-9_-]+|Bearer [A-Za-z0-9_-]{20,}|[0-9a-f]{48,}/gi;
+
+function stripAnsi(text) {
+  return String(text)
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x1b\\]*(?:\x1b\\|\x07)/g, "");
+}
+
+function unwrapContinuationLines(text) {
+  return String(text).replace(/([^\n])\n(?=[ \t]|sk-)/g, "$1");
+}
+
+export function normalizeForRedaction(text) {
+  return unwrapContinuationLines(stripAnsi(text));
+}
+
+export function redactSecrets(text) {
+  return normalizeForRedaction(text).replace(SECRET_RE, "[REDACTED]");
+}
 
 function shellEscape(s) {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -123,9 +141,9 @@ function timeoutTail() {
 
 export function redactPaneExcerpt(text, lineCount = 15) {
   if (!text || typeof text !== "string") return "(empty pane)";
-  const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim().length > 0);
+  const lines = normalizeForRedaction(text).replace(/\r/g, "").split("\n").filter((l) => l.trim().length > 0);
   const tail = lines.slice(-lineCount).join("\n");
-  return tail.replace(SECRET_RE, "[REDACTED]");
+  return redactSecrets(tail);
 }
 
 export function formatPtyTimeoutError(cli, transcript = "", stderr = "") {
@@ -150,7 +168,8 @@ export function shouldReturnPtyTranscript({ status, stdout = "", stderr = "", co
   const blob = combined || `${stdout}\n${stderr}`;
   if (/PTY_TIMEOUT_TAIL:/.test(blob) || status === 2) return false;
   if (stdout && isClosedSpawnExit(stderr)) return true;
-  if (stdout) return true;
+  // Partial stdout on exit 3 is a boot failure, not a usable transcript.
+  if (stdout && status === 1) return true;
   return false;
 }
 
@@ -192,6 +211,7 @@ export function buildExpectScript(cli, timeoutSec = 45) {
     const waitHitPat = shellEscape(seq.waitHit || CODEX_HIT_LIMIT_WAIT);
     const panelTimeout = Math.max(60, Math.floor(timeoutSec * 0.35));
     const bootTimeout = Math.max(90, Math.floor(timeoutSec * 0.6));
+    const statusBarPat = shellEscape(CODEX_STATUS_BAR_RE);
     return `set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"
@@ -199,12 +219,6 @@ expect {
 ${dialogs}  -re "${readyPat}" { }
   eof { exit 3 }
 ${timeoutTail()}}
-sleep 3
-send "${cmd}\\r"
-set timeout 20
-expect {
-${dialogs}  timeout { }
-}
 send "${cmd}\\r"
 set timeout ${panelTimeout}
 expect {
@@ -212,7 +226,18 @@ ${dialogs}  -re "${weeklyPat}" { }
   -re "${fiveHourPat}" { }
   -re "${limitReadyPat}" { }
   -re "${waitHitPat}" { }
-${timeoutTail()}}
+  -re "${statusBarPat}" { }
+  timeout {
+    send "${cmd}\\r"
+    expect {
+${dialogs}      -re "${weeklyPat}" { }
+      -re "${fiveHourPat}" { }
+      -re "${limitReadyPat}" { }
+      -re "${waitHitPat}" { }
+      -re "${statusBarPat}" { }
+${timeoutTail()}    }
+  }
+}
 ${fastExitBlock(exitCmd)}`;
   }
 
@@ -277,7 +302,8 @@ export function runPtyCollect(cli, opts = {}) {
     ) {
       return stdout;
     }
-    throw e;
+    const msg = String(e?.message || e);
+    throw new Error(redactSecrets(msg));
   } finally {
     try {
       fs.unlinkSync(tmp);
@@ -293,5 +319,6 @@ export {
   CODEX_LIMIT_WAIT_ALT,
   CODEX_HIT_LIMIT_WAIT,
   CODEX_LIMIT_READY_RE,
+  CODEX_STATUS_BAR_RE,
   codexTrustFlag,
 };

@@ -13,7 +13,8 @@ import { watcherConfig, DEFAULT_CONFIG, intervalMinForCli } from "../src/usage/u
 const STALL_MARGIN_MS = 5 * 60_000;
 const JUMP_THRESHOLD = 0.15;
 const FAILURE_REPEAT = 3;
-const AUTH_FAILURE_RE = /auth|login|logged in|unauthorized/i;
+const AUTH_FAILURE_REASONS = new Set(["auth_failure"]);
+const MARK_EXPIRED_GRACE_MS = 24 * 60 * 60_000;
 const TELEGRAM_MAX = 3500;
 
 function parseIso(s) {
@@ -79,7 +80,7 @@ export function detectUnexplainedUsageJumps({ usage }) {
     if (typeof prev?.used !== "number" || typeof last?.used !== "number") continue;
     const delta = last.used - prev.used;
     if (Math.abs(delta) < JUMP_THRESHOLD) continue;
-    if (delta < 0 && last.used < prev.used * 0.5) continue; // likely reset
+    if (delta < 0 && last.used < 0.05) continue; // dropped to empty — quota reset
     issues.push(
       `${wkey} moved ${Math.round(prev.used * 100)}% → ${Math.round(last.used * 100)}% without reset`,
     );
@@ -92,8 +93,8 @@ export function detectCollectFailures({ watcher }) {
   for (const [cli, entries] of Object.entries(watcher?.collect_failures || {})) {
     if (!Array.isArray(entries) || entries.length === 0) continue;
     for (const entry of entries) {
-      if (AUTH_FAILURE_RE.test(entry.reason || "")) {
-        issues.push(`${cli} auth/login failure: ${entry.reason}`);
+      if (AUTH_FAILURE_REASONS.has(entry.reason)) {
+        issues.push(`${cli} auth/login failure`);
       }
     }
     if (entries.length < FAILURE_REPEAT) continue;
@@ -111,9 +112,7 @@ export function detectMarkedEntries({ usage, now = Date.now() }) {
   for (const [target, mark] of Object.entries(usage?.marked || {})) {
     const until = parseIso(mark?.until);
     if (until === null) continue;
-    if (until > now) {
-      issues.push(`marked ${target} active until ${mark.until}`);
-    } else if (now - until < 60 * 60_000) {
+    if (until <= now && now - until > MARK_EXPIRED_GRACE_MS) {
       issues.push(`marked ${target} expired ${mark.until}`);
     }
   }

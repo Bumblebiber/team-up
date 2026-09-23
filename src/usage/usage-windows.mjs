@@ -332,6 +332,19 @@ export function isCliUsageFresh(cli, usage, maxAgeMs = 5 * 60_000, now = Date.no
   return newest > 0 && now - newest < maxAgeMs;
 }
 
+/** True when this window's own reading is within maxAgeMs (not sibling windows). */
+export function isWindowUsageFresh(info, maxAgeMs = 5 * 60_000, now = Date.now()) {
+  const t = Date.parse(info?.updated_at || info?.updated || "");
+  return Number.isFinite(t) && now - t < maxAgeMs;
+}
+
+/** Age of a window reading in whole minutes, or null when unknown. */
+export function windowUsageAgeMinutes(info, now = Date.now()) {
+  const t = Date.parse(info?.updated_at || info?.updated || "");
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.round((now - t) / 60_000));
+}
+
 /** Samples kept per window for the burn-rate trend. */
 const HISTORY_MAX = 12;
 const HISTORY_MAX_AGE_MS = 3 * 3_600_000;
@@ -341,10 +354,8 @@ const RATE_MIN_SPAN_MS = 5 * 60_000;
 
 /**
  * Append one reading to a window's sample ring.
- * A drop means the window reset — the old samples describe a spent quota, so
- * the ring starts over rather than averaging across the boundary.
- * ponytail: fail-open — for the first samples after a reset there is no rate,
- * so the drain gate below stays quiet until a span rebuilds.
+ * Drops are kept so the watchdog can see plan downgrades; burnRate clamps
+ * negative slopes to zero for the drain gate.
  */
 export function pushSample(history, { used, at }) {
   const t = typeof at === "number" ? at : Date.parse(at);
@@ -352,9 +363,7 @@ export function pushSample(history, { used, at }) {
   const prior = (Array.isArray(history) ? history : [])
     .filter((s) => Number.isFinite(s?.at) && typeof s?.used === "number" && s.at < t)
     .filter((s) => t - s.at <= HISTORY_MAX_AGE_MS);
-  const last = prior[prior.length - 1];
-  const kept = last && used < last.used ? [] : prior;
-  return [...kept, { at: t, used }].slice(-HISTORY_MAX);
+  return [...prior, { at: t, used }].slice(-HISTORY_MAX);
 }
 
 /**
