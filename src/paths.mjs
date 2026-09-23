@@ -99,6 +99,24 @@ export function usageWritePath(env = process.env) {
   });
 }
 
+export function modelsPath(env = process.env) {
+  return resolveReadPath({
+    teamUpEnv: "TEAM_UP_MODELS",
+    o9kEnv: "O9K_MODELS",
+    teamUpRelative: "models.json",
+    o9kRelative: "models.json",
+    env,
+  });
+}
+
+export function modelsWritePath(env = process.env) {
+  return resolveWritePath({
+    teamUpEnv: "TEAM_UP_MODELS",
+    teamUpRelative: "models.json",
+    env,
+  });
+}
+
 export function runsPath(env = process.env) {
   return (
     legacyAwarePath("TEAM_UP_RUNS", "O9K_RUNS", env) ||

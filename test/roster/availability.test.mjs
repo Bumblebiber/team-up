@@ -61,10 +61,11 @@ test("a CLI that cannot enumerate is unknown, never missing", () => {
   const by = Object.fromEntries(
     checkModelAvailability({ roster: ROSTER, run }).map((c) => [`${c.cli}:${c.model}`, c])
   );
-  // claude has no listing subcommand — a false "missing" here would be noise
-  // on every run and get the whole check tuned out.
+  // claude has no plain listing subcommand — enumerating it costs a full CLI
+  // boot, so this check leaves it to `models scan`. A false "missing" here
+  // would be noise on every doctor run and get the whole check tuned out.
   assert.equal(by["claude:claude-opus"].status, "unknown");
-  assert.match(by["claude:claude-opus"].reason, /no models listing/);
+  assert.match(by["claude:claude-opus"].reason, /models scan/);
 });
 
 test("a failed listing is unknown too, and reports why", () => {
@@ -76,7 +77,21 @@ test("a failed listing is unknown too, and reports why", () => {
   assert.match(cells.find((c) => c.cli === "cursor").reason, /boom/);
 });
 
-test("without a runner nothing is claimed missing", () => {
+test("without a runner nothing is claimed missing, and nothing is spawned", () => {
+  const started = [];
+  const cells = checkModelAvailability({
+    roster: ROSTER,
+    run: (bin, args) => {
+      started.push(`${bin} ${args.join(" ")}`);
+      throw new Error("no runner in this test");
+    },
+  });
+  assert.ok(cells.every((c) => c.status === "unknown"));
+  // claude must never reach the runner from here — it has no cheap listing.
+  assert.ok(!started.some((c) => c.startsWith("claude")), started.join(" | "));
+});
+
+test("no runner at all still claims nothing missing", () => {
   const cells = checkModelAvailability({ roster: ROSTER });
   assert.ok(cells.every((c) => c.status === "unknown"));
 });
