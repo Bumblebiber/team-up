@@ -1,6 +1,12 @@
-// models-scan.mjs — `team-up models scan` report (read-only, no roster writes).
+// models-scan.mjs — `team-up models scan` report + optional models.json persistence.
 
 import { scanModels, defaultRun } from "../collectors/cli-models.mjs";
+import { withModelPtyLock } from "../collectors/models-pty.mjs";
+import {
+  loadModelsStore,
+  mergeModelsStore,
+  writeModelsStore,
+} from "../collectors/models-store.mjs";
 
 function formatCliReport(report) {
   const lines = [];
@@ -39,14 +45,19 @@ function formatCliReport(report) {
 /**
  * @param {string[]} args
  * @param {{ out: Function, err: Function }} io
- * @param {{ roster: object, run?: Function }} deps
+ * @param {{ roster: object, run?: Function, runModelPty?: Function, env?: object }} deps
  */
-export function runModelsScan(args, io, { roster, run = defaultRun } = {}) {
+export function runModelsScan(
+  args,
+  io,
+  { roster, run = defaultRun, runModelPty = withModelPtyLock, env = process.env } = {}
+) {
   const json = args.includes("--json");
+  const noWrite = args.includes("--no-write");
   const cliIdx = args.indexOf("--cli");
   const cliFilter = cliIdx === -1 ? undefined : args[cliIdx + 1];
   if (cliFilter !== undefined && !cliFilter) {
-    io.err("usage: team-up models scan [--cli <id>] [--json]");
+    io.err("usage: team-up models scan [--cli <id>] [--json] [--no-write]");
     return 1;
   }
   if (cliFilter && !roster?.clis?.[cliFilter]) {
@@ -54,9 +65,16 @@ export function runModelsScan(args, io, { roster, run = defaultRun } = {}) {
     return 1;
   }
 
-  const reports = scanModels({ roster, cliFilter, run });
+  const scannedAt = new Date().toISOString();
+  const { reports, collectedByCli } = scanModels({ roster, cliFilter, run, runModelPty });
+
+  if (!noWrite) {
+    const merged = mergeModelsStore(loadModelsStore(env), reports, collectedByCli, scannedAt);
+    writeModelsStore(merged, env);
+  }
+
   if (json) {
-    io.out(JSON.stringify({ scanned_at: new Date().toISOString(), clis: reports }, null, 0));
+    io.out(JSON.stringify({ scanned_at: scannedAt, clis: reports }, null, 0));
     return 0;
   }
 

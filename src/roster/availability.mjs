@@ -54,6 +54,17 @@ export function checkModelAvailability({ roster, run }) {
 
   const listFor = (cli) => {
     if (listings.has(cli)) return listings.get(cli);
+    // Only CLIs with a plain listing subcommand are asked here. claude and
+    // codex can be enumerated, but only through a `/model` session that costs
+    // a full CLI boot — and this runs from the doctor cron. A false "missing"
+    // would be noise on every run and get the whole check tuned out, and a
+    // billed print session per cron tick is not what a health check is for.
+    // `team-up models scan` drives those two, deliberately and on demand.
+    if (!LIST_ARGS[cli]) {
+      const result = { ids: null, reason: `${cli} needs \`team-up models scan\` to enumerate` };
+      listings.set(cli, result);
+      return result;
+    }
     const collected = collectCliModels(cli, { roster, run });
     let result;
     if (!collected.supported) {

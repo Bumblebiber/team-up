@@ -24,6 +24,7 @@ import { diagnose } from "./doctor.mjs";
 import { runCapabilityCli } from "./capabilities/cli.mjs";
 import { startDashboard } from "./dashboard/server.mjs";
 import { runModelsScan } from "./commands/models-scan.mjs";
+import { runModelsList } from "./commands/models-list.mjs";
 import { defaultRun } from "./collectors/cli-models.mjs";
 
 function argValue(args, flag) {
@@ -165,7 +166,10 @@ async function cmdModels(args, io) {
     const roster = requireRoster();
     return runModelsScan(rest, io, { roster, run: defaultRun });
   }
-  io.err("usage: team-up models scan [--cli <id>] [--json]");
+  if (sub === "list") {
+    return runModelsList(rest, io);
+  }
+  io.err("usage: team-up models scan|list [--cli <id>] [--json]");
   return 1;
 }
 
