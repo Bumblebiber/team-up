@@ -104,6 +104,19 @@ test("runsRoot honours TEAM_UP_HOME, like every other path helper", async () => 
   }
 });
 
+test("handoffs paths stay inside TEAM_UP_HOME", async () => {
+  const { handoffsDir, handoffsDoneDir } = await import("../../src/paths.mjs");
+  const prior = process.env.TEAM_UP_HOME;
+  process.env.TEAM_UP_HOME = "/tmp/tu-handoffs-home";
+  try {
+    assert.equal(handoffsDir(), "/tmp/tu-handoffs-home/handoffs");
+    assert.equal(handoffsDoneDir(), "/tmp/tu-handoffs-home/handoffs/done");
+  } finally {
+    if (prior === undefined) delete process.env.TEAM_UP_HOME;
+    else process.env.TEAM_UP_HOME = prior;
+  }
+});
+
 test("an explicit TEAM_UP_RUNS still wins over the home", async () => {
   const { runsRoot } = await import("../../src/runs/runs.mjs");
   const priorHome = process.env.TEAM_UP_HOME;

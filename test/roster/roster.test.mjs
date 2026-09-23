@@ -269,7 +269,8 @@ test("checkThresholds warns at warn_at and instructs handoff at handoff_at", () 
     usage: { providers: { anthropic: { used: 0.96 } } },
     now: NOW,
   });
-  assert.match(handoff, /HANDOFF\.md/);
+  assert.match(handoff, /\.team-up\/handoffs/);
+  assert.match(handoff, /--handoff-file/);
   assert.match(handoff, /roster.*handoff/i);
   const rosterScript = fileURLToPath(new URL("../../src/roster/roster.mjs", import.meta.url));
   assert.match(handoff, new RegExp(`node ${rosterScript.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} handoff`));

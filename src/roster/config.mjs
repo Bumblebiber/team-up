@@ -175,6 +175,13 @@ export function validateRoster(roster) {
           errors.push(`limits.${key} must be a number in (0, 1]`);
         }
       }
+      const retention = roster.limits.handoff_retention_days;
+      if (
+        retention !== undefined &&
+        (typeof retention !== "number" || !Number.isInteger(retention) || retention < 1)
+      ) {
+        errors.push("limits.handoff_retention_days must be a positive integer");
+      }
     }
   }
 

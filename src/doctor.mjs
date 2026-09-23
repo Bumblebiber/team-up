@@ -14,6 +14,8 @@ import { configPath, loadJson, validateRoster } from "./roster/config.mjs";
 import { harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
 import { checkModelAvailability } from "./roster/availability.mjs";
 import { listVerificationRecords } from "./harness/verify.mjs";
+import { listOpenHandoffs } from "./handoff/store.mjs";
+import { handoffsDir } from "./paths.mjs";
 
 function readJson(file) {
   try {
@@ -256,6 +258,19 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
         fix: `drop the chain entry, or set models.${cell.model}.cli_model to the id ${cell.cli} uses`,
       });
     }
+  }
+
+  for (const stale of listOpenHandoffs(env)) {
+    findings.push({
+      kind: "forgotten_handoff",
+      severity: "medium",
+      path: stale.path,
+      age_hours: stale.ageHours,
+      detail:
+        `open handoff ${path.basename(stale.path)} is ${stale.ageHours}h old ` +
+        `(store: ${handoffsDir(env)}) — successor may never have run, or forgot team-up handoff --close`,
+      fix: `team-up handoff --close ${stale.path}`,
+    });
   }
 
   const count = (s) => findings.filter((f) => f.severity === s).length;

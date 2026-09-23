@@ -123,7 +123,8 @@ No config yet → `team-up init`, then tell the user to curate `~/.team-up/roste
 - **Rate-limit:** `team-up mark-limited <model|provider> --ttl 5h --reason rate-limit`
 - **Limits:** `team-up usage --check` / `team-up usage --refresh [--cli claude|codex|cursor]`
 - **Manual pass to a named model (human attaches):** skill `/pass-to` —
-  `team-up pass-to --model <name|cli:model> --dir "$PWD"` (requires `HANDOFF.md`)
+  `team-up pass-to --model <name|cli:model> --dir "$PWD"` (handoff file in
+  `~/.team-up/handoffs/`, or `HANDOFF.md` in `--dir` which is moved into the store)
 - **Scores:** see `roster-refresh` — `team-up refresh [--apply]`
 
 `--run-id` is **required** whenever the parent needs a completion signal (always,
@@ -148,10 +149,10 @@ When a limit warning arrives (hook injection, or your own `usage --check`):
 
 - **≥ warn threshold:** converge — finish the current unit, commit, keep state checkpointable.
 - **≥ handoff threshold:**
-  1. Write `HANDOFF.md` in the working directory: current state, completed steps, open steps (exact), verification commands, relevant paths.
-  2. `team-up handoff --role <your current role> --dir "$PWD"`
+  1. Write the handoff content (current state, completed steps, open steps, verification commands, relevant paths) — either as `HANDOFF.md` in the task dir (moved into the store on spawn) or via `--handoff-file <path>`. **Do not leave handoff files in the working tree** after spawn.
+  2. `team-up handoff --role <your current role> --dir "$PWD"` (or `--handoff-file <path>`)
   3. Report the tmux session name + attach command to the user.
-  4. Stop working in this session.
+  4. Stop working in this session. The successor closes the work order with `team-up handoff --close <absolute-path>` when done.
 
 ## Degraded mode (hosts without a per-turn hook)
 

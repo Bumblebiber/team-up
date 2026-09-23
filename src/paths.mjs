@@ -173,3 +173,13 @@ export function capabilityAssignmentsPath(env = process.env) {
   return env.TEAM_UP_CAPABILITY_ASSIGNMENTS ||
     path.join(teamUpHome(env), "capability-assignments.json");
 }
+
+/** Open session handoff work orders — never in the working tree. */
+export function handoffsDir(env = process.env) {
+  return path.join(teamUpHome(env), "handoffs");
+}
+
+/** Closed handoff work orders awaiting GC. */
+export function handoffsDoneDir(env = process.env) {
+  return path.join(handoffsDir(env), "done");
+}

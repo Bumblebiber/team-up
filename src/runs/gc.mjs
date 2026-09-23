@@ -16,6 +16,8 @@ import {
 } from "./runs.mjs";
 import { inspectTmuxSession, stopTmuxSession, tmuxSessionExists } from "./tmux.mjs";
 import { readLease, releaseAttemptLease } from "../supervisor/attempts.mjs";
+import { DEFAULT_HANDOFF_RETENTION_DAYS, gcHandoffs } from "../handoff/store.mjs";
+import { loadJson, configPath } from "../roster/config.mjs";
 
 export const IDLE_MS = 30 * 60 * 1000;
 export const GRACE_MS = 10 * 60 * 1000;
@@ -895,6 +897,14 @@ export function gcRuns({
       beforeStaleFailureConfirm,
       reportEntry,
     });
+  }
+
+  try {
+    const roster = loadJson(configPath());
+    const retentionDays = roster?.limits?.handoff_retention_days ?? DEFAULT_HANDOFF_RETENTION_DAYS;
+    report.handoffs = gcHandoffs({ now, retentionDays });
+  } catch (error) {
+    report.handoffs = { error: String(error.message || error) };
   }
 
   return report;

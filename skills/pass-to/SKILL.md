@@ -53,7 +53,9 @@ your judgment:
 
 1. **Converge** — finish the current unit of work if cheap; leave the tree
    checkpointable (commit or note uncommitted paths in HANDOFF).
-2. **Write `HANDOFF.md`** in the working directory (cwd / task dir):
+2. **Write the handoff** — content can live in `HANDOFF.md` in the task dir
+   (moved into `~/.team-up/handoffs/` on spawn) or in any file passed via
+   `--handoff-file`. Keep the working directory clean; the store is the work order.
 
 ```markdown
 # HANDOFF
@@ -75,13 +77,16 @@ your judgment:
 ```
 
 3. **TIM handoff** — follow the `tim-handoff` skill (checkpoint + Next Steps
-   merge). If TIM is unavailable, note that in chat and still continue with
-   `HANDOFF.md` (disk handoff must not block).
+   merge). If TIM is unavailable, note that in chat and still continue with the
+   disk handoff (must not block).
 4. **Spawn pinned session:**
 
 ```bash
 team-up pass-to --model "<Modellname>" --dir "$PWD"
+# or: team-up pass-to --model "<Modellname>" --handoff-file /path/to/handoff.md
 ```
+
+   When the successor finishes, they run `team-up handoff --close <absolute-path>`.
 
 5. **Report to the human** — copy the script's lines verbatim:
    - `tmux session: <full-id>`

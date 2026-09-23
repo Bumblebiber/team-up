@@ -69,3 +69,15 @@ profile fails with `PROFILE_UNAVAILABLE` before a run is created.
 Trusted specialist launches use **best-effort** OS isolation. Missing home
 CLI runtime paths still fail with `SANDBOX_RUNTIME_UNAVAILABLE` when
 isolation is applied. See `docs/command-broker.md`.
+
+## Limits
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `limits.warn_at` | `0.9` | Usage fraction that triggers a prepare-for-handoff warning |
+| `limits.handoff_at` | `0.95` | Usage fraction that triggers mandatory handoff |
+| `limits.handoff_at_burst` | `0.8` | Burst-window handoff threshold (5h/session windows) |
+| `limits.handoff_retention_days` | `14` | Open and closed handoff files under `~/.team-up/handoffs/` older than this are deleted by `team-up runs gc` |
+
+Session handoff work orders live in `~/.team-up/handoffs/` (open) and
+`~/.team-up/handoffs/done/` (closed). They are not written into project repos.

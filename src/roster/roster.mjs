@@ -384,35 +384,69 @@ async function cmdDispatch(args) {
 }
 
 async function cmdHandoff(args) {
+  const {
+    closeHandoff,
+    missingHandoffMessage,
+    resolveHandoffForSpawn,
+    successorPrompt,
+  } = await import("../handoff/store.mjs");
+
+  const closePath = argValue(args, "--close");
+  if (closePath) {
+    const note = argValue(args, "--note");
+    try {
+      const result = closeHandoff(closePath, { note });
+      if (result.status === "already_closed") {
+        console.log(`handoff already closed: ${result.path}`);
+        return;
+      }
+      console.log(`handoff closed: ${result.path}`);
+    } catch (error) {
+      console.error(String(error.message || error));
+      process.exit(1);
+    }
+    return;
+  }
+
   const role = argValue(args, "--role");
   const dir = argValue(args, "--dir") || process.cwd();
+  const handoffFile = argValue(args, "--handoff-file");
   if (!role) {
-    console.error("usage: team-up handoff --role <role> [--dir <taskdir>]");
+    console.error(
+      "usage: team-up handoff --role <role> [--dir <taskdir>] [--handoff-file <path>]\n" +
+      "       team-up handoff --close <path> [--note <text>]"
+    );
     process.exit(1);
   }
-  if (!fs.existsSync(path.join(dir, "HANDOFF.md"))) {
-    console.error(`no HANDOFF.md in ${dir} — write it first (state, done, open, verification), then re-run`);
+  const rosterCfg = requireRoster();
+  let handoffPath;
+  try {
+    handoffPath = resolveHandoffForSpawn({ dir, handoffFile, label: role });
+  } catch {
+    console.error(missingHandoffMessage(dir));
     process.exit(1);
   }
   await spawnInTmux({
-    roster: requireRoster(),
+    roster: rosterCfg,
     role,
     dir,
-    prompt: "Read HANDOFF.md in this directory and continue the task it describes.",
+    prompt: successorPrompt(handoffPath),
   });
   recordRunEscalation(process.env.TEAMUP_RUN_ID, "handoff");
 }
 
 async function cmdPassTo(args) {
   const { resolvePassTo } = await import("./pass-to.mjs");
+  const {
+    missingHandoffMessage,
+    resolveHandoffForSpawn,
+    successorPrompt,
+  } = await import("../handoff/store.mjs");
   const query = argValue(args, "--model") || firstPositional(args);
   const dir = argValue(args, "--dir") || process.cwd();
+  const handoffFile = argValue(args, "--handoff-file");
   if (!query) {
-    console.error("usage: team-up pass-to --model <name|cli:model> [--dir <taskdir>]");
-    process.exit(1);
-  }
-  if (!fs.existsSync(path.join(dir, "HANDOFF.md"))) {
-    console.error(`no HANDOFF.md in ${dir} — write it first (state, done, open, verification), then re-run`);
+    console.error("usage: team-up pass-to --model <name|cli:model> [--dir <taskdir>] [--handoff-file <path>]");
     process.exit(1);
   }
   const rosterCfg = requireRoster();
@@ -429,13 +463,20 @@ async function cmdPassTo(args) {
     console.error("use a roster model id, cli:model pin, or a recognizable free string (opus, composer-2.5, gpt-…)");
     process.exit(4);
   }
+  let handoffPath;
+  try {
+    handoffPath = resolveHandoffForSpawn({ dir, handoffFile, label: resolved.model });
+  } catch {
+    console.error(missingHandoffMessage(dir));
+    process.exit(1);
+  }
   console.log(`resolved: ${resolved.label} (via ${resolved.source})`);
   await spawnPinnedInTmux({
     roster: rosterCfg,
     model: resolved.model,
     cli: resolved.cli,
     dir,
-    prompt: "Read HANDOFF.md in this directory and continue the task it describes.",
+    prompt: successorPrompt(handoffPath),
     sessionPrefix: "team-up-pass",
   });
   recordRunEscalation(process.env.TEAMUP_RUN_ID, "pass-to");
