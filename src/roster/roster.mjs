@@ -165,6 +165,7 @@ export async function spawnInTmux({
   readUsage = () => loadJson(usagePath()),
   refreshUsage,
   spawn = spawnPinnedInTmux,
+  createRun = null,
 }) {
   const now = Date.now();
   let usage = usageSnapshot ?? loadJson(usagePath());
@@ -319,8 +320,11 @@ export async function spawnInTmux({
   }
   let effectiveRunId = runId;
   if (!effectiveRunId) {
-    const { createRun } = await import("../runs/runs.mjs");
-    const state = createRun({
+    // Injectable: a test that fakes `spawn` still reached the real
+    // ~/.team-up/runs through this import and left a `starting` run behind
+    // on every suite run — 44 of them before anybody noticed.
+    const create = createRun ?? (await import("../runs/runs.mjs")).createRun;
+    const state = create({
       cwd: dir,
       role,
       parent: { cli: "manual", attach: "manual" },

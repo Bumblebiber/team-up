@@ -315,6 +315,8 @@ test("active triage selection survives subscription usage refresh", async () => 
     refreshUsage: async () => { refreshes++; return { ok: true }; },
     fetchFn: fakeFetch(jevResponse(2, 1)),
     spawn: async (options) => { launched = options; },
+    // Without this the real ~/.team-up/runs gets a `starting` run per test run.
+    createRun: () => ({ runId: "test-run" }),
   });
   assert.equal(refreshes, 1);
   assert.equal(launched.model, "highA");
@@ -341,6 +343,8 @@ test("explicit model pin takes precedence over active triage", async () => {
     usageSnapshot: { windows: {}, marked: {} },
     fetchFn: async () => { throw new Error("triage must not run for hard pin"); },
     spawn: async (options) => { launched = options; },
+    // Without this the real ~/.team-up/runs gets a `starting` run per test run.
+    createRun: () => ({ runId: "test-run" }),
   });
   assert.equal(launched.model, "mediumA");
   assert.equal(launched.cli, "cursor");
