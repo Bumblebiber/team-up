@@ -272,19 +272,121 @@ async function refreshModels() {
     <tbody>${rows || '<tr><td colspan="5">No models — run refresh</td></tr>'}</tbody></table>`;
 }
 
+let selectedCli = null;
+let cliLogTimer = null;
+
+function verdictBadge(v) {
+  if (!v) return "—";
+  if (v.verdict === "verified") return '<span class="badge ok">verified</span>';
+  if (v.verdict === "harness_verification_unsupported") {
+    return `<span class="badge stale">unsupported${v.reason ? ` · ${esc(v.reason)}` : ""}</span>`;
+  }
+  return `<span class="badge red">failed${v.reason ? ` · ${esc(v.reason)}` : ""}</span>`;
+}
+
+async function refreshCliLog(cli) {
+  if (!cli) return;
+  try {
+    const data = await api(`/api/clis/${encodeURIComponent(cli)}/install/log`);
+    const lines = (data.lines || []).join("\n");
+    const verdict = data.post_update_verdict ? `verdict: ${data.post_update_verdict.verdict}` : "";
+    const el = $("#cli-log");
+    el.textContent = [lines, verdict].filter(Boolean).join("\n\n") || "(no log yet)";
+    el.classList.remove("hidden");
+  } catch {
+    /* ignore */
+  }
+}
+
+function selectCli(cli) {
+  selectedCli = cli;
+  if (cliLogTimer) clearInterval(cliLogTimer);
+  refreshCliLog(cli);
+  cliLogTimer = setInterval(() => refreshCliLog(cli), 2000);
+}
+
 async function refreshClis() {
   const data = await api("/api/clis");
-  const rows = data.clis.map((c) => `
-    <tr>
+  const rows = data.clis.map((c) => {
+    const state = c.install_state || "idle";
+    const actions = [];
+    if (c.update_available) {
+      actions.push(`<button type="button" class="cli-update" data-cli="${esc(c.cli)}">Update</button>`);
+    }
+    if (c.install_available) {
+      actions.push(`<button type="button" class="cli-install" data-cli="${esc(c.cli)}">Install</button>`);
+    } else if (c.install_disabled_reason) {
+      actions.push(`<span class="muted">${esc(c.install_disabled_reason)}</span>`);
+    }
+    if (c.login_available) {
+      actions.push(`<button type="button" class="cli-login" data-cli="${esc(c.cli)}">Start login</button>`);
+    }
+    return `
+    <tr class="clickable ${selectedCli === c.cli ? "selected" : ""}" data-cli="${esc(c.cli)}">
       <td>${esc(c.cli)}</td>
       <td>${c.present ? '<span class="badge ok">installed</span>' : '<span class="badge stale">missing</span>'}</td>
       <td class="mono">${esc(c.version || "—")}</td>
       <td>${esc(c.harness_label || c.harness?.status || "—")}</td>
+      <td>${verdictBadge(c.post_update_verdict)}</td>
+      <td>${esc(state)}</td>
       <td class="path">${esc(c.path || "—")}</td>
-    </tr>`).join("");
+      <td>${actions.join(" ")}</td>
+    </tr>`;
+  }).join("");
   $("#clis-table").innerHTML = `<table>
-    <thead><tr><th>CLI</th><th>Present</th><th>Version</th><th>Harness</th><th>Path</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="5">No CLIs</td></tr>'}</tbody></table>`;
+    <thead><tr><th>CLI</th><th>Present</th><th>Version</th><th>Harness</th><th>Verify</th><th>Job</th><th>Path</th><th>Actions</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="8">No CLIs</td></tr>'}</tbody></table>`;
+  $("#clis-table").querySelectorAll("tr[data-cli]").forEach((tr) => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      selectCli(tr.dataset.cli);
+    });
+  });
+  $("#clis-table").querySelectorAll(".cli-update").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const cli = btn.dataset.cli;
+      try {
+        const cmd = data.clis.find((c) => c.cli === cli)?.update_command;
+        if (cmd && !confirm(`Run update + verify?\n\n${cmd}`)) return;
+        await api(`/api/clis/${encodeURIComponent(cli)}/update`, { method: "POST", body: JSON.stringify({}) });
+        selectCli(cli);
+        await refreshClis();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+  $("#clis-table").querySelectorAll(".cli-install").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const cli = btn.dataset.cli;
+      try {
+        const row = data.clis.find((c) => c.cli === cli);
+        if (row?.install_command && !confirm(`Run install?\n\n${row.install_command}`)) return;
+        await api(`/api/clis/${encodeURIComponent(cli)}/install`, { method: "POST", body: JSON.stringify({}) });
+        selectCli(cli);
+        await refreshClis();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+  $("#clis-table").querySelectorAll(".cli-login").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const cli = btn.dataset.cli;
+      try {
+        const row = data.clis.find((c) => c.cli === cli);
+        if (row?.login_command && !confirm(`Start login in tmux?\n\n${row.login_command}\n\nFinish in terminal: tmux attach -t team-up-install-${cli}`)) return;
+        await api(`/api/clis/${encodeURIComponent(cli)}/login`, { method: "POST", body: JSON.stringify({}) });
+        selectCli(cli);
+        await refreshClis();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
 }
 
 async function refreshSetup() {

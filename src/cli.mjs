@@ -324,11 +324,12 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     const port = Number(argValue(rest, "--port") || 8556);
     const host = argValue(rest, "--host") || "127.0.0.1";
     const rotateToken = rest.includes("--rotate-token");
+    const allowInstall = rest.includes("--allow-install");
     if (!Number.isFinite(port) || port < 0 || port > 65535) {
-      io.err("usage: team-up dashboard [--port N] [--host H] [--rotate-token]");
+      io.err("usage: team-up dashboard [--port N] [--host H] [--rotate-token] [--allow-install]");
       return 1;
     }
-    await startDashboard({ host, port, rotateToken, io });
+    await startDashboard({ host, port, rotateToken, allowInstall, io });
     return 0;
   }
   if (
