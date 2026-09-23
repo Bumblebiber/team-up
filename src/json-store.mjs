@@ -18,9 +18,15 @@ export function atomicWriteJson(filePath, obj) {
   fs.renameSync(tmp, filePath);
 }
 
-export function atomicWriteText(filePath, text) {
+export function atomicWriteText(filePath, text, { mode } = {}) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, text.endsWith("\n") ? text : `${text}\n`);
+  const payload = text.endsWith("\n") ? text : `${text}\n`;
+  if (mode != null) {
+    fs.writeFileSync(tmp, payload, { mode });
+    fs.chmodSync(tmp, mode);
+  } else {
+    fs.writeFileSync(tmp, payload);
+  }
   fs.renameSync(tmp, filePath);
 }

@@ -1,10 +1,15 @@
 const $ = (sel) => document.querySelector(sel);
 
+let adminCapable = false;
+let adminChallengeId = null;
+
 async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  if (opts.method && opts.method !== "GET") headers["X-Team-Up-CSRF"] = "1";
   const res = await fetch(path, {
     credentials: "same-origin",
     ...opts,
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    headers,
   });
   if (res.status === 401) {
     showLogin();
@@ -171,11 +176,159 @@ async function refreshPick() {
     <tbody>${rows || '<tr><td colspan="4">No roles</td></tr>'}</tbody></table>`;
 }
 
+function providerStatus(p) {
+  if (p.class === "A") {
+    if (!p.configured) return '<span class="badge stale">not connected</span>';
+    const bits = [esc(p.hint || ""), p.label ? esc(p.label) : "", p.last_verdict === "ok" ? "valid" : ""].filter(Boolean);
+    return `<span class="badge ok">connected · ${bits.join(" · ")}</span>`;
+  }
+  if (p.class === "B") {
+    return `<span class="badge ${p.configured ? "ok" : "stale"}">subscription login</span>`;
+  }
+  return `<span class="badge ${p.configured ? "ok" : "stale"}">CLI-owned key</span>`;
+}
+
+async function refreshProviders() {
+  const data = await api("/api/providers");
+  const html = data.providers.map((p) => {
+    let body = `<div class="provider-card"><strong>${esc(p.id)}</strong> ${providerStatus(p)}`;
+    if (p.class === "A" && p.writable) {
+      body += `<form class="provider-form" data-id="${esc(p.id)}">
+        <input type="password" name="key" placeholder="OpenRouter API key" autocomplete="off">
+        <button type="submit">${p.configured ? "Rotate" : "Connect"}</button>
+        ${p.configured ? '<button type="button" class="remove-key">Remove</button>' : ""}
+        <button type="button" class="validate-key">Validate</button>
+      </form>`;
+    } else if (p.class === "A" && p.configured) {
+      body += `<p class="muted">Read-only (${esc(p.source || "external")}) · ${esc(p.hint || "")}</p>`;
+    } else if (p.login_command) {
+      body += `<p class="muted mono">${esc(p.login_command)}</p>`;
+    }
+    return `${body}</div>`;
+  }).join("");
+  $("#providers-list").innerHTML = html || "<p>No providers</p>";
+  $("#providers-list").querySelectorAll(".provider-form").forEach((form) => {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const key = form.querySelector('input[name="key"]').value.trim();
+      if (!key) return;
+      try {
+        await api("/api/providers/openrouter/key", { method: "POST", body: JSON.stringify({ key }) });
+        form.querySelector('input[name="key"]').value = "";
+        await refreshProviders();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+    form.querySelector(".validate-key")?.addEventListener("click", async () => {
+      try {
+        await api("/api/providers/openrouter/validate", { method: "POST", body: JSON.stringify({}) });
+        await refreshProviders();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+    form.querySelector(".remove-key")?.addEventListener("click", async () => {
+      try {
+        await api("/api/providers/openrouter/remove", { method: "POST", body: JSON.stringify({}) });
+        await refreshProviders();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+}
+
+async function refreshModels() {
+  const q = $("#models-search").value.trim();
+  const inRoster = $("#models-roster-only").checked ? "1" : "";
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (inRoster) params.set("in_roster", inRoster);
+  const data = await api(`/api/models?${params}`);
+  $("#models-meta").textContent = `${data.total} models (page ${data.page + 1}, showing ${data.models.length})`;
+  $("#apply-cli-hint").textContent = `To apply roster chain changes: ${data.apply_cli}`;
+  const rows = data.models.map((m) => `
+    <tr class="${m.in_roster && m.reachable === false ? "greyed" : ""}">
+      <td>${esc(m.model)}</td>
+      <td>${esc(m.display_name || "—")}</td>
+      <td>${m.in_roster ? "yes" : "no"}</td>
+      <td>${esc(m.tier || "—")}</td>
+      <td>${m.proposal ? esc(`+${m.proposal.gap?.toFixed?.(1) ?? "?"} vs ${m.proposal.head}`) : "—"}</td>
+    </tr>`).join("");
+  $("#models-table").innerHTML = `<table>
+    <thead><tr><th>Model</th><th>Name</th><th>Roster</th><th>Tier</th><th>Proposal</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5">No models — run refresh</td></tr>'}</tbody></table>`;
+}
+
+async function refreshClis() {
+  const data = await api("/api/clis");
+  const rows = data.clis.map((c) => `
+    <tr>
+      <td>${esc(c.cli)}</td>
+      <td>${c.present ? '<span class="badge ok">installed</span>' : '<span class="badge stale">missing</span>'}</td>
+      <td class="mono">${esc(c.version || "—")}</td>
+      <td>${esc(c.harness_label || c.harness?.status || "—")}</td>
+      <td class="path">${esc(c.path || "—")}</td>
+    </tr>`).join("");
+  $("#clis-table").innerHTML = `<table>
+    <thead><tr><th>CLI</th><th>Present</th><th>Version</th><th>Harness</th><th>Path</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5">No CLIs</td></tr>'}</tbody></table>`;
+}
+
+async function refreshSetup() {
+  await Promise.allSettled([refreshProviders(), refreshModels(), refreshClis()]);
+}
+
+$("#models-search").addEventListener("input", () => refreshModels());
+$("#models-roster-only").addEventListener("change", () => refreshModels());
+$("#refresh-scores-btn").addEventListener("click", async () => {
+  try {
+    await api("/api/refresh", { method: "POST", body: JSON.stringify({}) });
+    await refreshModels();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+$("#admin-challenge-btn").addEventListener("click", async () => {
+  try {
+    const data = await api("/api/admin/challenge", { method: "POST", body: JSON.stringify({}) });
+    adminChallengeId = data.challenge_id;
+    $("#admin-confirm-form").classList.remove("hidden");
+    $("#admin-status").textContent = "Enter the code printed in your terminal.";
+  } catch (err) {
+    $("#admin-status").textContent = err.message;
+  }
+});
+
+$("#admin-confirm-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/admin/confirm", {
+      method: "POST",
+      body: JSON.stringify({ challenge_id: adminChallengeId, code: $("#admin-code-input").value.trim() }),
+    });
+    adminCapable = true;
+    $("#admin-gate").classList.add("hidden");
+    $("#admin-status").textContent = "Admin confirmed for 10 minutes.";
+  } catch (err) {
+    $("#admin-status").textContent = err.message;
+  }
+});
+
 function refreshAll() {
-  return Promise.allSettled([refreshUsage(), refreshRuns(), refreshTmux(), refreshPick()]);
+  return Promise.allSettled([
+    refreshUsage(),
+    refreshRuns(),
+    refreshTmux(),
+    refreshPick(),
+    refreshSetup(),
+  ]);
 }
 
 function startPolling() {
+  $("#admin-gate").classList.remove("hidden");
   refreshAll();
   if (listTimer) clearInterval(listTimer);
   listTimer = setInterval(refreshAll, 5000);

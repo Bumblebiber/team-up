@@ -6,6 +6,7 @@ import {
   mapId,
   perMillion,
 } from "./openrouter-benchmarks.mjs";
+import { lookupKey, openRouterKeyFiles } from "../keys.mjs";
 
 /**
  * Detect open-weight / open-source hosted models.
@@ -62,12 +63,21 @@ export function normalizeModels(payload, idMap = loadIdMap()) {
 }
 
 export async function fetchModels({
-  apiKey = process.env.OPENROUTER_API_KEY,
+  apiKey,
+  env = process.env,
+  roster,
   fetchFn = globalThis.fetch,
 } = {}) {
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY required for live models fetch");
+  const resolved =
+    apiKey ??
+    lookupKey({
+      keyName: "OPENROUTER_API_KEY",
+      keyFiles: openRouterKeyFiles(env, roster),
+      env,
+    }).key;
+  if (!resolved) throw new Error("OPENROUTER_API_KEY required for live models fetch");
   const res = await fetchFn("https://openrouter.ai/api/v1/models", {
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    headers: { Authorization: `Bearer ${resolved}`, Accept: "application/json" },
   });
   if (!res.ok) throw new Error(`openrouter models HTTP ${res.status}`);
   return res.json();

@@ -1,4 +1,5 @@
 import { pick, limits } from "../roster/chain.mjs";
+import { unlistedHighScorers } from "../scores/propose.mjs";
 
 /** Run ids from `createRun` — ISO timestamp + 4-char base36 suffix. */
 export const RUN_ID_PATTERN = /^\d{8}T\d{6}Z-[a-z0-9]{4}$/;
@@ -171,6 +172,66 @@ export function buildPickAllView(roster, usage, now = Date.now()) {
     });
   }
   return sanitizeForDashboard({ picks, now: new Date(now).toISOString() }, { stripAccounts: true });
+}
+
+const MODELS_PAGE_SIZE = 200;
+
+export function buildModelsView(scoresFile, roster, { q, in_roster, page = 0 } = {}) {
+  if (!scoresFile?.models) {
+    return { models: [], total: 0, page, pageSize: MODELS_PAGE_SIZE, apply_cli: "team-up apply-scores" };
+  }
+  const proposals = unlistedHighScorers({ roster, scoresFile });
+  const proposalByModel = new Map();
+  for (const p of proposals) {
+    const key = p.model;
+    if (!proposalByModel.has(key)) proposalByModel.set(key, p);
+  }
+
+  const query = (q || "").trim().toLowerCase();
+  const rows = [];
+  for (const [modelId, mod] of Object.entries(scoresFile.models)) {
+    const rosterEntry = roster?.models?.[modelId] ?? null;
+    const inRoster = rosterEntry != null;
+    if (in_roster === true && !inRoster) continue;
+    if (in_roster === false && inRoster) continue;
+    const display = mod.display_name || modelId;
+    if (query) {
+      const hay = `${modelId} ${display} ${mod.provider || ""}`.toLowerCase();
+      if (!hay.includes(query)) continue;
+    }
+    const account = rosterEntry?.account ?? null;
+    const accountEnabled =
+      account == null ? true : roster?.accounts?.[account]?.enabled !== false;
+    const proposal =
+      proposalByModel.get(mod.openrouter_id || modelId) ||
+      proposalByModel.get(modelId) ||
+      null;
+    rows.push({
+      model: modelId,
+      display_name: display,
+      provider: mod.provider ?? null,
+      price: mod.price ?? null,
+      scores: mod.scores ?? null,
+      in_roster: inRoster,
+      clis: rosterEntry?.cli ?? null,
+      tier: rosterEntry?.tier ?? null,
+      account,
+      reasoning: rosterEntry?.reasoning ?? null,
+      reachable: inRoster ? accountEnabled : null,
+      proposal,
+    });
+  }
+  rows.sort((a, b) => a.model.localeCompare(b.model));
+  const total = rows.length;
+  const start = page * MODELS_PAGE_SIZE;
+  const models = rows.slice(start, start + MODELS_PAGE_SIZE);
+  return {
+    models,
+    total,
+    page,
+    pageSize: MODELS_PAGE_SIZE,
+    apply_cli: "team-up apply-scores",
+  };
 }
 
 export function readMailboxFiles(runId, { readFile, runRoot, maxBytes = 256 * 1024 }) {

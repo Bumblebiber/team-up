@@ -14,6 +14,7 @@ import {
 } from "../collectors/openrouter-models.mjs";
 import { blendedPrice, scoreForRole, ROLE_SCORE_FIELDS } from "./propose.mjs";
 import { scoresPath as scoresPathFromPaths, scoresWritePath } from "../paths.mjs";
+import { configPath, loadJson } from "../roster/config.mjs";
 
 export function scoresPath() {
   return scoresPathFromPaths();
@@ -84,15 +85,16 @@ export function buildRoleScores(scoresFile, roster) {
   return role_scores;
 }
 
-export async function collectScores({ fixtureDir, fetchFn } = {}) {
+export async function collectScores({ fixtureDir, fetchFn, env = process.env } = {}) {
   let benchRaw;
   let modelsRaw;
+  const roster = loadJson(configPath(env));
   if (fixtureDir) {
     benchRaw = JSON.parse(fs.readFileSync(path.join(fixtureDir, "benchmarks.json"), "utf8"));
     modelsRaw = JSON.parse(fs.readFileSync(path.join(fixtureDir, "models.json"), "utf8"));
   } else {
-    benchRaw = await fetchBenchmarks({ fetchFn });
-    modelsRaw = await fetchModels({ fetchFn });
+    benchRaw = await fetchBenchmarks({ fetchFn, env, roster });
+    modelsRaw = await fetchModels({ fetchFn, env, roster });
   }
   const benchmarks = normalizeBenchmarks(benchRaw);
   const modelsCatalog = normalizeModels(modelsRaw);

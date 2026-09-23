@@ -15,8 +15,23 @@ import {
   joinTmuxSessions,
   buildUsageView,
   buildPickAllView,
+  buildModelsView,
   readMailboxFiles,
+  sanitizeForDashboard,
 } from "./data.mjs";
+import { loadScores, collectScores, buildRoleScores, writeScores } from "../scores/scores.mjs";
+import { scoresPath } from "../paths.mjs";
+import { createAdminGate } from "./admin.mjs";
+import { appendAudit } from "./audit.mjs";
+import {
+  buildProvidersView,
+  readOpenRouterKey,
+  isOpenRouterWritable,
+  validateOpenRouterKey,
+  writeOpenRouterKey,
+  removeOpenRouterKey,
+} from "./providers.mjs";
+import { buildClisView, commandExists } from "./clis.mjs";
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 const COOKIE_NAME = "team_up_dashboard";
@@ -58,10 +73,30 @@ function parseCookies(header) {
   const out = {};
   if (!header) return out;
   for (const part of header.split(";")) {
-    const [k, ...rest] = part.trim().split("=");
-    if (k) out[k] = decodeURIComponent(rest.join("="));
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    const k = trimmed.slice(0, eq).trim();
+    const raw = trimmed.slice(eq + 1);
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(raw);
+    } catch {
+      /* skip malformed cookie pair */
+    }
   }
   return out;
+}
+
+function isLoopbackHost(host) {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function serverOrigin(host, req) {
+  const port = req.socket?.localPort;
+  if (!port) return `http://${host}`;
+  return `http://${host === "::1" ? "127.0.0.1" : host}:${port}`;
 }
 
 function rejectQueryToken(url) {
@@ -185,9 +220,13 @@ export function createDashboardServer({
   listSessions = () => listTmuxSessions({ exec }),
   capturePane = (session) => capturePaneLines(session, 200, { exec, listSessions }),
   now = () => Date.now(),
+  adminGate = createAdminGate({ now, log: (msg) => console.log(msg) }),
+  fetchFn = globalThis.fetch,
+  io = { out: console.log, err: console.error },
 } = {}) {
   const expectedToken = token ?? ensureDashboardToken(env);
   const memo = createMemo();
+  const openrouterValidation = {};
 
   function isAuthed(req) {
     if (rejectQueryToken(req.url || "")) return false;
@@ -206,6 +245,41 @@ export function createDashboardServer({
     }
     if (!isAuthed(req)) {
       jsonResponse(res, 401, { error: "unauthorized" });
+      return false;
+    }
+    return true;
+  }
+
+  function authCookie(req) {
+    const cookies = parseCookies(req.headers.cookie);
+    return cookies[COOKIE_NAME] || "";
+  }
+
+  function checkCsrf(req, res) {
+    if (req.headers["x-team-up-csrf"] !== "1") {
+      jsonResponse(res, 403, { error: "csrf header required" });
+      return false;
+    }
+    const origin = req.headers.origin;
+    if (origin) {
+      const allowed = serverOrigin(host, req);
+      if (origin !== allowed) {
+        jsonResponse(res, 403, { error: "origin not allowed" });
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function requireWriteAccess(req, res) {
+    if (!isLoopbackHost(host)) {
+      jsonResponse(res, 403, { error: "write endpoints disabled on non-loopback bind" });
+      return false;
+    }
+    if (!checkCsrf(req, res)) return false;
+    const cookie = authCookie(req);
+    if (!cookie || !adminGate.hasCapability(cookie)) {
+      jsonResponse(res, 403, { error: "admin confirmation required" });
       return false;
     }
     return true;
@@ -256,7 +330,210 @@ export function createDashboardServer({
       return;
     }
 
-    if (req.method !== "GET") {
+    const isApi = pathname.startsWith("/api/");
+    if (isApi && !requireAuth(req, res)) return;
+
+    if (req.method === "POST" && pathname === "/api/admin/challenge") {
+      if (!isLoopbackHost(host)) {
+        jsonResponse(res, 403, { error: "write endpoints disabled on non-loopback bind" });
+        return;
+      }
+      if (!checkCsrf(req, res)) return;
+      const challenge = adminGate.issueChallenge();
+      appendAudit(
+        { actor: "127.0.0.1", action: "admin.challenge", target: null, result: "ok" },
+        { env },
+      );
+      jsonResponse(res, 200, { challenge_id: challenge.challenge_id, expires_at: challenge.expires_at });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/admin/confirm") {
+      if (!isLoopbackHost(host)) {
+        jsonResponse(res, 403, { error: "write endpoints disabled on non-loopback bind" });
+        return;
+      }
+      if (!checkCsrf(req, res)) return;
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        const cookie = authCookie(req);
+        const result = adminGate.confirm({
+          challenge_id: body.challenge_id,
+          code: body.code,
+          cookieToken: cookie,
+        });
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: "admin.confirm",
+            target: null,
+            result: result.ok ? "ok" : "fail",
+          },
+          { env },
+        );
+        if (!result.ok) {
+          jsonResponse(res, 403, { error: result.error });
+          return;
+        }
+        jsonResponse(res, 200, { ok: true, expires_at: result.expires_at });
+      } catch {
+        jsonResponse(res, 400, { error: "bad request" });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/providers/openrouter/key") {
+      if (!requireWriteAccess(req, res)) return;
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        const key = String(body.key || "").trim();
+        if (!key) {
+          jsonResponse(res, 400, { error: "key required" });
+          return;
+        }
+        const roster = loadRoster(env);
+        if (!isOpenRouterWritable({ env, roster })) {
+          jsonResponse(res, 403, { error: "key is read-only (env or external file)" });
+          return;
+        }
+        const validation = await validateOpenRouterKey(key, { fetchFn });
+        if (!validation.ok) {
+          appendAudit(
+            {
+              actor: "127.0.0.1",
+              action: "provider.connect",
+              target: "openrouter",
+              result: "fail",
+              hint: key.length >= 4 ? `…${key.slice(-4)}` : null,
+            },
+            { env },
+          );
+          jsonResponse(res, 400, { error: validation.error, status: validation.status || null });
+          return;
+        }
+        const hadKey = !!readOpenRouterKey({ env, roster }).key;
+        writeOpenRouterKey(key, { env });
+        const hint = `…${key.slice(-4)}`;
+        openrouterValidation.openrouter = {
+          at: new Date(now()).toISOString(),
+          verdict: "ok",
+          label: validation.label,
+          limit: validation.limit,
+        };
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: hadKey ? "provider.rotate" : "provider.connect",
+            target: "openrouter",
+            result: "ok",
+            hint,
+          },
+          { env },
+        );
+        jsonResponse(res, 200, {
+          ok: true,
+          hint,
+          label: validation.label,
+          limit: validation.limit,
+          source: "file",
+        });
+      } catch {
+        jsonResponse(res, 400, { error: "bad request" });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/providers/openrouter/validate") {
+      if (!requireWriteAccess(req, res)) return;
+      try {
+        const roster = loadRoster(env);
+        const { key } = readOpenRouterKey({ env, roster });
+        if (!key) {
+          jsonResponse(res, 400, { error: "no key configured" });
+          return;
+        }
+        const validation = await validateOpenRouterKey(key, { fetchFn });
+        const hint = `…${key.slice(-4)}`;
+        openrouterValidation.openrouter = {
+          at: new Date(now()).toISOString(),
+          verdict: validation.ok ? "ok" : "fail",
+          label: validation.label,
+          limit: validation.limit,
+        };
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: "provider.validate",
+            target: "openrouter",
+            result: validation.ok ? "ok" : "fail",
+            hint,
+          },
+          { env },
+        );
+        jsonResponse(res, validation.ok ? 200 : 400, {
+          ok: validation.ok,
+          hint,
+          label: validation.label,
+          limit: validation.limit,
+          error: validation.error || null,
+        });
+      } catch {
+        jsonResponse(res, 400, { error: "bad request" });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/providers/openrouter/remove") {
+      if (!requireWriteAccess(req, res)) return;
+      try {
+        const roster = loadRoster(env);
+        const hit = readOpenRouterKey({ env, roster });
+        if (!isOpenRouterWritable({ env, roster })) {
+          jsonResponse(res, 403, { error: "key is read-only (env or external file)" });
+          return;
+        }
+        const hint = hit.key ? `…${hit.key.slice(-4)}` : null;
+        removeOpenRouterKey({ env });
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: "provider.remove",
+            target: "openrouter",
+            result: "ok",
+            hint,
+          },
+          { env },
+        );
+        jsonResponse(res, 200, { ok: true });
+      } catch {
+        jsonResponse(res, 400, { error: "bad request" });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/refresh") {
+      if (!requireWriteAccess(req, res)) return;
+      try {
+        const roster = loadRoster(env);
+        const collected = await collectScores({ fetchFn, env });
+        collected.role_scores = buildRoleScores(collected, roster);
+        const dest = writeScores(collected);
+        appendAudit(
+          { actor: "127.0.0.1", action: "refresh", target: dest, result: "ok" },
+          { env },
+        );
+        jsonResponse(res, 200, { ok: true, path: dest });
+      } catch (e) {
+        appendAudit(
+          { actor: "127.0.0.1", action: "refresh", target: "scores.json", result: "fail" },
+          { env },
+        );
+        jsonResponse(res, 500, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    if (req.method !== "GET" && isApi) {
       jsonResponse(res, 405, { error: "method not allowed" });
       return;
     }
@@ -276,12 +553,10 @@ export function createDashboardServer({
       return;
     }
 
-    if (!pathname.startsWith("/api/")) {
+    if (!isApi) {
       jsonResponse(res, 404, { error: "not found" });
       return;
     }
-
-    if (!requireAuth(req, res)) return;
 
     const ts = now();
 
@@ -315,11 +590,11 @@ export function createDashboardServer({
           readFile: (name, runRoot) => safeReadMailboxFile(name, runRoot),
         });
         const heartbeats = heartbeatMtimes();
-        return {
+        return sanitizeForDashboard({
           state,
           mailbox,
           row: buildRunsView([state], { heartbeats, now: ts }).runs[0],
-        };
+        });
       });
       jsonResponse(res, 200, data);
       return;
@@ -376,6 +651,47 @@ export function createDashboardServer({
       return;
     }
 
+    if (pathname === "/api/providers") {
+      const data = memo.get("providers", () => {
+        const roster = loadRoster(env);
+        return sanitizeForDashboard(
+          buildProvidersView({
+            roster,
+            env,
+            cliPresent: (id) => !!commandExists(roster.clis[id]?.cmd?.[0], { exec }),
+            lastValidation: openrouterValidation,
+          }),
+        );
+      });
+      jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/models") {
+      const q = url.searchParams.get("q") || "";
+      const inRosterParam = url.searchParams.get("in_roster");
+      const inRoster = inRosterParam === "1" ? true : inRosterParam === "0" ? false : undefined;
+      const page = Math.max(0, Number(url.searchParams.get("page") || 0) || 0);
+      const data = memo.get(`models:${q}:${inRosterParam}:${page}`, () => {
+        const roster = loadRoster(env);
+        const scores = loadScores(scoresPath(env)) || { models: {} };
+        return sanitizeForDashboard(
+          buildModelsView(scores, roster, { q, in_roster: inRoster, page }),
+        );
+      });
+      jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/clis") {
+      const data = memo.get("clis", () => {
+        const roster = loadRoster(env);
+        return sanitizeForDashboard(buildClisView(roster, { exec, env }));
+      });
+      jsonResponse(res, 200, data);
+      return;
+    }
+
     jsonResponse(res, 404, { error: "not found" });
   }
 
@@ -385,7 +701,7 @@ export function createDashboardServer({
     });
   });
 
-  return { server, token: expectedToken };
+  return { server, token: expectedToken, adminGate };
 }
 
 export function startDashboard({
@@ -399,7 +715,7 @@ export function startDashboard({
     io.err(`warning: dashboard binding to ${host} — use ssh -L for remote access`);
   }
   const token = ensureDashboardToken(env, { rotate: rotateToken });
-  const { server } = createDashboardServer({ env, host, token });
+  const { server } = createDashboardServer({ env, host, token, io });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
