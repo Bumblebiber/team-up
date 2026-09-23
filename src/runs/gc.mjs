@@ -1008,9 +1008,10 @@ export function gcRuns({
   try {
     const { usage, pruned } = pruneExpiredMarks({ usage: loadJson(usagePath()), now: nowMs });
     if (pruned.length && !dryRun) {
-      const out = usageWritePath();
-      fs.mkdirSync(path.dirname(out), { recursive: true });
-      fs.writeFileSync(out, `${JSON.stringify(usage, null, 2)}\n`);
+      // Atomic: the usage collector writes this file too, and losing that race
+      // would restore an old `updated_at` — which is exactly what makes the
+      // freshness gate block every dispatch.
+      atomicWriteText(usageWritePath(), `${JSON.stringify(usage, null, 2)}\n`);
     }
     report.expired_marks = { pruned, dry_run: Boolean(dryRun) };
   } catch (error) {
