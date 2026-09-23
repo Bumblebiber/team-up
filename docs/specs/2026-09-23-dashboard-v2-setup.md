@@ -1,6 +1,6 @@
 # team-up dashboard v2 — connect providers, see models, install CLIs
 
-Status: draft · 2026-09-23 · owner: team-up (P0073) · extends `2026-09-22-dashboard-v1-design.md` · depends on the key-file rules in `2026-09-22-jev-triage-design.md`
+Status: accepted · 2026-09-23 · owner: team-up (P0073) · extends `2026-09-22-dashboard-v1-design.md` · depends on the key-file rules in `2026-09-22-jev-triage-design.md`
 
 Driver: bringing up a **new** machine — all five CLIs and `OPENROUTER_API_KEY`
 already exist on this host, so v2 is an onboarding path, not a repair tool. v1
@@ -32,7 +32,7 @@ Continuity argues for `~/.hermes/.env` (0600, already holds the key, already
 the `triage.key_file` default). Blast radius wins: that file is Hermes-owned and
 holds `SUDO_PASSWORD=` among 17 keys, so a dashboard write path into it turns a
 leaked dashboard token into the host's sudo password. v2 writes only to a
-team-up-owned file:
+team-up-owned file. **Confirmed by Benni 2026-09-23.**
 
 - Write target: `~/.team-up/secrets.env`, 0600, `KEY=VALUE` lines.
 - Read order stays env → file, and the file list becomes
@@ -169,18 +169,32 @@ command, version or flag ever arrives from the browser.
 | cursor | `curl -fsS https://cursor.com/install \| bash` — **assumed** | `cursor-agent update` ✅ | network shell script |
 | opencode | `curl -fsSL https://opencode.ai/install \| bash` — **assumed** | `opencode upgrade` ✅ | network shell script |
 | codex | vendor standalone installer — **assumed, and least certain** | `codex update` ✅ | network shell script |
-| hermes | none — Benni's fork, editable install from `~/projects/hermes-agent` | none | **not offered**; row shows "manual" |
+| hermes | none — Benni's fork, no vendor installer | none | **not offered**; row shows "manual" (decided, Benni 2026-09-23) |
 
-✅ = verified from `--help` on this host 2026-09-23. Bootstrap commands are
-inferred from the on-disk layout (`~/.local/share/claude/versions/…`,
-`~/.local/share/cursor-agent/versions/…`, `~/.opencode/bin`) plus the vendors'
-documented installers — **they are assumptions and are open question 1.**
+✅ = verified from `--help` on this host 2026-09-23.
 
-codex is the weakest of the four and the evidence points *away* from npm:
-`npm ls -g` lists no `@openai/codex`, and the binary sits under
-`~/.codex/packages/standalone/releases/0.156.1-x86_64-unknown-linux-musl/bin/`,
-which is a standalone-installer layout. Do not ship a codex bootstrap until
-Benni names the command he used.
+**Bootstrap resolution (Benni 2026-09-23: he does not remember what he ran).**
+The host's layout settles the shape but not the URLs. Every one of the five
+binaries resolves to a vendor-managed directory and **none** is an npm global —
+`npm ls -g` lists `team-up` itself but no `@anthropic-ai/claude-code`, no
+`@openai/codex`:
+
+| cli | `readlink -f` |
+|---|---|
+| claude | `~/.local/share/claude/versions/2.1.267` |
+| codex | `~/.codex/packages/standalone/releases/0.156.1-x86_64-unknown-linux-musl/bin/codex` |
+| cursor-agent | `~/.local/share/cursor-agent/versions/2026.09.18-9a7762b/cursor-agent` |
+| opencode | `~/.opencode/bin/opencode` |
+| hermes | plain file in `~/.local/bin` (Benni's fork) |
+
+So npm is ruled out for all four and each was installed by its vendor's own
+native installer. The exact URLs are **not** to be written from memory at
+implementation time: fetch each vendor's current documented install command
+then, put it in `installers.mjs` with the date it was checked, and verify on a
+throwaway machine or container before the button ships. Until that happens the
+install button stays behind `--allow-install` and only the ✅ `update` path is
+offered — every CLI here can already update itself, which covers the common
+case; bootstrap only matters on a fresh box.
 
 Three of the five pipe a network shell script into bash. That is the risky one
 and it is why §4 exists: `POST /api/clis/claude/install` is remote code
@@ -274,24 +288,24 @@ state-changing POST gets its own check, both cheap and dependency-free:
 
 ### Bind and reverse proxy
 
-Default stays `127.0.0.1`; remote access stays `ssh -L`. Before anyone puts
-this behind nginx, **all** of these must be true — they are not today:
+**Not planned (Benni 2026-09-23): there is no nginx in front of this.** Default
+bind stays `127.0.0.1`, remote access stays `ssh -L 8556:127.0.0.1:8556`, and
+that is the whole access story for v2. Consequences, so nobody re-derives them:
 
-1. TLS terminated, and the cookie gains `Secure` (v1 sets it without).
-2. The cookie stops being the token itself (v1 stores the raw token as the
-   cookie value; a proxy log or a `Set-Cookie` leak is then a full credential).
-3. `X-Forwarded-For` is used for the audit `actor` field, and nginx is
-   configured not to accept a client-supplied one. Until then the audit log
-   identifies the **host, not a user** — `actor` is `127.0.0.1` for every
-   request, and behind a proxy it would stay loopback for all of them. Per-user
-   attribution does not exist and needs this item first.
-4. The admin confirmation code is still printed to a terminal a human can see —
-   under systemd that is the journal, which weakens the gate; say so before
-   enabling it.
+- The confirmation code is printed to the terminal running `team-up dashboard`
+  and a human is at that terminal. Under systemd it would land in the journal
+  and weaken the gate — so v2's dashboard is a foreground command, not a unit.
+- The audit `actor` is always `127.0.0.1`. It identifies the host, not a person.
+  That is honest for a single-user box; per-user attribution needs a proxy and
+  is out of scope.
+- `--host` other than loopback keeps printing v1's warning, and v2 additionally
+  **refuses** every write/exec endpoint when the bind is not loopback. Read
+  views still work.
 
-Until then `--host` other than loopback keeps printing v1's warning, and v2
-additionally **refuses** every write/exec endpoint when the bind is not
-loopback. Read views still work.
+If a proxy is ever put in front, two v1 defects must be fixed first: the cookie
+has no `Secure` flag, and the cookie value *is* the token (no session id, so a
+proxy log or a `Set-Cookie` leak is a full credential leak and rotation cannot
+invalidate a session). Both are listed as v1 defects, neither is v2's job.
 
 ### Audit trail
 
@@ -368,20 +382,14 @@ label/limit body and not just 200; that `claude auth` / `opencode providers` are
 the right login entry points rather than `claude setup-token` /
 `opencode providers login`; that vendor installers are idempotent on retry.
 
-## Open questions for Benni
+## Decided (Benni, 2026-09-23)
 
-1. **Bootstrap commands** — confirm the four in §3, or paste the ones you
-   actually ran. Nothing in the repo records them and a wrong one is a bad
-   first impression on a fresh box. Until confirmed, ship the install button
-   behind `--allow-install` and offer only the verified `update` path.
-   **codex especially:** the layout on this host says standalone installer, not
-   npm, so I have no candidate command for it at all.
-2. **hermes** — your fork has no vendor installer. Leave it "manual" in v2, or
-   should the dashboard clone `~/projects/hermes-agent` and `pip install -e`?
-3. **`~/.team-up/secrets.env` vs `~/.hermes/.env`** — §1 argues for a team-up
-   file because `.hermes/.env` holds `SUDO_PASSWORD`. Confirm; if you prefer one
-   file, say so and v2 writes into `.hermes/.env` with the same 0600 rules.
-4. **Admin capability TTL** — 10 min per onboarding pass, or per-action
-   confirmation (a code for every install)? Per-action is safer and annoying.
-5. **Reverse proxy** — is nginx actually planned? If not, item 4 of the §4 list
-   (journal vs terminal) never has to be solved and the section can shrink.
+| # | question | answer |
+|---|---|---|
+| 1 | bootstrap install commands | He does not remember. npm ruled out by the layout evidence in §3; URLs get fetched from vendor docs at implementation time and verified on a throwaway box. Button stays behind `--allow-install`, `update` path ships. |
+| 2 | hermes | Manual. No clone + `pip install -e` from the dashboard: it is his own fork with no installer, and a source build is a different failure surface than four vendor scripts. |
+| 3 | key store | `~/.team-up/secrets.env` as §1 argues. `~/.hermes/.env` stays readable and untouched. |
+| 4 | admin capability TTL | 10 minutes. |
+| 5 | reverse proxy | No nginx planned. §4 shrunk accordingly; loopback + `ssh -L` is the access model. |
+
+Nothing in this spec is open. Implementation can start from it.
