@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { teamUpHome } from "../paths.mjs";
 import { loadJson, configPath, usagePath } from "../roster/config.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
-import { listTmuxSessions } from "../runs/tmux.mjs";
+import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
 import { assertPathInsideRoot } from "../specialists/safe-id.mjs";
 import {
   isValidRunId,
@@ -32,6 +32,18 @@ import {
   removeOpenRouterKey,
 } from "./providers.mjs";
 import { buildClisView, commandExists } from "./clis.mjs";
+import {
+  isValidCliId,
+  bootstrapAvailable,
+  updateAvailable,
+  loginAvailable,
+  hermesInstallRefusal,
+  spawnCliJob,
+  readInstallLog,
+  classifyVerificationVerdict,
+  installState,
+  installSessionName,
+} from "./installers.mjs";
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 const COOKIE_NAME = "team_up_dashboard";
@@ -234,11 +246,14 @@ export function createDashboardServer({
   now = () => Date.now(),
   adminGate = createAdminGate({ now, log: (msg) => io.out(msg) }),
   fetchFn = globalThis.fetch,
+  allowInstall = false,
+  sessionExists = (session) => tmuxSessionExists(session, { exec }),
 } = {}) {
   const expectedToken = token ?? ensureDashboardToken(env);
   const memo = createMemo();
   const clisMemo = createMemo(30_000);
   const openrouterValidation = {};
+  const auditedJobCompletion = new Set();
 
   function isAuthed(req) {
     if (rejectQueryToken(req.url || "")) return false;
@@ -572,6 +587,149 @@ export function createDashboardServer({
       return;
     }
 
+    const cliInstallMatch = pathname.match(/^\/api\/clis\/([^/]+)\/install$/);
+    if (req.method === "POST" && cliInstallMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const cli = cliInstallMatch[1];
+      try {
+        const roster = loadRoster(env);
+        if (!isValidCliId(cli, roster)) {
+          jsonResponse(res, 400, { error: "unknown cli id" });
+          return;
+        }
+        const boot = bootstrapAvailable(cli, { allowInstall });
+        if (!boot.available) {
+          jsonResponse(res, 400, { error: boot.reason });
+          return;
+        }
+        if (cli === "hermes") {
+          const refusal = hermesInstallRefusal({ env, exec });
+          if (refusal) {
+            appendAudit(
+              {
+                actor: "127.0.0.1",
+                action: "cli.install",
+                target: cli,
+                result: "fail",
+                detail: refusal.detail,
+              },
+              { env },
+            );
+            jsonResponse(res, 409, refusal);
+            return;
+          }
+        }
+        const running = installState(cli, { env, sessionExists });
+        if (running.state === "running") {
+          jsonResponse(res, 409, { error: "install already running", job: running });
+          return;
+        }
+        const spawned = spawnCliJob(cli, "install", { env, exec, sessionExists });
+        if (!spawned.ok) {
+          jsonResponse(res, spawned.status, spawned);
+          return;
+        }
+        appendAudit(
+          { actor: "127.0.0.1", action: "cli.install", target: cli, result: "ok", detail: "spawned" },
+          { env },
+        );
+        jsonResponse(res, 200, { ok: true, session: spawned.session, command: boot.command, job: spawned.job });
+      } catch (e) {
+        appendAudit(
+          { actor: "127.0.0.1", action: "cli.install", target: cli, result: "fail" },
+          { env },
+        );
+        jsonResponse(res, 500, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    const cliUpdateMatch = pathname.match(/^\/api\/clis\/([^/]+)\/update$/);
+    if (req.method === "POST" && cliUpdateMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const cli = cliUpdateMatch[1];
+      try {
+        const roster = loadRoster(env);
+        if (!isValidCliId(cli, roster)) {
+          jsonResponse(res, 400, { error: "unknown cli id" });
+          return;
+        }
+        const upd = updateAvailable(cli);
+        if (!upd.available) {
+          jsonResponse(res, 400, { error: upd.reason });
+          return;
+        }
+        const running = installState(cli, { env, sessionExists });
+        if (running.state === "running") {
+          jsonResponse(res, 200, { ok: true, joined: true, job: running });
+          return;
+        }
+        const spawned = spawnCliJob(cli, "update", { env, exec, sessionExists });
+        if (!spawned.ok) {
+          jsonResponse(res, spawned.status, spawned);
+          return;
+        }
+        appendAudit(
+          { actor: "127.0.0.1", action: "cli.update", target: cli, result: "ok", detail: "spawned" },
+          { env },
+        );
+        jsonResponse(res, 200, { ok: true, session: spawned.session, command: upd.command, job: spawned.job });
+      } catch (e) {
+        appendAudit(
+          { actor: "127.0.0.1", action: "cli.update", target: cli, result: "fail" },
+          { env },
+        );
+        jsonResponse(res, 500, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    const cliLoginMatch = pathname.match(/^\/api\/clis\/([^/]+)\/login$/);
+    if (req.method === "POST" && cliLoginMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const cli = cliLoginMatch[1];
+      try {
+        const roster = loadRoster(env);
+        if (!isValidCliId(cli, roster)) {
+          jsonResponse(res, 400, { error: "unknown cli id" });
+          return;
+        }
+        const login = loginAvailable(cli);
+        if (!login.available) {
+          jsonResponse(res, 400, { error: "login not available for this cli" });
+          return;
+        }
+        const running = installState(cli, { env, sessionExists });
+        if (running.state === "running") {
+          jsonResponse(res, 200, { ok: true, joined: true, job: running });
+          return;
+        }
+        const spawned = spawnCliJob(cli, "login", { env, exec, sessionExists });
+        if (!spawned.ok) {
+          jsonResponse(res, spawned.status, spawned);
+          return;
+        }
+        appendAudit(
+          { actor: "127.0.0.1", action: "cli.login", target: cli, result: "ok", detail: "spawned" },
+          { env },
+        );
+        jsonResponse(res, 200, {
+          ok: true,
+          session: spawned.session,
+          command: login.command,
+          attach: `tmux attach -t ${installSessionName(cli)}`,
+          job: spawned.job,
+        });
+      } catch (e) {
+        appendAudit(
+          { actor: "127.0.0.1", action: "cli.login", target: cli, result: "fail" },
+          { env },
+        );
+        jsonResponse(res, 500, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     if (req.method !== "GET" && isApi) {
       jsonResponse(res, 405, { error: "method not allowed" });
       return;
@@ -725,9 +883,51 @@ export function createDashboardServer({
     if (pathname === "/api/clis") {
       const data = clisMemo.get("clis", () => {
         const roster = loadRoster(env);
-        return sanitizeForDashboard(buildClisView(roster, { exec, env }));
+        return sanitizeForDashboard(buildClisView(roster, { exec, env, allowInstall }));
       });
       jsonResponse(res, 200, data);
+      return;
+    }
+
+    const cliLogMatch = pathname.match(/^\/api\/clis\/([^/]+)\/install\/log$/);
+    if (cliLogMatch) {
+      const cli = cliLogMatch[1];
+      try {
+        const roster = loadRoster(env);
+        if (!isValidCliId(cli, roster)) {
+          jsonResponse(res, 400, { error: "unknown cli id" });
+          return;
+        }
+        const log = readInstallLog(cli, { env });
+        const state = installState(cli, { env, sessionExists });
+        const verdict = state.state === "succeeded" && updateAvailable(cli).available
+          ? classifyVerificationVerdict(cli, { env, exec, logLines: log.lines })
+          : null;
+        if ((state.state === "succeeded" || state.state === "failed") && state.exit_code != null) {
+          const key = `${cli}:${state.exit_code}:${log.lines.length}`;
+          if (!auditedJobCompletion.has(key)) {
+            auditedJobCompletion.add(key);
+            const phase = log.lines.some((l) => l.includes("phase: verify")) ? "update+verify" : "job";
+            appendAudit(
+              {
+                actor: "127.0.0.1",
+                action: "cli.update",
+                target: cli,
+                result: state.state === "succeeded" ? "ok" : "fail",
+                detail: JSON.stringify({
+                  phase,
+                  exit_code: state.exit_code,
+                  verdict: verdict?.verdict ?? null,
+                }),
+              },
+              { env },
+            );
+          }
+        }
+        jsonResponse(res, 200, { cli, ...log, install_state: state.state, post_update_verdict: verdict });
+      } catch (e) {
+        jsonResponse(res, 500, { error: String(e.message || e) });
+      }
       return;
     }
 
@@ -747,6 +947,7 @@ export function startDashboard({
   host = "127.0.0.1",
   port = 8556,
   rotateToken = false,
+  allowInstall = false,
   env = process.env,
   io = { out: console.log, err: console.error },
 } = {}) {
@@ -754,7 +955,7 @@ export function startDashboard({
     io.err(`warning: dashboard binding to ${host} — use ssh -L for remote access`);
   }
   const token = ensureDashboardToken(env, { rotate: rotateToken });
-  const { server } = createDashboardServer({ env, host, token, io });
+  const { server } = createDashboardServer({ env, host, token, io, allowInstall });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {

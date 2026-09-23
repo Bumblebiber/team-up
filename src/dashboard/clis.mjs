@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { harnessStatus } from "../harness/registry.mjs";
+import { enrichCliRow } from "./installers.mjs";
 
 export function commandExists(cmd, { exec = execFileSync } = {}) {
   if (!cmd || typeof cmd !== "string") return null;
@@ -57,5 +58,9 @@ export function detectClis(roster, { exec = execFileSync, env = process.env } = 
 }
 
 export function buildClisView(roster, opts = {}) {
-  return detectClis(roster, opts);
+  const { allowInstall = false, env = process.env, ...detectOpts } = opts;
+  const detected = detectClis(roster, detectOpts);
+  return {
+    clis: detected.clis.map((row) => enrichCliRow(row, roster, { allowInstall, env })),
+  };
 }
