@@ -169,7 +169,7 @@ command, version or flag ever arrives from the browser.
 | cursor | `curl -fsS https://cursor.com/install \| bash` — **assumed** | `cursor-agent update` ✅ | network shell script |
 | opencode | `curl -fsSL https://opencode.ai/install \| bash` — **assumed** | `opencode upgrade` ✅ | network shell script |
 | codex | vendor standalone installer — **assumed, and least certain** | `codex update` ✅ | network shell script |
-| hermes | none — Benni's fork, no vendor installer | none | **not offered**; row shows "manual" (decided, Benni 2026-09-23) |
+| hermes | `git clone https://github.com/NousResearch/hermes-agent` + `uv venv` + editable install + a launcher shim in `~/.local/bin/hermes` — **assumed, same rule as the other four** | none (git pull) | source install, **plus** the overwrite hazard below |
 
 ✅ = verified from `--help` on this host 2026-09-23.
 
@@ -195,6 +195,17 @@ throwaway machine or container before the button ships. Until that happens the
 install button stays behind `--allow-install` and only the ✅ `update` path is
 offered — every CLI here can already update itself, which covers the common
 case; bootstrap only matters on a fresh box.
+
+**hermes overwrite hazard.** hermes is the one CLI installed from source, so
+"install" and "the tree someone works in" are the same directory. On this host
+that tree holds work that exists nowhere else: 5 local commits on
+`feature/v0.16-rebase` (TUI statusline, PM dashboard, TIM project detection)
+and an uncommitted 42-line `cli.py` patch adding the TIM statusline hook. The
+`fork` remote that used to point at `~/projects/hermes-agent` was dead — that
+directory is gone — so there is no second copy. Therefore: the install endpoint
+**refuses** when the target directory already exists, no `--force`, and the UI
+says "already installed, use git pull". Fresh machines are the only case it
+serves, which is exactly v2's driver.
 
 Three of the five pipe a network shell script into bash. That is the risky one
 and it is why §4 exists: `POST /api/clis/claude/install` is remote code
@@ -387,7 +398,7 @@ the right login entry points rather than `claude setup-token` /
 | # | question | answer |
 |---|---|---|
 | 1 | bootstrap install commands | He does not remember. npm ruled out by the layout evidence in §3; URLs get fetched from vendor docs at implementation time and verified on a throwaway box. Button stays behind `--allow-install`, `update` path ships. |
-| 2 | hermes | Manual. No clone + `pip install -e` from the dashboard: it is his own fork with no installer, and a source build is a different failure surface than four vendor scripts. |
+| 2 | hermes | **Reversed 2026-09-23 after checking the host.** It is not a fork: `~/.hermes/hermes-agent` is a plain clone of `NousResearch/hermes-agent`, 0 commits ahead of `origin/main`. So a bootstrap is a normal upstream clone + `uv` venv and v2 offers it. See the overwrite hazard in §3. |
 | 3 | key store | `~/.team-up/secrets.env` as §1 argues. `~/.hermes/.env` stays readable and untouched. |
 | 4 | admin capability TTL | 10 minutes. |
 | 5 | reverse proxy | No nginx planned. §4 shrunk accordingly; loopback + `ssh -L` is the access model. |
