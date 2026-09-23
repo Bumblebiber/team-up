@@ -156,6 +156,7 @@ test("gc records stale candidate and fresh activity clears it", withTempRuns(asy
   const state = createGcFixture();
   const stopped = [];
   gcRuns({
+    listSessions: () => [],
     ...staleDeps,
     states: [state],
     stopTmux: session => stopped.push(session),
@@ -168,6 +169,7 @@ test("gc records stale candidate and fresh activity clears it", withTempRuns(asy
   assert.deepEqual(stopped, []);
 
   gcRuns({
+    listSessions: () => [],
     now: new Date(NOW + 60_000),
     states: [loadState(state.runId)],
     heartbeatFor: () => NOW + 30_000,
@@ -189,6 +191,7 @@ test("gc fails typed worker after 30+10 and cleans lease before tmux", withTempR
   const effects = [];
 
   const report = gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       stopTmux: session => effects.push(["stop", session]),
     }),
@@ -236,6 +239,7 @@ test("gc aborts stale failure when state becomes protected during confirmation",
   const stopped = [];
 
   gcRuns({
+    listSessions: () => [],
     ...staleDeps,
     states: [state],
     onBeforeStaleConfirmation: ({ runId }) => {
@@ -259,6 +263,7 @@ test("gc clears stale candidacy when activity becomes fresh during confirmation"
   let heartbeatReads = 0;
 
   gcRuns({
+    listSessions: () => [],
     ...staleDeps,
     states: [state],
     heartbeatFor: () => {
@@ -283,6 +288,7 @@ test("gc defers tmux stop when lease release is busy and retries next sweep", wi
   let releaseCalls = 0;
 
   const first = gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       stopTmux: session => stopped.push(session),
     }),
@@ -301,6 +307,7 @@ test("gc defers tmux stop when lease release is busy and retries next sweep", wi
   assert.deepEqual(stopped, []);
 
   const second = gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       stopTmux: session => stopped.push(session),
     }),
@@ -341,6 +348,7 @@ test("gc releases active lease from lease reader when state omits current_attemp
   const effects = [];
 
   gcRuns({
+    listSessions: () => [],
     ...staleDeps,
     states: [loadState(state.runId)],
     releaseLease: input => effects.push(["release", input]),
@@ -368,6 +376,7 @@ test("gc reconciles legitimate mailbox closeout during stale confirmation", with
   };
 
   gcRuns({
+    listSessions: () => [],
     ...staleDeps,
     states: [state],
     onBeforeStaleConfirmation: ({ runId }) => {
@@ -394,6 +403,7 @@ test("gc stale failure persists claim before release attempt", withTempRuns(asyn
   let releaseStarted = false;
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps(),
     states: [loadState(state.runId)],
     releaseLease: input => {
@@ -441,6 +451,7 @@ test("stale cleanup aborts when worker recovers after lease release", withTempRu
   saveState(latest);
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps(),
     states: [loadState(state.runId)],
     releaseLease: () => assert.fail("must not release after lease_released"),
@@ -472,6 +483,7 @@ test("stale cleanup clears claim when lease was replaced", withTempRuns(async ()
   const stopped = [];
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps(),
     states: [loadState(state.runId)],
     releaseLease: () => ({ ok: false, reason: "not_holder", current: "attempt-new" }),
@@ -504,6 +516,7 @@ test("gc continues other runs when stale claim lease release throws", withTempRu
   let releaseCalls = 0;
 
   const report = gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps(),
     states: [loadState(stale.runId), terminal],
     releaseLease: input => {
@@ -531,6 +544,7 @@ test("gc preserves legitimate result at finalize boundary", withTempRuns(async (
   };
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps(),
     states: [state],
     onBeforeStaleArtifactPublish: ({ runId }) => {
@@ -557,6 +571,7 @@ test("gc reconciles legitimate result written after stale claim", withTempRuns(a
   };
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps(),
     states: [state],
     onAfterClaim: ({ runId }) => {
@@ -583,6 +598,7 @@ test("gc later sweep reconciles legitimate result over synthetic stale failure",
   const stopped = [];
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       inspectTmux: () => ({
         exists: true,
@@ -602,6 +618,7 @@ test("gc later sweep reconciles legitimate result over synthetic stale failure",
   atomicWriteText(path.join(mb, "STATUS"), "done\n");
 
   const second = gcRuns({
+    listSessions: () => [],
     ...staleDeps,
     states: [loadState(state.runId)],
     releaseLease: () => assert.fail("must not release on reconciliation sweep"),
@@ -626,6 +643,7 @@ test("stale tmux stop targets immutable session id when name is reused", withTem
   let inspectCalls = 0;
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       inspectTmux: session => {
         inspectCalls += 1;
@@ -670,6 +688,7 @@ test("stale tmux stop is no-op when immutable session id is gone", withTempRuns(
   const stopped = [];
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       tmuxExists: sessionId => sessionId !== "$gone",
     }),
@@ -692,6 +711,7 @@ test("terminal sweep after immutable stale stop never targets reused tmux name",
   let inspectCalls = 0;
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       inspectTmux: session => {
         inspectCalls += 1;
@@ -720,6 +740,7 @@ test("terminal sweep after immutable stale stop never targets reused tmux name",
   aliveTmuxSessions.add("$new");
 
   gcRuns({
+    listSessions: () => [],
     now: new Date(NOW + 60_000),
     states: [loadState(state.runId)],
     heartbeatFor: () => null,
@@ -766,6 +787,7 @@ test("typed blocked result without STATUS finalizes as waiting_human not synthet
   const stopped = [];
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       stopTmux: session => stopped.push(session),
     }),
@@ -787,6 +809,7 @@ test("ordinary terminal kill retries when stopTmux returns false", withTempRuns(
   let stopCalls = 0;
 
   const first = gcRuns({
+    listSessions: () => [],
     now: new Date(NOW),
     states: [terminal],
     heartbeatFor: () => null,
@@ -805,6 +828,7 @@ test("ordinary terminal kill retries when stopTmux returns false", withTempRuns(
   assert.equal(afterFailed.cleanup?.terminal_tmux_stopped_at, undefined);
 
   const second = gcRuns({
+    listSessions: () => [],
     now: new Date(NOW + 60_000),
     states: [loadState(terminal.runId)],
     heartbeatFor: () => null,
@@ -824,6 +848,7 @@ test("ordinary terminal kill retries when stopTmux returns false", withTempRuns(
   assert.deepEqual(stopped, ["worker-gc", "worker-gc"]);
 
   const third = gcRuns({
+    listSessions: () => [],
     now: new Date(NOW + 120_000),
     states: [loadState(terminal.runId)],
     heartbeatFor: () => null,
@@ -838,6 +863,7 @@ test("gc terminal cleanup is idempotent and dry-run never mutates", withTempRuns
   const terminal = createGcFixture({ status: "done" });
   const stopped = [];
   gcRuns({
+    listSessions: () => [],
     now: new Date(NOW),
     states: [terminal],
     heartbeatFor: () => null,
@@ -849,6 +875,7 @@ test("gc terminal cleanup is idempotent and dry-run never mutates", withTempRuns
   const active = createGcFixture();
   const before = JSON.stringify(loadState(active.runId));
   const report = gcRuns({
+    listSessions: () => [],
     ...staleDeps,
     states: [active],
     dryRun: true,
@@ -870,6 +897,7 @@ test("typed result without STATUS finalizes after stop without overwrite", withT
   const stopped = [];
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       stopTmux: session => stopped.push(session),
     }),
@@ -894,6 +922,7 @@ test("legacy result without STATUS finalizes after stop without overwrite", with
   const stopped = [];
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       stopTmux: session => stopped.push(session),
     }),
@@ -933,6 +962,7 @@ test("crash after tmux stop resumes and finalizes stale failure", withTempRuns(a
 
   const stopped = [];
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       tmuxExists: () => false,
     }),
@@ -969,6 +999,7 @@ test("crash resume from tmux_stopped clears worker tmux and ignores reused name"
 
   const stopped = [];
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       tmuxExists: () => false,
       stopTmux: session => stopped.push(session),
@@ -990,6 +1021,7 @@ test("crash resume from tmux_stopped clears worker tmux and ignores reused name"
   aliveTmuxSessions.add("$new");
 
   gcRuns({
+    listSessions: () => [],
     now: new Date(NOW + 60_000),
     states: [loadState(state.runId)],
     heartbeatFor: () => null,
@@ -1023,6 +1055,7 @@ test("crash during lease release resumes claim on next sweep", withTempRuns(asyn
   let releaseCalls = 0;
 
   const first = gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps(),
     states: [loadState(state.runId)],
     releaseLease: () => {
@@ -1037,6 +1070,7 @@ test("crash during lease release resumes claim on next sweep", withTempRuns(asyn
   assert.equal(loadState(state.runId).cleanup?.stale_publication_claim?.phase, "claimed");
 
   const second = gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps(),
     states: [loadState(state.runId)],
     releaseLease: () => ({ ok: true }),
@@ -1068,6 +1102,7 @@ test("crash during tmux stop retries same immutable session id", withTempRuns(as
   let stopCalls = 0;
 
   const first = gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       stopTmux: session => {
         aliveTmuxSessions.delete(session);
@@ -1086,6 +1121,7 @@ test("crash during tmux stop retries same immutable session id", withTempRuns(as
   assert.equal(loadState(state.runId).cleanup?.stale_publication_claim?.phase, "lease_released");
 
   const second = gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps({
       stopTmux: session => stopped.push(session),
     }),
@@ -1105,6 +1141,7 @@ test("claim is durable before release with no mailbox mutation", withTempRuns(as
   let observedClaim = false;
 
   gcRuns({
+    listSessions: () => [],
     ...makeStaleDeps(),
     states: [loadState(state.runId)],
     releaseLease: () => {
@@ -1163,6 +1200,7 @@ test("mark_stale stores tmux session id from first inspection without second loo
   let inspectCalls = 0;
 
   gcRuns({
+    listSessions: () => [],
     now: new Date(NOW),
     states: [loadState(state.runId)],
     heartbeatFor: () => NOW - IDLE_MS - 1,
@@ -1193,6 +1231,7 @@ test("identity mismatch at final confirmation clears candidate and never stops r
   let inspectCalls = 0;
 
   gcRuns({
+    listSessions: () => [],
     ...staleDeps,
     states: [loadState(state.runId)],
     inspectTmux: session => {

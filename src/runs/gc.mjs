@@ -865,6 +865,7 @@ export function gcRuns({
   inspectTmux = inspectTmuxSession,
   tmuxExists = tmuxSessionExists,
   stopTmux = stopTmuxSession,
+  listSessions = listTmuxSessions,
   releaseLease = releaseAttemptLease,
   onBeforeStaleConfirmation = null,
   onBeforeStaleArtifactPublish = null,
@@ -989,6 +990,9 @@ export function gcRuns({
     report.idle_sessions = gcIdleSessions({
       now,
       states: input,
+      listSessions,
+      inspectTmux,
+      stopTmux,
       idleSessionHours: Number.isFinite(idleHours) && idleHours > 0 ? idleHours : 2,
       dryRun,
     });
