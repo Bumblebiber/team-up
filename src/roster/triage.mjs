@@ -59,12 +59,19 @@ export function shouldRunTriage({ roster, role, modelPin, noTriage = false }) {
  * Resolve triage API key without mutating process.env.
  * Env wins over secrets.env, then triage.key_file.
  */
+export function triageKeyFiles({ roster, env = process.env } = {}) {
+  const cfg = triageConfig(roster);
+  const files = [];
+  const sp = secretsPath(env);
+  if (sp) files.push(sp);
+  if (cfg.key_file) files.push(cfg.key_file);
+  return files;
+}
+
 export function lookupTriageKey({ roster, env = process.env, warn = (msg) => console.error(msg) }) {
   const cfg = triageConfig(roster);
   const keyName = cfg.key_env || DEFAULT_TRIAGE.key_env;
-  const keyFiles = [secretsPath(env)];
-  if (cfg.key_file) keyFiles.push(cfg.key_file);
-  return lookupKey({ keyName, keyFiles, env, warn });
+  return lookupKey({ keyName, keyFiles: triageKeyFiles({ roster, env }), env, warn });
 }
 
 export function shouldUseActiveTriage(roster, random = Math.random) {
@@ -87,13 +94,14 @@ export function bumpReasoning(reasoning) {
   return REASONING_LEVELS[idx + 1];
 }
 
-function fallbackOutput(fallback_reason, latency_ms = 0) {
+function fallbackOutput(fallback_reason, latency_ms = 0, extra = {}) {
   return {
     source: "fallback",
     profile: null,
     confidence: { tier: 0, reasoning: 0 },
     fallback_reason,
     latency_ms,
+    ...extra,
   };
 }
 
@@ -202,10 +210,13 @@ export async function triage({
     return fallbackOutput("role_not_allowlisted", 0);
   }
 
-  const { key: apiKey } = lookupTriageKey({ roster, env });
-  if (!apiKey) {
-    return fallbackOutput("no_key", 0);
+  const keyLookup = lookupTriageKey({ roster, env });
+  if (!keyLookup.key) {
+    return fallbackOutput("no_key", 0, {
+      key_files_checked: triageKeyFiles({ roster, env }),
+    });
   }
+  const apiKey = keyLookup.key;
 
   const body = {
     model: cfg.model || DEFAULT_TRIAGE.model,

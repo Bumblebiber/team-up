@@ -106,18 +106,29 @@ function rejectQueryToken(url) {
   return /(^|&)(token|auth|access_token|bearer)=/i.test(search);
 }
 
-function createMemo() {
+function createMemo(ttlMs = 1000) {
   const cache = new Map();
   return {
     get(key, fn) {
       const now = Date.now();
       const hit = cache.get(key);
-      if (hit && now - hit.at < 1000) return hit.value;
+      if (hit && now - hit.at < ttlMs) return hit.value;
       const value = fn();
       cache.set(key, { at: now, value });
       return value;
     },
   };
+}
+
+function isClientRequestError(e) {
+  return e instanceof SyntaxError;
+}
+
+function auditServerFailure(env, action, target) {
+  appendAudit(
+    { actor: "127.0.0.1", action, target, result: "fail" },
+    { env },
+  );
 }
 
 function jsonResponse(res, status, body) {
@@ -219,13 +230,14 @@ export function createDashboardServer({
   exec = execFileSync,
   listSessions = () => listTmuxSessions({ exec }),
   capturePane = (session) => capturePaneLines(session, 200, { exec, listSessions }),
-  now = () => Date.now(),
-  adminGate = createAdminGate({ now, log: (msg) => console.log(msg) }),
-  fetchFn = globalThis.fetch,
   io = { out: console.log, err: console.error },
+  now = () => Date.now(),
+  adminGate = createAdminGate({ now, log: (msg) => io.out(msg) }),
+  fetchFn = globalThis.fetch,
 } = {}) {
   const expectedToken = token ?? ensureDashboardToken(env);
   const memo = createMemo();
+  const clisMemo = createMemo(30_000);
   const openrouterValidation = {};
 
   function isAuthed(req) {
@@ -340,6 +352,14 @@ export function createDashboardServer({
       }
       if (!checkCsrf(req, res)) return;
       const challenge = adminGate.issueChallenge();
+      if (!challenge.ok) {
+        appendAudit(
+          { actor: "127.0.0.1", action: "admin.challenge", target: null, result: "fail" },
+          { env },
+        );
+        jsonResponse(res, 429, { error: challenge.error });
+        return;
+      }
       appendAudit(
         { actor: "127.0.0.1", action: "admin.challenge", target: null, result: "ok" },
         { env },
@@ -391,6 +411,10 @@ export function createDashboardServer({
           jsonResponse(res, 400, { error: "key required" });
           return;
         }
+        if (/[\r\n]/.test(key)) {
+          jsonResponse(res, 400, { error: "key must not contain line breaks" });
+          return;
+        }
         const roster = loadRoster(env);
         if (!isOpenRouterWritable({ env, roster })) {
           jsonResponse(res, 403, { error: "key is read-only (env or external file)" });
@@ -437,8 +461,13 @@ export function createDashboardServer({
           limit: validation.limit,
           source: "file",
         });
-      } catch {
-        jsonResponse(res, 400, { error: "bad request" });
+      } catch (e) {
+        if (isClientRequestError(e)) {
+          jsonResponse(res, 400, { error: "bad request" });
+          return;
+        }
+        auditServerFailure(env, "provider.connect", "openrouter");
+        jsonResponse(res, 500, { error: "server error" });
       }
       return;
     }
@@ -477,8 +506,13 @@ export function createDashboardServer({
           limit: validation.limit,
           error: validation.error || null,
         });
-      } catch {
-        jsonResponse(res, 400, { error: "bad request" });
+      } catch (e) {
+        if (isClientRequestError(e)) {
+          jsonResponse(res, 400, { error: "bad request" });
+          return;
+        }
+        auditServerFailure(env, "provider.validate", "openrouter");
+        jsonResponse(res, 500, { error: "server error" });
       }
       return;
     }
@@ -505,8 +539,13 @@ export function createDashboardServer({
           { env },
         );
         jsonResponse(res, 200, { ok: true });
-      } catch {
-        jsonResponse(res, 400, { error: "bad request" });
+      } catch (e) {
+        if (isClientRequestError(e)) {
+          jsonResponse(res, 400, { error: "bad request" });
+          return;
+        }
+        auditServerFailure(env, "provider.remove", "openrouter");
+        jsonResponse(res, 500, { error: "server error" });
       }
       return;
     }
@@ -684,7 +723,7 @@ export function createDashboardServer({
     }
 
     if (pathname === "/api/clis") {
-      const data = memo.get("clis", () => {
+      const data = clisMemo.get("clis", () => {
         const roster = loadRoster(env);
         return sanitizeForDashboard(buildClisView(roster, { exec, env }));
       });

@@ -185,13 +185,10 @@ export function handoffsDoneDir(env = process.env) {
 }
 
 export function secretsPath(env = process.env) {
-  return resolveWritePath({
-    teamUpEnv: "TEAM_UP_SECRETS",
-    teamUpRelative: "secrets.env",
-    env,
-  });
-}
-
-export function installLogPath(cli, env = process.env) {
-  return path.join(teamUpHome(env), "logs", `install-${cli}.log`);
+  if (env.TEAM_UP_SECRETS) return env.TEAM_UP_SECRETS;
+  if (env.TEAM_UP_HOME) return path.join(env.TEAM_UP_HOME, "secrets.env");
+  if (env === process.env) {
+    return path.join(teamUpHome(env), "secrets.env");
+  }
+  return null;
 }

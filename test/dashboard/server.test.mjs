@@ -194,7 +194,9 @@ async function loginCookie(port, token) {
 async function grantAdmin(port, cookie, adminGate, { viaHttp = true } = {}) {
   const gate = adminGate || createAdminGate({ log: () => {} });
   const challenge = gate.issueChallenge();
-  const code = challenge.code;
+  assert.equal(challenge.ok, true);
+  const code = gate.peekChallengeCode();
+  assert.ok(code, "expected confirmation code on gate");
   if (viaHttp) {
     const confirm = await req(port, "/api/admin/confirm", {
       method: "POST",

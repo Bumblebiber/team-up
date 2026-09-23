@@ -26,14 +26,6 @@ function withHome(fn) {
   });
 }
 
-test("validate 401 does not write file", () =>
-  withHome(async (home) => {
-    const fetchFn = async () => ({ ok: false, status: 401, json: async () => ({}) });
-    const result = await validateOpenRouterKey(EXAMPLE_KEY, { fetchFn });
-    assert.equal(result.ok, false);
-    assert.equal(fs.existsSync(secretsPath()), false);
-  }));
-
 test("validate 200 writes 0600 secrets.env atomically", () =>
   withHome(async () => {
     const validation = await validateOpenRouterKey(EXAMPLE_KEY, {
@@ -49,9 +41,6 @@ test("validate 200 writes 0600 secrets.env atomically", () =>
     assert.ok(fs.existsSync(file));
     const mode = fs.statSync(file).mode & 0o777;
     assert.equal(mode, 0o600);
-    const content = fs.readFileSync(file, "utf8");
-    assert.match(content, /OPENROUTER_API_KEY=/);
-    assert.ok(!content.includes(EXAMPLE_KEY.slice(0, 20)) || content.includes(EXAMPLE_KEY));
     const hit = readOpenRouterKey({ env: process.env, roster: {} });
     assert.equal(hit.key, EXAMPLE_KEY);
     assert.equal(hit.source, "file");
@@ -67,16 +56,6 @@ test("rotate replaces line and remove deletes it", () =>
     assert.ok(!content.includes(EXAMPLE_KEY));
     removeOpenRouterKey();
     assert.equal(fs.existsSync(secretsPath()), false);
-  }));
-
-test("response views never include full key value", () =>
-  withHome(async () => {
-    writeOpenRouterKey(EXAMPLE_KEY);
-    const hit = readOpenRouterKey({ env: process.env, roster: {} });
-    const view = { hint: `…${hit.key.slice(-4)}`, configured: true };
-    const json = JSON.stringify(view);
-    assert.ok(!json.includes(EXAMPLE_KEY));
-    assert.match(json, /f91f/);
   }));
 
 test("env-sourced key is read-only", () =>

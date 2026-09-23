@@ -22,11 +22,23 @@ export function atomicWriteText(filePath, text, { mode } = {}) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   const payload = text.endsWith("\n") ? text : `${text}\n`;
-  if (mode != null) {
-    fs.writeFileSync(tmp, payload, { mode });
-    fs.chmodSync(tmp, mode);
-  } else {
-    fs.writeFileSync(tmp, payload);
+  let renamed = false;
+  try {
+    if (mode != null) {
+      fs.writeFileSync(tmp, payload, { mode });
+      fs.chmodSync(tmp, mode);
+    } else {
+      fs.writeFileSync(tmp, payload);
+    }
+    fs.renameSync(tmp, filePath);
+    renamed = true;
+  } finally {
+    if (!renamed) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch (e) {
+        if (e.code !== "ENOENT") throw e;
+      }
+    }
   }
-  fs.renameSync(tmp, filePath);
 }

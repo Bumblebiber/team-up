@@ -9,14 +9,6 @@ const VALIDATE_URL = "https://openrouter.ai/api/v1/key";
 const CLASS_B = new Set(["claude", "codex", "cursor"]);
 const CLASS_C = new Set(["opencode", "hermes"]);
 
-const LOGIN_COMMANDS = {
-  claude: "claude auth",
-  codex: "codex login",
-  cursor: "NO_OPEN_BROWSER=1 cursor-agent login",
-  opencode: "opencode providers",
-  hermes: "# configure OPENROUTER_API_KEY in ~/.hermes/.env",
-};
-
 export function providerClass(id) {
   if (id === "openrouter") return "A";
   if (CLASS_B.has(id)) return "B";
@@ -38,7 +30,7 @@ export function isOpenRouterWritable({ env = process.env, roster, lookup = readO
   if (hit.source === "env") return false;
   if (hit.source === "file") {
     const target = secretsPath(env);
-    return hit.filePath === target;
+    return !!target && hit.filePath === target;
   }
   return false;
 }
@@ -78,6 +70,7 @@ function removeEnvLine(lines, keyName) {
 
 export function writeOpenRouterKey(key, { env = process.env } = {}) {
   const filePath = secretsPath(env);
+  if (!filePath) throw new Error("TEAM_UP_HOME required to store secrets");
   const lines = readSecretsLines(filePath);
   const text = upsertEnvLine(lines, OPENROUTER_KEY, key);
   atomicWriteText(filePath, text, { mode: 0o600 });
@@ -86,6 +79,7 @@ export function writeOpenRouterKey(key, { env = process.env } = {}) {
 
 export function removeOpenRouterKey({ env = process.env } = {}) {
   const filePath = secretsPath(env);
+  if (!filePath) return null;
   const lines = readSecretsLines(filePath);
   const text = removeEnvLine(lines, OPENROUTER_KEY);
   if (text.trim() === "") {
@@ -149,6 +143,7 @@ export function buildProvidersView({ roster, env = process.env, cliPresent = () 
     configured: !!orLookup.key,
     hint: orLookup.key ? keyHint(orLookup.key) : null,
     source: orLookup.source,
+    source_file: orLookup.source === "file" ? orLookup.filePath : null,
     writable: orWritable,
     last_validated_at: orMeta.at || null,
     last_verdict: orMeta.verdict || null,
@@ -166,8 +161,8 @@ export function buildProvidersView({ roster, env = process.env, cliPresent = () 
       configured: present,
       hint: null,
       source: null,
+      source_file: null,
       writable: false,
-      login_command: LOGIN_COMMANDS[id] || null,
       last_validated_at: null,
       last_verdict: null,
     });

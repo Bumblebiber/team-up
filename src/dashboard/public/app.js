@@ -1,7 +1,7 @@
 const $ = (sel) => document.querySelector(sel);
 
-let adminCapable = false;
 let adminChallengeId = null;
+let modelsPage = 0;
 
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
@@ -180,7 +180,8 @@ function providerStatus(p) {
   if (p.class === "A") {
     if (!p.configured) return '<span class="badge stale">not connected</span>';
     const bits = [esc(p.hint || ""), p.label ? esc(p.label) : "", p.last_verdict === "ok" ? "valid" : ""].filter(Boolean);
-    return `<span class="badge ok">connected · ${bits.join(" · ")}</span>`;
+    const src = p.source_file ? ` · ${esc(p.source_file)}` : p.source ? ` · ${esc(p.source)}` : "";
+    return `<span class="badge ok">connected · ${bits.join(" · ")}${src}</span>`;
   }
   if (p.class === "B") {
     return `<span class="badge ${p.configured ? "ok" : "stale"}">subscription login</span>`;
@@ -189,6 +190,11 @@ function providerStatus(p) {
 }
 
 async function refreshProviders() {
+  const list = $("#providers-list");
+  const activeInput = list.querySelector('.provider-form input[name="key"]');
+  if (activeInput && (activeInput === document.activeElement || activeInput.value)) {
+    return;
+  }
   const data = await api("/api/providers");
   const html = data.providers.map((p) => {
     let body = `<div class="provider-card"><strong>${esc(p.id)}</strong> ${providerStatus(p)}`;
@@ -245,8 +251,13 @@ async function refreshModels() {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (inRoster) params.set("in_roster", inRoster);
+  params.set("page", String(modelsPage));
   const data = await api(`/api/models?${params}`);
-  $("#models-meta").textContent = `${data.total} models (page ${data.page + 1}, showing ${data.models.length})`;
+  const pageCount = Math.max(1, Math.ceil(data.total / data.pageSize));
+  if (modelsPage >= pageCount) modelsPage = Math.max(0, pageCount - 1);
+  $("#models-meta").textContent = `${data.total} models (page ${data.page + 1} of ${pageCount}, showing ${data.models.length})`;
+  $("#models-prev").disabled = data.page <= 0;
+  $("#models-next").disabled = data.page + 1 >= pageCount;
   $("#apply-cli-hint").textContent = `To apply roster chain changes: ${data.apply_cli}`;
   const rows = data.models.map((m) => `
     <tr class="${m.in_roster && m.reachable === false ? "greyed" : ""}">
@@ -280,8 +291,24 @@ async function refreshSetup() {
   await Promise.allSettled([refreshProviders(), refreshModels(), refreshClis()]);
 }
 
-$("#models-search").addEventListener("input", () => refreshModels());
-$("#models-roster-only").addEventListener("change", () => refreshModels());
+$("#models-search").addEventListener("input", () => {
+  modelsPage = 0;
+  refreshModels();
+});
+$("#models-roster-only").addEventListener("change", () => {
+  modelsPage = 0;
+  refreshModels();
+});
+$("#models-prev").addEventListener("click", () => {
+  if (modelsPage > 0) {
+    modelsPage -= 1;
+    refreshModels();
+  }
+});
+$("#models-next").addEventListener("click", () => {
+  modelsPage += 1;
+  refreshModels();
+});
 $("#refresh-scores-btn").addEventListener("click", async () => {
   try {
     await api("/api/refresh", { method: "POST", body: JSON.stringify({}) });
@@ -309,7 +336,6 @@ $("#admin-confirm-form").addEventListener("submit", async (e) => {
       method: "POST",
       body: JSON.stringify({ challenge_id: adminChallengeId, code: $("#admin-code-input").value.trim() }),
     });
-    adminCapable = true;
     $("#admin-gate").classList.add("hidden");
     $("#admin-status").textContent = "Admin confirmed for 10 minutes.";
   } catch (err) {

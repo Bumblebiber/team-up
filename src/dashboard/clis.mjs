@@ -1,9 +1,13 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { harnessStatus } from "../harness/registry.mjs";
 
 export function commandExists(cmd, { exec = execFileSync } = {}) {
+  if (!cmd || typeof cmd !== "string") return null;
   try {
-    const out = exec("sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).trim();
+    const result = spawnSync("bash", ["-c", 'command -v -- "$1"', "command-v", cmd], {
+      encoding: "utf8",
+    });
+    const out = (result.stdout || "").trim();
     return out || null;
   } catch {
     return null;
