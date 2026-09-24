@@ -71,6 +71,20 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function fmtTime(iso) {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso || "—";
+  const d = new Date(ms);
+  const p2 = (n) => String(n).padStart(2, "0");
+  const time = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  const today = new Date();
+  const sameDay = d.getFullYear() === today.getFullYear()
+    && d.getMonth() === today.getMonth()
+    && d.getDate() === today.getDate();
+  if (sameDay) return time;
+  return `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()} - ${time}`;
+}
+
 function levelBadge(level, stale) {
   const parts = [];
   if (level === "red") parts.push('<span class="badge red">RED</span>');
@@ -154,7 +168,7 @@ async function refreshUsage() {
       <div class="key">${esc(key)}</div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
       <div>${levelBadge(w.level, w.stale)}</div>
-      <div class="marked-item">↻ ${esc(w.resets_at || "—")}</div>
+      <div class="marked-item">↻ ${esc(w.resets_at ? fmtTime(w.resets_at) : "—")}</div>
     </div>`).join("");
   $("#usage-grid").innerHTML = cards || "<p>No usage data</p>";
   $("#marked-list").innerHTML = data.marked.length
