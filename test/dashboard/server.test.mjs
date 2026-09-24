@@ -217,6 +217,19 @@ async function grantAdmin(port, cookie, adminGate, { viaHttp = true } = {}) {
   return gate;
 }
 
+test("the login cookie outlives the browser session", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const login = await req(port, "/api/login", { method: "POST", body: { token } });
+    const cookie = login.headers.get("set-cookie") || "";
+    // A session cookie means re-pasting the token after every browser restart.
+    assert.match(cookie, /Max-Age=\d+/);
+    assert.match(cookie, /HttpOnly/);
+    assert.match(cookie, /SameSite=Strict/);
+    server.close();
+  }));
+
 test("POST without CSRF header is refused", () =>
   withHome(async ({ token }) => {
     const { server } = createDashboardServer({ token });

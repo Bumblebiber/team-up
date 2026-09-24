@@ -48,6 +48,8 @@ import {
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 const COOKIE_NAME = "team_up_dashboard";
 const MAX_BODY = 4096;
+/** 90 days. Revoke early with `team-up dashboard --rotate-token`. */
+const COOKIE_MAX_AGE_SEC = 90 * 24 * 60 * 60;
 
 export function dashboardTokenPath(env = process.env) {
   return path.join(teamUpHome(env), "dashboard-token");
@@ -361,7 +363,12 @@ export function createDashboardServer({
         }
         res.writeHead(200, {
           "Content-Type": "application/json",
-          "Set-Cookie": `${COOKIE_NAME}=${expectedToken}; HttpOnly; SameSite=Strict; Path=/`,
+          // Without Max-Age this is a session cookie, so the token has to be
+          // pasted again after every browser restart — on every device. It is
+          // the same secret either way; expiring it at the window close buys
+          // nothing and is the whole of the friction.
+          "Set-Cookie":
+            `${COOKIE_NAME}=${expectedToken}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_SEC}`,
         });
         res.end(JSON.stringify({ ok: true }));
       } catch {
