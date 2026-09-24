@@ -329,11 +329,19 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     const host = argValue(rest, "--host") || "127.0.0.1";
     const rotateToken = rest.includes("--rotate-token");
     const allowInstall = rest.includes("--allow-install");
+    const publicOrigin = argValue(rest, "--public-origin") || "";
+    const usage =
+      "usage: team-up dashboard [--port N] [--host H] [--rotate-token] "
+      + "[--allow-install] [--public-origin https://host]";
     if (!Number.isFinite(port) || port < 0 || port > 65535) {
-      io.err("usage: team-up dashboard [--port N] [--host H] [--rotate-token] [--allow-install]");
+      io.err(usage);
       return 1;
     }
-    await startDashboard({ host, port, rotateToken, allowInstall, io });
+    if (publicOrigin && !/^https?:\/\/[^/\s]+$/.test(publicOrigin)) {
+      io.err("--public-origin must be scheme://host[:port] with no path");
+      return 1;
+    }
+    await startDashboard({ host, port, rotateToken, allowInstall, publicOrigin, io });
     return 0;
   }
   if (

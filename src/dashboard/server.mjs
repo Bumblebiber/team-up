@@ -247,6 +247,7 @@ export function createDashboardServer({
   adminGate = createAdminGate({ now, log: (msg) => io.out(msg) }),
   fetchFn = globalThis.fetch,
   allowInstall = false,
+  publicOrigin = env.TEAMUP_DASHBOARD_ORIGIN || "",
   sessionExists = (session) => tmuxSessionExists(session, { exec }),
 } = {}) {
   const expectedToken = token ?? ensureDashboardToken(env);
@@ -289,8 +290,12 @@ export function createDashboardServer({
     }
     const origin = req.headers.origin;
     if (origin) {
+      // Behind a reverse proxy (nginx, `tailscale serve`) the browser sends the
+      // public origin, never the loopback bind — so without this the operator
+      // has to rewrite the Origin header in the proxy, which is exactly the
+      // check being defeated. One configured origin is the honest version.
       const allowed = serverOrigin(host, req);
-      if (origin !== allowed) {
+      if (origin !== allowed && !(publicOrigin && origin === publicOrigin)) {
         jsonResponse(res, 403, { error: "origin not allowed" });
         return false;
       }
@@ -948,6 +953,7 @@ export function startDashboard({
   port = 8556,
   rotateToken = false,
   allowInstall = false,
+  publicOrigin = "",
   env = process.env,
   io = { out: console.log, err: console.error },
 } = {}) {
@@ -955,7 +961,7 @@ export function startDashboard({
     io.err(`warning: dashboard binding to ${host} — use ssh -L for remote access`);
   }
   const token = ensureDashboardToken(env, { rotate: rotateToken });
-  const { server } = createDashboardServer({ env, host, token, io, allowInstall });
+  const { server } = createDashboardServer({ env, host, token, io, allowInstall, publicOrigin });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {

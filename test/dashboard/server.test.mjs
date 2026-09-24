@@ -244,6 +244,41 @@ test("foreign Origin on POST is refused", () =>
     server.close();
   }));
 
+test("the configured public origin passes the CSRF check", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({ token, publicOrigin: "https://dash.example" });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/refresh", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      origin: "https://dash.example",
+      body: {},
+    });
+    // Past the origin gate, so the next gate is the one that answers.
+    assert.equal(r.status, 403);
+    assert.match(r.json.error, /admin confirmation/i);
+    server.close();
+  }));
+
+test("a public origin does not open the door to other origins", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({ token, publicOrigin: "https://dash.example" });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/refresh", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      origin: "http://evil.example",
+      body: {},
+    });
+    assert.equal(r.status, 403);
+    assert.match(r.json.error, /origin/i);
+    server.close();
+  }));
+
 test("write without admin capability is refused", () =>
   withHome(async ({ token }) => {
     const { server } = createDashboardServer({ token });
