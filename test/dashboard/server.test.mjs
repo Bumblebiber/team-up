@@ -262,6 +262,27 @@ test("the configured public origin passes the CSRF check", () =>
     server.close();
   }));
 
+test("several public origins are accepted, one per name the host answers to", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({
+      token,
+      publicOrigin: "http://strato:8556, http://strato.example.ts.net:8556",
+    });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    for (const origin of ["http://strato:8556", "http://strato.example.ts.net:8556"]) {
+      const r = await req(port, "/api/refresh", {
+        method: "POST",
+        cookie,
+        csrf: true,
+        origin,
+        body: {},
+      });
+      assert.match(r.json.error, /admin confirmation/i, `${origin} should pass the origin gate`);
+    }
+    server.close();
+  }));
+
 test("a public origin does not open the door to other origins", () =>
   withHome(async ({ token }) => {
     const { server } = createDashboardServer({ token, publicOrigin: "https://dash.example" });

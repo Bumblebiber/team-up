@@ -251,6 +251,14 @@ export function createDashboardServer({
   sessionExists = (session) => tmuxSessionExists(session, { exec }),
 } = {}) {
   const expectedToken = token ?? ensureDashboardToken(env);
+  // A tailnet or proxy reaches the same dashboard under more than one name
+  // (short MagicDNS name and FQDN, say). Reads work under any of them, so a
+  // single accepted origin means "everything loads but nothing saves".
+  const publicOrigins = new Set(
+    (Array.isArray(publicOrigin) ? publicOrigin : String(publicOrigin).split(","))
+      .map((o) => o.trim())
+      .filter(Boolean),
+  );
   const memo = createMemo();
   const clisMemo = createMemo(30_000);
   const openrouterValidation = {};
@@ -295,7 +303,7 @@ export function createDashboardServer({
       // has to rewrite the Origin header in the proxy, which is exactly the
       // check being defeated. One configured origin is the honest version.
       const allowed = serverOrigin(host, req);
-      if (origin !== allowed && !(publicOrigin && origin === publicOrigin)) {
+      if (origin !== allowed && !publicOrigins.has(origin)) {
         jsonResponse(res, 403, { error: "origin not allowed" });
         return false;
       }

@@ -332,13 +332,14 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     const publicOrigin = argValue(rest, "--public-origin") || "";
     const usage =
       "usage: team-up dashboard [--port N] [--host H] [--rotate-token] "
-      + "[--allow-install] [--public-origin https://host]";
+      + "[--allow-install] [--public-origin https://host[,https://other]]";
     if (!Number.isFinite(port) || port < 0 || port > 65535) {
       io.err(usage);
       return 1;
     }
-    if (publicOrigin && !/^https?:\/\/[^/\s]+$/.test(publicOrigin)) {
-      io.err("--public-origin must be scheme://host[:port] with no path");
+    const originParts = publicOrigin.split(",").map((o) => o.trim()).filter(Boolean);
+    if (originParts.some((o) => !/^https?:\/\/[^/\s]+$/.test(o))) {
+      io.err("--public-origin takes scheme://host[:port], comma-separated, no paths");
       return 1;
     }
     await startDashboard({ host, port, rotateToken, allowInstall, publicOrigin, io });
