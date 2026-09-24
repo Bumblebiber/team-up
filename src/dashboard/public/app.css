@@ -26,6 +26,34 @@
   }
 }
 
+/* Provider colours — one place for the whole dashboard. Official where the
+   company publishes one, brand-adjacent where it only ships black and white.
+   Everything tinted reads --prov, so a new provider needs one line here. */
+[data-provider] { --prov: var(--muted); }
+[data-provider="anthropic"] { --prov: #d97757; }
+[data-provider="openai"] { --prov: #10a37f; }
+[data-provider="cursor"] { --prov: #7c3aed; }
+[data-provider="xai"] { --prov: #111827; }
+[data-provider="deepseek"] { --prov: #4d6bfe; }
+[data-provider="moonshot"] { --prov: #16a3a3; }
+[data-provider="openrouter"] { --prov: #0ea5e9; }
+[data-provider="google"] { --prov: #4285f4; }
+[data-provider="meta"] { --prov: #0064e0; }
+[data-provider="mistral"] { --prov: #fa520f; }
+[data-provider="qwen"] { --prov: #615ced; }
+
+@media (prefers-color-scheme: dark) {
+  /* xAI's black disappears on a black surface. */
+  [data-provider="xai"] { --prov: #a1a1aa; }
+}
+
+.usage-card[data-provider], .provider-card[data-provider] {
+  background: color-mix(in srgb, var(--prov) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--prov) 40%, var(--border));
+}
+tr[data-provider] { background: color-mix(in srgb, var(--prov) 10%, transparent); }
+tr[data-provider] td:first-child { box-shadow: inset 3px 0 var(--prov); }
+
 * { box-sizing: border-box; }
 body {
   margin: 0;

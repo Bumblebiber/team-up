@@ -85,6 +85,31 @@ function fmtTime(iso) {
   return `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()} - ${time}`;
 }
 
+// Brand colours live in app.css; this only decides which one a string earns.
+// Last match wins, so "cursor:grok-4.5-high" is xAI and "hermes:deepseek-v4-pro"
+// is DeepSeek — the model says more than the CLI that runs it.
+const PROVIDER_TOKENS = {
+  anthropic: "anthropic", claude: "anthropic",
+  openai: "openai", codex: "openai", gpt: "openai",
+  cursor: "cursor", composer: "cursor",
+  xai: "xai", grok: "xai",
+  deepseek: "deepseek",
+  moonshotai: "moonshot", moonshot: "moonshot", kimi: "moonshot",
+  openrouter: "openrouter",
+  google: "google", gemini: "google",
+  meta: "meta", llama: "meta",
+  mistral: "mistral",
+  qwen: "qwen", alibaba: "qwen",
+};
+
+function providerAttr(...hints) {
+  let hit = null;
+  for (const token of hints.filter(Boolean).join(" ").toLowerCase().split(/[^a-z0-9]+/)) {
+    if (PROVIDER_TOKENS[token]) hit = PROVIDER_TOKENS[token];
+  }
+  return hit ? ` data-provider="${hit}"` : "";
+}
+
 function levelBadge(level, stale) {
   const parts = [];
   if (level === "red") parts.push('<span class="badge red">RED</span>');
@@ -98,7 +123,7 @@ async function refreshRuns() {
   const active = $("#active-only").checked ? "1" : "0";
   const data = await api(`/api/runs?active=${active}`);
   const rows = data.runs.map((r) => `
-    <tr class="clickable" data-run="${esc(r.runId)}">
+    <tr class="clickable" data-run="${esc(r.runId)}"${providerAttr(r.worker)}>
       <td><code>${esc(r.runId.slice(-8))}</code></td>
       <td>${esc(r.role)}</td>
       <td>${esc(r.status)}</td>
@@ -164,7 +189,7 @@ async function selectSession(session) {
 async function refreshUsage() {
   const data = await api("/api/usage");
   const cards = Object.entries(data.windows).map(([key, w]) => `
-    <div class="usage-card">
+    <div class="usage-card"${providerAttr(key)}>
       <div class="key">${esc(key)}</div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
       <div>${levelBadge(w.level, w.stale)}</div>
@@ -179,7 +204,7 @@ async function refreshUsage() {
 async function refreshPick() {
   const data = await api("/api/pick");
   const rows = data.picks.map((p) => `
-    <tr>
+    <tr${providerAttr(p.cli, p.model)}>
       <td>${esc(p.role)}</td>
       <td>${p.model ? esc(`${p.cli}:${p.model}`) : "<em>exhausted</em>"}</td>
       <td>${esc(p.effort || "—")}</td>
@@ -211,7 +236,7 @@ async function refreshProviders() {
   }
   const data = await api("/api/providers");
   const html = data.providers.map((p) => {
-    let body = `<div class="provider-card"><strong>${esc(p.id)}</strong> ${providerStatus(p)}`;
+    let body = `<div class="provider-card"${providerAttr(p.id)}><strong>${esc(p.id)}</strong> ${providerStatus(p)}`;
     if (p.class === "A" && p.writable) {
       body += `<form class="provider-form" data-id="${esc(p.id)}">
         <input type="password" name="key" placeholder="OpenRouter API key" autocomplete="off">
@@ -274,7 +299,7 @@ async function refreshModels() {
   $("#models-next").disabled = data.page + 1 >= pageCount;
   $("#apply-cli-hint").textContent = `To apply roster chain changes: ${data.apply_cli}`;
   const rows = data.models.map((m) => `
-    <tr class="${m.in_roster && m.reachable === false ? "greyed" : ""}">
+    <tr class="${m.in_roster && m.reachable === false ? "greyed" : ""}"${providerAttr(m.model, m.provider)}>
       <td>${esc(m.model)}</td>
       <td>${esc(m.display_name || "—")}</td>
       <td>${m.in_roster ? "yes" : "no"}</td>
@@ -336,7 +361,7 @@ async function refreshClis() {
       actions.push(`<button type="button" class="cli-login" data-cli="${esc(c.cli)}">Start login</button>`);
     }
     return `
-    <tr class="clickable ${selectedCli === c.cli ? "selected" : ""}" data-cli="${esc(c.cli)}">
+    <tr class="clickable ${selectedCli === c.cli ? "selected" : ""}" data-cli="${esc(c.cli)}"${providerAttr(c.cli)}>
       <td>${esc(c.cli)}</td>
       <td>${c.present ? '<span class="badge ok">installed</span>' : '<span class="badge stale">missing</span>'}</td>
       <td class="mono">${esc(c.version || "—")}</td>
