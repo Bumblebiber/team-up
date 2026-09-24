@@ -329,10 +329,12 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     const host = argValue(rest, "--host") || "127.0.0.1";
     const rotateToken = rest.includes("--rotate-token");
     const allowInstall = rest.includes("--allow-install");
+    const requireAdminConfirm = rest.includes("--require-admin-confirm");
     const publicOrigin = argValue(rest, "--public-origin") || "";
     const usage =
       "usage: team-up dashboard [--port N] [--host H] [--rotate-token] "
-      + "[--allow-install] [--public-origin https://host[,https://other]]";
+      + "[--allow-install] [--require-admin-confirm] "
+      + "[--public-origin https://host[,https://other]]";
     if (!Number.isFinite(port) || port < 0 || port > 65535) {
       io.err(usage);
       return 1;
@@ -342,7 +344,9 @@ export async function runCli(args, io = { out: console.log, err: console.error }
       io.err("--public-origin takes scheme://host[:port], comma-separated, no paths");
       return 1;
     }
-    await startDashboard({ host, port, rotateToken, allowInstall, publicOrigin, io });
+    await startDashboard({
+      host, port, rotateToken, allowInstall, requireAdminConfirm, publicOrigin, io,
+    });
     return 0;
   }
   if (

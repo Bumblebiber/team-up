@@ -212,7 +212,7 @@ test("admin gate expiry and CSRF on cli update endpoint", () =>
   withHome(async () => {
     const token = ensureDashboardToken(process.env);
     const adminGate = createAdminGate({ log: () => {} });
-    const { server } = createDashboardServer({ token, adminGate, sessionExists: () => false });
+    const { server } = createDashboardServer({ token, adminGate, requireAdminConfirm: true, sessionExists: () => false });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
     const noAdmin = await req(port, "/api/clis/claude/update", {

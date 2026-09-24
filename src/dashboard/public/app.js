@@ -358,6 +358,10 @@ function selectCli(cli) {
 
 async function refreshClis() {
   const data = await api("/api/clis");
+  // Off by default: the token already proves who you are, and the code only
+  // reaches someone reading the service journal. Start the dashboard with
+  // --require-admin-confirm to bring the second step back.
+  $("#admin-gate").classList.toggle("hidden", !data.requires_admin_confirm);
   const rows = data.clis.map((c) => {
     const state = c.install_state || "idle";
     const actions = [];
@@ -507,7 +511,6 @@ function refreshAll() {
 }
 
 function startPolling() {
-  $("#admin-gate").classList.remove("hidden");
   refreshAll();
   if (listTimer) clearInterval(listTimer);
   listTimer = setInterval(refreshAll, 5000);

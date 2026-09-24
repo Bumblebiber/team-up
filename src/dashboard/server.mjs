@@ -246,6 +246,7 @@ export function createDashboardServer({
   capturePane = (session) => capturePaneLines(session, 200, { exec, listSessions }),
   io = { out: console.log, err: console.error },
   now = () => Date.now(),
+  requireAdminConfirm = false,
   adminGate = createAdminGate({ now, log: (msg) => io.out(msg) }),
   fetchFn = globalThis.fetch,
   allowInstall = false,
@@ -313,14 +314,35 @@ export function createDashboardServer({
     return true;
   }
 
+  // A refused write is the one worth a line: without this, an attempt that
+  // never reached its handler left no trace anywhere.
+  function auditDeniedWrite(req, detail) {
+    appendAudit(
+      {
+        actor: "127.0.0.1",
+        action: "write.denied",
+        target: String(req.url || "").split("?")[0],
+        result: "fail",
+        detail,
+      },
+      { env },
+    );
+  }
+
   function requireWriteAccess(req, res) {
     if (!isLoopbackHost(host)) {
+      auditDeniedWrite(req, "non-loopback bind");
       jsonResponse(res, 403, { error: "write endpoints disabled on non-loopback bind" });
       return false;
     }
-    if (!checkCsrf(req, res)) return false;
+    if (!checkCsrf(req, res)) {
+      auditDeniedWrite(req, "csrf check failed");
+      return false;
+    }
+    if (!requireAdminConfirm) return true;
     const cookie = authCookie(req);
     if (!cookie || !adminGate.hasCapability(cookie)) {
+      auditDeniedWrite(req, "admin confirmation required");
       jsonResponse(res, 403, { error: "admin confirmation required" });
       return false;
     }
@@ -905,7 +927,7 @@ export function createDashboardServer({
         const roster = loadRoster(env);
         return sanitizeForDashboard(buildClisView(roster, { exec, env, allowInstall }));
       });
-      jsonResponse(res, 200, data);
+      jsonResponse(res, 200, { ...data, requires_admin_confirm: requireAdminConfirm });
       return;
     }
 
@@ -968,6 +990,7 @@ export function startDashboard({
   port = 8556,
   rotateToken = false,
   allowInstall = false,
+  requireAdminConfirm = false,
   publicOrigin = "",
   env = process.env,
   io = { out: console.log, err: console.error },
@@ -976,7 +999,9 @@ export function startDashboard({
     io.err(`warning: dashboard binding to ${host} — use ssh -L for remote access`);
   }
   const token = ensureDashboardToken(env, { rotate: rotateToken });
-  const { server } = createDashboardServer({ env, host, token, io, allowInstall, publicOrigin });
+  const { server } = createDashboardServer({
+    env, host, token, io, allowInstall, requireAdminConfirm, publicOrigin,
+  });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {

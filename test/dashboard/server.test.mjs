@@ -259,7 +259,7 @@ test("foreign Origin on POST is refused", () =>
 
 test("the configured public origin passes the CSRF check", () =>
   withHome(async ({ token }) => {
-    const { server } = createDashboardServer({ token, publicOrigin: "https://dash.example" });
+    const { server } = createDashboardServer({ token, publicOrigin: "https://dash.example", requireAdminConfirm: true });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
     const r = await req(port, "/api/refresh", {
@@ -280,6 +280,7 @@ test("several public origins are accepted, one per name the host answers to", ()
     const { server } = createDashboardServer({
       token,
       publicOrigin: "http://strato:8556, http://strato.example.ts.net:8556",
+      requireAdminConfirm: true,
     });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
@@ -313,9 +314,9 @@ test("a public origin does not open the door to other origins", () =>
     server.close();
   }));
 
-test("write without admin capability is refused", () =>
+test("write without admin capability is refused when the gate is on", () =>
   withHome(async ({ token }) => {
-    const { server } = createDashboardServer({ token });
+    const { server } = createDashboardServer({ token, requireAdminConfirm: true });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
     const r = await req(port, "/api/refresh", {
@@ -333,7 +334,7 @@ test("expired admin capability is refused", () =>
   withHome(async ({ token }) => {
     let ts = Date.now();
     const adminGate = createAdminGate({ now: () => ts });
-    const { server } = createDashboardServer({ token, adminGate });
+    const { server } = createDashboardServer({ token, adminGate, requireAdminConfirm: true });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
     await grantAdmin(port, cookie, adminGate);
@@ -385,7 +386,7 @@ test("openrouter key write never returns full value", () =>
       }
       throw new Error("unexpected fetch");
     };
-    const { server } = createDashboardServer({ token, adminGate, fetchFn });
+    const { server } = createDashboardServer({ token, adminGate, fetchFn, requireAdminConfirm: true });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
     await grantAdmin(port, cookie, adminGate);
@@ -467,3 +468,51 @@ test("mailbox directory symlink cannot read outside the run", () =>
 after(() => {
   // allow server close handlers to finish
 });
+
+test("a write goes through without the admin gate", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    // An unknown CLI id: past the gate, refused by the handler itself. Any
+    // endpoint that does its real work would reach the network from here.
+    const r = await req(port, "/api/clis/nope/install", { method: "POST", cookie, csrf: true, body: {} });
+    assert.equal(r.status, 400);
+    assert.match(r.json.error, /unknown cli id/i);
+    server.close();
+  }));
+
+test("a refused write is written to the audit log", () =>
+  withHome(async ({ home, token }) => {
+    const { server } = createDashboardServer({ token, requireAdminConfirm: true });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    await req(port, "/api/refresh", { method: "POST", cookie, csrf: true, body: {} });
+    server.close();
+    // The refusal happens before the handler, so this line is the only record
+    // that anyone tried at all.
+    const lines = fs.readFileSync(path.join(home, "dashboard-audit.log"), "utf8")
+      .trim().split("\n").map((l) => JSON.parse(l));
+    const denied = lines.find((l) => l.action === "write.denied");
+    assert.ok(denied, `expected a write.denied line, got ${JSON.stringify(lines)}`);
+    assert.equal(denied.target, "/api/refresh");
+    assert.equal(denied.result, "fail");
+  }));
+
+test("a write refused for a bad origin is audited too", () =>
+  withHome(async ({ home, token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    await req(port, "/api/refresh", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      origin: "http://evil.example",
+      body: {},
+    });
+    server.close();
+    const lines = fs.readFileSync(path.join(home, "dashboard-audit.log"), "utf8")
+      .trim().split("\n").map((l) => JSON.parse(l));
+    assert.ok(lines.some((l) => l.action === "write.denied" && /csrf/.test(l.detail)));
+  }));
