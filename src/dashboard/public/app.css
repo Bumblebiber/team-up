@@ -41,13 +41,16 @@
 [data-provider="meta"] { --prov: #0064e0; }
 [data-provider="mistral"] { --prov: #fa520f; }
 [data-provider="qwen"] { --prov: #615ced; }
+/* Not companies — the two local CLIs, coloured so they are still tellable apart. */
+[data-provider="hermes"] { --prov: #eab308; }
+[data-provider="opencode"] { --prov: #a1a1aa; }
 
 @media (prefers-color-scheme: dark) {
   /* xAI's black disappears on a black surface. */
   [data-provider="xai"] { --prov: #a1a1aa; }
 }
 
-.usage-card[data-provider], .provider-card[data-provider] {
+.usage-row[data-provider], .provider-card[data-provider] {
   background: color-mix(in srgb, var(--prov) 14%, var(--surface));
   border-color: color-mix(in srgb, var(--prov) 40%, var(--border));
 }
@@ -161,20 +164,36 @@ tr.orphan td:first-child { color: var(--orphan); }
 .badge.stale { background: var(--muted); color: var(--bg); }
 .badge.ok { background: var(--green); color: #000; }
 
-.usage-grid {
+.usage-grid { display: grid; gap: 0.25rem; margin-bottom: 1rem; }
+.usage-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  grid-template-columns: 9rem minmax(4rem, 1fr) 3rem auto auto;
+  align-items: center;
   gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-.usage-card {
-  padding: 0.5rem;
+  padding: 0.35rem 0.5rem;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
-.usage-card .key { font-weight: 600; font-size: 0.8rem; }
-.usage-card .pct { font-size: 1.25rem; }
+.usage-row .key { font-weight: 600; font-size: 0.8rem; overflow-wrap: anywhere; }
+.usage-row .pct { text-align: right; font-variant-numeric: tabular-nums; }
+.usage-row .marked-item { margin: 0; white-space: nowrap; }
+.bar {
+  height: 0.6rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  background: var(--prov, var(--accent));
+}
+
+@media (max-width: 600px) {
+  .usage-row { grid-template-columns: 1fr auto; }
+  .usage-row .bar { grid-column: 1 / -1; }
+}
 
 .detail, .pane {
   margin-top: 0.75rem;

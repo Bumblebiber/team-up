@@ -100,13 +100,19 @@ const PROVIDER_TOKENS = {
   meta: "meta", llama: "meta",
   mistral: "mistral",
   qwen: "qwen", alibaba: "qwen",
+  hermes: "hermes", opencode: "opencode",
 };
 
-function providerAttr(...hints) {
+function providerOf(...hints) {
   let hit = null;
   for (const token of hints.filter(Boolean).join(" ").toLowerCase().split(/[^a-z0-9]+/)) {
     if (PROVIDER_TOKENS[token]) hit = PROVIDER_TOKENS[token];
   }
+  return hit;
+}
+
+function providerAttr(...hints) {
+  const hit = providerOf(...hints);
   return hit ? ` data-provider="${hit}"` : "";
 }
 
@@ -188,14 +194,20 @@ async function selectSession(session) {
 
 async function refreshUsage() {
   const data = await api("/api/usage");
-  const cards = Object.entries(data.windows).map(([key, w]) => `
-    <div class="usage-card"${providerAttr(key)}>
+  // Grouped by provider so the windows of one account sit together; the key
+  // breaks ties, which keeps the order stable across refreshes.
+  const rows = Object.entries(data.windows)
+    .sort(([a], [b]) =>
+      (providerOf(a) || "\uffff").localeCompare(providerOf(b) || "\uffff") || a.localeCompare(b))
+    .map(([key, w]) => `
+    <div class="usage-row"${providerAttr(key)}>
       <div class="key">${esc(key)}</div>
+      <div class="bar"><span style="width:${w.usedPct != null ? Math.min(100, w.usedPct) : 0}%"></span></div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
       <div>${levelBadge(w.level, w.stale)}</div>
       <div class="marked-item">↻ ${esc(w.resets_at ? fmtTime(w.resets_at) : "—")}</div>
     </div>`).join("");
-  $("#usage-grid").innerHTML = cards || "<p>No usage data</p>";
+  $("#usage-grid").innerHTML = rows || "<p>No usage data</p>";
   $("#marked-list").innerHTML = data.marked.length
     ? `<h3>Marked</h3>${data.marked.map((m) => `<div class="marked-item">${esc(m.key)} until ${esc(m.until)}</div>`).join("")}`
     : "";
