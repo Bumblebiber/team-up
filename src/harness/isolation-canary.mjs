@@ -60,7 +60,7 @@ export const CLAUDE_HARNESS_BUILTIN_MCP_SERVERS = Object.freeze([
 ]);
 
 /**
- * Claude Code 2.1.220 built-in skills visible in system/init of a clean harness.
+ * Claude Code built-in skills visible in system/init of a clean harness (2.1.220+).
  * Deliberate allowlist — add entries only when a CLI version introduces new built-ins.
  * ponytail: flat name list — no provenance; user skill with same name as built-in is
  * indistinguishable at init. Not exploitable today (probe runs in fresh temp cwd;
@@ -84,6 +84,21 @@ export const CLAUDE_HARNESS_BUILTIN_SKILLS = Object.freeze([
   "claude-api",
   "run",
   "run-skill-generator",
+  "workflow-authoring",
+  // New in 2.1.281. Confirmed built-in: it is on no path under ~/.claude, and
+  // the host's ~50 user skills did not appear in the same init — isolation
+  // held, the CLI simply grew a skill.
+  "deep-research",
+]);
+
+/**
+ * Plugins Claude Code ships itself. Same rule as the skill list: an entry goes
+ * in only after checking the name is on no path under the host's ~/.claude and
+ * absent from installed_plugins.json — otherwise a real leak gets allowlisted.
+ */
+export const CLAUDE_HARNESS_BUILTIN_PLUGINS = Object.freeze([
+  "agents-md",
+  "telemetry",
 ]);
 
 function contentNonceField(text, nonce) {
@@ -134,7 +149,7 @@ export function buildAllowedInitSurface({ expected, prepared } = {}) {
     allowedSkills.add(`${plugin}:${PLUGIN_CANARY_SKILL.replace(/\./g, "-")}`);
     allowedSkills.add(`${plugin}:${PLUGIN_CANARY_SKILL}`);
   }
-  const allowedPlugins = new Set(expected?.plugins || []);
+  const allowedPlugins = new Set([...(expected?.plugins || []), ...CLAUDE_HARNESS_BUILTIN_PLUGINS]);
   const allowedMcpServers = new Set(["selected"]);
   const allowedTools = new Set([
     ...CLAUDE_HARNESS_BUILTIN_TOOLS,
@@ -888,10 +903,12 @@ export function parseClaudeStructuredCapabilityProofs(streamText, {
 
   const exclusion = verifyInitSurfaceExclusion(init, { expected, prepared });
   if (!exclusion.ok) {
-    const first = exclusion.violations?.[0];
+    // All of them, not just the first: a CLI update that adds three built-ins
+    // otherwise costs three full verification round-trips to enumerate.
+    const names = (exclusion.violations || []).map((v) => `${v.kind}:${v.name}`);
     return isoFail(
       "init_surface_exclusion",
-      first ? `${first.kind}:${first.name}` : "init lists disallowed surface"
+      names.length ? names.join(", ") : "init lists disallowed surface"
     );
   }
 
