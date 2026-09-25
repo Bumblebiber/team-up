@@ -24,6 +24,13 @@ const CODEX_HIT_LIMIT_WAIT = "hit your usage limit";
 /** Full line with resets — short "5h limit:" false-matches ANSI fragments like "[?25h". */
 const CODEX_LIMIT_READY_RE = "limit:.*% left.*resets";
 const CODEX_STATUS_BAR_RE = "weekly .*% left";
+/**
+ * Appended to every label anchor: /status may first answer "Limits: refresh
+ * requested" and repaint the rows later, while the "⚠ 5h limit: only 1% left"
+ * banner and the status bar are already on screen. Returning on those sends
+ * /exit before any row exists.
+ */
+const CODEX_ROW_PAINTED = ".*% left.*resets";
 
 const SEQUENCES = {
   claude: { bin: "claude", command: "/usage", wait: "Current session", exit: "/exit" },
@@ -133,12 +140,12 @@ export function buildExpectScript(cli, timeoutSec = 45) {
   if (cli === "codex") {
     const readyPat = shellEscape(seq.ready || "Tip:");
     const limitReadyPat = shellEscape(CODEX_LIMIT_READY_RE);
-    const weeklyPat = shellEscape(CODEX_LIMIT_WAIT);
-    const fiveHourPat = shellEscape(CODEX_LIMIT_WAIT_ALT);
+    const weeklyPat = shellEscape(CODEX_LIMIT_WAIT + CODEX_ROW_PAINTED);
+    const fiveHourPat = shellEscape(CODEX_LIMIT_WAIT_ALT + CODEX_ROW_PAINTED);
     const waitHitPat = shellEscape(seq.waitHit || CODEX_HIT_LIMIT_WAIT);
     const panelTimeout = Math.max(60, Math.floor(timeoutSec * 0.35));
     const bootTimeout = Math.max(90, Math.floor(timeoutSec * 0.6));
-    const statusBarPat = shellEscape(CODEX_STATUS_BAR_RE);
+    const statusBarPat = shellEscape(CODEX_STATUS_BAR_RE + CODEX_ROW_PAINTED);
     return `set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"

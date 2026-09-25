@@ -12,6 +12,10 @@
  */
 export function stripAnsi(text) {
   return String(text)
+    // Cursor moves stand in for the blanks they skip: codex repaints its
+    // /status panel in place (`(resets\e[25;72H01:55`), and deleting the move
+    // glues the words together so no row parses.
+    .replace(/\x1b\[[0-9;]*[HfCG]/g, " ")
     .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
     .replace(/\x1b\][^\x07]*\x07/g, "")
     .replace(/\x1b[()][AB012]/g, "")

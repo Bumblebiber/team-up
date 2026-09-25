@@ -223,3 +223,22 @@ test("signalTree leaves a recorded pid alone once its start time no longer match
   await new Promise((r) => child.once("exit", r));
   assert.equal(alive(), false);
 });
+
+// codex 0.157 answers /status with "Limits: refresh requested" and repaints the
+// rows in place seconds later; meanwhile a "⚠ 5h limit: only 1% left" banner
+// and the "weekly 50% left" status bar are painted. An anchor that fires on
+// those sends /exit before the rows exist, and the collect is empty-parse.
+test("buildExpectScript codex anchors wait for a painted limit row", () => {
+  const script = buildExpectScript("codex", 180);
+  const block = script.split('send "/status\\r"')[1].split('catch { send "/exit')[0];
+  const anchors = [...block.matchAll(/-re "([^"]+)" \{ \}/g)]
+    .map((m) => new RegExp(m[1].replace(/\\\\/g, "\\"), "s"));
+  assert.ok(anchors.length > 0);
+  const raw = fs.readFileSync(
+    new URL("./fixtures/usage/codex-status-cup-render.txt", import.meta.url),
+    "utf8",
+  );
+  const beforeRows = raw.slice(0, raw.indexOf("(resets"));
+  for (const re of anchors) assert.equal(re.test(beforeRows), false, `${re} fires before the rows`);
+  assert.ok(anchors.some((re) => re.test(raw)));
+});

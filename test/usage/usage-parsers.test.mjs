@@ -89,3 +89,30 @@ test("parseCodexStatus reads the 5h window out of a raw PTY transcript", () => {
   assert.equal(w["codex:5h"].resets_at, "2026-09-02T17:41:00.000Z");
   assert.equal(w["codex:weekly"].resets_at, "2026-09-07T06:03:00.000Z");
 });
+
+// codex 0.157 repaints the /status panel in place with cursor moves
+// (`(resets\e[25;72H01:55`, `100%\e[27;61Hleft`) instead of spaces. Deleting
+// those moves glued the words together, only the Weekly row still parsed, and
+// the low-quota banner's "5h limit:" claimed Weekly's 50% as the 5h reading.
+test("parseCodexStatus reads a panel repainted with cursor moves", () => {
+  const text = fs.readFileSync(path.join(FIX, "codex-status-cup-render.txt"), "utf8");
+  const w = parseCodexStatus(text, { now: "2026-09-25T20:10:25.364Z" });
+  assert.deepEqual(Object.keys(w).sort(), ["codex:5h", "codex:luna-reserve-weekly", "codex:weekly"]);
+  assert.equal(w["codex:5h"].used, 0.99);
+  assert.equal(w["codex:5h"].resets_at_raw, "01:55 on 26 Sep");
+  assert.equal(w["codex:weekly"].used, 0.5);
+  assert.equal(w["codex:weekly"].resets_at_raw, "13:05 on 28 Sep");
+  assert.equal(w["codex:luna-reserve-weekly"].used, 0);
+  assert.equal(w["codex:luna-reserve-weekly"].resets_at_raw, "22:10 on 2 Oct");
+  for (const r of Object.values(w)) assert.match(r.resets_at, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("parseCodexStatus never lends one row's number to another label", () => {
+  const text =
+    "⚠ 5h limit: only 1% left · /status·weekly 50% left" +
+    "│  5h limit:   [░░░░] 1%\x1b[2m (resets" + // row cut off mid-repaint
+    "│  Weekly limit:   [██░░] 50% left (resets 13:05 on 28 Sep) │";
+  const w = parseCodexStatus(text, { now: "2026-09-25T20:10:25.364Z" });
+  assert.equal(w["codex:5h"], undefined);
+  assert.equal(w["codex:weekly"].used, 0.5);
+});

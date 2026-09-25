@@ -2,8 +2,11 @@
 import { normalizeWindowRecord } from "../usage/usage-windows.mjs";
 import { stripAnsi } from "./strip-ansi.mjs";
 
+// The span after "limit:" may not cross another "limit:": the transcript is
+// one unbroken line, and the low-quota banner ("5h limit: only 1% left") would
+// otherwise borrow the next row's percent and reset.
 const LIMIT_LINE_RE =
-  /([A-Za-z0-9][A-Za-z0-9 ]*?)\s+limit:\s+.*?(\d+)%\s+left\s*\(resets\s+([^)]+)\)/gi;
+  /([A-Za-z0-9][A-Za-z0-9 ]*?)\s+limit:\s+(?:(?!limit:).)*?(\d+)%\s+left\s*\(resets\s+([^)]+)\)/gi;
 const HIT_LIMIT_RE = /hit your usage limit.*?try again at\s+([^.]+)/is;
 
 function labelToWindowKey(label) {
