@@ -10,7 +10,13 @@ import { loadJson, configPath, usagePath } from "../roster/config.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
 import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
 import { assertPathInsideRoot } from "../specialists/safe-id.mjs";
-import { buildSpecialistsView } from "./specialists.mjs";
+import {
+  buildSpecialistsView,
+  buildCapabilityPoolView,
+  installSpecialistFromGithub,
+} from "./specialists.mjs";
+import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
+import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
 import {
   isValidRunId,
   buildRunsView,
@@ -132,6 +138,11 @@ function createMemo(ttlMs = 1000) {
       const value = fn();
       cache.set(key, { at: now, value });
       return value;
+    },
+    // A write that changes what a memoised view reports must not wait out the
+    // TTL, or the panel shows the old answer right after the click.
+    invalidate(key) {
+      cache.delete(key);
     },
   };
 }
@@ -894,6 +905,85 @@ export function createDashboardServer({
       return;
     }
 
+    if (req.method === "POST" && pathname === "/api/specialists/install") {
+      if (!requireWriteAccess(req, res)) return;
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        const result = await installSpecialistFromGithub(body.repo, {
+          subdir: String(body.subdir || ""),
+          env,
+        });
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: "specialist.install",
+            target: result.source || String(body.repo || ""),
+            result: result.ok ? "ok" : "fail",
+          },
+          { env },
+        );
+        clisMemo.invalidate("specialists");
+        clisMemo.invalidate("capability-pool");
+        // The client reads `error`; without it a refused install reaches the
+        // panel as a bare "Bad Request" and the reason is lost.
+        jsonResponse(res, result.ok ? 200 : 400, {
+          ...result,
+          ...(result.ok ? {} : { error: (result.errors || []).join("; ") }),
+        });
+      } catch (e) {
+        jsonResponse(res, 500, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    const capabilityMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/capabilities$/);
+    if (req.method === "POST" && capabilityMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const specialistId = decodeURIComponent(capabilityMatch[1]);
+      try {
+        assertSafeSpecialistSegment(specialistId, "id");
+        const body = JSON.parse(await readBody(req) || "{}");
+        const pkg = String(body.package || "");
+        const checksum = String(body.checksum || "");
+        const enable = body.action !== "disable";
+        // Assign only what the pool actually holds: a hand-written package or
+        // checksum would otherwise write an assignment no launch can resolve.
+        const known = buildCapabilityPoolView({ env }).packages.some(
+          (item) => item.package === pkg && item.checksum === checksum,
+        );
+        if (!known) {
+          jsonResponse(res, 400, { error: "unknown package or checksum" });
+          return;
+        }
+        const mutate = enable ? enableCapability : disableCapability;
+        mutate({ package: pkg, checksum, target: specialistId, env });
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: enable ? "capability.enable" : "capability.disable",
+            target: `${pkg} -> ${specialistId}`,
+            result: "ok",
+          },
+          { env },
+        );
+        clisMemo.invalidate("specialists");
+        clisMemo.invalidate("capability-pool");
+        jsonResponse(res, 200, { ok: true });
+      } catch (e) {
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: "capability.assign",
+            target: specialistId,
+            result: "fail",
+          },
+          { env },
+        );
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     if (req.method !== "GET" && isApi) {
       jsonResponse(res, 405, { error: "method not allowed" });
       return;
@@ -1015,6 +1105,13 @@ export function createDashboardServer({
       // changes between polls — the 30s memo keeps it off the 5s cycle.
       const data = clisMemo.get("specialists", () =>
         sanitizeForDashboard(buildSpecialistsView({ env })));
+      jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/capability-pool") {
+      const data = clisMemo.get("capability-pool", () =>
+        sanitizeForDashboard(buildCapabilityPoolView({ env })));
       jsonResponse(res, 200, data);
       return;
     }

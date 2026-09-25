@@ -51,6 +51,21 @@
             </label>
           </div>
           <div id="specialist-detail"></div>
+
+          <h3>Assign a capability</h3>
+          <div class="toolbar">
+            <select id="capability-select"></select>
+            <button type="button" id="capability-assign">Assign</button>
+          </div>
+          <p id="capability-status" class="muted"></p>
+
+          <h3>Install from GitHub</h3>
+          <div class="toolbar">
+            <input type="text" id="specialist-repo" placeholder="https://github.com/owner/repo#ref">
+            <input type="text" id="specialist-subdir" placeholder="subdir (optional)">
+            <button type="button" id="specialist-install">Install</button>
+          </div>
+          <p id="specialist-install-status" class="muted"></p>
         </section>
 
         <section id="panel-setup" class="panel setup-panel">

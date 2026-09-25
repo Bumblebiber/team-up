@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildSpecialistsView } from "../../src/dashboard/specialists.mjs";
+import {
+  buildSpecialistsView,
+  buildCapabilityPoolView,
+  parseGithubSource,
+  installSpecialistFromGithub,
+} from "../../src/dashboard/specialists.mjs";
 
 const CHECKSUM = "sha256:" + "a".repeat(64);
 const CAP_CHECKSUM = "sha256:" + "b".repeat(64);
@@ -53,13 +58,13 @@ function plant(home) {
   );
 }
 
-function withHome(fn) {
+async function withHome(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-spec-"));
   const prev = process.env.TEAM_UP_HOME;
   process.env.TEAM_UP_HOME = home;
   try {
     plant(home);
-    return fn(home);
+    return await fn(home);
   } finally {
     if (prev === undefined) delete process.env.TEAM_UP_HOME;
     else process.env.TEAM_UP_HOME = prev;
@@ -137,4 +142,92 @@ test("only approvals matching the installed checksum count", () =>
     );
     const [codey] = buildSpecialistsView().specialists;
     assert.deepEqual(codey.approved_for, ["/home/bbbee/projects/team-up"]);
+  }));
+
+test("only https github URLs are accepted as an install source", () => {
+  const good = parseGithubSource("https://github.com/Bumblebiber/team-up-with-codey.git#v1.0");
+  assert.equal(good.ok, true);
+  assert.equal(good.url, "https://github.com/Bumblebiber/team-up-with-codey.git");
+  assert.equal(good.ref, "v1.0");
+
+  for (const bad of [
+    "ssh://git@github.com/a/b",
+    "file:///etc/passwd",
+    "https://evil.example/a/b",
+    "https://github.com/a/b/c",
+    "https://github.com/--upload-pack=touch/b",
+    "https://github.com/a/b#--exec=touch",
+    "",
+  ]) {
+    assert.equal(parseGithubSource(bad).ok, false, bad);
+  }
+});
+
+test("a refused source never reaches git", async () => {
+  let called = false;
+  const result = await installSpecialistFromGithub("ssh://git@github.com/a/b", {
+    exec: async () => { called = true; },
+    install: async () => ({ ok: true }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(called, false);
+});
+
+test("a subdir escaping the checkout is refused and the clone is cleaned up", async () =>
+  withHome(async (home) => {
+    const tmpRoot = path.join(home, "clones");
+    fs.mkdirSync(tmpRoot, { recursive: true });
+    const result = await installSpecialistFromGithub("https://github.com/a/b", {
+      subdir: "../../etc",
+      tmpRoot,
+      exec: async () => {},
+      install: async () => ({ ok: true, id: "should.not.happen" }),
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(fs.readdirSync(tmpRoot), []);
+  }));
+
+test("a clone installs from the requested subdir", async () =>
+  withHome(async (home) => {
+    const tmpRoot = path.join(home, "clones");
+    fs.mkdirSync(tmpRoot, { recursive: true });
+    let installedFrom = null;
+    let gitArgs = null;
+    const result = await installSpecialistFromGithub("https://github.com/o/r#main", {
+      subdir: "bundle",
+      tmpRoot,
+      exec: async (_bin, args) => { gitArgs = args; },
+      install: async (dir) => { installedFrom = dir; return { ok: true, id: "x.y", version: "1" }; },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.source, "o/r#main");
+    assert.equal(path.basename(installedFrom), "bundle");
+    assert.ok(gitArgs.includes("--branch") && gitArgs.includes("main"));
+    assert.equal(gitArgs[gitArgs.length - 3], "--");
+    assert.deepEqual(fs.readdirSync(tmpRoot), []);
+  }));
+
+test("the pool view reports which specialists already hold a package", () =>
+  withHome((home) => {
+    assign(home, [
+      { package: "ponytail.build@4.8.4", checksum: CAP_CHECKSUM, targets: ["all"], exclude: ["testing.tessa"] },
+    ]);
+    const [pkg] = buildCapabilityPoolView().packages;
+    assert.equal(pkg.package, "ponytail.build@4.8.4");
+    assert.deepEqual(pkg.targets, ["all"]);
+    assert.deepEqual(pkg.exclude, ["testing.tessa"]);
+    assert.equal(pkg.checksum, CAP_CHECKSUM);
+  }));
+
+test("git is run without a credential prompt", async () =>
+  withHome(async (home) => {
+    const tmpRoot = path.join(home, "clones");
+    fs.mkdirSync(tmpRoot, { recursive: true });
+    let opts = null;
+    await installSpecialistFromGithub("https://github.com/o/r", {
+      tmpRoot,
+      exec: async (_bin, _args, o) => { opts = o; },
+      install: async () => ({ ok: true }),
+    });
+    assert.equal(opts.env.GIT_TERMINAL_PROMPT, "0");
   }));

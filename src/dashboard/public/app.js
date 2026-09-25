@@ -645,6 +645,8 @@ function chips(items) {
   return items.map((item) => `<span class="chip">${esc(item)}</span>`).join(" ");
 }
 
+let capabilityPool = null;
+
 function specialistSource(entry) {
   const provides = entry.provides || {};
   const gives = ["skills", "plugins", "mcps", "frameworks"]
@@ -652,6 +654,8 @@ function specialistSource(entry) {
   return `<li>
     <strong>${esc(entry.display_name)}</strong>
     <span class="muted">${esc(entry.package)} · ${esc(entry.checksum)} · ${esc(entry.reason)}</span>
+    <button type="button" class="capability-remove"
+      data-package="${esc(entry.package)}" data-checksum="${esc(entry.checksum_full)}">Remove</button>
     <div>${chips(gives)}</div>
   </li>`;
 }
@@ -710,19 +714,93 @@ function renderSpecialist() {
     }`;
 }
 
+// Only offer what the specialist does not already hold; assigning a package
+// twice is a no-op the user would have to reason about.
+function renderCapabilityChoices() {
+  const select = $("#capability-select");
+  const id = $("#specialist-select").value;
+  const held = new Set(
+    ((specialistsData?.specialists || []).find((s) => s.id === id)?.assigned || [])
+      .map((a) => `${a.package}:${a.checksum_full}`),
+  );
+  const options = (capabilityPool?.packages || [])
+    .filter((p) => !held.has(`${p.package}:${p.checksum}`))
+    .map((p) => `<option value="${esc(p.package)}" data-checksum="${esc(p.checksum)}">
+      ${esc(p.display_name)} — ${esc(p.package)}</option>`)
+    .join("");
+  select.innerHTML = options || '<option value="">nothing left to assign</option>';
+}
+
+async function assignCapability(pkg, checksum, action) {
+  const id = $("#specialist-select").value;
+  const status = $("#capability-status");
+  status.textContent = action === "disable" ? "Removing…" : "Assigning…";
+  try {
+    await api(`/api/specialists/${encodeURIComponent(id)}/capabilities`, {
+      method: "POST",
+      body: JSON.stringify({ package: pkg, checksum, action }),
+    });
+    await refreshSpecialists();
+    status.textContent = `${pkg} ${action === "disable" ? "removed from" : "assigned to"} ${id}`;
+  } catch (err) {
+    status.textContent = err.message;
+  }
+}
+
 async function refreshSpecialists() {
   const select = $("#specialist-select");
   const keep = select.value;
-  specialistsData = await api("/api/specialists");
+  const [specialists, pool] = await Promise.all([
+    api("/api/specialists"),
+    api("/api/capability-pool"),
+  ]);
+  specialistsData = specialists;
+  capabilityPool = pool;
   const list = specialistsData.specialists || [];
   select.innerHTML = list
     .map((s) => `<option value="${esc(s.id)}">${esc(s.display_name || s.id)}</option>`)
     .join("");
   if (list.some((s) => s.id === keep)) select.value = keep;
   renderSpecialist();
+  renderCapabilityChoices();
 }
 
-$("#specialist-select").addEventListener("change", renderSpecialist);
+$("#specialist-select").addEventListener("change", () => {
+  renderSpecialist();
+  renderCapabilityChoices();
+});
+
+$("#capability-assign").addEventListener("click", () => {
+  const option = $("#capability-select").selectedOptions[0];
+  if (!option?.value) return;
+  assignCapability(option.value, option.dataset.checksum, "enable");
+});
+
+// Delegated, because renderSpecialist replaces the list on every change.
+$("#specialist-detail").addEventListener("click", (event) => {
+  const button = event.target.closest(".capability-remove");
+  if (!button) return;
+  assignCapability(button.dataset.package, button.dataset.checksum, "disable");
+});
+
+$("#specialist-install").addEventListener("click", async () => {
+  const status = $("#specialist-install-status");
+  const repo = $("#specialist-repo").value.trim();
+  if (!repo) return;
+  status.textContent = `Cloning ${repo}…`;
+  try {
+    const result = await api("/api/specialists/install", {
+      method: "POST",
+      body: JSON.stringify({ repo, subdir: $("#specialist-subdir").value.trim() }),
+    });
+    status.textContent = `Installed ${result.id}@${result.version} from ${result.source}`;
+    $("#specialist-repo").value = "";
+    $("#specialist-subdir").value = "";
+    await refreshSpecialists();
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
 
 // ── Panel layout ──────────────────────────────────────────────────────────
 // Order comes from dragging a panel by its <h2>; size comes from the browser's
