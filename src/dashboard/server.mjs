@@ -10,6 +10,7 @@ import { loadJson, configPath, usagePath } from "../roster/config.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
 import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
 import { assertPathInsideRoot } from "../specialists/safe-id.mjs";
+import { buildSpecialistsView } from "./specialists.mjs";
 import {
   isValidRunId,
   buildRunsView,
@@ -1005,6 +1006,15 @@ export function createDashboardServer({
         }
         return buildUsageView(usage, roster, ts, { watcher, repairs });
       });
+      jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/specialists") {
+      // Reads a handful of JSON indexes and no subprocess, but nothing here
+      // changes between polls — the 30s memo keeps it off the 5s cycle.
+      const data = clisMemo.get("specialists", () =>
+        sanitizeForDashboard(buildSpecialistsView({ env })));
       jsonResponse(res, 200, data);
       return;
     }

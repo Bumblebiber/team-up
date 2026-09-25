@@ -25,6 +25,7 @@
         <a href="#panel-runs">Runs</a>
         <a href="#panel-tmux">tmux</a>
         <a href="#panel-pick">Pick</a>
+        <a href="#panel-specialists">Specialists</a>
         <a href="#panel-setup">Setup</a>
         <button type="button" id="reset-layout-btn" title="Restore the default panel order and size">Reset layout</button>
       </nav>
@@ -42,6 +43,16 @@
           <h2>tmux</h2>
           <div id="tmux-table" class="table-wrap"></div>
         </section>
+        <section id="panel-specialists" class="panel">
+          <h2>Specialists</h2>
+          <div class="toolbar">
+            <label>Specialist
+              <select id="specialist-select"></select>
+            </label>
+          </div>
+          <div id="specialist-detail"></div>
+        </section>
+
         <section id="panel-setup" class="panel setup-panel">
           <h2>Setup</h2>
           <div id="admin-gate" class="admin-gate hidden">

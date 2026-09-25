@@ -634,6 +634,96 @@ $("#admin-confirm-form").addEventListener("submit", async (e) => {
   }
 });
 
+// ── Specialists ───────────────────────────────────────────────────────────
+// One specialist at a time: the dropdown picks, the body shows what that one
+// actually holds. Fetched once per load and on demand — nothing here changes
+// between polls, so it stays off the 5s cycle.
+let specialistsData = null;
+
+function chips(items) {
+  if (!items?.length) return '<span class="muted">none</span>';
+  return items.map((item) => `<span class="chip">${esc(item)}</span>`).join(" ");
+}
+
+function specialistSource(entry) {
+  const provides = entry.provides || {};
+  const gives = ["skills", "plugins", "mcps", "frameworks"]
+    .flatMap((kind) => (provides[kind] || []).map((v) => `${kind.replace(/s$/, "")}: ${v}`));
+  return `<li>
+    <strong>${esc(entry.display_name)}</strong>
+    <span class="muted">${esc(entry.package)} · ${esc(entry.checksum)} · ${esc(entry.reason)}</span>
+    <div>${chips(gives)}</div>
+  </li>`;
+}
+
+function renderSpecialist() {
+  const body = $("#specialist-detail");
+  const id = $("#specialist-select").value;
+  const s = (specialistsData?.specialists || []).find((item) => item.id === id);
+  if (!s) {
+    body.innerHTML = '<p class="muted">No specialist installed.</p>';
+    return;
+  }
+  const perms = s.permissions || {};
+  const budget = s.budget || {};
+  body.innerHTML = `
+    <p class="muted">
+      ${esc(s.id)} · v${esc(s.version)} · ${esc(s.checksum)}
+      ${s.versions_installed > 1 ? ` · ${s.versions_installed} versions installed` : ""}
+    </p>
+    ${s.error ? `<p class="error">${esc(s.error)}</p>` : ""}
+    <h3>Remit</h3>
+    <ul class="remit">${(s.remit || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+    <h3>Never</h3>
+    <ul class="anti-remit">${(s.anti_remit || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+    <h3>Bundled in the package</h3>
+    <dl class="kv">
+      <dt>Skills</dt><dd>${chips(s.bundled?.skills)}</dd>
+      <dt>MCPs</dt><dd>${chips(s.bundled?.mcps)}</dd>
+      <dt>Tools</dt><dd>${chips(s.bundled?.tools)}</dd>
+      <dt>Frameworks</dt><dd>${chips(s.bundled?.frameworks)}</dd>
+    </dl>
+    <h3>Assigned capability packages</h3>
+    <ul class="assigned">${
+      (s.assigned || []).map(specialistSource).join("") ||
+      '<li class="muted">none assigned</li>'
+    }</ul>
+    ${
+      s.exclusions?.length
+        ? `<p class="muted">Excluded: ${s.exclusions.map((e) => esc(`${e.package} (${e.reason})`)).join(", ")}</p>`
+        : ""
+    }
+    <h3>Permissions</h3>
+    <dl class="kv">
+      <dt>Filesystem</dt><dd>${esc(perms.filesystem || "—")}</dd>
+      <dt>Writes</dt><dd>${perms.writes ? "yes" : "no"}</dd>
+      <dt>Network</dt><dd>${perms.network ? "yes" : "no"}</dd>
+      <dt>Commands</dt><dd>${chips(perms.commands)}</dd>
+      <dt>Call types</dt><dd>${chips(s.call_types)}</dd>
+      <dt>Timeout</dt><dd>${budget.timeout_seconds ? esc(`${budget.timeout_seconds}s`) : "—"}</dd>
+    </dl>
+    <h3>Approved for</h3>
+    ${
+      s.approved_for?.length
+        ? `<ul class="approved">${s.approved_for.map((p) => `<li><code>${esc(p)}</code></li>`).join("")}</ul>`
+        : '<p class="muted">No project has approved this version.</p>'
+    }`;
+}
+
+async function refreshSpecialists() {
+  const select = $("#specialist-select");
+  const keep = select.value;
+  specialistsData = await api("/api/specialists");
+  const list = specialistsData.specialists || [];
+  select.innerHTML = list
+    .map((s) => `<option value="${esc(s.id)}">${esc(s.display_name || s.id)}</option>`)
+    .join("");
+  if (list.some((s) => s.id === keep)) select.value = keep;
+  renderSpecialist();
+}
+
+$("#specialist-select").addEventListener("change", renderSpecialist);
+
 // ── Panel layout ──────────────────────────────────────────────────────────
 // Order comes from dragging a panel by its <h2>; size comes from the browser's
 // native resize handle, which writes inline width/height. Both are per-browser
@@ -799,6 +889,7 @@ function refreshAll() {
 }
 
 function startPolling() {
+  refreshSpecialists().catch(() => {});
   refreshAll();
   if (listTimer) clearInterval(listTimer);
   listTimer = setInterval(refreshAll, 5000);

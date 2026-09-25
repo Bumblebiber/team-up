@@ -364,3 +364,28 @@ tr.greyed td { opacity: 0.55; }
 @media (max-width: 800px) {
   .panel { resize: none; }
 }
+
+/* Specialists: chips for the capability names, a two-column list for the
+   permission facts. */
+.chip {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  margin: 0.1rem 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.78rem;
+}
+#panel-specialists h3 { margin: 0.9rem 0 0.3rem; font-size: 0.85rem; }
+#panel-specialists ul { margin: 0; padding-left: 1.1rem; font-size: 0.85rem; }
+#panel-specialists .assigned { list-style: none; padding-left: 0; }
+#panel-specialists .assigned li { margin-bottom: 0.4rem; }
+#panel-specialists .anti-remit { color: var(--muted); }
+.kv {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.15rem 0.5rem;
+  margin: 0;
+  font-size: 0.85rem;
+}
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
