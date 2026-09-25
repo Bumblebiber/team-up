@@ -120,6 +120,9 @@ nav a {
 }
 main {
   display: grid;
+  /* start, not stretch: a panel resized taller must not drag its row
+     neighbour along with it. */
+  align-items: start;
   grid-template-columns: minmax(20rem, 1fr) minmax(30rem, 1.6fr);
   gap: 0.75rem;
   padding: 0.75rem 1rem;
@@ -326,6 +329,9 @@ tr.greyed td { opacity: 0.55; }
 .panel {
   resize: both;
   overflow: auto;
+  /* The resize handle writes a raw pixel width; cap it at the grid column so a
+     wide panel cannot overlap its neighbour. */
+  max-width: 100%;
 }
 .panel > h2 {
   cursor: grab;

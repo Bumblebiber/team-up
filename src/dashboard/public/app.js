@@ -761,12 +761,16 @@ async function probe() {
   try {
     await api("/api/runs?active=1");
     showApp();
-    applyLayout();
-    enableLayoutEditing();
     startPolling();
   } catch {
     showLogin();
   }
 }
+
+// Panels live in the DOM while #app is hidden, so the layout wires up once
+// here rather than in probe() — the login path never runs probe() again, and
+// registering the drop handlers twice would undo every move.
+applyLayout();
+enableLayoutEditing();
 
 probe();
