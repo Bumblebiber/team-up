@@ -107,12 +107,14 @@ test("buildExpectScript claude waits on Current session without blind sleeps aft
   assert.equal(/sleep \d/.test(afterCmd), false);
 });
 
-test("buildExpectScript cursor slow-types /usage and waits for panel, no long sleeps", () => {
+test("buildExpectScript cursor types /usage and waits for panel, no long sleeps", () => {
   const script = buildExpectScript("cursor", 180);
-  assert.ok(script.includes('send "/"'));
-  assert.ok(script.includes('send "usage"'));
-  assert.ok(script.includes('-re "Show plan"'));
+  assert.ok(script.includes('send "/usage"'));
   assert.ok(script.lastIndexOf('-re "Esc to close"') > 0);
+  // cursor-agent prints its banner once; a second wait for it hangs forever.
+  assert.equal((script.match(/-re "Tip:"/g) || []).length, 1);
+  // The paginated slash menu hides the /usage row — never wait for it.
+  assert.ok(!script.includes("Show plan"));
   for (const [, secs] of script.matchAll(/sleep (\d+(?:\.\d+)?)/g)) {
     assert.ok(Number(secs) <= 1, `unexpected sleep ${secs}s in cursor script`);
   }

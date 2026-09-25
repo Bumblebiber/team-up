@@ -109,19 +109,12 @@ export function shouldReturnPtyTranscript({ status, stdout = "", stderr = "", co
 
 function cursorCommandBlock(seq) {
   const resultPat = shellEscape(seq.wait || "Esc to close");
-  const acceptPat = shellEscape(seq.accept || "Show plan");
-  const readyPat = shellEscape(seq.ready || "Tip:");
-  return `expect {
-  -re "${readyPat}" { }
-${timeoutTail()}}
-send "/"
-expect {
-  -re "${acceptPat}" { }
-${timeoutTail()}}
-send "usage"
-expect {
-  -re "${acceptPat}" { }
-${timeoutTail()}}
+  // Type the whole command, then submit. The old flow waited for the slash
+  // menu's "/usage — Show plan …" row, but cursor-agent 2026.09.23 paginates
+  // that menu, so the row is off-screen and the wait never returns. It also
+  // re-expected the banner the caller had already consumed, printed once.
+  return `send "/usage"
+sleep 0.5
 send "\\r"
 expect {
   -re "${resultPat}" { }
