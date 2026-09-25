@@ -638,8 +638,13 @@ $("#admin-confirm-form").addEventListener("submit", async (e) => {
 // Order comes from dragging a panel by its <h2>; size comes from the browser's
 // native resize handle, which writes inline width/height. Both are per-browser
 // preferences, so localStorage is the right home for them.
+//
+// The two columns are their own flex containers rather than grid items: that
+// way each stacks independently, and a tall panel in one leaves no gap in the
+// other. Panels drag freely between them.
 const LAYOUT_KEY = "teamup.layout";
 const mainEl = $("main");
+const columns = () => [...mainEl.querySelectorAll(".column")];
 const panels = () => [...mainEl.querySelectorAll(".panel")];
 
 function readLayout() {
@@ -657,11 +662,12 @@ function saveLayout() {
       size[panel.id] = { w: panel.style.width, h: panel.style.height };
     }
   }
+  const order = {};
+  for (const column of columns()) {
+    order[column.id] = [...column.querySelectorAll(".panel")].map((p) => p.id);
+  }
   try {
-    localStorage.setItem(
-      LAYOUT_KEY,
-      JSON.stringify({ order: panels().map((p) => p.id), size }),
-    );
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ order, size }));
   } catch {
     // Private mode or a full quota: the layout just stops surviving reloads.
   }
@@ -669,9 +675,16 @@ function saveLayout() {
 
 function applyLayout() {
   const layout = readLayout();
-  for (const id of layout.order || []) {
-    const panel = document.getElementById(id);
-    if (panel?.classList.contains("panel")) mainEl.append(panel);
+  // An older single-column layout stored an array; ignore it rather than
+  // guessing which column each panel belonged to.
+  const order = Array.isArray(layout.order) ? {} : layout.order || {};
+  for (const [columnId, ids] of Object.entries(order)) {
+    const column = document.getElementById(columnId);
+    if (!column?.classList.contains("column")) continue;
+    for (const id of ids) {
+      const panel = document.getElementById(id);
+      if (panel?.classList.contains("panel")) column.append(panel);
+    }
   }
   for (const [id, size] of Object.entries(layout.size || {})) {
     const panel = document.getElementById(id);
@@ -702,6 +715,7 @@ function enableLayoutEditing() {
     panel.addEventListener("dragover", (event) => {
       if (!draggedPanel || draggedPanel === panel) return;
       event.preventDefault();
+      event.stopPropagation();
       panel.classList.add("drop-target");
     });
     panel.addEventListener("dragleave", () => panel.classList.remove("drop-target"));
@@ -709,9 +723,30 @@ function enableLayoutEditing() {
       panel.classList.remove("drop-target");
       if (!draggedPanel || draggedPanel === panel) return;
       event.preventDefault();
-      const dropBelow =
-        draggedPanel.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING;
-      panel[dropBelow ? "after" : "before"](draggedPanel);
+      event.stopPropagation();
+      // Which half of the target was hit decides above/below. Document order
+      // cannot answer that once a panel crosses into the other column.
+      const box = panel.getBoundingClientRect();
+      const above = event.clientY < box.top + box.height / 2;
+      panel[above ? "before" : "after"](draggedPanel);
+      saveLayout();
+    });
+  }
+
+  // Dropping on a column's empty space parks the panel at its end; without
+  // this a column emptied by dragging could never take a panel back.
+  for (const column of columns()) {
+    column.addEventListener("dragover", (event) => {
+      if (!draggedPanel) return;
+      event.preventDefault();
+      column.classList.add("drop-target");
+    });
+    column.addEventListener("dragleave", () => column.classList.remove("drop-target"));
+    column.addEventListener("drop", (event) => {
+      column.classList.remove("drop-target");
+      if (!draggedPanel) return;
+      event.preventDefault();
+      column.append(draggedPanel);
       saveLayout();
     });
   }
