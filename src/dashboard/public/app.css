@@ -173,6 +173,11 @@ button.badge.stale:hover:not(:disabled) { filter: brightness(1.25); }
 button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
 .badge.ok { background: var(--green); color: #000; }
 
+.repair-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
 .usage-grid { display: grid; gap: 0.25rem; margin-bottom: 1rem; }
 .usage-row {
   display: grid;

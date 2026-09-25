@@ -123,17 +123,33 @@ function levelBadge(level) {
 }
 
 /**
- * STALE is a button, not a label: the collector stopped succeeding and the
- * reason is rarely guessable, so one click spawns an agent to go find it.
+ * STALE is a button, not a label: the cause differs every time a vendor changes
+ * its TUI, so one click dispatches an agent to fix the collector and prove it.
  */
 function staleBadge(key, collector) {
   const cli = key.split(":")[0];
   const reason = collector?.last_reason;
   const title = reason ? ` title="last collector failure: ${esc(reason)}"` : "";
-  if (collector?.diagnosis?.running) {
-    return ` <button class="badge stale" data-diagnose-session="${esc(collector.diagnosis.session)}"${title}>DIAGNOSING…</button>`;
+  if (collector?.repair?.running) {
+    return ` <button class="badge stale" data-repair-session="${esc(collector.repair.session)}"${title}>FIXING…</button>`;
   }
-  return ` <button class="badge stale" data-diagnose="${esc(cli)}"${title}>STALE ⟳</button>`;
+  return ` <button class="badge stale" data-repair="${esc(cli)}"${title}>STALE · FIX IT</button>`;
+}
+
+/** Derived from /api/usage, so a reload shows the same thing. */
+function repairStatusLine(collectors = {}) {
+  const entries = Object.entries(collectors);
+  const running = entries.filter(([, c]) => c?.repair?.running).map(([cli]) => cli);
+  if (running.length) {
+    return `⟳ updating usage limits for ${running.join(", ")} — this widget refreshes itself every 5s`;
+  }
+  const DAY = 24 * 3600 * 1000;
+  const reported = entries.filter(([, c]) =>
+    c?.repair?.report && Date.now() - Date.parse(c.repair.started_at || 0) < DAY);
+  if (reported.length) {
+    return `last repair wrote ~/.team-up/usage-repair-${reported[0][0]}.report.md`;
+  }
+  return "";
 }
 
 async function refreshRuns() {
@@ -294,6 +310,10 @@ async function refreshUsage() {
       <div class="marked-item">↻ ${esc(w.resets_at ? fmtTime(w.resets_at) : "—")}</div>
     </div>`).join("");
   $("#usage-grid").innerHTML = rows || "<p>No usage data</p>";
+  const status = repairStatusLine(data.collectors);
+  const statusEl = $("#usage-repair-status");
+  statusEl.textContent = status;
+  statusEl.classList.toggle("hidden", !status);
   $("#marked-list").innerHTML = data.marked.length
     ? `<h3>Marked</h3>${data.marked.map((m) => `<div class="marked-item">${esc(m.key)} until ${esc(m.until)}</div>`).join("")}`
     : "";
@@ -301,28 +321,28 @@ async function refreshUsage() {
 
 // Delegated, because refreshUsage replaces the whole grid every poll.
 $("#usage-grid").addEventListener("click", async (e) => {
-  const btn = e.target.closest("[data-diagnose], [data-diagnose-session]");
+  const btn = e.target.closest("[data-repair], [data-repair-session]");
   if (!btn) return;
-  const running = btn.dataset.diagnoseSession;
+  const running = btn.dataset.repairSession;
   if (running) {
     await selectSession(running);
     return;
   }
-  const cli = btn.dataset.diagnose;
+  const cli = btn.dataset.repair;
   btn.disabled = true;
   btn.textContent = "starting…";
   try {
-    const res = await api(`/api/usage/${encodeURIComponent(cli)}/diagnose`, {
+    const res = await api(`/api/usage/${encodeURIComponent(cli)}/repair`, {
       method: "POST",
       body: JSON.stringify({}),
     });
-    // Straight into the terminal overlay: the investigation IS the output, and
-    // from there the pane is steerable by typing.
-    await selectSession(res.session);
+    // No terminal overlay: the repair reports into its own file and the badge
+    // clears itself once the collector produces a fresh reading again.
+    void res;
   } catch (err) {
     btn.disabled = false;
-    btn.textContent = "STALE ⟳";
-    alert(`diagnosis failed to start: ${err.message}`);
+    btn.textContent = "STALE · FIX IT";
+    alert(`repair failed to start: ${err.message}`);
   }
   await refreshUsage();
 });

@@ -141,7 +141,7 @@ export function classifyUsageWindow(info, roster, now = Date.now()) {
  * succeeding, so the reason lives in the watcher's state, not in usage.json —
  * surfacing it here is what turns a bare STALE badge into something actionable.
  */
-export function buildCollectorView(watcher, diagnoses = {}) {
+export function buildCollectorView(watcher, repairs = {}) {
   const lastCollect = watcher?.last_collect || {};
   const failures = watcher?.collect_failures || {};
   const out = {};
@@ -153,13 +153,13 @@ export function buildCollectorView(watcher, diagnoses = {}) {
       failure_count: list.length,
       last_failure_at: last?.at ?? null,
       last_reason: last?.reason ?? null,
-      diagnosis: diagnoses[cli] ?? { running: false, session: null, started_at: null },
+      repair: repairs[cli] ?? { running: false, session: null, started_at: null },
     };
   }
   return out;
 }
 
-export function buildUsageView(usage, roster, now = Date.now(), { watcher = null, diagnoses = {} } = {}) {
+export function buildUsageView(usage, roster, now = Date.now(), { watcher = null, repairs = {} } = {}) {
   const windows = {};
   for (const [key, info] of Object.entries(usage?.windows || {})) {
     windows[key] = classifyUsageWindow(info, roster, now);
@@ -177,7 +177,7 @@ export function buildUsageView(usage, roster, now = Date.now(), { watcher = null
     updated: usage?.updated ?? null,
     limits: limits(roster),
     staleThresholdMin: usageStaleThresholdMs(roster) / 60_000,
-    collectors: buildCollectorView(watcher, diagnoses),
+    collectors: buildCollectorView(watcher, repairs),
     now: new Date(now).toISOString(),
   };
 }

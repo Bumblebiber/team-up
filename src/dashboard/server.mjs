@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { teamUpHome, usageWatcherStatePath } from "../paths.mjs";
-import { readDiagnoseState, spawnUsageDiagnosis } from "./diagnose.mjs";
+import { readRepairState, readRepairReport, spawnUsageRepair } from "./repair.mjs";
 import { loadJson, configPath, usagePath } from "../roster/config.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
 import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
@@ -846,12 +846,12 @@ export function createDashboardServer({
       return;
     }
 
-    // One click on a STALE badge starts one investigation per CLI — cursor goes
-    // stale in three windows at once, and that is one cause, not three.
-    const diagnoseMatch = pathname.match(/^\/api\/usage\/([^/]+)\/diagnose$/);
-    if (req.method === "POST" && diagnoseMatch) {
+    // One click on a STALE badge starts one repair per CLI — cursor goes stale
+    // in three windows at once, and that is one cause, not three.
+    const repairMatch = pathname.match(/^\/api\/usage\/([^/]+)\/repair$/);
+    if (req.method === "POST" && repairMatch) {
       if (!requireWriteAccess(req, res)) return;
-      const cli = diagnoseMatch[1];
+      const cli = repairMatch[1];
       const roster = loadRoster(env);
       const subs = Array.isArray(roster?.subscriptions) && roster.subscriptions.length
         ? roster.subscriptions
@@ -863,7 +863,7 @@ export function createDashboardServer({
       const watcher = loadJson(usageWatcherStatePath(env)) || {};
       let result;
       try {
-        result = spawnUsageDiagnosis(cli, {
+        result = spawnUsageRepair(cli, {
           env,
           usage: loadJson(usagePath(env)) || {},
           failures: watcher?.collect_failures?.[cli] || [],
@@ -874,7 +874,7 @@ export function createDashboardServer({
         });
       } catch (e) {
         appendAudit(
-          { actor: "127.0.0.1", action: "usage.diagnose", target: cli, result: "fail" },
+          { actor: "127.0.0.1", action: "usage.repair", target: cli, result: "fail" },
           { env },
         );
         jsonResponse(res, 500, { error: String(e.message || e) });
@@ -883,7 +883,7 @@ export function createDashboardServer({
       appendAudit(
         {
           actor: "127.0.0.1",
-          action: "usage.diagnose",
+          action: "usage.repair",
           target: cli,
           result: result.ok ? (result.joined ? "joined" : "ok") : "fail",
         },
@@ -996,11 +996,14 @@ export function createDashboardServer({
         const usage = loadJson(usagePath(env)) || {};
         const roster = loadRoster(env);
         const watcher = loadJson(usageWatcherStatePath(env)) || {};
-        const diagnoses = {};
+        const repairs = {};
         for (const cli of Object.keys(watcher?.last_collect || {})) {
-          diagnoses[cli] = readDiagnoseState(cli, { env, sessionExists });
+          repairs[cli] = {
+            ...readRepairState(cli, { env, sessionExists }),
+            report: readRepairReport(cli, { env }).present,
+          };
         }
-        return buildUsageView(usage, roster, ts, { watcher, diagnoses });
+        return buildUsageView(usage, roster, ts, { watcher, repairs });
       });
       jsonResponse(res, 200, data);
       return;
