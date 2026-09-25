@@ -11,3 +11,4 @@ test/fixtures/**/.team-up-verify-run-*/
 
 # runtime log, never belongs in the repo
 .tim/
+.playwright-mcp/
