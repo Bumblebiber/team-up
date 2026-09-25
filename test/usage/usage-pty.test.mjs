@@ -207,3 +207,17 @@ test("buildExpectScript cursor starts cursor-agent with --trust so its trust dia
   const script = buildExpectScript("cursor", 30);
   assert.match(script, /exec env [^\n]*cursor-agent --trust/);
 });
+
+test("signalTree leaves a recorded pid alone once its start time no longer matches (pid reuse)", async () => {
+  const { spawn } = await import("node:child_process");
+  const { signalTree, readProcIds } = await import("../../src/usage/usage-pty.mjs");
+  const child = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+  const ids = readProcIds(child.pid);
+  const alive = () => { try { process.kill(child.pid, 0); return true; } catch { return false; } };
+  signalTree([{ pid: child.pid, pgid: ids.pgid, start: String(Number(ids.start) + 1) }], new Set());
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(alive(), true);
+  signalTree([{ pid: child.pid, pgid: ids.pgid, start: ids.start }], new Set());
+  await new Promise((r) => child.once("exit", r));
+  assert.equal(alive(), false);
+});

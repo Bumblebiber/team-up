@@ -201,8 +201,8 @@ ${fastExitBlock(exitCmd)}`;
 
 const PTY_MAX_BUFFER = 4 * 1024 * 1024;
 
-/** pid (comm) state ppid pgrp — comm may contain spaces, so cut at the last ")". */
-function readProcIds(pid) {
+/** pid (comm) state ppid pgrp … starttime(22) — comm may contain spaces, so cut at the last ")". */
+export function readProcIds(pid) {
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
     const rest = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
@@ -211,6 +211,7 @@ function readProcIds(pid) {
     return {
       ppid: Number.isFinite(ppid) ? ppid : 0,
       pgid: Number.isFinite(pgid) ? pgid : 0,
+      start: rest[19] ?? "",
     };
   } catch {
     return null;
@@ -239,7 +240,7 @@ function descendantRows(root) {
       seen.add(child);
       const ids = readProcIds(child);
       if (!ids) continue;
-      out.push({ pid: child, pgid: ids.pgid });
+      out.push({ pid: child, pgid: ids.pgid, start: ids.start });
       stack.push(child);
     }
   }
@@ -261,7 +262,7 @@ function ancestorPgids(start) {
 }
 
 function publishTree(pidFile, recorded) {
-  const body = [...recorded.entries()].map(([pid, pgid]) => `${pid} ${pgid}`).join("\n");
+  const body = [...recorded.entries()].map(([pid, r]) => `${pid} ${r.pgid} ${r.start}`).join("\n");
   const tmp = `${pidFile}.tmp`;
   fs.writeFileSync(tmp, body ? `${body}\n` : "");
   fs.renameSync(tmp, pidFile);
@@ -276,18 +277,24 @@ function readPublishedTree(pidFile) {
   }
   const entries = [];
   for (const line of text.split("\n")) {
-    const [ps, gs] = line.trim().split(/\s+/);
+    const [ps, gs, start] = line.trim().split(/\s+/);
     const pid = Number(ps);
     const pgid = Number(gs);
-    if (pid > 1) entries.push({ pid, pgid: Number.isFinite(pgid) ? pgid : 0 });
+    if (pid > 1 && start) entries.push({ pid, pgid: Number.isFinite(pgid) ? pgid : 0, start });
   }
   return entries;
 }
 
-/** SIGKILL every recorded process group, then any pid the group signal missed. */
-function signalTree(entries, skipPgids) {
+/**
+ * SIGKILL every recorded process group, then any pid the group signal missed.
+ * pid_max wraps within minutes on a busy host, so a recorded pid is signalled
+ * only while its start time still matches; a group only while one of its recorded
+ * members is still that same process — then the kernel cannot have reused the pgid.
+ */
+export function signalTree(entries, skipPgids) {
+  const live = entries.filter(({ pid, start }) => pid > 1 && start && readProcIds(pid)?.start === start);
   const groups = new Set();
-  for (const { pgid } of entries) {
+  for (const { pgid } of live) {
     if (pgid > 1 && !skipPgids.has(pgid)) groups.add(pgid);
   }
   for (const pgid of groups) {
@@ -297,8 +304,7 @@ function signalTree(entries, skipPgids) {
       /* already gone */
     }
   }
-  for (const { pid } of entries) {
-    if (pid <= 1) continue;
+  for (const { pid } of live) {
     try {
       process.kill(pid, "SIGKILL");
     } catch {
@@ -362,9 +368,9 @@ function boundedExpectEntry() {
   const snap = () => {
     if (!child.pid) return;
     const self = readProcIds(child.pid);
-    if (self && self.pgid > 1 && !skipPgids.has(self.pgid)) recorded.set(child.pid, self.pgid);
+    if (self && self.pgid > 1 && !skipPgids.has(self.pgid)) recorded.set(child.pid, self);
     for (const row of descendantRows(child.pid)) {
-      if (row.pgid > 1 && !skipPgids.has(row.pgid)) recorded.set(row.pid, row.pgid);
+      if (row.pgid > 1 && !skipPgids.has(row.pgid)) recorded.set(row.pid, row);
     }
     try {
       publishTree(pidFile, recorded);
@@ -372,7 +378,7 @@ function boundedExpectEntry() {
       /* parent still has the previous snapshot */
     }
   };
-  const kill = () => signalTree([...recorded.entries()].map(([pid, pgid]) => ({ pid, pgid })), skipPgids);
+  const kill = () => signalTree([...recorded.entries()].map(([pid, r]) => ({ pid, pgid: r.pgid, start: r.start })), skipPgids);
 
   snap();
   const iv = setInterval(snap, 50);
@@ -450,6 +456,8 @@ export function runPtyCollect(cli, opts = {}) {
   const script = opts.script ?? buildExpectScript(cli, timeoutSec);
   const tmp = path.join(os.tmpdir(), `team-up-usage-pty-${cli}-${process.pid}.exp`);
   const pidFile = `${tmp}.tree`;
+  // A crashed earlier collector with the same pid may have left its tree behind.
+  fs.rmSync(pidFile, { force: true });
   fs.writeFileSync(tmp, script);
   try {
     // Strip collect markers from expect's environment — if the parent is already a
