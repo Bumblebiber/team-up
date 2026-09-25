@@ -7,6 +7,7 @@ import {
   INSTALLERS,
   isValidCliId,
   bootstrapAvailable,
+  updateAvailable,
   installState,
   redactSecrets,
   classifyVerificationVerdict,
@@ -349,5 +350,31 @@ test("a CLI that can never be verified says so in the steady state", () => {
     assert.equal(row.post_update_verdict, null);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("hermes updates by pulling its checkout, with HERMES_DIR exported", () => {
+  const upd = updateAvailable("hermes");
+  assert.equal(upd.available, true);
+
+  const shell = buildJobShell({ cli: "hermes", phase: "update" })[2];
+  // The update phase must export env like install does; without it the `cd`
+  // lands in the home directory and the pull silently updates nothing.
+  assert.match(shell, /export HERMES_DIR=/);
+  assert.ok(shell.indexOf("export HERMES_DIR=") < shell.indexOf("git pull"));
+  // --ff-only refuses a diverged tree instead of leaving a merge behind.
+  assert.match(shell, /git pull --ff-only/);
+  // hermes cannot be harness-verified, so the job must not claim it was.
+  assert.match(shell, /verify \(skipped\)/);
+});
+
+test("a cli without an update command still refuses to build one", () => {
+  const prev = INSTALLERS.hermes.update;
+  INSTALLERS.hermes.update = null;
+  try {
+    assert.equal(updateAvailable("hermes").available, false);
+    assert.throws(() => buildJobShell({ cli: "hermes", phase: "update" }), /no update command/);
+  } finally {
+    INSTALLERS.hermes.update = prev;
   }
 });

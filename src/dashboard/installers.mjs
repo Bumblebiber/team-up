@@ -65,7 +65,14 @@ export const INSTALLERS = {
       doc_url: "https://github.com/NousResearch/hermes-agent",
       env: { HERMES_DIR: path.join(os.homedir(), ".hermes", "hermes-agent") },
     },
-    update: null,
+    // Hermes has no vendor updater: it is a git checkout installed as an
+    // editable package, so pulling the tree and re-resolving it is the update.
+    // --ff-only refuses rather than merging when the tree was touched locally.
+    update: {
+      shell: 'cd "$HERMES_DIR" && git pull --ff-only && uv pip install -e .',
+      confirmed: "2026-09-25",
+      env: { HERMES_DIR: path.join(os.homedir(), ".hermes", "hermes-agent") },
+    },
     login: null,
   },
 };
@@ -329,16 +336,24 @@ export function buildJobShell({
   const exitPath = installExitPath(cli, env);
   const sessionDir = teamUpHome(env);
 
+  // A phase that declares env needs it exported first — the update phase too,
+  // not just install: hermes updates the checkout $HERMES_DIR points at.
+  const exports = (spec) =>
+    spec?.env
+      ? Object.entries(spec.env).map(([k, v]) => `export ${k}=${JSON.stringify(v)}`).join("; ")
+      : "";
+
   let inner;
   if (phase === "install") {
     const boot = spec.bootstrap;
     if (!boot?.shell) throw new Error("no bootstrap command");
-    const prefix = boot.env
-      ? Object.entries(boot.env).map(([k, v]) => `export ${k}=${JSON.stringify(v)}`).join("; ")
-      : "";
+    const prefix = exports(boot);
     inner = prefix ? `${prefix}; ${boot.shell}` : boot.shell;
   } else if (phase === "update") {
-    const upd = spec.update?.shell;
+    const updPrefix = exports(spec.update);
+    const upd = spec.update?.shell
+      ? (updPrefix ? `${updPrefix}; ${spec.update.shell}` : spec.update.shell)
+      : null;
     if (!upd) throw new Error("no update command");
     const fixture = harnessFixtureProject(env);
     const verifyCmd = `"${process.execPath}" "${teamUpBin}" harness verify ${cli} --fixture-project ${JSON.stringify(fixture)}`;
