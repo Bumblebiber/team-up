@@ -696,6 +696,16 @@ function applyLayout() {
 
 let draggedPanel = null;
 
+// A resize writes both width and height, so a panel dragged into the other
+// column would carry the old column's pixel width with it. Height is the
+// user's choice and stays.
+function movePanel(panel, place) {
+  const from = panel.parentElement;
+  place(panel);
+  if (panel.parentElement !== from) panel.style.width = "";
+  saveLayout();
+}
+
 function enableLayoutEditing() {
   for (const panel of panels()) {
     const grip = panel.querySelector("h2");
@@ -713,23 +723,26 @@ function enableLayoutEditing() {
       draggedPanel = null;
     });
     panel.addEventListener("dragover", (event) => {
-      if (!draggedPanel || draggedPanel === panel) return;
-      event.preventDefault();
+      if (!draggedPanel) return;
+      // Stop before the self-check: letting the event reach the column would
+      // make an aborted drag onto its own panel fall through to "append".
       event.stopPropagation();
+      if (draggedPanel === panel) return;
+      event.preventDefault();
       panel.classList.add("drop-target");
     });
     panel.addEventListener("dragleave", () => panel.classList.remove("drop-target"));
     panel.addEventListener("drop", (event) => {
       panel.classList.remove("drop-target");
-      if (!draggedPanel || draggedPanel === panel) return;
-      event.preventDefault();
+      if (!draggedPanel) return;
       event.stopPropagation();
+      if (draggedPanel === panel) return;
+      event.preventDefault();
       // Which half of the target was hit decides above/below. Document order
       // cannot answer that once a panel crosses into the other column.
       const box = panel.getBoundingClientRect();
       const above = event.clientY < box.top + box.height / 2;
-      panel[above ? "before" : "after"](draggedPanel);
-      saveLayout();
+      movePanel(draggedPanel, (moved) => panel[above ? "before" : "after"](moved));
     });
   }
 
@@ -746,8 +759,7 @@ function enableLayoutEditing() {
       column.classList.remove("drop-target");
       if (!draggedPanel) return;
       event.preventDefault();
-      column.append(draggedPanel);
-      saveLayout();
+      movePanel(draggedPanel, (moved) => column.append(moved));
     });
   }
 
