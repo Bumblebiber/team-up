@@ -182,10 +182,17 @@ function loadState() {
 
 const COLLECT_FAILURE_RING = 5;
 
-function classifyCollectFailure(error) {
-  const msg = String(error?.message || error);
-  if (/not logged in|unauthorized|authentication failed/i.test(msg)) return "auth_failure";
-  return msg.slice(0, 500);
+/**
+ * The collector names its own reason on stdout ("skip cursor: empty-parse", or
+ * a timeout with the pane tail). Prefer it: execFileSync's own message is only
+ * ever "Command failed: … --cli cursor", which says nothing a reader can act
+ * on — two days of silent STALE went undiagnosed on exactly that string.
+ */
+export function classifyCollectFailure(error) {
+  const skip = /^skip \w+: ([\s\S]*)$/m.exec(String(error?.stdout || ""));
+  const reason = skip ? skip[1].trim() : String(error?.message || error);
+  if (/not logged in|unauthorized|authentication failed/i.test(reason)) return "auth_failure";
+  return reason.slice(0, 500);
 }
 
 function journalCollectFailure(stateDoc, cli, reason, now = Date.now()) {
@@ -229,11 +236,17 @@ const COLLECT_TIMEOUT_MS = { claude: 120_000, codex: 300_000, cursor: 300_000 };
 function runCollect(cli) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "usage-collect.mjs");
   try {
-    execFileSync(process.execPath, [script, "--cli", cli], {
-      stdio: "inherit",
+    // Pipe stdout instead of inheriting it: classifyCollectFailure needs the
+    // collector's own reason line. Mirrored below so the journal keeps it too.
+    const out = execFileSync(process.execPath, [script, "--cli", cli], {
+      stdio: ["ignore", "pipe", "inherit"],
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
       timeout: COLLECT_TIMEOUT_MS[cli] ?? 120_000,
     });
+    if (out) process.stdout.write(out);
   } catch (e) {
+    if (e?.stdout) process.stdout.write(String(e.stdout));
     // Timeout only. There the child takes a SIGTERM and dies without running
     // its own finally, so the CLI and its MCP servers leak into this service's
     // cgroup, and the watcher is the only survivor that can sweep them. Any

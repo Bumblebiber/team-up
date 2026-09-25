@@ -116,13 +116,24 @@ function providerAttr(...hints) {
   return hit ? ` data-provider="${hit}"` : "";
 }
 
-function levelBadge(level, stale) {
-  const parts = [];
-  if (level === "red") parts.push('<span class="badge red">RED</span>');
-  else if (level === "amber") parts.push('<span class="badge amber">WARN</span>');
-  else parts.push('<span class="badge ok">OK</span>');
-  if (stale) parts.push('<span class="badge stale">STALE</span>');
-  return parts.join(" ");
+function levelBadge(level) {
+  if (level === "red") return '<span class="badge red">RED</span>';
+  if (level === "amber") return '<span class="badge amber">WARN</span>';
+  return '<span class="badge ok">OK</span>';
+}
+
+/**
+ * STALE is a button, not a label: the collector stopped succeeding and the
+ * reason is rarely guessable, so one click spawns an agent to go find it.
+ */
+function staleBadge(key, collector) {
+  const cli = key.split(":")[0];
+  const reason = collector?.last_reason;
+  const title = reason ? ` title="last collector failure: ${esc(reason)}"` : "";
+  if (collector?.diagnosis?.running) {
+    return ` <button class="badge stale" data-diagnose-session="${esc(collector.diagnosis.session)}"${title}>DIAGNOSING…</button>`;
+  }
+  return ` <button class="badge stale" data-diagnose="${esc(cli)}"${title}>STALE ⟳</button>`;
 }
 
 async function refreshRuns() {
@@ -279,7 +290,7 @@ async function refreshUsage() {
       <div class="key">${esc(key)}</div>
       <div class="bar"><span style="width:${w.usedPct != null ? Math.min(100, w.usedPct) : 0}%"></span></div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
-      <div>${levelBadge(w.level, w.stale)}</div>
+      <div>${levelBadge(w.level)}${w.stale ? staleBadge(key, data.collectors?.[key.split(":")[0]]) : ""}</div>
       <div class="marked-item">↻ ${esc(w.resets_at ? fmtTime(w.resets_at) : "—")}</div>
     </div>`).join("");
   $("#usage-grid").innerHTML = rows || "<p>No usage data</p>";
@@ -287,6 +298,34 @@ async function refreshUsage() {
     ? `<h3>Marked</h3>${data.marked.map((m) => `<div class="marked-item">${esc(m.key)} until ${esc(m.until)}</div>`).join("")}`
     : "";
 }
+
+// Delegated, because refreshUsage replaces the whole grid every poll.
+$("#usage-grid").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-diagnose], [data-diagnose-session]");
+  if (!btn) return;
+  const running = btn.dataset.diagnoseSession;
+  if (running) {
+    await selectSession(running);
+    return;
+  }
+  const cli = btn.dataset.diagnose;
+  btn.disabled = true;
+  btn.textContent = "starting…";
+  try {
+    const res = await api(`/api/usage/${encodeURIComponent(cli)}/diagnose`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    // Straight into the terminal overlay: the investigation IS the output, and
+    // from there the pane is steerable by typing.
+    await selectSession(res.session);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "STALE ⟳";
+    alert(`diagnosis failed to start: ${err.message}`);
+  }
+  await refreshUsage();
+});
 
 async function refreshPick() {
   const data = await api("/api/pick");

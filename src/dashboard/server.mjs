@@ -4,7 +4,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { teamUpHome } from "../paths.mjs";
+import { teamUpHome, usageWatcherStatePath } from "../paths.mjs";
+import { readDiagnoseState, spawnUsageDiagnosis } from "./diagnose.mjs";
 import { loadJson, configPath, usagePath } from "../roster/config.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
 import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
@@ -845,6 +846,53 @@ export function createDashboardServer({
       return;
     }
 
+    // One click on a STALE badge starts one investigation per CLI — cursor goes
+    // stale in three windows at once, and that is one cause, not three.
+    const diagnoseMatch = pathname.match(/^\/api\/usage\/([^/]+)\/diagnose$/);
+    if (req.method === "POST" && diagnoseMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const cli = diagnoseMatch[1];
+      const roster = loadRoster(env);
+      const subs = Array.isArray(roster?.subscriptions) && roster.subscriptions.length
+        ? roster.subscriptions
+        : ["claude", "codex", "cursor"];
+      if (!subs.includes(cli)) {
+        jsonResponse(res, 404, { error: "not a subscription cli" });
+        return;
+      }
+      const watcher = loadJson(usageWatcherStatePath(env)) || {};
+      let result;
+      try {
+        result = spawnUsageDiagnosis(cli, {
+          env,
+          usage: loadJson(usagePath(env)) || {},
+          failures: watcher?.collect_failures?.[cli] || [],
+          // `ts` is only declared further down, in the read-endpoint section.
+          now: now(),
+          exec,
+          sessionExists,
+        });
+      } catch (e) {
+        appendAudit(
+          { actor: "127.0.0.1", action: "usage.diagnose", target: cli, result: "fail" },
+          { env },
+        );
+        jsonResponse(res, 500, { error: String(e.message || e) });
+        return;
+      }
+      appendAudit(
+        {
+          actor: "127.0.0.1",
+          action: "usage.diagnose",
+          target: cli,
+          result: result.ok ? (result.joined ? "joined" : "ok") : "fail",
+        },
+        { env },
+      );
+      jsonResponse(res, result.ok ? 200 : (result.status ?? 500), result);
+      return;
+    }
+
     if (req.method !== "GET" && isApi) {
       jsonResponse(res, 405, { error: "method not allowed" });
       return;
@@ -947,7 +995,12 @@ export function createDashboardServer({
       const data = memo.get("usage", () => {
         const usage = loadJson(usagePath(env)) || {};
         const roster = loadRoster(env);
-        return buildUsageView(usage, roster, ts);
+        const watcher = loadJson(usageWatcherStatePath(env)) || {};
+        const diagnoses = {};
+        for (const cli of Object.keys(watcher?.last_collect || {})) {
+          diagnoses[cli] = readDiagnoseState(cli, { env, sessionExists });
+        }
+        return buildUsageView(usage, roster, ts, { watcher, diagnoses });
       });
       jsonResponse(res, 200, data);
       return;

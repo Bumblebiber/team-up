@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   planCollect,
   advanceSchedule,
+  classifyCollectFailure,
   computeState,
   clearCollecting,
   intervalMinForCli,
@@ -220,4 +221,32 @@ test("watcherConfig deep-merges intervals and per-cli overrides", () => {
   assert.equal(cfg.cli_intervals.cursor.busy_min, 8);
   assert.equal(intervalMinForCli("codex", "active", cfg), 15);
   assert.equal(intervalMinForCli("codex", "busy", cfg), 8);
+});
+
+test("collect failures record the collector's own reason, not \"Command failed\"", () => {
+  // execFileSync throws with a useless message; the reason is on the child's stdout.
+  const e = Object.assign(new Error("Command failed: node usage-collect.mjs --cli cursor"), {
+    stdout: "skip cursor: empty-parse\n",
+  });
+  assert.equal(classifyCollectFailure(e), "empty-parse");
+});
+
+test("a multi-line timeout reason keeps its pane tail", () => {
+  const e = Object.assign(new Error("Command failed"), {
+    stdout: "skip cursor: cursor collect timed out — last pane lines:\n  Cursor Agent  Tip:\n",
+  });
+  const reason = classifyCollectFailure(e);
+  assert.match(reason, /timed out/);
+  assert.match(reason, /Cursor Agent/);
+});
+
+test("auth failures are still classified from the collector reason", () => {
+  const e = Object.assign(new Error("Command failed"), {
+    stdout: "skip cursor: not logged in\n",
+  });
+  assert.equal(classifyCollectFailure(e), "auth_failure");
+});
+
+test("without stdout the error message is still used", () => {
+  assert.equal(classifyCollectFailure(new Error("spawnSync claude ETIMEDOUT")), "spawnSync claude ETIMEDOUT");
 });

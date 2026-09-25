@@ -162,6 +162,15 @@ tr.orphan td:first-child { color: var(--orphan); }
 .badge.red { background: var(--red); color: #fff; }
 .badge.amber { background: var(--amber); color: #000; }
 .badge.stale { background: var(--muted); color: var(--bg); }
+/* STALE is a <button> in the usage grid; keep it looking like the badge it replaced. */
+button.badge.stale {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0.1rem 0.4rem;
+}
+button.badge.stale:hover:not(:disabled) { filter: brightness(1.25); }
+button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
 .badge.ok { background: var(--green); color: #000; }
 
 .usage-grid { display: grid; gap: 0.25rem; margin-bottom: 1rem; }

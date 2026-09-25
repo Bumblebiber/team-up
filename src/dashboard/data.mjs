@@ -136,7 +136,30 @@ export function classifyUsageWindow(info, roster, now = Date.now()) {
   };
 }
 
-export function buildUsageView(usage, roster, now = Date.now()) {
+/**
+ * Per-CLI collector health. A window goes STALE because its collector stopped
+ * succeeding, so the reason lives in the watcher's state, not in usage.json —
+ * surfacing it here is what turns a bare STALE badge into something actionable.
+ */
+export function buildCollectorView(watcher, diagnoses = {}) {
+  const lastCollect = watcher?.last_collect || {};
+  const failures = watcher?.collect_failures || {};
+  const out = {};
+  for (const cli of new Set([...Object.keys(lastCollect), ...Object.keys(failures)])) {
+    const list = Array.isArray(failures[cli]) ? failures[cli] : [];
+    const last = list.length ? list[list.length - 1] : null;
+    out[cli] = {
+      last_collect: lastCollect[cli] ?? null,
+      failure_count: list.length,
+      last_failure_at: last?.at ?? null,
+      last_reason: last?.reason ?? null,
+      diagnosis: diagnoses[cli] ?? { running: false, session: null, started_at: null },
+    };
+  }
+  return out;
+}
+
+export function buildUsageView(usage, roster, now = Date.now(), { watcher = null, diagnoses = {} } = {}) {
   const windows = {};
   for (const [key, info] of Object.entries(usage?.windows || {})) {
     windows[key] = classifyUsageWindow(info, roster, now);
@@ -154,6 +177,7 @@ export function buildUsageView(usage, roster, now = Date.now()) {
     updated: usage?.updated ?? null,
     limits: limits(roster),
     staleThresholdMin: usageStaleThresholdMs(roster) / 60_000,
+    collectors: buildCollectorView(watcher, diagnoses),
     now: new Date(now).toISOString(),
   };
 }
