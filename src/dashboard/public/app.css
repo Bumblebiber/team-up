@@ -320,3 +320,29 @@ tr.greyed td { opacity: 0.55; }
 @media (max-width: 800px) {
   main { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Panels are user-arrangeable: the browser's own resize handle sizes them,
+   the <h2> is the drag grip. Layout lives in localStorage, per browser. */
+.panel {
+  resize: both;
+  overflow: auto;
+}
+.panel > h2 {
+  cursor: grab;
+  user-select: none;
+}
+.panel.dragging { opacity: 0.4; }
+.panel.drop-target { outline: 2px dashed var(--muted); }
+
+#reset-layout-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+@media (max-width: 800px) {
+  .panel { resize: none; }
+}

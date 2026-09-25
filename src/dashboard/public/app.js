@@ -634,6 +634,113 @@ $("#admin-confirm-form").addEventListener("submit", async (e) => {
   }
 });
 
+// ── Panel layout ──────────────────────────────────────────────────────────
+// Order comes from dragging a panel by its <h2>; size comes from the browser's
+// native resize handle, which writes inline width/height. Both are per-browser
+// preferences, so localStorage is the right home for them.
+const LAYOUT_KEY = "teamup.layout";
+const mainEl = $("main");
+const panels = () => [...mainEl.querySelectorAll(".panel")];
+
+function readLayout() {
+  try {
+    return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveLayout() {
+  const size = {};
+  for (const panel of panels()) {
+    if (panel.style.width || panel.style.height) {
+      size[panel.id] = { w: panel.style.width, h: panel.style.height };
+    }
+  }
+  try {
+    localStorage.setItem(
+      LAYOUT_KEY,
+      JSON.stringify({ order: panels().map((p) => p.id), size }),
+    );
+  } catch {
+    // Private mode or a full quota: the layout just stops surviving reloads.
+  }
+}
+
+function applyLayout() {
+  const layout = readLayout();
+  for (const id of layout.order || []) {
+    const panel = document.getElementById(id);
+    if (panel?.classList.contains("panel")) mainEl.append(panel);
+  }
+  for (const [id, size] of Object.entries(layout.size || {})) {
+    const panel = document.getElementById(id);
+    if (!panel) continue;
+    if (size.w) panel.style.width = size.w;
+    if (size.h) panel.style.height = size.h;
+  }
+}
+
+let draggedPanel = null;
+
+function enableLayoutEditing() {
+  for (const panel of panels()) {
+    const grip = panel.querySelector("h2");
+    if (!grip) continue;
+    grip.draggable = true;
+    grip.addEventListener("dragstart", (event) => {
+      draggedPanel = panel;
+      panel.classList.add("dragging");
+      event.dataTransfer.effectAllowed = "move";
+      // Firefox only starts a drag once some data is set.
+      event.dataTransfer.setData("text/plain", panel.id);
+    });
+    grip.addEventListener("dragend", () => {
+      panel.classList.remove("dragging");
+      draggedPanel = null;
+    });
+    panel.addEventListener("dragover", (event) => {
+      if (!draggedPanel || draggedPanel === panel) return;
+      event.preventDefault();
+      panel.classList.add("drop-target");
+    });
+    panel.addEventListener("dragleave", () => panel.classList.remove("drop-target"));
+    panel.addEventListener("drop", (event) => {
+      panel.classList.remove("drop-target");
+      if (!draggedPanel || draggedPanel === panel) return;
+      event.preventDefault();
+      const dropBelow =
+        draggedPanel.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING;
+      panel[dropBelow ? "after" : "before"](draggedPanel);
+      saveLayout();
+    });
+  }
+
+  // The native resize handle sets inline width/height and fires no event of its
+  // own; a pointerup anywhere is the cheapest "the drag is over" signal.
+  document.addEventListener("pointerup", () => {
+    const layout = readLayout();
+    const changed = panels().some((panel) => {
+      const saved = layout.size?.[panel.id] || {};
+      return panel.style.width !== (saved.w || "") || panel.style.height !== (saved.h || "");
+    });
+    if (changed) saveLayout();
+  });
+
+  $("#reset-layout-btn").addEventListener("click", () => {
+    try {
+      localStorage.removeItem(LAYOUT_KEY);
+    } catch {
+      // Nothing stored means nothing to clear.
+    }
+    for (const panel of panels()) {
+      panel.style.width = "";
+      panel.style.height = "";
+    }
+    location.reload();
+  });
+}
+
 function refreshAll() {
   return Promise.allSettled([
     refreshUsage(),
@@ -654,6 +761,8 @@ async function probe() {
   try {
     await api("/api/runs?active=1");
     showApp();
+    applyLayout();
+    enableLayoutEditing();
     startPolling();
   } catch {
     showLogin();
