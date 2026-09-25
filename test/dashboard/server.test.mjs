@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createDashboardServer, ensureDashboardToken } from "../../src/dashboard/server.mjs";
+import {
+  createDashboardServer,
+  ensureDashboardToken,
+  sendPaneKeys as sendPaneKeysForTest,
+} from "../../src/dashboard/server.mjs";
 import { createAdminGate } from "../../src/dashboard/admin.mjs";
 import { createRun, atomicWriteText } from "../../src/runs/runs.mjs";
 import { secretsPath } from "../../src/paths.mjs";
@@ -611,3 +615,13 @@ test("sending keys without the CSRF header is refused", () =>
     assert.deepEqual(sent, []);
     server.close();
   }));
+
+test("a scrolled pane leaves copy-mode before the key is sent", () => {
+  const calls = [];
+  sendPaneKeysForTest("s1", { text: "q", key: null }, {
+    exec: (cmd, args) => calls.push([cmd, ...args].join(" ")),
+  });
+  // copy-mode swallows keys and send-keys still exits 0, so without this the
+  // terminal looks broken and the log says everything worked.
+  assert.deepEqual(calls, ["tmux copy-mode -q -t s1", "tmux send-keys -t s1 -l q"]);
+});

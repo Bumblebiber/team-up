@@ -241,7 +241,14 @@ const TMUX_NAMED_KEYS = new Set([
   "Home", "End", "PageUp", "PageDown", "IC", "DC",
 ]);
 
-function sendPaneKeys(session, { text, key }, { exec = execFileSync } = {}) {
+export function sendPaneKeys(session, { text, key }, { exec = execFileSync } = {}) {
+  // A pane someone scrolled is in copy-mode, and copy-mode eats every key
+  // instead of passing it to the program: send-keys still exits 0, the
+  // keystroke simply never arrives. Leaving the mode first is the difference
+  // between "nothing happens" and a working terminal.
+  try {
+    exec("tmux", ["copy-mode", "-q", "-t", session], { stdio: "ignore" });
+  } catch { /* not in a mode */ }
   const args = text != null
     ? ["send-keys", "-t", session, "-l", text]
     : ["send-keys", "-t", session, key];
