@@ -16,6 +16,7 @@ import {
   installSpecialistFromGithub,
 } from "./specialists.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
+import { pinSpecialist } from "../specialists/store.mjs";
 import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
 import {
   isValidRunId,
@@ -936,6 +937,40 @@ export function createDashboardServer({
       return;
     }
 
+    const pinMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/pin$/);
+    if (req.method === "POST" && pinMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const specialistId = decodeURIComponent(pinMatch[1]);
+      try {
+        assertSafeSpecialistSegment(specialistId, "id");
+        const body = JSON.parse(await readBody(req) || "{}");
+        // installPackage leaves a newer version installed but unselected; this
+        // is the only way in from the panel, as `specialist pin` is from the CLI.
+        const result = pinSpecialist(specialistId, {
+          version: String(body.version || ""),
+          env,
+        });
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: "specialist.pin",
+            target: `${specialistId}@${body.version}`,
+            result: "ok",
+          },
+          { env },
+        );
+        clisMemo.invalidate("specialists");
+        jsonResponse(res, 200, { ok: true, ...result });
+      } catch (e) {
+        appendAudit(
+          { actor: "127.0.0.1", action: "specialist.pin", target: specialistId, result: "fail" },
+          { env },
+        );
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     const capabilityMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/capabilities$/);
     if (req.method === "POST" && capabilityMatch) {
       if (!requireWriteAccess(req, res)) return;
@@ -953,6 +988,13 @@ export function createDashboardServer({
         );
         if (!known) {
           jsonResponse(res, 400, { error: "unknown package or checksum" });
+          return;
+        }
+        // A well-formed id is not an installed one; without this an assignment
+        // can be written for a specialist that does not exist.
+        const targets = buildSpecialistsView({ env }).specialists;
+        if (!targets.some((item) => item.id === specialistId)) {
+          jsonResponse(res, 400, { error: "unknown specialist" });
           return;
         }
         const mutate = enable ? enableCapability : disableCapability;

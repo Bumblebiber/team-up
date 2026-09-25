@@ -86,6 +86,7 @@ test("a specialist reports what its package bundles", () =>
     assert.equal(codey.display_name, "Codey");
     assert.equal(codey.version, "0.1.2");
     assert.equal(codey.checksum, "a".repeat(12));
+    assert.deepEqual(codey.versions, [{ version: "0.1.2", checksum: CHECKSUM, selected: true }]);
     assert.deepEqual(codey.bundled.skills, ["implementing"]);
     assert.equal(codey.permissions.writes, true);
     assert.deepEqual(codey.assigned, []);

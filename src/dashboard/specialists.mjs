@@ -69,7 +69,13 @@ function describe(id, { env, assignments, installedCaps, approvals, versions }) 
     version: loaded.version,
     checksum: short(loaded.checksum),
     installed_at: loaded.installed_at || null,
-    versions_installed: versions,
+    // installPackage never repoints an existing selection, so a freshly
+    // installed newer version sits here unreachable until something pins it.
+    versions: versions.map((v) => ({
+      version: v.version,
+      checksum: v.checksum,
+      selected: v.checksum === loaded.checksum,
+    })),
     remit: manifest.remit || [],
     anti_remit: manifest.anti_remit || [],
     call_types: manifest.call_types || [],
@@ -101,7 +107,7 @@ export function buildSpecialistsView({ env = process.env } = {}) {
         assignments,
         installedCaps,
         approvals,
-        versions: (index.versions?.[id] || []).length,
+        versions: index.versions?.[id] || [],
       }),
     );
   return { specialists };

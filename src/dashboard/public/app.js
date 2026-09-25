@@ -671,10 +671,16 @@ function renderSpecialist() {
   const perms = s.permissions || {};
   const budget = s.budget || {};
   body.innerHTML = `
-    <p class="muted">
-      ${esc(s.id)} · v${esc(s.version)} · ${esc(s.checksum)}
-      ${s.versions_installed > 1 ? ` · ${s.versions_installed} versions installed` : ""}
-    </p>
+    <p class="muted">${esc(s.id)} · v${esc(s.version)} · ${esc(s.checksum)}</p>
+    ${
+      (s.versions || []).length > 1
+        ? `<p class="muted">Selected version:
+            ${s.versions.map((v) => `
+              <button type="button" class="version-pin" data-version="${esc(v.version)}"
+                ${v.selected ? "disabled" : ""}>${esc(v.version)}${v.selected ? " ✓" : ""}</button>`).join(" ")}
+          </p>`
+        : ""
+    }
     ${s.error ? `<p class="error">${esc(s.error)}</p>` : ""}
     <h3>Remit</h3>
     <ul class="remit">${(s.remit || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
@@ -776,11 +782,27 @@ $("#capability-assign").addEventListener("click", () => {
   assignCapability(option.value, option.dataset.checksum, "enable");
 });
 
-// Delegated, because renderSpecialist replaces the list on every change.
-$("#specialist-detail").addEventListener("click", (event) => {
-  const button = event.target.closest(".capability-remove");
-  if (!button) return;
-  assignCapability(button.dataset.package, button.dataset.checksum, "disable");
+// Delegated, because renderSpecialist replaces the body on every change.
+$("#specialist-detail").addEventListener("click", async (event) => {
+  const remove = event.target.closest(".capability-remove");
+  if (remove) {
+    assignCapability(remove.dataset.package, remove.dataset.checksum, "disable");
+    return;
+  }
+  const pin = event.target.closest(".version-pin");
+  if (!pin) return;
+  const id = $("#specialist-select").value;
+  const status = $("#capability-status");
+  try {
+    await api(`/api/specialists/${encodeURIComponent(id)}/pin`, {
+      method: "POST",
+      body: JSON.stringify({ version: pin.dataset.version }),
+    });
+    await refreshSpecialists();
+    status.textContent = `${id} now runs ${pin.dataset.version}`;
+  } catch (err) {
+    status.textContent = err.message;
+  }
 });
 
 $("#specialist-install").addEventListener("click", async () => {
