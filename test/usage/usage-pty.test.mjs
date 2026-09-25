@@ -202,3 +202,8 @@ expect {
   const out = runPtyCollect("cursor", { hardTimeoutMs: 5000, script });
   assert.match(out, /probe-ok/);
 });
+
+test("buildExpectScript cursor starts cursor-agent with --trust so its trust dialog never blocks", () => {
+  const script = buildExpectScript("cursor", 30);
+  assert.match(script, /exec env [^\n]*cursor-agent --trust/);
+});

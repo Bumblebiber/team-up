@@ -35,6 +35,11 @@ export function spawnLine(seq) {
       `-c ${bashSingleQuote("check_for_update_on_startup=false")}`
     );
   }
+  // Cursor's trust dialog wants a menu choice, not the codex answer the shared
+  // branch types, so it never clears and the probe runs into its deadline.
+  if (seq.bin === "cursor-agent") {
+    return `stty cols ${cols} rows ${rows} 2>/dev/null; cd ${home} && exec env ${env} ${seq.bin} --trust`;
+  }
   if (seq.bin === "claude") {
     return `stty cols ${cols} rows ${rows} 2>/dev/null; cd ${bashSingleQuote(homeDir())} && exec env O9K_USAGE_COLLECT=1 TERM=xterm-256color ${seq.bin}`;
   }
