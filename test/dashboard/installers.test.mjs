@@ -353,19 +353,23 @@ test("a CLI that can never be verified says so in the steady state", () => {
   }
 });
 
-test("hermes updates by pulling its checkout, with HERMES_DIR exported", () => {
-  const upd = updateAvailable("hermes");
-  assert.equal(upd.available, true);
+test("hermes updates through its own updater, unattended", () => {
+  assert.equal(updateAvailable("hermes").available, true);
 
   const shell = buildJobShell({ cli: "hermes", phase: "update" })[2];
-  // The update phase must export env like install does; without it the `cd`
-  // lands in the home directory and the pull silently updates nothing.
-  assert.match(shell, /export HERMES_DIR=/);
-  assert.ok(shell.indexOf("export HERMES_DIR=") < shell.indexOf("git pull"));
-  // --ff-only refuses a diverged tree instead of leaving a merge behind.
-  assert.match(shell, /git pull --ff-only/);
+  // The vendor updater handles the pull, the reinstall, the backup and the
+  // config migration; a hand-written git pull would skip the last two.
+  assert.match(shell, /hermes update --yes/);
+  // The job runs in tmux with nobody watching, so it must not be able to stop
+  // on a prompt.
+  assert.doesNotMatch(shell, /hermes update(?! --yes)/);
   // hermes cannot be harness-verified, so the job must not claim it was.
   assert.match(shell, /verify \(skipped\)/);
+});
+
+test("a phase that declares env gets it exported before its command", () => {
+  const shell = buildJobShell({ cli: "hermes", phase: "install" })[2];
+  assert.ok(shell.indexOf("export HERMES_DIR=") < shell.indexOf("git clone"));
 });
 
 test("a cli without an update command still refuses to build one", () => {

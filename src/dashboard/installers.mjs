@@ -65,14 +65,11 @@ export const INSTALLERS = {
       doc_url: "https://github.com/NousResearch/hermes-agent",
       env: { HERMES_DIR: path.join(os.homedir(), ".hermes", "hermes-agent") },
     },
-    // Hermes has no vendor updater: it is a git checkout installed as an
-    // editable package, so pulling the tree and re-resolving it is the update.
-    // --ff-only refuses rather than merging when the tree was touched locally.
-    update: {
-      shell: 'cd "$HERMES_DIR" && git pull --ff-only && uv pip install -e .',
-      confirmed: "2026-09-25",
-      env: { HERMES_DIR: path.join(os.homedir(), ".hermes", "hermes-agent") },
-    },
+    // `hermes update` pulls the checkout and reinstalls dependencies itself,
+    // with a pre-update backup, config migration and stash restore that a
+    // hand-written git pull does not do. --yes because the job runs unattended
+    // in tmux and an interactive prompt would hang it.
+    update: { shell: "hermes update --yes", confirmed: "2026-09-25" },
     login: null,
   },
 };
