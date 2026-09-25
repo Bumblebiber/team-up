@@ -212,6 +212,60 @@ tr.orphan td:first-child { color: var(--orphan); }
   overflow: auto;
 }
 
+.term-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 55%);
+}
+.term-window {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 60rem);
+  max-height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.term-bar strong { font-family: ui-monospace, monospace; }
+.term-bar #term-state { margin-left: auto; }
+.term-bar button {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+/* A terminal is black in both themes — the pane's own colours assume it. */
+.term-screen {
+  margin: 0;
+  padding: 0.75rem;
+  flex: 1;
+  overflow: auto;
+  background: #0b0b0d;
+  color: #e4e4e7;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  line-height: 1.25;
+  white-space: pre;
+  tab-size: 8;
+}
+.term-screen:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.term-hint { margin: 0; padding: 0.4rem 0.75rem; border-top: 1px solid var(--border); }
+
 .marked-item { color: var(--muted); font-size: 0.85rem; margin: 0.25rem 0; }
 
 .skipped { color: var(--muted); font-size: 0.8rem; }

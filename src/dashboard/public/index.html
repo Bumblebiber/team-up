@@ -48,7 +48,6 @@
       <section id="panel-tmux" class="panel">
         <h2>tmux</h2>
         <div id="tmux-table" class="table-wrap"></div>
-        <pre id="pane-output" class="pane hidden"></pre>
       </section>
 
       <section id="panel-pick" class="panel">
@@ -90,6 +89,21 @@
         <pre id="cli-log" class="pane hidden"></pre>
       </section>
     </main>
+  </div>
+
+  <div id="term" class="term-backdrop hidden">
+    <div class="term-window">
+      <div class="term-bar">
+        <strong id="term-title"></strong>
+        <span id="term-state" class="muted"></span>
+        <button type="button" id="term-close">Close</button>
+      </div>
+      <pre id="pane-output" class="term-screen" tabindex="0"></pre>
+      <p class="muted term-hint">
+        Click the screen and type — keys go straight to the session.
+        Ctrl-C, Esc and the arrow keys reach it too; Ctrl-Esc closes the overlay.
+      </p>
+    </div>
   </div>
 
   <script src="/app.js"></script>

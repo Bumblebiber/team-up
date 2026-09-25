@@ -231,6 +231,23 @@ function capturePaneLines(session, lines = 200, { exec = execFileSync, listSessi
   }
 }
 
+/**
+ * Keys tmux names instead of sending literally. Anything outside this list and
+ * the C-<char> form is refused: send-keys reads its argument as a key name, so
+ * an unchecked string is a way to press keys nobody typed.
+ */
+const TMUX_NAMED_KEYS = new Set([
+  "Enter", "Escape", "Tab", "BTab", "BSpace", "Space", "Up", "Down", "Left", "Right",
+  "Home", "End", "PageUp", "PageDown", "IC", "DC",
+]);
+
+function sendPaneKeys(session, { text, key }, { exec = execFileSync } = {}) {
+  const args = text != null
+    ? ["send-keys", "-t", session, "-l", text]
+    : ["send-keys", "-t", session, key];
+  exec("tmux", args, { stdio: "ignore" });
+}
+
 function loadRoster(env) {
   const roster = loadJson(configPath(env));
   if (!roster) throw new Error("no roster");
@@ -252,6 +269,7 @@ export function createDashboardServer({
   allowInstall = false,
   publicOrigin = env.TEAMUP_DASHBOARD_ORIGIN || "",
   sessionExists = (session) => tmuxSessionExists(session, { exec }),
+  sendKeys = sendPaneKeys,
 } = {}) {
   const expectedToken = token ?? ensureDashboardToken(env);
   // A tailnet or proxy reaches the same dashboard under more than one name
@@ -266,6 +284,7 @@ export function createDashboardServer({
   const clisMemo = createMemo(30_000);
   const openrouterValidation = {};
   const auditedJobCompletion = new Set();
+  const keyAuditAt = new Map();
 
   function isAuthed(req) {
     if (rejectQueryToken(req.url || "")) return false;
@@ -769,6 +788,53 @@ export function createDashboardServer({
         );
         jsonResponse(res, 500, { error: String(e.message || e) });
       }
+      return;
+    }
+
+    const keysMatch = pathname.match(/^\/api\/tmux\/([^/]+)\/keys$/);
+    if (req.method === "POST" && keysMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const session = keysMatch[1];
+      if (!listSessions().includes(session)) {
+        jsonResponse(res, 404, { error: "session not found" });
+        return;
+      }
+      let body;
+      try {
+        body = JSON.parse(await readBody(req) || "{}");
+      } catch {
+        jsonResponse(res, 400, { error: "invalid json" });
+        return;
+      }
+      const text = typeof body.text === "string" ? body.text : null;
+      const key = typeof body.key === "string" ? body.key : null;
+      if (text != null) {
+        // Control characters belong in `key`, where the allowlist can see them.
+        if (!text.length || text.length > 256 || /[\u0000-\u001f\u007f]/.test(text)) {
+          jsonResponse(res, 400, { error: "text must be 1-256 printable characters" });
+          return;
+        }
+      } else if (!key || !(TMUX_NAMED_KEYS.has(key) || /^C-[a-z0-9[\]\\^_]$/.test(key))) {
+        jsonResponse(res, 400, { error: "unknown key" });
+        return;
+      }
+      try {
+        sendKeys(session, { text, key }, { exec });
+      } catch (e) {
+        jsonResponse(res, 500, { error: String(e.message || e) });
+        return;
+      }
+      // One line per session per minute. A line per keystroke would bury the
+      // log in the very typing it is there to make reviewable.
+      const keyTs = now();
+      if (keyTs - (keyAuditAt.get(session) ?? 0) > 60_000) {
+        keyAuditAt.set(session, keyTs);
+        appendAudit(
+          { actor: "127.0.0.1", action: "tmux.keys", target: session, result: "ok" },
+          { env },
+        );
+      }
+      jsonResponse(res, 200, { ok: true });
       return;
     }
 

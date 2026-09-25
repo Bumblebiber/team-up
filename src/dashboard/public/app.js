@@ -177,20 +177,95 @@ async function refreshTmux() {
   });
 }
 
+/** Browser key name → the name tmux send-keys knows it by. */
+const TMUX_KEYS = {
+  Enter: "Enter",
+  Escape: "Escape",
+  Tab: "Tab",
+  Backspace: "BSpace",
+  Delete: "DC",
+  Insert: "IC",
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  Home: "Home",
+  End: "End",
+  PageUp: "PageUp",
+  PageDown: "PageDown",
+};
+
+async function sendKey(body) {
+  if (!selectedSession) return;
+  try {
+    await api(`/api/tmux/${encodeURIComponent(selectedSession)}/keys`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    await refreshPane();
+  } catch (err) {
+    $("#term-state").textContent = err.message;
+  }
+}
+
+async function refreshPane() {
+  if (!selectedSession) return;
+  try {
+    const data = await api(`/api/tmux/${encodeURIComponent(selectedSession)}/pane`);
+    // Trailing blank lines are the unused rest of the pane; they push the
+    // prompt off the top of a scrolled screen for no reason.
+    $("#pane-output").textContent = (data.pane || "").replace(/\s+$/, "") || "(empty)";
+    $("#term-state").textContent = "";
+  } catch {
+    $("#term-state").textContent = "session gone";
+    closeTerm();
+  }
+}
+
+function closeTerm() {
+  selectedSession = null;
+  if (paneTimer) clearInterval(paneTimer);
+  paneTimer = null;
+  $("#term").classList.add("hidden");
+}
+
 async function selectSession(session) {
   selectedSession = session;
+  $("#term-title").textContent = session;
+  $("#term-state").textContent = "";
+  $("#term").classList.remove("hidden");
+  $("#pane-output").focus();
   if (paneTimer) clearInterval(paneTimer);
-  const refresh = async () => {
-    try {
-      const data = await api(`/api/tmux/${encodeURIComponent(session)}/pane`);
-      const el = $("#pane-output");
-      el.textContent = data.pane || "(empty)";
-      el.classList.remove("hidden");
-    } catch { /* session gone */ }
-  };
-  await refresh();
-  paneTimer = setInterval(refresh, 2000);
+  await refreshPane();
+  // Faster than the read-only view was: the pane is the only feedback that a
+  // keystroke arrived.
+  paneTimer = setInterval(refreshPane, 700);
 }
+
+$("#term-close").addEventListener("click", closeTerm);
+$("#term").addEventListener("click", (e) => {
+  if (e.target.id === "term") closeTerm();
+});
+
+$("#pane-output").addEventListener("keydown", (e) => {
+  if (!selectedSession) return;
+  // Escape goes to the session, not the overlay: every TUI in here uses it to
+  // back out of a dialog. Closing is the button, the backdrop, or Ctrl-Esc.
+  if (e.key === "Escape" && e.ctrlKey) {
+    closeTerm();
+    return;
+  }
+  e.preventDefault();
+  if (e.ctrlKey && /^[a-z0-9[\]\\^_]$/i.test(e.key)) {
+    sendKey({ key: `C-${e.key.toLowerCase()}` });
+    return;
+  }
+  if (TMUX_KEYS[e.key]) {
+    sendKey({ key: TMUX_KEYS[e.key] });
+    return;
+  }
+  if (e.key.length === 1 && !e.metaKey && !e.altKey) sendKey({ text: e.key });
+});
 
 async function refreshUsage() {
   const data = await api("/api/usage");

@@ -516,3 +516,98 @@ test("a write refused for a bad origin is audited too", () =>
       .trim().split("\n").map((l) => JSON.parse(l));
     assert.ok(lines.some((l) => l.action === "write.denied" && /csrf/.test(l.detail)));
   }));
+
+function withTermServer(token, sent) {
+  return createDashboardServer({
+    token,
+    listSessions: () => ["team-up-install-cursor"],
+    sendKeys: (session, payload) => sent.push({ session, ...payload }),
+  });
+}
+
+test("a printable key is sent to the session literally", () =>
+  withHome(async ({ token }) => {
+    const sent = [];
+    const { server } = withTermServer(token, sent);
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/tmux/team-up-install-cursor/keys", {
+      method: "POST",
+      cookie,
+      csrf: true,
+      body: { text: "q" },
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(sent, [{ session: "team-up-install-cursor", text: "q", key: null }]);
+    server.close();
+  }));
+
+test("named and control keys pass, invented ones do not", () =>
+  withHome(async ({ token }) => {
+    const sent = [];
+    const { server } = withTermServer(token, sent);
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    for (const key of ["Enter", "C-c", "Up"]) {
+      const ok = await req(port, "/api/tmux/team-up-install-cursor/keys", {
+        method: "POST", cookie, csrf: true, body: { key },
+      });
+      assert.equal(ok.status, 200, key);
+    }
+    // send-keys reads its argument as a key name, so anything outside the list
+    // is a way to press keys nobody typed.
+    for (const key of ["kill-session", "C-", "Enter Enter", ""]) {
+      const bad = await req(port, "/api/tmux/team-up-install-cursor/keys", {
+        method: "POST", cookie, csrf: true, body: { key },
+      });
+      assert.equal(bad.status, 400, key);
+    }
+    assert.equal(sent.length, 3);
+    server.close();
+  }));
+
+test("control characters are refused in literal text", () =>
+  withHome(async ({ token }) => {
+    const sent = [];
+    const { server } = withTermServer(token, sent);
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    for (const text of ["\u0003", "ls\n", "", "x".repeat(257)]) {
+      const r = await req(port, "/api/tmux/team-up-install-cursor/keys", {
+        method: "POST", cookie, csrf: true, body: { text },
+      });
+      assert.equal(r.status, 400, JSON.stringify(text));
+    }
+    assert.deepEqual(sent, []);
+    server.close();
+  }));
+
+test("keys to an unknown session are refused", () =>
+  withHome(async ({ token }) => {
+    const sent = [];
+    const { server } = withTermServer(token, sent);
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/tmux/nope/keys", {
+      method: "POST", cookie, csrf: true, body: { text: "q" },
+    });
+    assert.equal(r.status, 404);
+    assert.deepEqual(sent, []);
+    server.close();
+  }));
+
+test("sending keys without the CSRF header is refused", () =>
+  withHome(async ({ token }) => {
+    const sent = [];
+    const { server } = withTermServer(token, sent);
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/tmux/team-up-install-cursor/keys", {
+      method: "POST",
+      cookie,
+      body: { text: "q" },
+    });
+    assert.equal(r.status, 403);
+    assert.deepEqual(sent, []);
+    server.close();
+  }));
