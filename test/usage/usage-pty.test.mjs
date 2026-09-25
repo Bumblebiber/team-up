@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   buildExpectScript,
+  runPtyCollect,
   redactPaneExcerpt,
   normalizeForRedaction,
   formatPtyTimeoutError,
@@ -134,4 +136,69 @@ test("redactPaneExcerpt keeps last N non-empty lines", () => {
   assert.match(out, /c/);
   assert.match(out, /e/);
   assert.doesNotMatch(out, /^a/m);
+});
+
+function pidsWithCmdline(marker) {
+  const hits = [];
+  for (const name of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      const cmd = fs.readFileSync(`/proc/${name}/cmdline`, "utf8");
+      if (cmd.includes(marker)) hits.push(Number(name));
+    } catch {
+      /* exited between readdir and read */
+    }
+  }
+  return hits;
+}
+
+test("probe whose child never answers returns within the hard timeout and leaves no child", { timeout: 20_000 }, async () => {
+  const marker = `teamup-probe-hang-${process.pid}-${Date.now()}`;
+  // setsid grandchild survives expect dying (SIGHUP) and a SIGTERM to expect's pid.
+  // It never prints the prompt, so only the hard kill can reap it.
+  const script = `
+set timeout 60
+spawn bash -c {setsid bash -c 'exec -a ${marker} sleep 90' & exec -a ${marker} sleep 90}
+expect {
+  -re "never-answers-teamup" {}
+  timeout { exit 2 }
+}
+`;
+  const hardTimeoutMs = 1500;
+  const started = Date.now();
+  try {
+    assert.throws(
+      () => runPtyCollect("cursor", { hardTimeoutMs, script }),
+      /cursor collect timed out/,
+    );
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < hardTimeoutMs + 5000, `returned in ${elapsed}ms`);
+    let left = pidsWithCmdline(marker);
+    for (let i = 0; i < 20 && left.length; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      left = pidsWithCmdline(marker);
+    }
+    assert.deepEqual(left, [], `child still alive: ${left.join(",")}`);
+  } finally {
+    for (const pid of pidsWithCmdline(marker)) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+});
+
+test("bounded probe returns the transcript when the child answers", { timeout: 15_000 }, () => {
+  const script = `
+set timeout 5
+spawn bash -c {echo probe-ok}
+expect {
+  -re "probe-ok" {}
+  timeout { exit 2 }
+}
+`;
+  const out = runPtyCollect("cursor", { hardTimeoutMs: 5000, script });
+  assert.match(out, /probe-ok/);
 });
