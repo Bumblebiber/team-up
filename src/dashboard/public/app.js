@@ -825,14 +825,19 @@ $("#specialist-install").addEventListener("click", async () => {
 });
 
 // ── Panel layout ──────────────────────────────────────────────────────────
-// Order comes from dragging a panel by its <h2>; size comes from the browser's
-// native resize handle, which writes inline width/height. Both are per-browser
-// preferences, so localStorage is the right home for them.
-//
-// The two columns are their own flex containers rather than grid items: that
-// way each stacks independently, and a tall panel in one leaves no gap in the
-// other. Panels drag freely between them.
+// Panels live in columns the script builds, not in the markup: the number of
+// columns is the user's choice. Each column is its own flex container, so it
+// stacks independently and a tall panel in one leaves no gap in the next.
+// Order comes from dragging a panel by its <h2>, size from the browser's
+// native resize handle. All of it is per-browser preference, so localStorage
+// is the right home for it.
 const LAYOUT_KEY = "teamup.layout";
+const MAX_COLUMNS = 6;
+// What a fresh browser gets: the narrow-content panels left, the wide ones right.
+const DEFAULT_COLUMNS = [
+  ["panel-usage", "panel-tmux", "panel-specialists", "panel-setup"],
+  ["panel-runs", "panel-pick"],
+];
 const mainEl = $("main");
 const columns = () => [...mainEl.querySelectorAll(".column")];
 const panels = () => [...mainEl.querySelectorAll(".panel")];
@@ -852,10 +857,8 @@ function saveLayout() {
       size[panel.id] = { w: panel.style.width, h: panel.style.height };
     }
   }
-  const order = {};
-  for (const column of columns()) {
-    order[column.id] = [...column.querySelectorAll(".panel")].map((p) => p.id);
-  }
+  const order = columns().map((column) =>
+    [...column.querySelectorAll(".panel")].map((p) => p.id));
   try {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify({ order, size }));
   } catch {
@@ -863,19 +866,56 @@ function saveLayout() {
   }
 }
 
+function setColumnCount(count) {
+  const wanted = Math.max(1, Math.min(MAX_COLUMNS, count));
+  let existing = columns();
+  while (existing.length < wanted) {
+    const column = document.createElement("div");
+    column.className = "column";
+    mainEl.append(column);
+    existing = columns();
+  }
+  // Removing a column must not remove its panels: they move to the last one
+  // that survives, in order.
+  while (existing.length > wanted) {
+    const doomed = existing.pop();
+    for (const panel of [...doomed.querySelectorAll(".panel")]) {
+      existing[existing.length - 1].append(panel);
+    }
+    doomed.remove();
+  }
+  mainEl.style.setProperty("--column-count", String(wanted));
+  $("#column-count").textContent = String(wanted);
+  $("#column-remove").disabled = wanted <= 1;
+  $("#column-add").disabled = wanted >= MAX_COLUMNS;
+}
+
 function applyLayout() {
   const layout = readLayout();
-  // An older single-column layout stored an array; ignore it rather than
-  // guessing which column each panel belonged to.
-  const order = Array.isArray(layout.order) ? {} : layout.order || {};
-  for (const [columnId, ids] of Object.entries(order)) {
-    const column = document.getElementById(columnId);
-    if (!column?.classList.contains("column")) continue;
+  // Older layouts keyed the order by column id, or were a flat array before
+  // there were columns at all. Neither says how many columns the user wanted,
+  // so they fall back to the default rather than being guessed at.
+  const order = Array.isArray(layout.order) && Array.isArray(layout.order[0])
+    ? layout.order
+    : DEFAULT_COLUMNS;
+
+  setColumnCount(order.length);
+  const built = columns();
+  const placed = new Set();
+  order.forEach((ids, index) => {
     for (const id of ids) {
       const panel = document.getElementById(id);
-      if (panel?.classList.contains("panel")) column.append(panel);
+      if (!panel?.classList.contains("panel")) continue;
+      built[index].append(panel);
+      placed.add(id);
     }
+  });
+  // A panel the stored layout never heard of — a new one shipped since it was
+  // written — would otherwise stay outside every column and vanish from view.
+  for (const panel of [...mainEl.children].filter((el) => el.classList.contains("panel"))) {
+    if (!placed.has(panel.id)) built[0].append(panel);
   }
+
   for (const [id, size] of Object.entries(layout.size || {})) {
     const panel = document.getElementById(id);
     if (!panel) continue;
@@ -884,9 +924,7 @@ function applyLayout() {
   }
 }
 
-let draggedPanel = null;
-
-// A resize writes both width and height, so a panel dragged into the other
+// A resize writes both width and height, so a panel dragged into another
 // column would carry the old column's pixel width with it. Height is the
 // user's choice and stays.
 function movePanel(panel, place) {
@@ -895,6 +933,8 @@ function movePanel(panel, place) {
   if (panel.parentElement !== from) panel.style.width = "";
   saveLayout();
 }
+
+let draggedPanel = null;
 
 function enableLayoutEditing() {
   for (const panel of panels()) {
@@ -911,47 +951,48 @@ function enableLayoutEditing() {
     grip.addEventListener("dragend", () => {
       panel.classList.remove("dragging");
       draggedPanel = null;
-    });
-    panel.addEventListener("dragover", (event) => {
-      if (!draggedPanel) return;
-      // Stop before the self-check: letting the event reach the column would
-      // make an aborted drag onto its own panel fall through to "append".
-      event.stopPropagation();
-      if (draggedPanel === panel) return;
-      event.preventDefault();
-      panel.classList.add("drop-target");
-    });
-    panel.addEventListener("dragleave", () => panel.classList.remove("drop-target"));
-    panel.addEventListener("drop", (event) => {
-      panel.classList.remove("drop-target");
-      if (!draggedPanel) return;
-      event.stopPropagation();
-      if (draggedPanel === panel) return;
-      event.preventDefault();
-      // Which half of the target was hit decides above/below. Document order
-      // cannot answer that once a panel crosses into the other column.
-      const box = panel.getBoundingClientRect();
-      const above = event.clientY < box.top + box.height / 2;
-      movePanel(draggedPanel, (moved) => panel[above ? "before" : "after"](moved));
+      mainEl.querySelectorAll(".drop-target")
+        .forEach((el) => el.classList.remove("drop-target"));
     });
   }
 
-  // Dropping on a column's empty space parks the panel at its end; without
-  // this a column emptied by dragging could never take a panel back.
-  for (const column of columns()) {
-    column.addEventListener("dragover", (event) => {
-      if (!draggedPanel) return;
+  // Delegated to <main>: columns come and go, so per-column listeners would
+  // have to be rewired on every add.
+  mainEl.addEventListener("dragover", (event) => {
+    if (!draggedPanel) return;
+    const panel = event.target.closest?.(".panel");
+    const column = event.target.closest?.(".column");
+    if (!panel && !column) return;
+    if (panel === draggedPanel) return;
+    event.preventDefault();
+    for (const el of mainEl.querySelectorAll(".drop-target")) el.classList.remove("drop-target");
+    (panel || column).classList.add("drop-target");
+  });
+
+  mainEl.addEventListener("dragleave", (event) => {
+    event.target.closest?.(".panel, .column")?.classList.remove("drop-target");
+  });
+
+  mainEl.addEventListener("drop", (event) => {
+    if (!draggedPanel) return;
+    const panel = event.target.closest?.(".panel");
+    const column = event.target.closest?.(".column");
+    if (panel === draggedPanel) return;
+    if (panel) {
       event.preventDefault();
-      column.classList.add("drop-target");
-    });
-    column.addEventListener("dragleave", () => column.classList.remove("drop-target"));
-    column.addEventListener("drop", (event) => {
-      column.classList.remove("drop-target");
-      if (!draggedPanel) return;
+      // Which half of the target was hit decides above/below. Document order
+      // cannot answer that once a panel crosses into another column.
+      const box = panel.getBoundingClientRect();
+      const above = event.clientY < box.top + box.height / 2;
+      movePanel(draggedPanel, (moved) => panel[above ? "before" : "after"](moved));
+    } else if (column) {
+      // The blank space below the last panel parks it at the end, which is
+      // also the only way into a column emptied by dragging.
       event.preventDefault();
       movePanel(draggedPanel, (moved) => column.append(moved));
-    });
-  }
+    }
+    for (const el of mainEl.querySelectorAll(".drop-target")) el.classList.remove("drop-target");
+  });
 
   // The native resize handle sets inline width/height and fires no event of its
   // own; a pointerup anywhere is the cheapest "the drag is over" signal.
@@ -962,6 +1003,16 @@ function enableLayoutEditing() {
       return panel.style.width !== (saved.w || "") || panel.style.height !== (saved.h || "");
     });
     if (changed) saveLayout();
+  });
+
+  $("#column-add").addEventListener("click", () => {
+    setColumnCount(columns().length + 1);
+    saveLayout();
+  });
+
+  $("#column-remove").addEventListener("click", () => {
+    setColumnCount(columns().length - 1);
+    saveLayout();
   });
 
   $("#reset-layout-btn").addEventListener("click", () => {

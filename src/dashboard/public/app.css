@@ -122,8 +122,10 @@ main {
   display: grid;
   /* stretch, so each column reaches the full height and its blank space below
      the last panel stays a drop target. Panels do not grow with it: they are
-     flex children along the column axis. */
-  grid-template-columns: minmax(20rem, 1fr) minmax(30rem, 1.6fr);
+     flex children along the column axis. The count is the user's, set as an
+     inline custom property; minmax(0,…) lets columns shrink rather than
+     forcing the page to scroll sideways. */
+  grid-template-columns: repeat(var(--column-count, 2), minmax(0, 1fr));
   gap: 0.75rem;
   padding: 0.75rem 1rem;
 }
@@ -321,6 +323,7 @@ tr.greyed td { opacity: 0.55; }
 }
 
 @media (max-width: 800px) {
+  /* One column on a phone whatever the stored count says. */
   main { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -389,3 +392,13 @@ tr.greyed td { opacity: 0.55; }
 }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; }
+
+.column-controls {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.column-controls button {
+  padding: 0 0.4rem;
+  min-width: 1.6rem;
+}
+.column-controls button:disabled { opacity: 0.4; cursor: default; }

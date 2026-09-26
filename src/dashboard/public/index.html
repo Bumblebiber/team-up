@@ -27,96 +27,100 @@
         <a href="#panel-pick">Pick</a>
         <a href="#panel-specialists">Specialists</a>
         <a href="#panel-setup">Setup</a>
+        <span class="column-controls">
+          <button type="button" id="column-remove" title="Remove the last column; its panels move left">−</button>
+          <span id="column-count">2</span> columns
+          <button type="button" id="column-add" title="Add a column">+</button>
+        </span>
         <button type="button" id="reset-layout-btn" title="Restore the default panel order and size">Reset layout</button>
       </nav>
     </header>
 
     <main>
-      <div class="column" id="col-left">
-        <section id="panel-usage" class="panel">
-          <h2>Usage</h2>
-          <div id="usage-grid" class="usage-grid"></div>
-          <div id="usage-repair-status" class="repair-status hidden"></div>
-          <div id="marked-list"></div>
-        </section>
-        <section id="panel-tmux" class="panel">
-          <h2>tmux</h2>
-          <div id="tmux-table" class="table-wrap"></div>
-        </section>
-        <section id="panel-specialists" class="panel">
-          <h2>Specialists</h2>
-          <div class="toolbar">
-            <label>Specialist
-              <select id="specialist-select"></select>
-            </label>
-          </div>
-          <div id="specialist-detail"></div>
+      <section id="panel-usage" class="panel">
+        <h2>Usage</h2>
+        <div id="usage-grid" class="usage-grid"></div>
+        <div id="usage-repair-status" class="repair-status hidden"></div>
+        <div id="marked-list"></div>
+      </section>
 
-          <h3>Assign a capability</h3>
-          <div class="toolbar">
-            <select id="capability-select"></select>
-            <button type="button" id="capability-assign">Assign</button>
-          </div>
-          <p id="capability-status" class="muted"></p>
+      <section id="panel-tmux" class="panel">
+        <h2>tmux</h2>
+        <div id="tmux-table" class="table-wrap"></div>
+      </section>
 
-          <h3>Install from GitHub</h3>
-          <div class="toolbar">
-            <input type="text" id="specialist-repo" placeholder="https://github.com/owner/repo#ref">
-            <input type="text" id="specialist-subdir" placeholder="subdir (optional)">
-            <button type="button" id="specialist-install">Install</button>
-          </div>
-          <p id="specialist-install-status" class="muted"></p>
-        </section>
+      <section id="panel-specialists" class="panel">
+        <h2>Specialists</h2>
+        <div class="toolbar">
+          <label>Specialist
+            <select id="specialist-select"></select>
+          </label>
+        </div>
+        <div id="specialist-detail"></div>
 
-        <section id="panel-setup" class="panel setup-panel">
-          <h2>Setup</h2>
-          <div id="admin-gate" class="admin-gate hidden">
-            <p>Write actions need a confirmation code from the terminal running <code>team-up dashboard</code>.</p>
-            <button type="button" id="admin-challenge-btn">Request code</button>
-            <form id="admin-confirm-form" class="hidden">
-              <input type="text" id="admin-code-input" placeholder="123-456" autocomplete="off">
-              <button type="submit">Confirm</button>
-            </form>
-            <p id="admin-status" class="muted"></p>
-          </div>
+        <h3>Assign a capability</h3>
+        <div class="toolbar">
+          <select id="capability-select"></select>
+          <button type="button" id="capability-assign">Assign</button>
+        </div>
+        <p id="capability-status" class="muted"></p>
 
-          <h3>Providers</h3>
-          <div id="providers-list"></div>
+        <h3>Install from GitHub</h3>
+        <div class="toolbar">
+          <input type="text" id="specialist-repo" placeholder="https://github.com/owner/repo#ref">
+          <input type="text" id="specialist-subdir" placeholder="subdir (optional)">
+          <button type="button" id="specialist-install">Install</button>
+        </div>
+        <p id="specialist-install-status" class="muted"></p>
+      </section>
 
-          <h3>Models</h3>
-          <div class="toolbar">
-            <input type="search" id="models-search" placeholder="Filter models…">
-            <label><input type="checkbox" id="models-roster-only"> In roster only</label>
-            <button type="button" id="refresh-scores-btn">Refresh catalogue</button>
-          </div>
-          <p id="models-meta" class="muted"></p>
-          <div class="toolbar">
-            <button type="button" id="models-prev">Previous</button>
-            <button type="button" id="models-next">Next</button>
-          </div>
-          <div id="models-table" class="table-wrap"></div>
-          <p id="apply-cli-hint" class="muted"></p>
+      <section id="panel-setup" class="panel setup-panel">
+        <h2>Setup</h2>
+        <div id="admin-gate" class="admin-gate hidden">
+          <p>Write actions need a confirmation code from the terminal running <code>team-up dashboard</code>.</p>
+          <button type="button" id="admin-challenge-btn">Request code</button>
+          <form id="admin-confirm-form" class="hidden">
+            <input type="text" id="admin-code-input" placeholder="123-456" autocomplete="off">
+            <button type="submit">Confirm</button>
+          </form>
+          <p id="admin-status" class="muted"></p>
+        </div>
 
-          <h3>CLIs</h3>
-          <div id="clis-table" class="table-wrap"></div>
-          <pre id="cli-log" class="pane hidden"></pre>
-        </section>
-      </div>
+        <h3>Providers</h3>
+        <div id="providers-list"></div>
 
-      <div class="column" id="col-right">
-        <section id="panel-runs" class="panel">
-          <h2>Runs</h2>
-          <div class="toolbar">
-            <label><input type="checkbox" id="active-only" checked> Active only</label>
-          </div>
-          <div id="runs-table" class="table-wrap"></div>
-          <div id="run-detail" class="detail hidden"></div>
-        </section>
-        <section id="panel-pick" class="panel">
-          <h2>Pick preview</h2>
-          <div id="pick-table" class="table-wrap"></div>
-        </section>
-      </div>
+        <h3>Models</h3>
+        <div class="toolbar">
+          <input type="search" id="models-search" placeholder="Filter models…">
+          <label><input type="checkbox" id="models-roster-only"> In roster only</label>
+          <button type="button" id="refresh-scores-btn">Refresh catalogue</button>
+        </div>
+        <p id="models-meta" class="muted"></p>
+        <div class="toolbar">
+          <button type="button" id="models-prev">Previous</button>
+          <button type="button" id="models-next">Next</button>
+        </div>
+        <div id="models-table" class="table-wrap"></div>
+        <p id="apply-cli-hint" class="muted"></p>
+
+        <h3>CLIs</h3>
+        <div id="clis-table" class="table-wrap"></div>
+        <pre id="cli-log" class="pane hidden"></pre>
+      </section>
+
+      <section id="panel-runs" class="panel">
+        <h2>Runs</h2>
+        <div class="toolbar">
+          <label><input type="checkbox" id="active-only" checked> Active only</label>
+        </div>
+        <div id="runs-table" class="table-wrap"></div>
+        <div id="run-detail" class="detail hidden"></div>
+      </section>
+
+      <section id="panel-pick" class="panel">
+        <h2>Pick preview</h2>
+        <div id="pick-table" class="table-wrap"></div>
+      </section>
     </main>
   </div>
 
