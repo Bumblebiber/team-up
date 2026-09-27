@@ -261,8 +261,20 @@ test("a satisfiable profile is not reported", () => {
       })
     );
     fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify(ROSTER_FRONTIER_ONLY));
+    const verifyDir = path.join(home, "harness-verification", "claude");
+    fs.mkdirSync(verifyDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(verifyDir, "9.9.9.json"),
+      JSON.stringify({
+        adapter: "claude",
+        cli_version: "9.9.9",
+        status: "verified",
+        context_isolation: "team-up.context-isolation/v1",
+        checked_at: "2026-09-01T09:57:52.333Z",
+      })
+    );
 
-    const report = diagnose(homeEnv(home));
+    const report = diagnose(homeEnv(home), { execFileSync: () => "9.9.9 (Claude Code)\n" });
     assert.equal(report.findings.some((f) => f.kind === "no_model_for_profile"), false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

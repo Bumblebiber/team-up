@@ -11,7 +11,7 @@ import {
   CONTEXT_ISOLATION_CAPABILITY,
 } from "./harness/capabilities.mjs";
 import { configPath, loadJson, validateRoster } from "./roster/config.mjs";
-import { harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
+import { defaultHarnessCapabilities, harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
 import { checkModelAvailability } from "./roster/availability.mjs";
 import { LIST_TIMEOUT_MS } from "./collectors/cli-models.mjs";
 import { listVerificationRecords, loadVerificationRecord } from "./harness/verify.mjs";
@@ -104,6 +104,8 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
     // rather than report every specialist as broken.
   }
   if (roster) {
+    const harnessCaps = (cli) =>
+      defaultHarnessCapabilities(cli, execFileSync ? { env, execFileSync } : { env });
     for (const id of ids) {
       let manifest;
       try {
@@ -127,6 +129,7 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
             ? { command_broker: COMMAND_BROKER_CAPABILITY }
             : {}),
         },
+        harnessCapabilities: harnessCaps,
       });
       if (resolved.code === "PROFILE_UNAVAILABLE") {
         findings.push({
