@@ -126,6 +126,17 @@ function levelBadge(level) {
  * STALE is a button, not a label: the cause differs every time a vendor changes
  * its TUI, so one click dispatches an agent to fix the collector and prove it.
  */
+function collectorBadge(key, collector, stale) {
+  // Auth first, and independent of staleness: a dead login is visible in the
+  // collector ring long before the window crosses the 40-minute stale mark, and
+  // "FIX IT" would dispatch a repair agent that cannot log in for you.
+  if (collector?.auth_failure) {
+    const n = collector.auth_failure_streak;
+    return ` <span class="badge red" title="collector could not authenticate${n > 1 ? ` (${n}x in a row)` : ""} — re-login at the CLI">LOGIN FAILED</span>`;
+  }
+  return stale ? staleBadge(key, collector) : "";
+}
+
 function staleBadge(key, collector) {
   const cli = key.split(":")[0];
   const reason = collector?.last_reason;
@@ -139,6 +150,15 @@ function staleBadge(key, collector) {
 /** Derived from /api/usage, so a reload shows the same thing. */
 function repairStatusLine(collectors = {}) {
   const entries = Object.entries(collectors);
+  // Collector-level, not per row: a CLI whose login died may have no windows in
+  // usage.json at all, and then no row exists to carry the warning.
+  const dead = entries.filter(([, c]) => c?.suggest_disable).map(([cli]) => cli);
+  if (dead.length) {
+    const today = new Date().toISOString().slice(0, 10);
+    return dead.map((cli) =>
+      `⚠ ${cli}: login failed ${collectors[cli].auth_failure_streak}x in a row. If the subscription is gone, set accounts.${cli} in ~/.team-up/roster.json to "enabled": false with "$comment": "${cli} sub dead ${today}. Flip enabled:true to bring the chain entries back." — nothing is switched automatically.`,
+    ).join(" ");
+  }
   const running = entries.filter(([, c]) => c?.repair?.running).map(([cli]) => cli);
   if (running.length) {
     return `⟳ updating usage limits for ${running.join(", ")} — this widget refreshes itself every 5s`;
@@ -306,7 +326,7 @@ async function refreshUsage() {
       <div class="key">${esc(key)}</div>
       <div class="bar"><span style="width:${w.usedPct != null ? Math.min(100, w.usedPct) : 0}%"></span></div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
-      <div>${levelBadge(w.level)}${w.stale ? staleBadge(key, data.collectors?.[key.split(":")[0]]) : ""}</div>
+      <div>${levelBadge(w.level)}${collectorBadge(key, data.collectors?.[key.split(":")[0]], w.stale)}</div>
       <div class="marked-item">↻ ${esc(w.resets_at ? fmtTime(w.resets_at) : "—")}</div>
     </div>`).join("");
   $("#usage-grid").innerHTML = rows || "<p>No usage data</p>";

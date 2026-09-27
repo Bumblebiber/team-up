@@ -140,9 +140,25 @@ export function classifyUsageWindow(info, roster, now = Date.now()) {
 }
 
 /**
+ * Consecutive auth failures at the tail of the ring. The ring is emptied on a
+ * successful collect (tickOnce), so every entry is a failure since the last
+ * good reading; only a tail streak means "still failing on login now".
+ */
+function authFailureStreak(list) {
+  let n = 0;
+  for (let i = list.length - 1; i >= 0 && list[i]?.reason === "auth_failure"; i -= 1) n += 1;
+  return n;
+}
+
+/** Same threshold as usage-watchdog.mjs FAILURE_REPEAT, and <= COLLECT_FAILURE_RING. */
+export const AUTH_FAILURE_STREAK = 3;
+
+/**
  * Per-CLI collector health. A window goes STALE because its collector stopped
  * succeeding, so the reason lives in the watcher's state, not in usage.json —
  * surfacing it here is what turns a bare STALE badge into something actionable.
+ * auth_failure is kept apart from the parse reasons: a dead login is an account
+ * problem no repair agent can fix, and the dashboard has to say which it is.
  */
 export function buildCollectorView(watcher, repairs = {}) {
   const lastCollect = watcher?.last_collect || {};
@@ -151,11 +167,18 @@ export function buildCollectorView(watcher, repairs = {}) {
   for (const cli of new Set([...Object.keys(lastCollect), ...Object.keys(failures)])) {
     const list = Array.isArray(failures[cli]) ? failures[cli] : [];
     const last = list.length ? list[list.length - 1] : null;
+    const authStreak = authFailureStreak(list);
     out[cli] = {
       last_collect: lastCollect[cli] ?? null,
       failure_count: list.length,
       last_failure_at: last?.at ?? null,
       last_reason: last?.reason ?? null,
+      auth_failure: authStreak > 0,
+      auth_failure_streak: authStreak,
+      // Suggest only. The 2026-09-23 cursor collector bug produced this exact
+      // shape while the subscription was healthy — an auto-flip would have
+      // disabled a paid, working account on its own.
+      suggest_disable: authStreak >= AUTH_FAILURE_STREAK,
       repair: repairs[cli] ?? { running: false, session: null, started_at: null },
     };
   }

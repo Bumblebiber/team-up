@@ -312,3 +312,23 @@ test("the usage endpoint ships the collector reason behind the STALE badge", () 
       assert.equal(data.collectors.cursor.last_reason, "cursor collect timed out");
     });
   }));
+
+test("an auth_failure streak is kept apart from parse reasons and earns a suggestion", () => {
+  const auth = (at) => ({ at, reason: "auth_failure" });
+  const view = buildCollectorView({
+    collect_failures: {
+      // three in a row: account, not parser — suggest disabling
+      cursor: [{ at: "t0", reason: "empty-parse" }, auth("t1"), auth("t2"), auth("t3")],
+      // a parse failure after the auth ones: the login is not the current story
+      codex: [auth("t1"), auth("t2"), { at: "t3", reason: "cursor collect timed out" }],
+      // one is enough to say "login", not enough to suggest an account change
+      claude: [auth("t1")],
+    },
+  });
+  assert.equal(view.cursor.auth_failure_streak, 3);
+  assert.equal(view.cursor.suggest_disable, true);
+  assert.equal(view.codex.auth_failure, false);
+  assert.equal(view.codex.auth_failure_streak, 0);
+  assert.equal(view.claude.auth_failure, true);
+  assert.equal(view.claude.suggest_disable, false);
+});
