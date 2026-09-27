@@ -1,5 +1,6 @@
 import { pick, limits } from "../roster/chain.mjs";
 import { unlistedHighScorers } from "../scores/propose.mjs";
+import { SESSION_PREFIX } from "./projects.mjs";
 
 /** Run ids from `createRun` — ISO timestamp + 4-char base36 suffix. */
 export const RUN_ID_PATTERN = /^\d{8}T\d{6}Z-[a-z0-9]{4}$/;
@@ -97,7 +98,9 @@ export function joinTmuxSessions(sessions, states) {
     runId: bySession.get(name)?.runId ?? null,
     role: bySession.get(name)?.role ?? null,
     status: bySession.get(name)?.status ?? null,
-    orphan: !bySession.has(name),
+    // A session started from the Projects panel has no run by design, so it is
+    // not a leftover worker — flagging it would make the warning meaningless.
+    orphan: !bySession.has(name) && !name.startsWith(SESSION_PREFIX),
   }));
   const orphans = joined.filter((s) => s.orphan);
   return { sessions: joined, orphans };

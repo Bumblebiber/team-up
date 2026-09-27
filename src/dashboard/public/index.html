@@ -24,6 +24,7 @@
         <a href="#panel-usage">Usage</a>
         <a href="#panel-runs">Runs</a>
         <a href="#panel-tmux">tmux</a>
+        <a href="#panel-projects">Projects</a>
         <a href="#panel-pick">Pick</a>
         <a href="#panel-specialists">Specialists</a>
         <a href="#panel-setup">Setup</a>
@@ -47,6 +48,18 @@
       <section id="panel-tmux" class="panel">
         <h2>tmux</h2>
         <div id="tmux-table" class="table-wrap"></div>
+      </section>
+
+      <section id="panel-projects" class="panel">
+        <h2>Projects</h2>
+        <div class="toolbar">
+          <label>Folder
+            <input type="text" id="projects-dir" placeholder="~/projects" autocomplete="off">
+          </label>
+          <select id="projects-cli"></select>
+        </div>
+        <p id="projects-status" class="muted"></p>
+        <div id="projects-table" class="table-wrap"></div>
       </section>
 
       <section id="panel-specialists" class="panel">

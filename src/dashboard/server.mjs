@@ -15,6 +15,7 @@ import {
   buildCapabilityPoolView,
   installSpecialistFromGithub,
 } from "./specialists.mjs";
+import { listProjects, startProjectSession } from "./projects.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
 import { pinSpecialist } from "../specialists/store.mjs";
 import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
@@ -1022,6 +1023,48 @@ export function createDashboardServer({
           { env },
         );
         jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    if (pathname === "/api/projects") {
+      const dir = url.searchParams.get("dir") || "";
+      try {
+        const data = memo.get(`projects:${dir}`, () => listProjects(dir, { exec }));
+        jsonResponse(res, 200, { ...data, clis: Object.keys(loadRoster(env).clis || {}).sort() });
+      } catch (e) {
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/projects/session") {
+      if (!requireWriteAccess(req, res)) return;
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        const result = startProjectSession({
+          dir: body.dir,
+          cli: body.cli,
+          projectsDir: body.projects_dir,
+          roster: loadRoster(env),
+          exec,
+        });
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: "project.session",
+            target: `${body.cli}:${body.dir}`,
+            result: result.ok ? (result.existing ? "existing" : "ok") : "fail",
+          },
+          { env },
+        );
+        // The pane endpoint 404s on a session the 1s memo has not seen yet, and
+        // the overlay reads any 404 as "session gone" and closes itself.
+        memo.invalidate("tmux");
+        memo.invalidate("tmux-sessions");
+        jsonResponse(res, result.ok ? 200 : (result.status ?? 500), result);
+      } catch (e) {
+        jsonResponse(res, 500, { error: String(e.message || e) });
       }
       return;
     }

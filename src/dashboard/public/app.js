@@ -835,7 +835,7 @@ const LAYOUT_KEY = "teamup.layout";
 const MAX_COLUMNS = 6;
 // What a fresh browser gets: the narrow-content panels left, the wide ones right.
 const DEFAULT_COLUMNS = [
-  ["panel-usage", "panel-tmux", "panel-specialists", "panel-setup"],
+  ["panel-usage", "panel-tmux", "panel-projects", "panel-specialists", "panel-setup"],
   ["panel-runs", "panel-pick"],
 ];
 const mainEl = $("main");
@@ -1029,11 +1029,94 @@ function enableLayoutEditing() {
   });
 }
 
+// ── Projects ──────────────────────────────────────────────────────────────
+// The collecting folder is a per-browser preference, like the layout: the
+// server takes it as a parameter and never stores it.
+const PROJECTS_DIR_KEY = "teamup.projectsDir";
+
+function readProjectsDir() {
+  try {
+    return localStorage.getItem(PROJECTS_DIR_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+async function refreshProjects() {
+  const dir = readProjectsDir();
+  const status = $("#projects-status");
+  let data;
+  try {
+    data = await api(`/api/projects?dir=${encodeURIComponent(dir)}`);
+  } catch (err) {
+    status.textContent = err.message;
+    $("#projects-table").innerHTML = "";
+    return;
+  }
+  status.textContent = data.dir;
+  if (!$("#projects-dir").value) $("#projects-dir").value = dir || data.dir;
+
+  const cliSel = $("#projects-cli");
+  const selected = cliSel.value;
+  const options = (data.clis || []).map((c) => `<option>${esc(c)}</option>`).join("");
+  if (cliSel.innerHTML !== options) cliSel.innerHTML = options;
+  if (selected && (data.clis || []).includes(selected)) cliSel.value = selected;
+
+  const rows = data.projects.map((p) => `
+    <tr>
+      <td>${esc(p.name)}${p.dirty ? " <span class=\"muted\">*</span>" : ""}</td>
+      <td>${esc(p.git ? (p.branch || "detached") : "—")}</td>
+      <td>${p.sessions.map((s) => `<a href="#" class="session-link" data-session="${esc(s)}">${esc(s.replace(/^team-up-proj-/, ""))}</a>`).join(" ") || "—"}</td>
+      <td><button type="button" class="project-start" data-dir="${esc(p.path)}">Start</button></td>
+    </tr>`).join("");
+  $("#projects-table").innerHTML = `<table>
+    <thead><tr><th>Project</th><th>Branch</th><th>Sessions</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="4">No projects</td></tr>'}</tbody></table>`;
+
+  $("#projects-table").querySelectorAll(".session-link").forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      selectSession(a.dataset.session);
+    });
+  });
+  $("#projects-table").querySelectorAll(".project-start").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const res = await api("/api/projects/session", {
+          method: "POST",
+          body: JSON.stringify({
+            dir: btn.dataset.dir,
+            cli: $("#projects-cli").value,
+            projects_dir: readProjectsDir(),
+          }),
+        });
+        await refreshProjects();
+        selectSession(res.session);
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+$("#projects-dir").addEventListener("change", () => {
+  try {
+    localStorage.setItem(PROJECTS_DIR_KEY, $("#projects-dir").value.trim());
+  } catch {
+    // Private mode: the folder just stops surviving reloads.
+  }
+  refreshProjects().catch(() => {});
+});
+
 function refreshAll() {
   return Promise.allSettled([
     refreshUsage(),
     refreshRuns(),
     refreshTmux(),
+    refreshProjects(),
     refreshPick(),
     refreshSetup(),
   ]);
