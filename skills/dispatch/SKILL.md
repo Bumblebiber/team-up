@@ -135,6 +135,8 @@ Minimum mental model:
    `{question|done|failed|watching}`, exit.
 4. On `question`: answer or escalate to human → `$RUNS answer` → **respawn** watcher.
 5. On `done`/`failed`: read `mailbox/RESULT.md` (and task-dir artifacts); memory/TIM closeout only if useful.
+6. Once you know whether you kept the work: `$RUNS outcome <id> merged|discarded`.
+   `status` says how the run ended, never whether it was worth its cost.
 
 ### Disk artifacts ≠ done
 

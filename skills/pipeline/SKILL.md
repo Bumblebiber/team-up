@@ -30,7 +30,10 @@ Six stages, and the first two never leave your session:
    What each piece must carry is an invariant below.
 4. **Dispatch.** One writer per ticket, in parallel, each in its own clone.
 5. **Merge.** Yours. You have the real tree and you are the only one who can
-   ask the human about a conflict.
+   ask the human about a conflict. Record what each writer's work was worth as
+   you go: `team-up runs outcome <run-id> merged|discarded`. A run's status says
+   how it ended, never whether you kept it, and without that second fact no
+   later comparison between models, CLIs or launch paths is more than a story.
 6. **Review.** Once, on the merged result.
 
 Stages 4–6 are worth their overhead only when the tickets are genuinely

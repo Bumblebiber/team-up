@@ -589,6 +589,46 @@ export function setStatus(runId, status) {
   return state;
 }
 
+/**
+ * What the run was worth, recorded after the fact.
+ *
+ * `status` says how a run ended — done, failed, cancelled. It says nothing
+ * about whether the work was kept. 339 runs on this host, 249 of them done,
+ * and no way to tell whether that produced 249 merges or 249 discarded
+ * branches. Every argument about which model, which CLI or which path is
+ * worth its cost currently rests on that gap.
+ *
+ * Two values, because a third would need a rule for when to use it and the
+ * question is only ever "did this land". Set by whoever merges, which is the
+ * orchestrator, never the worker itself.
+ */
+export const RUN_OUTCOMES = Object.freeze(["merged", "discarded"]);
+
+export function setOutcome(runId, outcome, { note = null, now = () => new Date().toISOString() } = {}) {
+  if (!RUN_OUTCOMES.includes(outcome)) {
+    throw new Error(`unknown outcome ${outcome} (expected ${RUN_OUTCOMES.join("|")})`);
+  }
+  return updateState(runId, (state) => {
+    state.outcome = { value: outcome, at: now(), ...(note ? { note } : {}) };
+    return state;
+  });
+}
+
+/** Counts per role, so a before/after comparison needs no jq. */
+export function outcomeSummary(states = listAllStates({ onCorrupt: () => {} })) {
+  const rows = new Map();
+  for (const state of states) {
+    const role = state.role || "unknown";
+    const row = rows.get(role) ?? { role, merged: 0, discarded: 0, unrecorded: 0, total: 0 };
+    const value = state.outcome?.value;
+    if (value === "merged" || value === "discarded") row[value] += 1;
+    else row.unrecorded += 1;
+    row.total += 1;
+    rows.set(role, row);
+  }
+  return [...rows.values()].sort((a, b) => b.total - a.total || a.role.localeCompare(b.role));
+}
+
 /** After roster dispatch spawns tmux, link session to run registry. */
 export function linkDispatchToRun(runId, session, { model, cli, tier, effort, triage: triageResult } = {}) {
   if (!runId) return false;
@@ -1127,6 +1167,28 @@ function cmdSetStatus(args) {
   setStatus(runId, status);
 }
 
+function cmdOutcome(args) {
+  if (args[0] === "--summary") {
+    for (const row of outcomeSummary()) {
+      console.log(
+        `${row.role}: merged ${row.merged}, discarded ${row.discarded}, `
+        + `unrecorded ${row.unrecorded} (of ${row.total})`
+      );
+    }
+    return;
+  }
+  const [runId, outcome] = args;
+  const note = argValue(args, "--note");
+  if (!runId || !outcome) {
+    console.error(
+      `usage: runs.mjs outcome <runId> <${RUN_OUTCOMES.join("|")}> [--note <text>] | outcome --summary`
+    );
+    process.exit(1);
+  }
+  const state = setOutcome(runId, outcome, { note });
+  console.log(`${runId}: ${state.outcome.value}`);
+}
+
 function cmdWait(args) {
   const runId = args[0];
   const ceilingRaw = argValue(args, "--ceiling-sec");
@@ -1350,6 +1412,7 @@ const HANDLERS = {
   classify: cmdClassify,
   answer: cmdAnswer,
   "set-status": cmdSetStatus,
+  outcome: cmdOutcome,
   wait: cmdWait,
   resume: cmdResume,
   capacity: cmdCapacity,
