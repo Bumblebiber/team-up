@@ -89,7 +89,7 @@ function describe(id, { env, assignments, installedCaps, approvals, versions }) 
     // match the version now selected say anything about a run started today.
     approved_for: approvals
       .filter((row) => row.id === id && row.checksum === loaded.checksum)
-      .map((row) => row.project)
+      .map((row) => (row.scope === "clone_root" ? `${row.clone_root}/*` : row.project))
       .sort(),
     error,
   };

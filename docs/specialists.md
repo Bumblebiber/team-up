@@ -35,8 +35,11 @@ Everything else is still measured at `--project` and still has to match at
 launch: package checksum, permissions, and the project command policy. A clone
 carrying a different policy is refused exactly as an unapproved project is, and
 a path that only looks like it is under the root — a symlink pointing out of it,
-or a `..` — is outside it. Name a root that holds nothing but disposable clones:
-within those limits, a root grant does say "anywhere under here".
+or a `..` — is outside it. The root itself is never covered; it is the container
+the clones sit in, not a project. A root that does not exist, that is `/` or the
+home directory, or that contains `--project` is refused outright. Beyond that,
+name a root that holds nothing but disposable clones: within those limits, a
+root grant does say "anywhere under here".
 
 Installing a second version never repoints an existing selection — that would
 silently change what runs. `pin` is how the selection moves, and it is a

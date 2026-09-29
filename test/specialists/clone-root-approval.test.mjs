@@ -122,6 +122,10 @@ test("one clone-root grant covers every clone under it, and nothing beside it", 
     // Nested deeper is still inside the root.
     assert.equal(approvedFor(f, f.clone(path.join("ticket-03", "repo"))), true);
 
+    // The root itself is a container, not a project: launching in it would
+    // hand a writer every sibling clone as its working tree.
+    assert.equal(approvedFor(f, f.root), false);
+
     // A directory outside the root is not covered.
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "tu-clone-out-"));
     writeCommands(outside);
@@ -185,6 +189,27 @@ test("a symlink out of the root is outside it, however it is spelled", async () 
     assert.equal(approvedFor(f, path.join(f.root, "sneaky")), false);
     assert.equal(approvedFor(f, path.join(f.root, "..", path.basename(escape))), false);
     fs.rmSync(escape, { recursive: true, force: true });
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a root that is too wide, absent, or holds the project is refused", async () => {
+  const f = await fixture();
+  try {
+    const approve = (cloneRoot) => approveSpecialist({
+      idAtVersion: "coding.cloney@0.1.0",
+      project: f.project,
+      cloneRoot,
+      env: f.env,
+    });
+    assert.equal((await approve(path.join(f.root, "nope"))).code, "CLONE_ROOT_INVALID");
+    assert.equal((await approve("/")).code, "CLONE_ROOT_INVALID");
+    assert.equal((await approve(os.homedir())).code, "CLONE_ROOT_INVALID");
+    // The project lives in the OS temp dir, so that dir is not a clone root.
+    assert.equal((await approve(path.dirname(f.project))).code, "CLONE_ROOT_INVALID");
+    // A refused root writes no grant at all.
+    assert.equal(fs.existsSync(path.join(f.env.TEAM_UP_HOME, "approvals.json")), false);
   } finally {
     f.cleanup();
   }

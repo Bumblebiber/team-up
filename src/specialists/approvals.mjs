@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { specialistApprovalsPath } from "../paths.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
@@ -39,9 +40,14 @@ function canonical(p) {
   }
 }
 
-/** Is `target` the root itself or below it? Both sides already canonical. */
+/**
+ * Is `target` strictly below `root`? Both sides already canonical.
+ *
+ * The root itself is never covered: it is the container the clones live in,
+ * not a project. Launching in it would give a writer the whole fan-out —
+ * every sibling clone — as its working tree.
+ */
 function within(root, target) {
-  if (root === target) return true;
   const rel = path.relative(root, target);
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
@@ -117,6 +123,22 @@ export async function approveSpecialist({ idAtVersion, project, cloneRoot = null
     }));
   } catch (e) {
     return { ok: false, errors: [e.message], code: e.code || "COMMAND_POLICY_INVALID" };
+  }
+
+  // A root is only as narrow as what it holds, and three ways of getting that
+  // wrong are visible from here: a root that is not there, a root so wide it
+  // is the home or the filesystem, and a root that contains the very project
+  // whose policy is being measured — which is not a clone container at all.
+  if (cloneRoot) {
+    const rootCanon = canonical(cloneRoot);
+    const bad = !fs.existsSync(rootCanon)
+      ? `clone root does not exist: ${rootCanon}`
+      : rootCanon === path.parse(rootCanon).root || rootCanon === canonical(os.homedir())
+        ? `clone root is too wide: ${rootCanon}`
+        : within(rootCanon, canonical(project))
+          ? `clone root contains the approved project: ${rootCanon}`
+          : null;
+    if (bad) return { ok: false, errors: [bad], code: "CLONE_ROOT_INVALID" };
   }
 
   const scope = cloneRoot ? "clone_root" : null;

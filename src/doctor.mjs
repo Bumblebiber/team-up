@@ -150,10 +150,13 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
   // harmless: the launcher matches on checksum, so a superseded row is simply
   // never selected. Only report a mismatch when nothing else covers that
   // specialist for that project — otherwise every upgrade produces a finding.
+  // A root grant is about the root, not the project its policy was measured
+  // at, so it must not be masked by an exact grant for that same project.
+  const scopeOf = (a) => (a.scope === "clone_root" ? a.clone_root : a.project);
   const covered = new Set();
   for (const a of Object.values(approvals)) {
     if (ids.has(a.id) && installed[a.id].checksum === a.checksum) {
-      covered.add(`${a.id}\u0000${a.project}`);
+      covered.add(`${a.id}\u0000${scopeOf(a)}`);
     }
   }
   for (const [key, a] of Object.entries(approvals)) {
@@ -168,7 +171,7 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
     } else if (
       a.checksum &&
       installed[a.id].checksum !== a.checksum &&
-      !covered.has(`${a.id}\u0000${a.project}`)
+      !covered.has(`${a.id}\u0000${scopeOf(a)}`)
     ) {
       findings.push({
         kind: "approval_stale_version",
