@@ -315,7 +315,7 @@ test("a harness whose CLI updated past its verified version is reported", () => 
     assert.equal(finding.severity, "high");
     assert.equal(finding.installed, "2.1.259");
     assert.equal(finding.last_verified, "2.1.252");
-    assert.match(finding.fix, /harness verify claude/);
+    assert.match(finding.fix, /harness reverify/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

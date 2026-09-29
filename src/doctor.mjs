@@ -253,7 +253,7 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
           "every capability it granted is revoked until it is re-verified",
         fix: cannotVerify
           ? unverifiableFix(cli, null)
-          : `team-up harness verify ${cli} --fixture-project <path>`,
+          : "team-up harness reverify",
       });
       continue;
     }

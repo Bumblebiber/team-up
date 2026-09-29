@@ -296,7 +296,8 @@ export async function launch({
   // rather than refuse a launch whose only problem is an update — and only
   // for the CLIs whose skip reason was a capability, so an exhausted quota
   // window never buys a verification it cannot use.
-  if (cellErr) {
+  // A dry run is a preview and never pays for a real CLI run.
+  if (cellErr && !dryRun) {
     const drifted = new Set(
       profileResult.skipped
         .filter((sk) => / unavailable \(need /.test(String(sk.reason)))
@@ -304,8 +305,12 @@ export async function launch({
     );
     let repaired = false;
     for (const cli of drifted) {
-      const r = await reverifyDriftedFn(cli, { env, wait: true });
-      if (r.status === "verified") repaired = true;
+      try {
+        const r = await reverifyDriftedFn(cli, { env, wait: true });
+        if (r.status === "verified") repaired = true;
+      } catch {
+        // Best-effort repair: a broken marker must not replace the real refusal.
+      }
     }
     if (repaired) ({ profileResult, cell, err: cellErr } = pickCell());
   }

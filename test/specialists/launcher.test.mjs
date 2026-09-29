@@ -266,7 +266,10 @@ test("a launch re-verifies drift once instead of refusing", async () => {
     const calls = [];
     const result = await launch({
       ...fixture.args,
+      dryRun: false,
       dependencyOverrides: {
+        startFromLaunchDescriptor: () => {},
+        prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
         harnessCapabilities: () => ({
           command_broker: null,
           context_isolation: verified ? CONTEXT_ISOLATION_CAPABILITY : null,
@@ -305,6 +308,35 @@ test("a cell skipped for anything but a capability buys no verification", async 
         },
       }),
       /RUNTIME_OVERRIDE_UNAVAILABLE/,
+    );
+    assert.deepEqual(calls, []);
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});
+
+test("a dry run previews the refusal instead of paying for a verification", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  try {
+    const calls = [];
+    await assert.rejects(
+      () => launch({
+        ...fixture.args,
+        dependencyOverrides: {
+          harnessCapabilities: () => ({
+            command_broker: null,
+            context_isolation: null,
+            native_shell: "denied",
+            mcp: "stdio",
+          }),
+          reverifyDrifted: async (cli) => {
+            calls.push(cli);
+            return { cli, attempted: true, status: "verified" };
+          },
+        },
+      }),
+      /PROFILE_UNAVAILABLE/,
     );
     assert.deepEqual(calls, []);
   } finally {
