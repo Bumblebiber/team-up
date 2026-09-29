@@ -19,6 +19,33 @@ function saveApprovals(data, env = process.env) {
   atomicWriteJson(specialistApprovalsPath(env), data);
 }
 
+/**
+ * The directory a grant is about, as the filesystem sees it.
+ *
+ * `path.resolve` normalizes text; it does not follow links. A symlinked
+ * project therefore hashed differently from its target, so the same directory
+ * could need two grants — and a grant on the link covered nothing about the
+ * real tree. Under a clone root that gap is worse than clumsy: `<root>/link`
+ * pointing at `~/.ssh` is inside the root by spelling and outside it in fact.
+ *
+ * A path that does not exist cannot be canonicalized; it falls back to
+ * `resolve` and simply fails to match at launch time, which is the safe end.
+ */
+function canonical(p) {
+  try {
+    return fs.realpathSync(path.resolve(p));
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+/** Is `target` the root itself or below it? Both sides already canonical. */
+function within(root, target) {
+  if (root === target) return true;
+  const rel = path.relative(root, target);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
 export function approvalKey({
   project,
   id,
@@ -26,19 +53,34 @@ export function approvalKey({
   checksum,
   permissions,
   command_policy_checksum = null,
+  scope = null,
 }) {
-  const payload = JSON.stringify({
-    project: path.resolve(project),
+  const base = {
+    project: canonical(project),
     id,
     version,
     checksum,
     permissions,
     command_policy_checksum: command_policy_checksum ?? null,
-  });
+  };
+  // The scope field is added only for a root grant, so every exact grant
+  // already on file keeps the key it was written under.
+  const payload = JSON.stringify(scope ? { ...base, scope } : base);
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 
-export async function approveSpecialist({ idAtVersion, project, env = process.env }) {
+/**
+ * Approve a specialist for a project, or for every clone under a root.
+ *
+ * `pipeline` gives each parallel writer its own full clone, so every writer
+ * spawn is a new path and — with an exact-path grant — a new permission
+ * prompt for a directory that will be deleted afterwards. A clone-root grant
+ * keeps everything else about the binding and loosens only the path: the
+ * package checksum, the permissions and the project command policy are still
+ * measured at `project` and still have to match at launch, so a clone that
+ * carries a different policy is refused exactly as an unapproved project is.
+ */
+export async function approveSpecialist({ idAtVersion, project, cloneRoot = null, env = process.env }) {
   const [id, version] = String(idAtVersion).split("@");
   if (!id || !version) {
     return { ok: false, errors: ["expected <id>@<version>"] };
@@ -77,17 +119,20 @@ export async function approveSpecialist({ idAtVersion, project, env = process.en
     return { ok: false, errors: [e.message], code: e.code || "COMMAND_POLICY_INVALID" };
   }
 
+  const scope = cloneRoot ? "clone_root" : null;
   const key = approvalKey({
-    project,
+    project: cloneRoot ?? project,
     id,
     version: loaded.version,
     checksum: loaded.checksum,
     permissions: loaded.manifest.permissions,
     command_policy_checksum,
+    scope,
   });
   const data = loadApprovals(env);
   data.approvals[key] = {
-    project: path.resolve(project),
+    project: canonical(project),
+    ...(cloneRoot ? { scope, clone_root: canonical(cloneRoot) } : {}),
     id,
     version: loaded.version,
     checksum: loaded.checksum,
@@ -108,16 +153,26 @@ export function isApproved({
   command_policy_checksum = null,
   env = process.env,
 }) {
-  const key = approvalKey({
-    project,
-    id,
-    version,
-    checksum,
-    permissions,
-    command_policy_checksum,
-  });
   const data = loadApprovals(env);
-  return Boolean(data.approvals?.[key]);
+  const fields = { id, version, checksum, permissions, command_policy_checksum };
+  if (data.approvals?.[approvalKey({ project, ...fields })]) return true;
+
+  // No exact grant: a clone root may cover this directory. The stored key is
+  // recomputed from the launch's own fields, so containment alone proves
+  // nothing — version, checksum, permissions and command policy must still be
+  // the ones that were approved.
+  const target = canonical(project);
+  for (const [storedKey, entry] of Object.entries(data.approvals ?? {})) {
+    if (entry?.scope !== "clone_root" || !entry.clone_root) continue;
+    if (!within(canonical(entry.clone_root), target)) continue;
+    const expected = approvalKey({
+      project: entry.clone_root,
+      ...fields,
+      scope: "clone_root",
+    });
+    if (expected === storedKey) return true;
+  }
+  return false;
 }
 
 export function listApprovals(env = process.env) {

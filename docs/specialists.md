@@ -9,7 +9,7 @@ executable install hooks.
 ```bash
 team-up specialist inspect <path>
 team-up specialist install <path>
-team-up specialist approve <id>@<version> --project <abs-path>
+team-up specialist approve <id>@<version> --project <abs-path> [--clone-root <abs-path>]
 team-up specialist pin <id>@<version> [--project <abs-path>]
 team-up specialist uninstall <id>@<version>
 team-up specialist list
@@ -17,7 +17,26 @@ team-up specialist run --id <id> --call-type review --objective "..." --project 
 ```
 
 Approval binds project + id + version + checksum + permissions. Any checksum
-or permission change requires reapproval.
+or permission change requires reapproval. The project is the directory the
+filesystem reports, not the spelling: a symlink and its target are one project
+and share one grant.
+
+`--clone-root` widens only the path half of that binding. A `pipeline` fan-out
+gives each parallel writer its own full clone, so an exact-path grant means one
+permission prompt per disposable directory. With a root, one grant covers every
+clone under it:
+
+```bash
+team-up specialist approve coding.codey@0.1.2 \
+  --project ~/projects/team-up --clone-root ~/projects/tasks
+```
+
+Everything else is still measured at `--project` and still has to match at
+launch: package checksum, permissions, and the project command policy. A clone
+carrying a different policy is refused exactly as an unapproved project is, and
+a path that only looks like it is under the root — a symlink pointing out of it,
+or a `..` — is outside it. Name a root that holds nothing but disposable clones:
+within those limits, a root grant does say "anywhere under here".
 
 Installing a second version never repoints an existing selection — that would
 silently change what runs. `pin` is how the selection moves, and it is a

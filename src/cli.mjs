@@ -221,11 +221,18 @@ async function cmdSpecialist(args, io) {
   if (sub === "approve") {
     const idVer = rest[0];
     const project = argValue(rest, "--project");
+    // --clone-root widens one grant to every clone under a root, for the
+    // one-clone-per-writer fan-out. Package, permissions and command policy
+    // are still measured at --project and still have to match at launch.
+    const cloneRoot = argValue(rest, "--clone-root");
     if (!idVer || !project) {
-      io.err("usage: team-up specialist approve <id>@<version> --project <absolute-path>");
+      io.err(
+        "usage: team-up specialist approve <id>@<version> --project <absolute-path> "
+        + "[--clone-root <absolute-path>]"
+      );
       return 1;
     }
-    const result = await approveSpecialist({ idAtVersion: idVer, project });
+    const result = await approveSpecialist({ idAtVersion: idVer, project, cloneRoot });
     io.out(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }

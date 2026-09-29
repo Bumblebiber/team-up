@@ -179,13 +179,18 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
         detail: "approval is bound to a checksum that is no longer the installed one",
       });
     }
-    if (a.project && !fs.existsSync(a.project)) {
+    // A clone-root grant outlives the project it was measured at on purpose —
+    // what has to still exist is the root, not that reference directory.
+    const dir = a.scope === "clone_root" ? a.clone_root : a.project;
+    if (dir && !fs.existsSync(dir)) {
       findings.push({
         kind: "approval_missing_project",
         severity: "low",
         id: a.id,
-        project: a.project,
-        detail: "approved project directory no longer exists",
+        project: dir,
+        detail: a.scope === "clone_root"
+          ? "approved clone root no longer exists"
+          : "approved project directory no longer exists",
       });
     }
   }
