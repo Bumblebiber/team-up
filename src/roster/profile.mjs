@@ -48,11 +48,17 @@ export function resolveProfile({
   now = Date.now(),
   requirements = {},
   harnessCapabilities = defaultHarnessCapabilities,
+  override = null,
 }) {
-  const effective =
+  const configured =
     roster?.specialists?.[specialistId]?.calls?.[callType]?.model_profile ||
     roster?.specialists?.[specialistId]?.model_profile ||
     profile;
+  // An override replaces the tier/reasoning the specialist asks for — that
+  // demand is exactly the standard a caller overrides. Everything below
+  // (account, harness capability, usage window) still gates the result, so an
+  // override narrows the chain, it never bypasses a check.
+  const effective = override ? { ...configured, ...override } : configured;
 
   if (!effective?.tier || !effective?.reasoning) {
     return {

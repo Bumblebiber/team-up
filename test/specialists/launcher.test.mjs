@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { launch } from "../../src/specialists/launcher.mjs";
+import { launch, resolveRuntimeOverride } from "../../src/specialists/launcher.mjs";
 import { wrapWithSandbox } from "../../src/sandbox/systemd.mjs";
 import { installPackage } from "../../src/specialists/store.mjs";
 import { approveSpecialist } from "../../src/specialists/approvals.mjs";
@@ -181,4 +181,73 @@ test("profile skips harness verified for broker but not isolation", () => {
   assert.equal(result.code, "PROFILE_UNAVAILABLE");
   assert.equal(result.chain.length, 0);
   assert.ok(result.skipped.some((x) => /context isolation/.test(x.reason)));
+});
+
+/** The fixture home has no harness verification records, so isolation is
+ *  asserted here the same way the capsule test does. */
+const ISOLATED = {
+  harnessCapabilities: () => ({
+    command_broker: null,
+    context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+    native_shell: "denied",
+    mcp: "stdio",
+  }),
+};
+
+/** Two more cells beside the fixture's medium `m`, for the override tests. */
+function widenRoster(env) {
+  const roster = JSON.parse(fs.readFileSync(env.TEAM_UP_ROSTER, "utf8"));
+  // The fixture's `claude` is the home-installed one; the sandbox refuses it
+  // without explicit runtime paths, and that refusal is not what is under test.
+  roster.clis.claude.sandbox_runtime_paths = ["/usr/bin", "/bin"];
+  roster.models.big = {
+    tier: "frontier", cli: ["claude"], account: "anthropic", reasoning: { low: null }, priority: 1,
+  };
+  roster.accounts.broke = { kind: "subscription", enabled: false };
+  roster.models.unreachable = {
+    tier: "frontier", cli: ["claude"], account: "broke", reasoning: { low: null }, priority: 0,
+  };
+  fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify(roster));
+}
+
+test("resolveRuntimeOverride refuses what the roster does not have", () => {
+  const roster = { clis: { claude: { cmd: ["claude"] } }, models: { m: { tier: "medium" } } };
+  assert.equal(resolveRuntimeOverride(roster, null), null);
+  assert.equal(resolveRuntimeOverride(roster, {}), null);
+  assert.deepEqual(resolveRuntimeOverride(roster, { model: "m" }), {
+    cli: null, model: "m", profile: { tier: "medium" },
+  });
+  assert.throws(() => resolveRuntimeOverride(roster, { model: "nope" }), /unknown model/);
+  assert.throws(() => resolveRuntimeOverride(roster, { cli: "nope" }), /unknown cli/);
+});
+
+test("a one-off model override crosses the tier the specialist asked for", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  try {
+    const plain = await launch({ ...fixture.args, dependencyOverrides: ISOLATED });
+    assert.equal(plain.runtime.model, "m");
+    const overridden = await launch({
+      ...fixture.args, runtime: { model: "big" }, dependencyOverrides: ISOLATED,
+    });
+    assert.equal(overridden.runtime.model, "big");
+    assert.equal(overridden.runtime.cli, "claude");
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});
+
+test("an override still has to pass the gates, and is refused rather than swapped", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  try {
+    await assert.rejects(
+      () => launch({
+        ...fixture.args, runtime: { model: "unreachable" }, dependencyOverrides: ISOLATED,
+      }),
+      /RUNTIME_OVERRIDE_UNAVAILABLE: unreachable/,
+    );
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
 });

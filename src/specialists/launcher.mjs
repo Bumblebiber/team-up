@@ -113,6 +113,30 @@ function needsCommandMediation(effectivePerms, manifest) {
 
 
 /**
+ * A one-off {cli, model} for this launch. The named model's own tier replaces
+ * the one the specialist's profile asks for — that demand is the standard
+ * being overridden — and the chain is then filtered down to that cell. Account,
+ * harness capability and usage gates run unchanged, so an override can only
+ * pick something the gates already allowed; it cannot conjure a cell.
+ */
+export function resolveRuntimeOverride(roster, runtime) {
+  const cli = runtime?.cli || null;
+  const model = runtime?.model || null;
+  if (!cli && !model) return null;
+  if (model && !roster?.models?.[model]) {
+    const err = new Error(`unknown model: ${model}`);
+    err.code = "RUNTIME_OVERRIDE_UNKNOWN";
+    throw err;
+  }
+  if (cli && !roster?.clis?.[cli]?.cmd) {
+    const err = new Error(`unknown cli: ${cli}`);
+    err.code = "RUNTIME_OVERRIDE_UNKNOWN";
+    throw err;
+  }
+  return { cli, model, profile: model ? { tier: roster.models[model].tier } : null };
+}
+
+/**
  * Launch API used by tests and CLI.
  */
 export async function launch({
@@ -123,6 +147,7 @@ export async function launch({
   inputs = [],
   sandbox = {},
   permissions,
+  runtime = null,
   env = process.env,
   dryRun = false,
   dependencyOverrides = {},
@@ -221,6 +246,7 @@ export async function launch({
     ...((manifest.permissions?.commands || []).length > 0
       ? { command_broker: "team-up.command-broker/v1" } : {}),
   };
+  const runtimeOverride = resolveRuntimeOverride(roster, runtime);
   const profileResult = resolveProfile({
     roster,
     usage,
@@ -229,6 +255,7 @@ export async function launch({
     callType,
     requirements,
     harnessCapabilities: harnessCapabilitiesFn,
+    override: runtimeOverride?.profile ?? null,
   });
   if (profileResult.code !== "OK") {
     const err = new Error(`PROFILE_UNAVAILABLE: ${JSON.stringify(profileResult.skipped.slice(0, 5))}`);
@@ -236,7 +263,26 @@ export async function launch({
     err.details = profileResult;
     throw err;
   }
-  const cell = profileResult.chain[0];
+  const cell = runtimeOverride
+    ? profileResult.chain.find((c) =>
+        (!runtimeOverride.model || c.model === runtimeOverride.model)
+        && (!runtimeOverride.cli || c.cli === runtimeOverride.cli))
+    : profileResult.chain[0];
+  // A named cell that no gate let through is a refusal, not a silent fallback
+  // to whatever the chain offered instead: the caller asked for that one.
+  if (!cell) {
+    const want = [runtimeOverride?.cli, runtimeOverride?.model].filter(Boolean).join(":");
+    // Why the asked-for cell was dropped comes first; a list of other models'
+    // tier mismatches answers a question nobody asked.
+    const mine = profileResult.skipped.filter((sk) =>
+      !runtimeOverride?.model || String(sk.model).endsWith(runtimeOverride.model));
+    const err = new Error(
+      `RUNTIME_OVERRIDE_UNAVAILABLE: ${want} — ${JSON.stringify((mine.length ? mine : profileResult.skipped).slice(0, 5))}`,
+    );
+    err.code = "RUNTIME_OVERRIDE_UNAVAILABLE";
+    err.details = profileResult;
+    throw err;
+  }
   const harnessCaps = harnessCapabilitiesFn(cell.cli);
   const cliCfg = cliSandboxConfig(roster, cell.cli, { harnessCapabilities: harnessCaps });
 
@@ -614,8 +660,9 @@ export async function runSpecialist(args, io = { out: console.log, err: console.
   const project = argValue(args, "--project") || process.cwd();
   const objective = argValue(args, "--objective") || "";
   const dryRun = args.includes("--dry-run");
+  const runtime = { cli: argValue(args, "--cli"), model: argValue(args, "--model") };
   if (!id || !objective) {
-    io.err("usage: team-up specialist run --id <id> --call-type <consult|delegate|review> --objective <text> --project <path>");
+    io.err("usage: team-up specialist run --id <id> --call-type <consult|delegate|review> --objective <text> --project <path> [--cli <cli>] [--model <model>]");
     return { code: 1 };
   }
   try {
@@ -624,6 +671,7 @@ export async function runSpecialist(args, io = { out: console.log, err: console.
       callType,
       objective,
       project,
+      runtime,
       dryRun,
     });
     io.out(`run_id: ${result.runId}`);
@@ -637,6 +685,7 @@ export async function runSpecialist(args, io = { out: console.log, err: console.
     return { code: 0, result };
   } catch (e) {
     io.err(String(e.message || e));
-    return { code: e.code === "PROFILE_UNAVAILABLE" ? 2 : 1, error: e };
+    const unavailable = e.code === "PROFILE_UNAVAILABLE" || e.code === "RUNTIME_OVERRIDE_UNAVAILABLE";
+    return { code: unavailable ? 2 : 1, error: e };
   }
 }

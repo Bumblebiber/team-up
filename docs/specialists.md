@@ -13,7 +13,7 @@ team-up specialist approve <id>@<version> --project <abs-path>
 team-up specialist pin <id>@<version> [--project <abs-path>]
 team-up specialist uninstall <id>@<version>
 team-up specialist list
-team-up specialist run --id <id> --call-type review --objective "..." --project <abs>
+team-up specialist run --id <id> --call-type review --objective "..." --project <abs> [--cli <cli>] [--model <model>]
 ```
 
 Approval binds project + id + version + checksum + permissions. Any checksum
@@ -25,6 +25,15 @@ separate step on purpose: approve the new version first, then pin it. Without
 `--project` the pin is global; with it, only that project sees the new version
 and everywhere else keeps the old one. `run` has no `--version` flag; the pin
 is the single place a version gets chosen.
+
+`--cli` and `--model` override the cell for one run. The named model's own tier
+replaces the one the specialist's profile asks for — that demand is the standard
+being overridden — and the resolved chain is then narrowed to that cell.
+Everything else still gates it: account, harness capability (context isolation,
+command broker) and usage windows are unchanged, so an override can only pick a
+cell the gates already allowed. A named cell that no gate let through is refused
+with `RUNTIME_OVERRIDE_UNAVAILABLE` and the reason it was dropped, never
+silently swapped for another model.
 
 `uninstall` removes one version: its package tree, its index entry, any pin
 naming it, and any approval bound to it. It refuses while an unfinished run

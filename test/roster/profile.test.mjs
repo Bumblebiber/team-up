@@ -42,3 +42,29 @@ test("imports mid as medium", () => {
   const result = resolveProfile({ roster: r, profile: { tier: "medium", reasoning: "low" }, usage: {} });
   assert.ok(result.chain.some(x => x.model === "midA"));
 });
+
+test("an override replaces the configured tier, the other gates stay", () => {
+  const r = {
+    ...roster,
+    specialists: { "coding.codey": { model_profile: { tier: "frontier", reasoning: "max" } } },
+  };
+  const configured = resolveProfile({ roster: r, specialistId: "coding.codey", usage: {} });
+  assert.deepEqual(configured.chain.map((x) => x.model), ["frontier"]);
+
+  const overridden = resolveProfile({
+    roster: r, specialistId: "coding.codey", usage: {}, override: { tier: "medium", reasoning: "low" },
+  });
+  assert.deepEqual(overridden.chain.map((x) => x.model), ["mediumA", "mediumB"]);
+});
+
+test("an override cannot reach a model whose account is blocked", () => {
+  const r = {
+    ...roster,
+    accounts: { ...roster.accounts, cursor: { kind: "subscription", enabled: false } },
+  };
+  const result = resolveProfile({
+    roster: r, profile: { tier: "frontier", reasoning: "max" }, usage: {},
+    override: { tier: "medium", reasoning: "low" },
+  });
+  assert.deepEqual(result.chain.map((x) => x.model), ["mediumB"]);
+});
