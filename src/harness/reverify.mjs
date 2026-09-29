@@ -143,13 +143,18 @@ export async function runHarnessReverify(args, io = { out: console.log, err: con
     return 1;
   }
   const results = await reverifyAllDrifted({ env: io.env || process.env, io });
+  const stamp = new Date().toISOString();
   let failed = 0;
   for (const r of results) {
     if (!r.attempted) {
-      if (r.status === "drifted") io.out(`${r.cli}: drifted, not re-verified (${r.reason})`);
+      // A CLI without a live runner is drifted forever by design; the doctor
+      // reports that once, and a ten-minute cron must not repeat it into a log.
+      if (r.status === "drifted" && r.reason !== "unsupported") {
+        io.out(`${stamp} ${r.cli}: drifted, not re-verified (${r.reason})`);
+      }
       continue;
     }
-    io.out(`${r.cli}: re-verified ${r.from_version} → ${r.status}`);
+    io.out(`${stamp} ${r.cli}: re-verified ${r.from_version} → ${r.status}`);
     if (r.status !== "verified") failed += 1;
   }
   return failed ? 2 : 0;

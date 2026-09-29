@@ -172,6 +172,12 @@ One attempt is made per build: a sidecar `<version>.attempt` marker is both
 the lock a parallel fan-out needs and the cooldown that keeps a logged-out
 host from paying for a verification run every two hours.
 
+The drift check itself is cheap — one `--version` per adapter — so it runs
+from cron every ten minutes and the expensive fixture run happens only when a
+build actually changed. That bounds the window in which a self-update leaves
+the host without grants to ten minutes, without loosening what a record
+proves.
+
 ## Commands
 
 ```bash
