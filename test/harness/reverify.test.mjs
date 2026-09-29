@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { reverifyDrifted, REVERIFY_COOLDOWN_MS } from "../../src/harness/reverify.mjs";
+import { reverifyAllDrifted, reverifyDrifted, REVERIFY_COOLDOWN_MS } from "../../src/harness/reverify.mjs";
 import { verificationAttemptPath } from "../../src/harness/verify.mjs";
 
 /**
@@ -156,5 +156,24 @@ test("a CLI without a live runner is reported, not re-verified", async () => {
     assert.equal(r.attempted, false);
     assert.equal(r.status, "drifted");
     assert.equal(r.reason, "unsupported");
+  });
+});
+
+test("the sweep skips an adapter that was never verified", async () => {
+  await withHome(async (home) => {
+    // codex has a live runner but no record at all; only claude may be verified.
+    plant(home, "claude", "2.1.252");
+    const verified = [];
+    const results = await reverifyAllDrifted({
+      env: { TEAM_UP_HOME: home },
+      execFileSync: versionStub("2.1.284"),
+      verify: async ([cli]) => {
+        verified.push(cli);
+        plant(home, cli, "2.1.284");
+        return 0;
+      },
+    });
+    assert.deepEqual(verified, ["claude"]);
+    assert.deepEqual(results.map((r) => r.cli), ["claude"]);
   });
 });
