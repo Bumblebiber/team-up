@@ -7,6 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { getAdapter } from "./registry.mjs";
 import { verifyHarness } from "./verify.mjs";
 import { snapshotCommandPolicy } from "../commands/policy.mjs";
+import { packageRoot } from "../paths.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
 import {
   observeContextIsolation,
@@ -555,6 +556,11 @@ export async function liveCodexVerifyRunner({ adapter, fixtureProject, cliVersio
       : {}),
     ...(isolation.error ? { isolation_error: isolation.error } : {}),
   };
+}
+
+/** The fixture project every verification run is measured against. */
+export function harnessFixtureProject() {
+  return path.join(packageRoot(), "test", "fixtures", "harness-project");
 }
 
 /**

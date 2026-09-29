@@ -36,6 +36,7 @@ import {
   getAdapter,
 } from "../harness/registry.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../harness/capabilities.mjs";
+import { reverifyDrifted } from "../harness/reverify.mjs";
 import { loadAssignments } from "../capabilities/assignments.mjs";
 import { listInstalledCapabilities } from "../capabilities/store.mjs";
 import { resolveCapabilities } from "../capabilities/resolve.mjs";
@@ -168,6 +169,7 @@ export async function launch({
     dependencyOverrides.harnessCapabilities ?? defaultHarnessCapabilities;
   const prepareHarnessLaunchFn =
     dependencyOverrides.prepareHarnessLaunch ?? prepareHarnessLaunch;
+  const reverifyDriftedFn = dependencyOverrides.reverifyDrifted ?? reverifyDrifted;
   const installed = loadInstalledManifest(specialistId, { project, env });
   if (!installed) {
     const err = new Error(`specialist not installed: ${specialistId}`);
@@ -247,42 +249,67 @@ export async function launch({
       ? { command_broker: "team-up.command-broker/v1" } : {}),
   };
   const runtimeOverride = resolveRuntimeOverride(roster, runtime);
-  const profileResult = resolveProfile({
-    roster,
-    usage,
-    profile: manifest.model_profile,
-    specialistId,
-    callType,
-    requirements,
-    harnessCapabilities: harnessCapabilitiesFn,
-    override: runtimeOverride?.profile ?? null,
-  });
-  if (profileResult.code !== "OK") {
-    const err = new Error(`PROFILE_UNAVAILABLE: ${JSON.stringify(profileResult.skipped.slice(0, 5))}`);
-    err.code = "PROFILE_UNAVAILABLE";
-    err.details = profileResult;
-    throw err;
-  }
-  const cell = runtimeOverride
-    ? profileResult.chain.find((c) =>
-        (!runtimeOverride.model || c.model === runtimeOverride.model)
-        && (!runtimeOverride.cli || c.cli === runtimeOverride.cli))
-    : profileResult.chain[0];
-  // A named cell that no gate let through is a refusal, not a silent fallback
-  // to whatever the chain offered instead: the caller asked for that one.
-  if (!cell) {
-    const want = [runtimeOverride?.cli, runtimeOverride?.model].filter(Boolean).join(":");
-    // Why the asked-for cell was dropped comes first; a list of other models'
-    // tier mismatches answers a question nobody asked.
-    const mine = profileResult.skipped.filter((sk) =>
-      !runtimeOverride?.model || String(sk.model).endsWith(runtimeOverride.model));
-    const err = new Error(
-      `RUNTIME_OVERRIDE_UNAVAILABLE: ${want} — ${JSON.stringify((mine.length ? mine : profileResult.skipped).slice(0, 5))}`,
+  const pickCell = () => {
+    const profileResult = resolveProfile({
+      roster,
+      usage,
+      profile: manifest.model_profile,
+      specialistId,
+      callType,
+      requirements,
+      harnessCapabilities: harnessCapabilitiesFn,
+      override: runtimeOverride?.profile ?? null,
+    });
+    if (profileResult.code !== "OK") {
+      const err = new Error(`PROFILE_UNAVAILABLE: ${JSON.stringify(profileResult.skipped.slice(0, 5))}`);
+      err.code = "PROFILE_UNAVAILABLE";
+      err.details = profileResult;
+      return { profileResult, cell: null, err };
+    }
+    const cell = runtimeOverride
+      ? profileResult.chain.find((c) =>
+          (!runtimeOverride.model || c.model === runtimeOverride.model)
+          && (!runtimeOverride.cli || c.cli === runtimeOverride.cli))
+      : profileResult.chain[0];
+    // A named cell that no gate let through is a refusal, not a silent fallback
+    // to whatever the chain offered instead: the caller asked for that one.
+    if (!cell) {
+      const want = [runtimeOverride?.cli, runtimeOverride?.model].filter(Boolean).join(":");
+      // Why the asked-for cell was dropped comes first; a list of other models'
+      // tier mismatches answers a question nobody asked.
+      const mine = profileResult.skipped.filter((sk) =>
+        !runtimeOverride?.model || String(sk.model).endsWith(runtimeOverride.model));
+      const err = new Error(
+        `RUNTIME_OVERRIDE_UNAVAILABLE: ${want} — ${JSON.stringify((mine.length ? mine : profileResult.skipped).slice(0, 5))}`,
+      );
+      err.code = "RUNTIME_OVERRIDE_UNAVAILABLE";
+      err.details = profileResult;
+      return { profileResult, cell: null, err };
+    }
+    return { profileResult, cell, err: null };
+  };
+
+  let { profileResult, cell, err: cellErr } = pickCell();
+  // A capability skip right after a CLI self-update is drift, not a verdict:
+  // the record is keyed by version, so the grant it proved is gone until
+  // someone re-measures the new build. Pay for that measurement once, here,
+  // rather than refuse a launch whose only problem is an update — and only
+  // for the CLIs whose skip reason was a capability, so an exhausted quota
+  // window never buys a verification it cannot use.
+  if (cellErr) {
+    const drifted = new Set(
+      profileResult.skipped
+        .filter((sk) => / unavailable \(need /.test(String(sk.reason)))
+        .map((sk) => String(sk.model).split(":")[0])
     );
-    err.code = "RUNTIME_OVERRIDE_UNAVAILABLE";
-    err.details = profileResult;
-    throw err;
+    let repaired = false;
+    for (const cli of drifted) {
+      const r = await reverifyDriftedFn(cli, { env, wait: true });
+      if (r.status === "verified") repaired = true;
+    }
+    if (repaired) ({ profileResult, cell, err: cellErr } = pickCell());
   }
+  if (cellErr) throw cellErr;
   const harnessCaps = harnessCapabilitiesFn(cell.cli);
   const cliCfg = cliSandboxConfig(roster, cell.cli, { harnessCapabilities: harnessCaps });
 

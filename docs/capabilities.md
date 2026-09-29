@@ -159,6 +159,19 @@ canary's absence is never mistaken for an exercised one.
 Cursor, Codex, Hermes, and OpenCode have no isolation adapter yet and are
 therefore ineligible for specialist runs.
 
+### Drift
+
+Because the record is keyed by CLI version, a self-updating harness revokes
+every grant it proved until the new build is measured. `team-up harness
+reverify` re-runs verification for any adapter whose installed build drifted
+away from a passing record; the health cron calls it before `doctor`, and a
+specialist launch calls it once for the CLI a capability skip named, rather
+than refusing a launch whose only problem is an update.
+
+One attempt is made per build: a sidecar `<version>.attempt` marker is both
+the lock a parallel fan-out needs and the cooldown that keeps a logged-out
+host from paying for a verification run every two hours.
+
 ## Commands
 
 ```bash

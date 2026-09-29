@@ -7,6 +7,7 @@ import { tmuxSessionExists } from "../runs/tmux.mjs";
 import { tmuxArgs } from "../roster/command.mjs";
 import {
   HARNESS_VERIFY_CLIS,
+  harnessFixtureProject,
   UNVERIFIABLE_ISOLATION_REASONS,
 } from "../harness/cli-verify.mjs";
 import { harnessStatus } from "../harness/registry.mjs";
@@ -317,10 +318,6 @@ export function classifyVerificationVerdict(cli, {
   };
 }
 
-function harnessFixtureProject(env = process.env) {
-  return path.join(packageRoot(), "test", "fixtures", "harness-project");
-}
-
 export function buildJobShell({
   cli,
   phase,
@@ -352,7 +349,7 @@ export function buildJobShell({
       ? (updPrefix ? `${updPrefix}; ${spec.update.shell}` : spec.update.shell)
       : null;
     if (!upd) throw new Error("no update command");
-    const fixture = harnessFixtureProject(env);
+    const fixture = harnessFixtureProject();
     const verifyCmd = `"${process.execPath}" "${teamUpBin}" harness verify ${cli} --fixture-project ${JSON.stringify(fixture)}`;
     if (HARNESS_VERIFY_CLIS.has(cli)) {
       inner = [

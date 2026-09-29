@@ -251,3 +251,63 @@ test("an override still has to pass the gates, and is refused rather than swappe
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }
 });
+
+/**
+ * A CLI self-update revokes every grant it proved, and the first launch after
+ * one used to fail with PROFILE_UNAVAILABLE naming the roster. It now pays for
+ * one re-verification instead — but only when a capability was what got
+ * skipped, never for an exhausted quota window.
+ */
+test("a launch re-verifies drift once instead of refusing", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  try {
+    let verified = false;
+    const calls = [];
+    const result = await launch({
+      ...fixture.args,
+      dependencyOverrides: {
+        harnessCapabilities: () => ({
+          command_broker: null,
+          context_isolation: verified ? CONTEXT_ISOLATION_CAPABILITY : null,
+          native_shell: "denied",
+          mcp: "stdio",
+        }),
+        reverifyDrifted: async (cli) => {
+          calls.push(cli);
+          verified = true;
+          return { cli, attempted: true, status: "verified" };
+        },
+      },
+    });
+    assert.deepEqual(calls, ["claude"]);
+    assert.equal(result.runtime.model, "m");
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});
+
+test("a cell skipped for anything but a capability buys no verification", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  try {
+    const calls = [];
+    await assert.rejects(
+      () => launch({
+        ...fixture.args,
+        runtime: { model: "unreachable" },
+        dependencyOverrides: {
+          ...ISOLATED,
+          reverifyDrifted: async (cli) => {
+            calls.push(cli);
+            return { cli, attempted: false, status: "verified" };
+          },
+        },
+      }),
+      /RUNTIME_OVERRIDE_UNAVAILABLE/,
+    );
+    assert.deepEqual(calls, []);
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});

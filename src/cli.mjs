@@ -20,6 +20,7 @@ import { approveSpecialist, listApprovals } from "./specialists/approvals.mjs";
 import { runSpecialist } from "./specialists/launcher.mjs";
 import { loadEvalSuite, runEvalSuite } from "./specialists/evals.mjs";
 import { runHarnessVerify } from "./harness/cli-verify.mjs";
+import { runHarnessReverify } from "./harness/reverify.mjs";
 import { diagnose } from "./doctor.mjs";
 import { runCapabilityCli } from "./capabilities/cli.mjs";
 import { startDashboard } from "./dashboard/server.mjs";
@@ -321,7 +322,8 @@ export async function runCli(args, io = { out: console.log, err: console.error }
   if (cmd === "harness") {
     const [sub, ...harnessArgs] = rest;
     if (sub === "verify") return runHarnessVerify(harnessArgs, io);
-    io.err("usage: team-up harness verify <claude> --fixture-project <path>");
+    if (sub === "reverify") return runHarnessReverify(harnessArgs, io);
+    io.err("usage: team-up harness <verify <claude|codex> --fixture-project <path>|reverify>");
     return 1;
   }
   if (cmd === "dashboard") {

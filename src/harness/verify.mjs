@@ -18,6 +18,19 @@ export function verificationRecordPath(adapterId, cliVersion, env = process.env)
 }
 
 /**
+ * Sidecar marker for a re-verification attempt on this exact build.
+ *
+ * A verify that throws (logged out, quota, spawn failure) writes no record at
+ * all, so drift survives it — and an unmarked retry would then repeat a paid
+ * CLI run every cron tick and every launch. The marker also doubles as the
+ * lock a fan-out needs: five writers finding the same drift must not each
+ * start their own verification.
+ */
+export function verificationAttemptPath(adapterId, cliVersion, env = process.env) {
+  return verificationRecordPath(adapterId, cliVersion, env).replace(/\.json$/, ".attempt");
+}
+
+/**
  * Every verification record on file for this adapter, newest check first.
  *
  * Drift is not visible from a single-key lookup: "no record for the installed
