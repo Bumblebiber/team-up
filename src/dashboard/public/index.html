@@ -27,6 +27,7 @@
         <a href="#panel-projects">Projects</a>
         <a href="#panel-tim" id="nav-tim" class="hidden">TIM</a>
         <a href="#panel-pick">Pick</a>
+        <a href="#panel-tiers">Tiers</a>
         <a href="#panel-specialists">Specialists</a>
         <a href="#panel-setup">Setup</a>
         <span class="column-controls">
@@ -147,6 +148,17 @@
       <section id="panel-pick" class="panel">
         <h2>Pick preview</h2>
         <div id="pick-table" class="table-wrap"></div>
+      </section>
+
+      <section id="panel-tiers" class="panel">
+        <h2>Tiers</h2>
+        <p class="muted">
+          A profile asks for a tier and never falls back to another one, so this
+          table decides what a specialist can reach. Saved to roster.json on
+          every change, with a backup; the weekly refresh leaves these fields alone.
+        </p>
+        <div id="tiers-status" class="muted"></div>
+        <div id="tiers-table" class="table-wrap"></div>
       </section>
     </main>
   </div>

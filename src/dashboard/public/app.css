@@ -428,3 +428,17 @@ tr.greyed td { opacity: 0.55; }
 .launch-dialog .launch-row { display: flex; gap: 1rem; flex-wrap: wrap; }
 .launch-dialog .launch-row select { max-width: 14rem; }
 .launch-dialog menu { display: flex; gap: 0.5rem; justify-content: flex-end; margin: 0.8rem 0 0; padding: 0; }
+
+/* Tiers — a config table, so it stays readable when every cell is a control. */
+.tiers select { font: inherit; font-size: 0.8rem; padding: 0.1rem 0.2rem; }
+.tiers .tier-head th {
+  padding-top: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+/* Five CLIs beside four effort pickers: let the CLI cell wrap in pairs so a
+   row stays two lines tall instead of five. */
+.tier-clis { display: flex; flex-wrap: wrap; gap: 0.1rem 0.5rem; min-width: 12rem; }
+.tier-cli { font-size: 0.8rem; white-space: nowrap; }
+#tiers-status { min-height: 1.2em; margin-bottom: 0.4rem; }

@@ -17,6 +17,7 @@ import {
 } from "./specialists.mjs";
 import { listProjects, startProjectSession } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
+import { buildTierMatrixView, applyModelEdit, saveRoster } from "./tiers.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
 import { pinSpecialist } from "../specialists/store.mjs";
 import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
@@ -974,6 +975,43 @@ export function createDashboardServer({
       return;
     }
 
+    const tierModelMatch = pathname.match(/^\/api\/tiers\/models\/([^/]+)$/);
+    if (req.method === "POST" && tierModelMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const model = decodeURIComponent(tierModelMatch[1]);
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        // The tier table is the sharpest lever in the roster: a specialist
+        // reaches a model or it does not, with no fallback across tiers. So
+        // every edit names one field, is validated by the roster validator,
+        // and leaves a backup behind.
+        const next = applyModelEdit(loadRoster(env), {
+          model,
+          ...(body.tier !== undefined ? { tier: body.tier } : {}),
+          ...(body.cli !== undefined ? { cli: body.cli, action: body.action } : {}),
+          ...(body.level !== undefined ? { level: body.level, effort: body.effort ?? null } : {}),
+        });
+        const written = saveRoster(next, { env });
+        appendAudit(
+          { actor: "127.0.0.1", action: "roster.model.edit", target: model, result: "ok" },
+          { env },
+        );
+        memo.invalidate("pick");
+        jsonResponse(res, 200, {
+          ok: true,
+          backup: path.basename(written.backup),
+          ...sanitizeForDashboard(buildTierMatrixView(next), { stripAccounts: true }),
+        });
+      } catch (e) {
+        appendAudit(
+          { actor: "127.0.0.1", action: "roster.model.edit", target: model, result: "fail" },
+          { env },
+        );
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     const capabilityMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/capabilities$/);
     if (req.method === "POST" && capabilityMatch) {
       if (!requireWriteAccess(req, res)) return;
@@ -1253,6 +1291,16 @@ export function createDashboardServer({
     if (pathname === "/api/capability-pool") {
       const data = clisMemo.get("capability-pool", () =>
         sanitizeForDashboard(buildCapabilityPoolView({ env })));
+      jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/tiers") {
+      // Straight off roster.json, and it changes only when this panel writes
+      // it — but accounts never reach the browser, same as every other view.
+      const data = sanitizeForDashboard(buildTierMatrixView(loadRoster(env)), {
+        stripAccounts: true,
+      });
       jsonResponse(res, 200, data);
       return;
     }

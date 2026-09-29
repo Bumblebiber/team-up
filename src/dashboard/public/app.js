@@ -381,6 +381,78 @@ async function refreshPick() {
     <tbody>${rows || '<tr><td colspan="4">No roles</td></tr>'}</tbody></table>`;
 }
 
+/**
+ * The tier table. Deliberately outside `refreshAll`: a five-second re-render
+ * would reset a dropdown mid-edit, and nothing changes this file except this
+ * panel. It redraws from what the write returns.
+ */
+function renderTiers(data) {
+  const efforts = ["", ...data.effort_values];
+  const row = (m) => {
+    const tierOptions = data.tiers
+      .map((t) => `<option value="${esc(t)}"${t === m.tier ? " selected" : ""}>${esc(t)}</option>`)
+      .join("");
+    const clis = data.clis.map((cli) => `
+      <label class="tier-cli"><input type="checkbox" data-kind="cli" data-model="${esc(m.model)}"
+        data-cli="${esc(cli)}"${m.clis.includes(cli) ? " checked" : ""}> ${esc(cli)}</label>`).join("");
+    const levels = data.reasoning_levels.map((level) => {
+      const current = m.reasoning[level];
+      const options = efforts.map((value) =>
+        `<option value="${esc(value)}"${value === (current ?? "") ? " selected" : ""}>${
+          value ? esc(value) : "—"}</option>`).join("");
+      return `<td><select data-kind="effort" data-model="${esc(m.model)}"
+        data-level="${esc(level)}">${options}</select></td>`;
+    }).join("");
+    return `<tr${providerAttr(m.clis[0] || "", m.model)}>
+      <td>${esc(m.model)}</td>
+      <td class="muted">${esc(m.provider || "—")}</td>
+      <td><select data-kind="tier" data-model="${esc(m.model)}">${tierOptions}</select></td>
+      <td class="tier-clis">${clis}</td>
+      ${levels}
+    </tr>`;
+  };
+  const sections = data.tiers.map((tier) => {
+    const models = data.models.filter((m) => m.tier === tier);
+    const body = models.length
+      ? models.map(row).join("")
+      : `<tr><td colspan="${4 + data.reasoning_levels.length}"><em>no model in this tier</em></td></tr>`;
+    return `<tr class="tier-head"><th colspan="${4 + data.reasoning_levels.length}">${esc(tier)}</th></tr>${body}`;
+  }).join("");
+  const levelHeads = data.reasoning_levels.map((l) => `<th>${esc(l)}</th>`).join("");
+  $("#tiers-table").innerHTML = `<table class="tiers">
+    <thead><tr><th>Model</th><th>Provider</th><th>Tier</th><th>CLIs</th>${levelHeads}</tr></thead>
+    <tbody>${sections}</tbody></table>`;
+}
+
+async function refreshTiers() {
+  renderTiers(await api("/api/tiers"));
+}
+
+$("#tiers-table").addEventListener("change", async (e) => {
+  const el = e.target;
+  const model = el.dataset.model;
+  if (!model) return;
+  let body;
+  if (el.dataset.kind === "tier") body = { tier: el.value };
+  else if (el.dataset.kind === "cli") body = { cli: el.dataset.cli, action: el.checked ? "add" : "remove" };
+  else if (el.dataset.kind === "effort") body = { level: el.dataset.level, effort: el.value || null };
+  else return;
+  const status = $("#tiers-status");
+  try {
+    const data = await api(`/api/tiers/models/${encodeURIComponent(model)}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    status.textContent = `saved · backup ${data.backup}`;
+    renderTiers(data);
+    refreshPick().catch(() => {});
+  } catch (err) {
+    status.textContent = `refused: ${err.message}`;
+    // The roster is unchanged, so the table has to go back to what it says.
+    refreshTiers().catch(() => {});
+  }
+});
+
 function providerStatus(p) {
   if (p.class === "A") {
     if (!p.configured) return '<span class="badge stale">not connected</span>';
@@ -856,7 +928,7 @@ const MAX_COLUMNS = 6;
 // What a fresh browser gets: the narrow-content panels left, the wide ones right.
 const DEFAULT_COLUMNS = [
   ["panel-usage", "panel-tmux", "panel-projects", "panel-tim", "panel-specialists", "panel-setup"],
-  ["panel-runs", "panel-pick"],
+  ["panel-runs", "panel-pick", "panel-tiers"],
 ];
 const mainEl = $("main");
 const columns = () => [...mainEl.querySelectorAll(".column")];
@@ -1344,6 +1416,7 @@ function refreshAll() {
 
 function startPolling() {
   refreshSpecialists().catch(() => {});
+  refreshTiers().catch(() => {});
   refreshAll();
   if (listTimer) clearInterval(listTimer);
   listTimer = setInterval(refreshAll, 5000);
