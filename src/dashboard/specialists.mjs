@@ -76,6 +76,7 @@ function describe(id, { env, assignments, installedCaps, approvals, versions }) 
       checksum: v.checksum,
       selected: v.checksum === loaded.checksum,
     })),
+    model_profile: manifest.model_profile || null,
     remit: manifest.remit || [],
     anti_remit: manifest.anti_remit || [],
     call_types: manifest.call_types || [],

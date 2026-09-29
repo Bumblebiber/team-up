@@ -855,7 +855,7 @@ const LAYOUT_KEY = "teamup.layout";
 const MAX_COLUMNS = 6;
 // What a fresh browser gets: the narrow-content panels left, the wide ones right.
 const DEFAULT_COLUMNS = [
-  ["panel-usage", "panel-tmux", "panel-projects", "panel-specialists", "panel-setup"],
+  ["panel-usage", "panel-tmux", "panel-projects", "panel-tim", "panel-specialists", "panel-setup"],
   ["panel-runs", "panel-pick"],
 ];
 const mainEl = $("main");
@@ -1129,6 +1129,205 @@ $("#projects-dir").addEventListener("change", () => {
     // Private mode: the folder just stops surviving reloads.
   }
   refreshProjects().catch(() => {});
+  refreshTim().catch(() => {});
+});
+
+// ── TIM ───────────────────────────────────────────────────────────────────
+// Only there when `tim open-work` answers: no TIM, no panel. Tasks, ideas and
+// bugs of every project in three tabs, each project its own <details> so a
+// backlog of ten projects is still one screen. The collecting folder is the
+// Projects panel's — the same repos, read through the .tim-project markers.
+const TIM_KIND_KEY = "teamup.timKind";
+const TIM_CLOSED_KEY = "teamup.timClosed";
+const TIM_KINDS = { task: "Tasks", idea: "Ideas", bug: "Bugs" };
+
+function readStored(key, fallback) {
+  try {
+    return JSON.parse(localStorage.getItem(key)) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStored(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private mode: the choice just stops surviving reloads.
+  }
+}
+
+function timKind() {
+  const kind = readStored(TIM_KIND_KEY, "task");
+  return TIM_KINDS[kind] ? kind : "task";
+}
+
+async function refreshTim() {
+  const status = $("#tim-status");
+  let data;
+  try {
+    data = await api(`/api/tim?dir=${encodeURIComponent(readProjectsDir())}`);
+  } catch (err) {
+    status.textContent = err.message;
+    return;
+  }
+  // The panel and its nav link exist in the markup but stay hidden until TIM
+  // answers, so a dashboard without TIM never shows an empty box. The class,
+  // not the attribute: `nav a` sets display and would win over [hidden].
+  $("#panel-tim").classList.toggle("hidden", !data.installed);
+  $("#nav-tim").classList.toggle("hidden", !data.installed);
+  if (!data.installed) return;
+
+  fillSelect($("#tim-launch-cli"), (data.clis || []).map((c) => ({ value: c, label: c })));
+  timModels = data.models || [];
+  fillModels();
+
+  const kind = timKind();
+  for (const tab of $("#tim-tabs").querySelectorAll(".tim-tab")) {
+    tab.classList.toggle("is-active", tab.dataset.kind === kind);
+  }
+  const closed = new Set(readStored(TIM_CLOSED_KEY, []));
+
+  const groups = data.projects
+    .map((p) => ({ ...p, items: p.items.filter((i) => i.kind === kind) }))
+    .filter((p) => p.items.length > 0);
+  const total = groups.reduce((n, p) => n + p.items.length, 0);
+  status.textContent = `${total} open ${TIM_KINDS[kind].toLowerCase()} in ${groups.length} project${groups.length === 1 ? "" : "s"}`;
+
+  $("#tim-list").innerHTML = groups.map((p) => `
+    <details class="tim-project" data-project="${esc(p.label)}"${closed.has(p.label) ? "" : " open"}>
+      <summary>${esc(p.title.split(" | ")[0])} <span class="muted">${p.items.length}</span></summary>
+      <ul class="tim-items">${p.items.map((item) => `
+        <li>
+          <span class="muted">${esc(item.status)}${item.priority ? ` · ${esc(item.priority)}` : ""}</span>
+          ${esc(item.title)}
+          ${item.sessions.length
+            ? item.sessions.map((sess) => `<a href="#" class="session-link" data-session="${esc(sess)}">running</a>`).join(" ")
+            : p.dir
+              ? `<button type="button" class="tim-start" data-id="${esc(item.id)}">Start</button>`
+              : '<span class="muted">no repo</span>'}
+        </li>`).join("")}</ul>
+    </details>`).join("") || `<p class="muted">Nothing open.</p>`;
+
+  $("#tim-list").querySelectorAll(".tim-project").forEach((el) => {
+    el.addEventListener("toggle", () => {
+      const shut = new Set(readStored(TIM_CLOSED_KEY, []));
+      if (el.open) shut.delete(el.dataset.project);
+      else shut.add(el.dataset.project);
+      writeStored(TIM_CLOSED_KEY, [...shut]);
+    });
+  });
+  $("#tim-list").querySelectorAll(".session-link").forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      selectSession(a.dataset.session);
+    });
+  });
+  // Start opens the dialog instead of spawning: the prompt is the user's to
+  // rewrite before an agent acts on it.
+  const items = new Map(groups.flatMap((p) => p.items.map((i) => [i.id, { ...i, project: p }])));
+  $("#tim-list").querySelectorAll(".tim-start").forEach((btn) => {
+    btn.addEventListener("click", () => openLaunchDialog(items.get(btn.dataset.id)));
+  });
+}
+
+const launchDialog = $("#tim-launch");
+let timModels = [];
+
+/** Only the models the chosen CLI actually runs — the roster says which. */
+function fillModels() {
+  const cli = $("#tim-launch-cli").value;
+  fillSelect($("#tim-launch-model"), [
+    { value: "", label: "— CLI default —" },
+    ...timModels
+      .filter((m) => !cli || (m.clis || []).includes(cli))
+      .map((m) => ({ value: m.id, label: m.tier ? `${m.id} (${m.tier})` : m.id })),
+  ]);
+}
+
+$("#tim-launch-cli").addEventListener("change", fillModels);
+
+/** Rewrite a <select> without losing what the user had picked. */
+function fillSelect(select, options) {
+  const keep = select.value;
+  const html = options
+    .map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("");
+  if (select.innerHTML !== html) select.innerHTML = html;
+  if (options.some((o) => o.value === keep)) select.value = keep;
+}
+
+/** The specialist's remit, so what the framing will say is visible beforehand. */
+function showRemit() {
+  const id = $("#tim-launch-specialist").value;
+  const spec = (specialistsData?.specialists || []).find((s) => s.id === id);
+  if (!spec) {
+    $("#tim-launch-remit").textContent = "";
+    return;
+  }
+  const profile = spec.model_profile
+    ? ` Its profile asks for ${spec.model_profile.tier}:${spec.model_profile.reasoning}.`
+    : "";
+  $("#tim-launch-remit").textContent =
+    `${spec.display_name || spec.id}: ${(spec.remit || []).join("; ")}.${profile}`
+    + " Interactive session — no sandbox, approval or RESULT.json.";
+}
+
+$("#tim-launch-specialist").addEventListener("change", showRemit);
+
+function openLaunchDialog(item) {
+  if (!item) return;
+  $("#tim-launch-title").textContent = item.title;
+  $("#tim-launch-where").textContent = `${item.kind} ${item.id} · ${item.project.dir}`;
+  $("#tim-launch-prompt").value = item.prompt;
+  $("#tim-launch-status").textContent = "";
+  // The Specialists panel already holds the installed list; the specialist
+  // contributes its remit as prompt framing, built server-side from the
+  // manifest — the browser never authors a specialist's contract text.
+  fillSelect($("#tim-launch-specialist"), [
+    { value: "", label: "— none —" },
+    ...(specialistsData?.specialists || [])
+      .filter((s) => !s.error)
+      .map((s) => ({ value: s.id, label: s.display_name || s.id })),
+  ]);
+  fillModels();
+  showRemit();
+  launchDialog.dataset.id = item.id;
+  launchDialog.showModal();
+}
+
+$("#tim-launch-cancel").addEventListener("click", () => launchDialog.close());
+
+$("#tim-launch-form").addEventListener("submit", async (event) => {
+  // Not method="dialog": a refused start has to leave the dialog open with the
+  // typed prompt still in it.
+  event.preventDefault();
+  const status = $("#tim-launch-status");
+  status.textContent = "starting…";
+  try {
+    const res = await api("/api/tim/session", {
+      method: "POST",
+      body: JSON.stringify({
+        id: launchDialog.dataset.id,
+        cli: $("#tim-launch-cli").value,
+        prompt: $("#tim-launch-prompt").value,
+        specialist: $("#tim-launch-specialist").value || null,
+        model: $("#tim-launch-model").value || null,
+        projects_dir: readProjectsDir(),
+      }),
+    });
+    launchDialog.close();
+    await refreshTim();
+    selectSession(res.session);
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
+
+$("#tim-tabs").addEventListener("click", (event) => {
+  const tab = event.target.closest(".tim-tab");
+  if (!tab) return;
+  writeStored(TIM_KIND_KEY, tab.dataset.kind);
+  refreshTim().catch(() => {});
 });
 
 function refreshAll() {
@@ -1137,6 +1336,7 @@ function refreshAll() {
     refreshRuns(),
     refreshTmux(),
     refreshProjects(),
+    refreshTim(),
     refreshPick(),
     refreshSetup(),
   ]);

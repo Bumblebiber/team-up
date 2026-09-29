@@ -25,6 +25,7 @@
         <a href="#panel-runs">Runs</a>
         <a href="#panel-tmux">tmux</a>
         <a href="#panel-projects">Projects</a>
+        <a href="#panel-tim" id="nav-tim" class="hidden">TIM</a>
         <a href="#panel-pick">Pick</a>
         <a href="#panel-specialists">Specialists</a>
         <a href="#panel-setup">Setup</a>
@@ -60,6 +61,19 @@
         </div>
         <p id="projects-status" class="muted"></p>
         <div id="projects-table" class="table-wrap"></div>
+      </section>
+
+      <section id="panel-tim" class="panel hidden">
+        <h2>TIM</h2>
+        <div class="toolbar">
+          <span class="tabs" id="tim-tabs">
+            <button type="button" class="tim-tab is-active" data-kind="task">Tasks</button>
+            <button type="button" class="tim-tab" data-kind="idea">Ideas</button>
+            <button type="button" class="tim-tab" data-kind="bug">Bugs</button>
+          </span>
+        </div>
+        <p id="tim-status" class="muted"></p>
+        <div id="tim-list" class="table-wrap"></div>
       </section>
 
       <section id="panel-specialists" class="panel">
@@ -151,6 +165,35 @@
       </p>
     </div>
   </div>
+
+  <dialog id="tim-launch" class="launch-dialog">
+    <form id="tim-launch-form">
+      <h2 id="tim-launch-title"></h2>
+      <p id="tim-launch-where" class="muted"></p>
+      <label for="tim-launch-prompt">Prompt</label>
+      <textarea id="tim-launch-prompt" rows="7"></textarea>
+      <div class="launch-row">
+        <span>
+          <label for="tim-launch-cli">CLI</label>
+          <select id="tim-launch-cli"></select>
+        </span>
+        <span>
+          <label for="tim-launch-specialist">Specialist</label>
+          <select id="tim-launch-specialist"></select>
+        </span>
+        <span>
+          <label for="tim-launch-model">Model</label>
+          <select id="tim-launch-model"></select>
+        </span>
+      </div>
+      <p id="tim-launch-remit" class="muted"></p>
+      <p id="tim-launch-status" class="muted"></p>
+      <menu>
+        <button type="button" id="tim-launch-cancel">Cancel</button>
+        <button type="submit">Start session</button>
+      </menu>
+    </form>
+  </dialog>
 
   <script src="/app.js"></script>
 </body>

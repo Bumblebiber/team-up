@@ -16,6 +16,7 @@ import {
   installSpecialistFromGithub,
 } from "./specialists.mjs";
 import { listProjects, startProjectSession } from "./projects.mjs";
+import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
 import { pinSpecialist } from "../specialists/store.mjs";
 import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
@@ -304,6 +305,7 @@ export function createDashboardServer({
   );
   const memo = createMemo();
   const clisMemo = createMemo(30_000);
+  const timMemo = createMemo(30_000);
   const openrouterValidation = {};
   const auditedJobCompletion = new Set();
   const keyAuditAt = new Map();
@@ -1034,6 +1036,60 @@ export function createDashboardServer({
         jsonResponse(res, 200, { ...data, clis: Object.keys(loadRoster(env).clis || {}).sort() });
       } catch (e) {
         jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    if (pathname === "/api/tim") {
+      const dir = url.searchParams.get("dir") || "";
+      try {
+        // Spawning `tim open-work` on every 5s poll would put a TimStore open
+        // (migrations, FTS triggers) against TIM's own writer that often. The
+        // backlog is not a live feed; running sessions stay on the 1s memo.
+        const work = timMemo.get("open-work", () => readOpenWork({ exec }));
+        jsonResponse(res, 200, {
+          ...buildTimView(dir, { exec, work }),
+          clis: promptClis(loadRoster(env)),
+          models: Object.entries(loadRoster(env).models || {})
+            .map(([id, spec]) => ({ id, tier: spec.tier ?? null, clis: spec.cli ?? [] }))
+            .sort((a, b) => a.id.localeCompare(b.id)),
+        });
+      } catch (e) {
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/tim/session") {
+      if (!requireWriteAccess(req, res)) return;
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        const result = startTaskSession({
+          id: body.id,
+          cli: body.cli,
+          prompt: body.prompt,
+          specialist: body.specialist,
+          model: body.model,
+          projectsDir: body.projects_dir,
+          roster: loadRoster(env),
+          env,
+          exec,
+        });
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: "tim.session",
+            target: `${body.cli}:${body.id}`,
+            result: result.ok ? (result.existing ? "existing" : "ok") : "fail",
+          },
+          { env },
+        );
+        timMemo.invalidate("open-work");
+        memo.invalidate("tmux");
+        memo.invalidate("tmux-sessions");
+        jsonResponse(res, result.ok ? 200 : (result.status ?? 500), result);
+      } catch (e) {
+        jsonResponse(res, 500, { error: String(e.message || e) });
       }
       return;
     }

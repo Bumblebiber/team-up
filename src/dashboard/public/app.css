@@ -402,3 +402,29 @@ tr.greyed td { opacity: 0.55; }
   min-width: 1.6rem;
 }
 .column-controls button:disabled { opacity: 0.4; cursor: default; }
+
+/* TIM panel: three tabs, one <details> per project. */
+.tabs { display: inline-flex; gap: 0; }
+.tim-tab.is-active { font-weight: 600; text-decoration: underline; }
+.tim-project > summary { cursor: pointer; padding: 0.2rem 0; }
+.tim-items { list-style: none; margin: 0 0 0.4rem; padding: 0 0 0 1rem; }
+.tim-items li { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.15rem 0; }
+.tim-items li > .muted:first-child { flex: 0 0 auto; }
+.tim-items li > :last-child { margin-left: auto; flex: 0 0 auto; white-space: nowrap; }
+
+/* Launch dialog: native <dialog>, so Esc and the backdrop come for free. */
+.launch-dialog {
+  width: min(100%, 44rem);
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+}
+.launch-dialog::backdrop { background: rgb(0 0 0 / 55%); }
+.launch-dialog h2 { margin: 0 0 0.25rem; font-size: 1rem; }
+.launch-dialog label { display: block; margin: 0.6rem 0 0.2rem; font-size: 0.85rem; }
+.launch-dialog textarea { width: 100%; font: inherit; }
+.launch-dialog .launch-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+.launch-dialog .launch-row select { max-width: 14rem; }
+.launch-dialog menu { display: flex; gap: 0.5rem; justify-content: flex-end; margin: 0.8rem 0 0; padding: 0; }
