@@ -625,3 +625,45 @@ test("a scrolled pane leaves copy-mode before the key is sent", () => {
   // terminal looks broken and the log says everything worked.
   assert.deepEqual(calls, ["tmux copy-mode -q -t s1", "tmux send-keys -t s1 -l q"]);
 });
+
+test("creating a command policy and approving go through the audited write path", () =>
+  withHome(async ({ home, token }) => {
+    const root = fs.mkdtempSync(path.join(os.homedir(), ".teamup-test-projects-"));
+    const project = path.join(root, "alpha");
+    fs.mkdirSync(project);
+    fs.writeFileSync(path.join(project, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
+    const { server } = createDashboardServer({ token, exec: () => "", listSessions: () => [] });
+    try {
+      const port = await listen(server);
+      const cookie = await loginCookie(port, token);
+      const before = await req(port, `/api/projects?dir=${encodeURIComponent(root)}`, { cookie });
+      assert.equal(before.json.projects[0].policy.state, "missing");
+
+      const body = { dir: project, projects_dir: root };
+      const noCsrf = await req(port, "/api/projects/policy", { method: "POST", cookie, body });
+      assert.equal(noCsrf.status, 403);
+
+      const created = await req(port, "/api/projects/policy", { method: "POST", cookie, csrf: true, body });
+      assert.equal(created.status, 200, created.text);
+      const again = await req(port, "/api/projects/policy", { method: "POST", cookie, csrf: true, body });
+      assert.equal(again.status, 409);
+
+      // The write invalidates the listing: no stale "missing" for a second.
+      const after = await req(port, `/api/projects?dir=${encodeURIComponent(root)}`, { cookie });
+      assert.equal(after.json.projects[0].policy.state, "valid");
+
+      const approved = await req(port, "/api/projects/approve", { method: "POST", cookie, csrf: true, body });
+      assert.equal(approved.status, 200, approved.text);
+      assert.deepEqual(approved.json.results, []);
+
+      const lines = fs.readFileSync(path.join(home, "dashboard-audit.log"), "utf8")
+        .trim().split("\n").map((l) => JSON.parse(l));
+      assert.deepEqual(
+        lines.filter((l) => l.action.startsWith("project.")).map((l) => [l.action, l.result]),
+        [["project.policy", "ok"], ["project.policy", "fail"], ["project.approve", "ok"]],
+      );
+    } finally {
+      server.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }));

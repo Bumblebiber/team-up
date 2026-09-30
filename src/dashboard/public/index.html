@@ -59,6 +59,10 @@
             <input type="text" id="projects-dir" placeholder="~/projects" autocomplete="off">
           </label>
           <select id="projects-cli"></select>
+          <button type="button" id="projects-fix-all" title="Write every unambiguous command policy and approve every specialist that can be approved">Fix all</button>
+          <label title="On every refresh: write unambiguous .team-up/commands.json files (uncommitted) and approve specialists">
+            <input type="checkbox" id="projects-auto"> auto-fix
+          </label>
         </div>
         <p id="projects-status" class="muted"></p>
         <div id="projects-table" class="table-wrap"></div>
@@ -203,6 +207,21 @@
       <menu>
         <button type="button" id="tim-launch-cancel">Cancel</button>
         <button type="submit">Start session</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="policy-editor" class="launch-dialog">
+    <form id="policy-editor-form">
+      <h2>Command policy</h2>
+      <p id="policy-editor-where" class="muted"></p>
+      <label for="policy-editor-json">.team-up/commands.json</label>
+      <textarea id="policy-editor-json" rows="14" spellcheck="false"></textarea>
+      <p class="muted">Written into the checkout, not committed. An existing file is never overwritten.</p>
+      <p id="policy-editor-status" class="muted"></p>
+      <menu>
+        <button type="button" id="policy-editor-cancel">Cancel</button>
+        <button type="submit">Create</button>
       </menu>
     </form>
   </dialog>

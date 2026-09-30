@@ -1145,7 +1145,9 @@ async function refreshProjects() {
     $("#projects-table").innerHTML = "";
     return;
   }
-  status.textContent = data.dir;
+  // A write note stays until the next write: the dirty star alone does not
+  // say that the change came from this panel.
+  status.textContent = projectsNote ? `${data.dir} — ${projectsNote}` : data.dir;
   if (!$("#projects-dir").value) $("#projects-dir").value = dir || data.dir;
 
   const cliSel = $("#projects-cli");
@@ -1154,16 +1156,34 @@ async function refreshProjects() {
   if (cliSel.innerHTML !== options) cliSel.innerHTML = options;
   if (selected && (data.clis || []).includes(selected)) cliSel.value = selected;
 
+  projectsByPath = new Map(data.projects.map((p) => [p.path, p]));
   const rows = data.projects.map((p) => `
     <tr>
       <td>${esc(p.name)}${p.dirty ? " <span class=\"muted\">*</span>" : ""}</td>
       <td>${esc(p.git ? (p.branch || "detached") : "—")}</td>
+      <td>${policyCell(p)}</td>
+      <td>${specialistsCell(p)}</td>
       <td>${p.sessions.map((s) => `<a href="#" class="session-link" data-session="${esc(s)}">${esc(s.replace(/^team-up-proj-/, ""))}</a>`).join(" ") || "—"}</td>
       <td><button type="button" class="project-start" data-dir="${esc(p.path)}">Start</button></td>
     </tr>`).join("");
   $("#projects-table").innerHTML = `<table>
-    <thead><tr><th>Project</th><th>Branch</th><th>Sessions</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="4">No projects</td></tr>'}</tbody></table>`;
+    <thead><tr><th>Project</th><th>Branch</th><th>Policy</th><th>Specialists</th><th>Sessions</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="6">No projects</td></tr>'}</tbody></table>`;
+
+  $("#projects-table").querySelectorAll(".policy-create").forEach((btn) => {
+    btn.addEventListener("click", () => openPolicyEditor(projectsByPath.get(btn.dataset.dir)));
+  });
+  $("#projects-table").querySelectorAll(".project-approve").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await approveProject(projectsByPath.get(btn.dataset.dir));
+      } catch (err) {
+        projectsNote = err.message;
+      }
+      await refreshProjects();
+    });
+  });
 
   $("#projects-table").querySelectorAll(".session-link").forEach((a) => {
     a.addEventListener("click", (e) => {
@@ -1192,7 +1212,180 @@ async function refreshProjects() {
       }
     });
   });
+  autoFixProjects().catch(() => {});
 }
+
+// ── command policy and approvals ──
+// A specialist that runs commands needs `.team-up/commands.json` before it
+// can be approved: the grant binds the policy's checksum. So a fix is always
+// policy first, then approve.
+let projectsByPath = new Map();
+let projectsNote = "";
+const PROJECTS_AUTO_KEY = "teamup.projectsAutoFix";
+// Auto-fix tries each project once per page load: a failing approval would
+// otherwise be retried, and audited, on every poll.
+const autoFixTried = new Set();
+
+function policyCell(p) {
+  const pol = p.policy || { state: "none" };
+  const create = `<button type="button" class="policy-create" data-dir="${esc(p.path)}">Create…</button>`;
+  if (pol.state === "valid") return '<span class="badge ok">valid</span>';
+  if (pol.state === "invalid") {
+    return `<span class="badge red" title="${esc((pol.errors || []).join("\n"))}">invalid</span>`;
+  }
+  if (pol.state === "missing") {
+    const hint = pol.proposal?.auto ? "unambiguous" : "check the proposal";
+    return `<span class="badge amber" title="${esc(hint)}">missing</span> ${create}`;
+  }
+  return `<span class="muted" title="no test command detected">no tests</span> ${create}`;
+}
+
+function specialistsCell(p) {
+  const specs = p.specialists || [];
+  if (!specs.length) return "—";
+  const chips = specs.map((s) => {
+    const name = s.id.split(".").pop();
+    const title = s.approved ? `${s.id}@${s.version} approved` : `${s.id}@${s.version}: ${s.reason || "not approved"}`;
+    return `<span class="chip${s.approved ? "" : " missing"}" title="${esc(title)}">${esc(name)} ${s.approved ? "✓" : "✗"}</span>`;
+  }).join(" ");
+  const approvable = specs.some((s) => !s.approved && !s.reason);
+  return chips + (approvable ? ` <button type="button" class="project-approve" data-dir="${esc(p.path)}">Approve</button>` : "");
+}
+
+async function approveProject(p) {
+  const res = await api("/api/projects/approve", {
+    method: "POST",
+    body: JSON.stringify({ dir: p.path, projects_dir: readProjectsDir() }),
+  });
+  // Blocked on a missing policy is what the Policy column already says.
+  const refused = res.results.filter((r) => !r.ok && !/^COMMAND_POLICY_/.test(r.error));
+  if (refused.length) {
+    projectsNote = `${p.name}: not approved — ${refused.map((r) => `${r.id}: ${r.error}`).join("; ")}`;
+  }
+  return res;
+}
+
+/** What "Fix all" and auto-fix do to one project: only what needs no judgement. */
+async function fixProject(p) {
+  let wrote = false;
+  if (p.policy?.state === "missing" && p.policy.proposal?.auto) {
+    await api("/api/projects/policy", {
+      method: "POST",
+      body: JSON.stringify({ dir: p.path, projects_dir: readProjectsDir() }),
+    });
+    wrote = true;
+  }
+  const approvable = (p.specialists || []).some(
+    (s) => !s.approved && (!s.reason || (wrote && s.reason === "COMMAND_POLICY_MISSING")),
+  );
+  if (approvable) await approveProject(p);
+  return wrote;
+}
+
+const needsFix = (p) =>
+  (p.policy?.state === "missing" && p.policy.proposal?.auto)
+  || (p.specialists || []).some((s) => !s.approved && !s.reason);
+
+async function fixProjects(projects) {
+  const written = [];
+  for (const p of projects) {
+    try {
+      if (await fixProject(p)) written.push(p.name);
+    } catch (err) {
+      projectsNote = `${p.name}: ${err.message}`;
+    }
+  }
+  if (written.length) {
+    projectsNote = `wrote .team-up/commands.json (uncommitted) in: ${written.join(", ")}`;
+  }
+  return written;
+}
+
+let autoFixRunning = false;
+async function autoFixProjects() {
+  if (autoFixRunning || !$("#projects-auto").checked) return;
+  const todo = [...projectsByPath.values()].filter((p) => needsFix(p) && !autoFixTried.has(p.path));
+  if (!todo.length) return;
+  autoFixRunning = true;
+  todo.forEach((p) => autoFixTried.add(p.path));
+  try {
+    await fixProjects(todo);
+  } finally {
+    autoFixRunning = false;
+  }
+  await refreshProjects();
+}
+
+$("#projects-fix-all").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  try {
+    await fixProjects([...projectsByPath.values()].filter(needsFix));
+    await refreshProjects();
+  } finally {
+    e.target.disabled = false;
+  }
+});
+
+try {
+  $("#projects-auto").checked = localStorage.getItem(PROJECTS_AUTO_KEY) === "1";
+} catch {
+  // storage blocked: auto-fix just starts off
+}
+$("#projects-auto").addEventListener("change", () => {
+  try {
+    localStorage.setItem(PROJECTS_AUTO_KEY, $("#projects-auto").checked ? "1" : "0");
+  } catch {
+    // Private mode: the toggle stops surviving reloads.
+  }
+  autoFixProjects().catch(() => {});
+});
+
+// The editor is a <dialog> outside the table: the table is rebuilt on every
+// poll and would throw away half-typed JSON.
+const policyDialog = $("#policy-editor");
+let policyTarget = null;
+
+const EMPTY_POLICY = {
+  schema_version: 1,
+  commands: {
+    "project-test": { argv: ["npm", "test"], cwd: ".", timeout_seconds: 900, environment: {} },
+  },
+};
+
+function openPolicyEditor(p) {
+  if (!p) return;
+  policyTarget = p;
+  $("#policy-editor-where").textContent = p.path;
+  $("#policy-editor-json").value = JSON.stringify(p.policy?.proposal?.policy || EMPTY_POLICY, null, 2);
+  $("#policy-editor-status").textContent = p.policy?.proposal
+    ? (p.policy.proposal.auto ? "Detected unambiguously." : "Proposal only — check the command before creating.")
+    : "No test command detected — fill in the one this project uses.";
+  policyDialog.showModal();
+}
+
+$("#policy-editor-cancel").addEventListener("click", () => policyDialog.close());
+$("#policy-editor-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = $("#policy-editor-status");
+  let policy;
+  try {
+    policy = JSON.parse($("#policy-editor-json").value);
+  } catch (err) {
+    status.textContent = `not JSON: ${err.message}`;
+    return;
+  }
+  try {
+    await api("/api/projects/policy", {
+      method: "POST",
+      body: JSON.stringify({ dir: policyTarget.path, projects_dir: readProjectsDir(), policy }),
+    });
+    policyDialog.close();
+    projectsNote = `wrote .team-up/commands.json (uncommitted) in ${policyTarget.name}`;
+    await refreshProjects();
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
 
 $("#projects-dir").addEventListener("change", () => {
   try {

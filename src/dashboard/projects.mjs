@@ -4,6 +4,13 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { tmuxArgs } from "../roster/command.mjs";
 import { listTmuxSessions } from "../runs/tmux.mjs";
+import {
+  COMMAND_POLICY_FILE,
+  validateCommandPolicy,
+  resolveCommandPolicyForApproval,
+} from "../commands/policy.mjs";
+import { listInstalled, loadInstalledManifest } from "../specialists/store.mjs";
+import { approveSpecialist, isApproved } from "../specialists/approvals.mjs";
 
 export const SESSION_PREFIX = "team-up-proj-";
 
@@ -37,6 +44,224 @@ export function resolveCollectingDir(input) {
   return real;
 }
 
+/**
+ * One project, as the browser named it, checked against the collecting folder.
+ * Every write the panel makes into a project goes through here first.
+ */
+function resolveProjectDir(dir, projectsDir) {
+  const collecting = resolveCollectingDir(projectsDir);
+  let real;
+  try {
+    real = fs.realpathSync(String(dir || ""));
+  } catch {
+    return { ok: false, status: 404, error: "no such project" };
+  }
+  if (path.dirname(real) !== collecting || !fs.statSync(real).isDirectory()) {
+    return { ok: false, status: 400, error: "project is not a directory inside the collecting folder" };
+  }
+  return { ok: true, real };
+}
+
+// ── command policy ──
+// Detection is deliberately narrow. A proposal is only `auto` when there is
+// exactly one test command and nothing to choose: a wrong guess written into
+// someone's checkout is worse than a missing file with a suggestion next to it.
+
+const NPM_PLACEHOLDER = /no test specified/;
+const PYTEST_CONFIGS = ["pyproject.toml", "setup.cfg", "tox.ini"];
+
+const has = (...parts) => fs.existsSync(path.join(...parts));
+
+function hasNpmTest(dir) {
+  try {
+    const test = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"))?.scripts?.test;
+    return typeof test === "string" && test.trim() !== "" && !NPM_PLACEHOLDER.test(test);
+  } catch {
+    return false;
+  }
+}
+
+const PY_TEST_FILE = /^(test_.*|.*_test)\.py$|^conftest\.py$/;
+
+/** A test dir says pytest only if it holds Python tests: node repos have one too. */
+function hasPythonTests(dir) {
+  try {
+    return fs.readdirSync(dir).some((f) => PY_TEST_FILE.test(f));
+  } catch {
+    return false;
+  }
+}
+
+function hasPytestMarkers(dir) {
+  if (["pytest.ini", "conftest.py"].some((f) => has(dir, f))) return true;
+  if (["tests", "test"].some((d) => hasPythonTests(path.join(dir, d)))) return true;
+  return PYTEST_CONFIGS.some((f) => {
+    try {
+      return fs.readFileSync(path.join(dir, f), "utf8").includes("pytest");
+    } catch {
+      return false;
+    }
+  });
+}
+
+const testAction = (argv, cwd = ".") => ({ argv, cwd, timeout_seconds: 900, environment: {} });
+
+/** The `project-test` action this repo most likely wants, or null for none. */
+export function proposePolicy(dir) {
+  const candidates = [];
+  if (hasNpmTest(dir)) {
+    candidates.push({ action: testAction(["npm", "test"]), auto: true });
+  } else {
+    let nested = [];
+    try {
+      nested = fs.readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
+        .map((e) => e.name)
+        .filter((name) => hasNpmTest(path.join(dir, name)))
+        .sort();
+    } catch {
+      // unreadable: no nested candidates
+    }
+    // Several nested packages: which one is "the" test suite is Benni's call.
+    if (nested.length) candidates.push({ action: testAction(["npm", "test"], nested[0]), auto: nested.length === 1 });
+  }
+  if (hasPytestMarkers(dir)) {
+    const venv = has(dir, ".venv", "bin", "python");
+    candidates.push({
+      action: testAction([venv ? ".venv/bin/python" : "python3", "-m", "pytest", "-q"]),
+      auto: venv && has(dir, ".venv", "bin", "pytest"),
+    });
+  }
+  if (!candidates.length) return null;
+  return {
+    policy: { schema_version: 1, commands: { "project-test": candidates[0].action } },
+    auto: candidates.length === 1 && candidates[0].auto,
+  };
+}
+
+/** valid | invalid (with errors) | missing (with a proposal) | none (no tests found). */
+export function projectPolicy(dir) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(dir, COMMAND_POLICY_FILE), "utf8");
+  } catch (e) {
+    if (e.code !== "ENOENT") return { state: "invalid", errors: [e.message] };
+    const proposal = proposePolicy(dir);
+    return proposal ? { state: "missing", proposal } : { state: "none" };
+  }
+  let policy;
+  try {
+    policy = JSON.parse(raw);
+  } catch (e) {
+    return { state: "invalid", errors: [`not JSON: ${e.message}`] };
+  }
+  const { ok, errors } = validateCommandPolicy(policy);
+  return ok ? { state: "valid" } : { state: "invalid", errors };
+}
+
+/**
+ * Create `.team-up/commands.json` — never overwrite it. Replacing a policy
+ * silently voids every approval bound to its checksum, so that stays a
+ * deliberate edit in the repo. Nothing is committed: the file shows up as an
+ * untracked change in the project's own checkout.
+ */
+export function writeProjectPolicy({ dir, projectsDir, policy = null } = {}) {
+  const target = resolveProjectDir(dir, projectsDir);
+  if (!target.ok) return target;
+  let body = policy;
+  if (!body) {
+    const proposal = proposePolicy(target.real);
+    if (!proposal?.auto) {
+      return { ok: false, status: 400, error: "no unambiguous test command — edit the proposal and save it" };
+    }
+    body = proposal.policy;
+  }
+  const { ok, errors } = validateCommandPolicy(body);
+  if (!ok) return { ok: false, status: 400, error: errors.join("; ") };
+
+  // A symlinked .team-up would turn a write into this repo into a write anywhere.
+  const teamUpDir = path.join(target.real, path.dirname(COMMAND_POLICY_FILE));
+  try {
+    if (!fs.lstatSync(teamUpDir).isDirectory()) {
+      return { ok: false, status: 400, error: ".team-up is not a plain directory" };
+    }
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+    fs.mkdirSync(teamUpDir);
+  }
+  const file = path.join(target.real, COMMAND_POLICY_FILE);
+  try {
+    fs.writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`, { flag: "wx" });
+  } catch (e) {
+    if (e.code === "EEXIST") return { ok: false, status: 409, error: `${COMMAND_POLICY_FILE} already exists` };
+    throw e;
+  }
+  return { ok: true, path: file };
+}
+
+// ── approvals ──
+
+/**
+ * Every installed specialist, measured against one project the way the
+ * launcher measures it: the project's pin, its command policy checksum, the
+ * exact grant. `reason` is the policy error that blocks an approval outright.
+ */
+function projectSpecialists(dir, ids, env) {
+  return ids.map((id) => {
+    let loaded;
+    try {
+      loaded = loadInstalledManifest(id, { project: dir, env });
+    } catch {
+      return null;
+    }
+    if (!loaded) return null;
+    const permissions = loaded.manifest?.permissions;
+    const row = { id, version: loaded.version, needs_policy: (permissions?.commands || []).length > 0 };
+    try {
+      const { checksum } = resolveCommandPolicyForApproval({ project: dir, permissions, env });
+      return {
+        ...row,
+        approved: isApproved({
+          project: dir,
+          id,
+          version: loaded.version,
+          checksum: loaded.checksum,
+          permissions,
+          command_policy_checksum: checksum,
+          env,
+        }),
+      };
+    } catch (e) {
+      return { ...row, approved: false, reason: e.code || "COMMAND_POLICY_INVALID" };
+    }
+  }).filter(Boolean);
+}
+
+const installedIds = (env) => Object.keys(listInstalled(env).specialists || {}).sort();
+
+/** Approve every not-yet-approved specialist (or just `id`) for one project. */
+export async function approveProjectSpecialists({ dir, projectsDir, id = null, env = process.env } = {}) {
+  const target = resolveProjectDir(dir, projectsDir);
+  if (!target.ok) return target;
+  const results = [];
+  for (const s of projectSpecialists(target.real, installedIds(env), env)) {
+    if (s.approved || (id && s.id !== id)) continue;
+    // A policy problem fails the approval anyway; say so without trying.
+    if (s.reason) {
+      results.push({ id: s.id, version: s.version, ok: false, error: s.reason });
+      continue;
+    }
+    const r = await approveSpecialist({ idAtVersion: `${s.id}@${s.version}`, project: target.real, env });
+    results.push({
+      id: s.id,
+      version: s.version,
+      ok: r.ok,
+      ...(r.ok ? {} : { error: (r.errors || []).join("; ") }),
+    });
+  }
+  return { ok: true, results };
+}
+
 /** Branch and dirtiness in one call — `status --branch` reports both. */
 function gitInfo(dir, exec) {
   try {
@@ -55,9 +280,10 @@ function gitInfo(dir, exec) {
   }
 }
 
-export function listProjects(dirInput, { exec = execFileSync, sessions = null } = {}) {
+export function listProjects(dirInput, { exec = execFileSync, sessions = null, env = process.env } = {}) {
   const dir = resolveCollectingDir(dirInput);
   const live = sessions ?? listTmuxSessions({ exec });
+  const ids = installedIds(env);
   const projects = fs.readdirSync(dir)
     .filter((name) => !name.startsWith("."))
     .map((name) => {
@@ -78,6 +304,8 @@ export function listProjects(dirInput, { exec = execFileSync, sessions = null } 
         git,
         ...(git ? gitInfo(full, exec) : { branch: null, dirty: false }),
         sessions: live.filter((s) => s.startsWith(`${SESSION_PREFIX}${slug(name)}-`)).sort(),
+        policy: projectPolicy(full),
+        specialists: projectSpecialists(full, ids, env),
       };
     })
     .filter(Boolean)
@@ -100,19 +328,11 @@ export function startProjectSession({
   exec = execFileSync,
   sessions = null,
 } = {}) {
-  const collecting = resolveCollectingDir(projectsDir);
   const cmd = roster?.clis?.[cli]?.cmd?.[0];
   if (!cmd) return { ok: false, status: 400, error: `unknown cli: ${cli}` };
-
-  let real;
-  try {
-    real = fs.realpathSync(String(dir || ""));
-  } catch {
-    return { ok: false, status: 404, error: "no such project" };
-  }
-  if (path.dirname(real) !== collecting || !fs.statSync(real).isDirectory()) {
-    return { ok: false, status: 400, error: "project is not a directory inside the collecting folder" };
-  }
+  const target = resolveProjectDir(dir, projectsDir);
+  if (!target.ok) return target;
+  const { real } = target;
 
   const session = projectSessionName(path.basename(real), cli);
   const live = sessions ?? listTmuxSessions({ exec });

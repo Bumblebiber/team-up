@@ -425,6 +425,8 @@ tr.greyed td { opacity: 0.55; }
 .launch-dialog h2 { margin: 0 0 0.25rem; font-size: 1rem; }
 .launch-dialog label { display: block; margin: 0.6rem 0 0.2rem; font-size: 0.85rem; }
 .launch-dialog textarea { width: 100%; font: inherit; }
+#policy-editor-json { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+#projects-table .chip.missing { border-style: dashed; color: var(--muted); }
 .launch-dialog .launch-row { display: flex; gap: 1rem; flex-wrap: wrap; }
 .launch-dialog .launch-row select { max-width: 14rem; }
 .launch-dialog menu { display: flex; gap: 0.5rem; justify-content: flex-end; margin: 0.8rem 0 0; padding: 0; }

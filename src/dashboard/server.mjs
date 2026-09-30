@@ -15,7 +15,12 @@ import {
   buildCapabilityPoolView,
   installSpecialistFromGithub,
 } from "./specialists.mjs";
-import { listProjects, startProjectSession } from "./projects.mjs";
+import {
+  listProjects,
+  startProjectSession,
+  writeProjectPolicy,
+  approveProjectSpecialists,
+} from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
 import { buildTierMatrixView, applyModelEdit, saveRoster } from "./tiers.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
@@ -1070,7 +1075,7 @@ export function createDashboardServer({
     if (pathname === "/api/projects") {
       const dir = url.searchParams.get("dir") || "";
       try {
-        const data = memo.get(`projects:${dir}`, () => listProjects(dir, { exec }));
+        const data = memo.get(`projects:${dir}`, () => listProjects(dir, { exec, env }));
         jsonResponse(res, 200, { ...data, clis: Object.keys(loadRoster(env).clis || {}).sort() });
       } catch (e) {
         jsonResponse(res, 400, { error: String(e.message || e) });
@@ -1160,6 +1165,44 @@ export function createDashboardServer({
       } catch (e) {
         jsonResponse(res, 500, { error: String(e.message || e) });
       }
+      return;
+    }
+
+    // Both write into a project on Benni's behalf: the policy file into the
+    // checkout (never committed, never overwritten), the grant into approvals.
+    const projectWrite = {
+      "/api/projects/policy": ["project.policy", (body) =>
+        writeProjectPolicy({ dir: body.dir, projectsDir: body.projects_dir, policy: body.policy ?? null })],
+      "/api/projects/approve": ["project.approve", (body) =>
+        approveProjectSpecialists({ dir: body.dir, projectsDir: body.projects_dir, id: body.id ?? null, env })],
+    }[pathname];
+    if (req.method === "POST" && projectWrite) {
+      if (!requireWriteAccess(req, res)) return;
+      const [action, run] = projectWrite;
+      let body = {};
+      let result;
+      try {
+        body = JSON.parse(await readBody(req) || "{}");
+        result = await run(body);
+      } catch (e) {
+        result = { ok: false, status: 400, error: String(e.message || e) };
+      }
+      const refused = (result.results || []).filter((r) => !r.ok).map((r) => r.id);
+      const detail = result.ok
+        ? (refused.length ? `not approved: ${refused.join(", ")}` : null)
+        : result.error;
+      appendAudit(
+        {
+          actor: "127.0.0.1",
+          action,
+          target: String(body.dir ?? ""),
+          result: result.ok ? "ok" : "fail",
+          ...(detail ? { detail } : {}),
+        },
+        { env },
+      );
+      memo.invalidate(`projects:${body.projects_dir ?? ""}`);
+      jsonResponse(res, result.ok ? 200 : (result.status ?? 500), result);
       return;
     }
 
