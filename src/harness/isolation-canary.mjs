@@ -99,6 +99,11 @@ export const CLAUDE_HARNESS_BUILTIN_SKILLS = Object.freeze([
 export const CLAUDE_HARNESS_BUILTIN_PLUGINS = Object.freeze([
   "agents-md",
   "telemetry",
+  // 2.1.285 renamed the same two built-ins: the binary carries a legacy→new id
+  // table (["agents-md","cc-plugin-agents-md"], ["telemetry","cc-plugin-telemetry"]).
+  // Neither name is on any path under ~/.claude or in installed_plugins.json.
+  "cc-plugin-agents-md",
+  "cc-plugin-telemetry",
 ]);
 
 function contentNonceField(text, nonce) {

@@ -90,6 +90,26 @@ test("built-in harness skill on allowlist still grants", () => {
   assert.ok(CLAUDE_HARNESS_BUILTIN_SKILLS.includes("doctor"));
 });
 
+test("2.1.285 renamed built-in plugins grant, an unlisted cc-plugin still denies", () => {
+  const expected = {
+    skills: ["capsule.selected-skill"],
+    plugins: ["capsule.selected-plugin"],
+    mcp_tools: ["mcp__selected__lookup"],
+  };
+  const init = (extra) => ({
+    session_id: "s1",
+    skills: ["capsule.selected-skill", PLUGIN_CANARY_SKILL],
+    plugins: ["capsule.selected-plugin", "cc-plugin-agents-md", "cc-plugin-telemetry", ...extra],
+    mcp_servers: ["selected"],
+    tools: ["Read", "Skill", "mcp__selected__lookup"],
+  });
+  assert.equal(verifyInitSurfaceExclusion(init([]), { expected }).ok, true);
+  assert.deepEqual(
+    verifyInitSurfaceExclusion(init(["cc-plugin-mermaid"]), { expected }).violations,
+    [{ kind: "plugin", name: "cc-plugin-mermaid" }]
+  );
+});
+
 test("unknown built-in tool denies with named violation", () => {
   const init = {
     session_id: "s1",
