@@ -826,7 +826,7 @@ export function startFromLaunchDescriptor({
       live.status = rollbackStatus;
       live.last_start_error = String(e.message || e);
       saveState(live);
-      setStatus(runId, rollbackStatus);
+      setStatus(runId, rollbackStatus, { reason: live.last_start_error });
     }
     throw e;
   }
@@ -851,7 +851,7 @@ export function startFromLaunchDescriptor({
       live.status = rollbackStatus;
       live.last_start_error = `LEASE_TRANSFER_FAILED: ${transferred?.reason || "unknown"}`;
       saveState(live);
-      setStatus(runId, rollbackStatus);
+      setStatus(runId, rollbackStatus, { reason: live.last_start_error });
     }
     const err = new Error(
       `LEASE_TRANSFER_FAILED: ${transferred?.reason || "unknown"}`

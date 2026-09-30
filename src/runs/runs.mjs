@@ -291,6 +291,11 @@ function writeStateUnderLock(state, expectedRevision) {
     throw stateWriteConflict(expectedRevision, currentRevision);
   }
   state.updatedAt = new Date().toISOString();
+  // Every writer passes through here, so this is the one place a run's end
+  // time cannot be forgotten. Run analysis needs durations, not guesses.
+  if (TERMINAL_RUN_STATUSES.has(state.status) && !state.finishedAt) {
+    state.finishedAt = state.updatedAt;
+  }
   state._stateRevision = expectedRevision + 1;
   atomicWriteJson(path.join(runDir(state.runId), "STATE.json"), state);
   return state;
@@ -573,6 +578,11 @@ function persistResolvedRunStatus(runId, classified) {
     const resolution = resolveRunState(state, classified);
     if (!resolution.changed) return undefined;
     state.status = resolution.state.status;
+    // The classifier always knows why a run failed; until now that reason died
+    // here and 39 of 39 failed runs on this host carried none.
+    if (state.status === "failed" && classified?.error && !state.failure) {
+      state.failure = { error: classified.error, at: new Date().toISOString() };
+    }
     return state;
   });
   const resolution = resolveRunState(latestState, classified);
@@ -580,10 +590,13 @@ function persistResolvedRunStatus(runId, classified) {
   return resolution;
 }
 
-export function setStatus(runId, status) {
+export function setStatus(runId, status, { reason = null } = {}) {
   const state = loadState(runId);
   if (!state) throw new Error(`unknown run ${runId}`);
   state.status = status;
+  if (status === "failed" && reason && !state.failure) {
+    state.failure = { error: String(reason), at: new Date().toISOString() };
+  }
   saveState(state);
   atomicWriteText(path.join(mailboxDir(runId), "STATUS"), status);
   return state;
@@ -1161,10 +1174,10 @@ function cmdAnswer(args) {
 function cmdSetStatus(args) {
   const [runId, status] = args;
   if (!runId || !status) {
-    console.error("usage: runs.mjs set-status <runId> <status>");
+    console.error("usage: runs.mjs set-status <runId> <status> [--reason <text>]");
     process.exit(1);
   }
-  setStatus(runId, status);
+  setStatus(runId, status, { reason: argValue(args, "--reason") });
 }
 
 function cmdOutcome(args) {

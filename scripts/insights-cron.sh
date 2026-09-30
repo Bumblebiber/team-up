@@ -1,0 +1,137 @@
+#!/bin/bash
+# insights-cron.sh — every 48h: read the run logs, judge them, act on them.
+#
+#   1. scripts/run-insights.mjs turns ~/.team-up/runs into findings (free).
+#   2. Unchanged finding set, or nothing above low → silent, no model is paid.
+#   3. Otherwise a headless Claude evaluates (templates/insights-evaluator.md):
+#      TIM entries always, at most one fix as a verified PR, never a merge.
+#
+# Cron runs this daily; the stamp gate makes it 48h. `0 x */2 * *` would fire
+# on the 31st and again on the 1st.
+#
+# Env: INSIGHTS_FORCE=1 skips the 48h gate and the dedup.
+#      INSIGHTS_DRY_RUN=1 writes the report and prints the evaluator command
+#      and prompt instead of running them or sending Telegram.
+# Stdout only when a message goes out (watchdog pattern).
+
+set -u
+
+REPO="${TEAM_UP_REPO:-$HOME/projects/team-up}"
+OUT_DIR="${INSIGHTS_OUT_DIR:-$HOME/.team-up/reports/insights}"
+LOG_DIR="$HOME/.hermes/cron-outputs/insights"
+mkdir -p "$OUT_DIR" "$LOG_DIR"
+STAMP="$OUT_DIR/.last-run"
+HASH_FILE="$OUT_DIR/.last-hash"
+FORCE="${INSIGHTS_FORCE:-0}"
+DRY="${INSIGHTS_DRY_RUN:-0}"
+
+exec 9>"$OUT_DIR/.lock"
+flock -n 9 || { echo "$(date -Is) previous run still active" >> "$LOG_DIR/cron.log"; exit 0; }
+
+if [ "$FORCE" != "1" ] && [ -f "$STAMP" ] \
+   && [ $(( $(date +%s) - $(stat -c %Y "$STAMP") )) -lt $(( 47 * 3600 )) ]; then
+  exit 0
+fi
+[ "$DRY" = "1" ] || touch "$STAMP"
+
+JSON=$(node "$REPO/scripts/run-insights.mjs" --since-hours 48 --out-dir "$OUT_DIR" 2>> "$LOG_DIR/stderr.log") \
+  || { echo "WARN: run-insights failed, see $LOG_DIR/stderr.log"; exit 0; }
+MD="${JSON%.json}.md"
+
+read -r HASH ACTIONABLE <<<"$(python3 - "$JSON" <<'E'
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(d["findingsHash"], sum(f["severity"] != "low" for f in d["findings"]))
+E
+)"
+echo "$(date -Is) report=$JSON actionable=$ACTIONABLE hash=${HASH:0:12}" >> "$LOG_DIR/cron.log"
+
+if [ "$FORCE" != "1" ]; then
+  [ "$ACTIONABLE" -eq 0 ] && exit 0
+  [ "$HASH" = "$(cat "$HASH_FILE" 2>/dev/null)" ] && exit 0
+fi
+
+STAMP_ID=$(date +%Y%m%d-%H%M)
+BRANCH="insights/$STAMP_ID"
+PROMPT="${JSON%.json}.prompt.md"
+TICKET="${JSON%.json}.ticket.md"
+sed -e "s|{{REPORT_MD}}|$MD|g" -e "s|{{REPORT_JSON}}|$JSON|g" \
+    -e "s|{{REPORT_DIR}}|$OUT_DIR|g" -e "s|{{TICKET}}|$TICKET|g" \
+    -e "s|{{BRANCH}}|$BRANCH|g" \
+    "$REPO/templates/insights-evaluator.md" > "$PROMPT"
+
+# The evaluator's model comes from the roster like every other seat. It needs
+# TIM MCP and a shell, which only the claude CLI gives it headless here.
+MODEL=$(node "$REPO/bin/team-up.mjs" pick --role planner 2>/dev/null | awk '/^cli:/{c=$2} /^model:/{m=$2} END{if (c=="claude") print m}')
+MODEL_ARG=()
+case "$MODEL" in
+  claude-opus) MODEL_ARG=(--model opus) ;;
+  claude-sonnet) MODEL_ARG=(--model sonnet) ;;
+esac
+CMD=(claude -p "${MODEL_ARG[@]}" --permission-mode dontAsk
+     --allowedTools "Read,Grep,Glob,Bash,mcp__tim"
+     --disallowedTools "Edit,Write,NotebookEdit")
+
+if [ "$DRY" = "1" ]; then
+  echo "--- would run in $REPO: ${CMD[*]} < $PROMPT"
+  cat "$PROMPT"
+  exit 0
+fi
+
+BEFORE=$(git -C "$REPO" status --porcelain)
+DECISION="${JSON%.json}.decision.md"
+(cd "$REPO" && timeout 3h "${CMD[@]}" < "$PROMPT") > "$DECISION" 2>> "$LOG_DIR/stderr.log"
+RC=$?
+echo "$HASH" > "$HASH_FILE"
+
+# The one fix. Deterministic on purpose: the evaluator's Bash cannot block for
+# the 90 minutes a worker takes, and a push should not hang on a model's mood.
+fix_ticket() {
+  local tu="$REPO/bin/team-up.mjs" clone="$HOME/projects/tasks/insights-$STAMP_ID"
+  git clone -q -b main "$REPO" "$clone" || return 1
+  git -C "$clone" remote set-url origin "$(git -C "$REPO" remote get-url origin)"
+  git -C "$clone" switch -q -c "$BRANCH" || return 1
+  (cd "$clone" && npm ci --silent) >> "$LOG_DIR/stderr.log" 2>&1 || return 1
+  local pick cli model run status
+  pick=$(node "$tu" pick --role implementer 2>/dev/null)
+  cli=$(awk '/^cli:/{print $2}' <<<"$pick"); model=$(awk '/^model:/{print $2}' <<<"$pick")
+  run=$(node "$tu" runs create --cwd "$clone" --role implementer --parent-cli claude \
+        --parent-attach manual --worker-cli "$cli" --worker-model "$model" \
+        --prompt-file "$TICKET" --project P0073 --verify-command "npm test" | awk '/^runId:/{print $2}')
+  [ -n "$run" ] || return 1
+  node "$tu" dispatch --role implementer --prompt-file "$TICKET" --dir "$clone" \
+       --run-id "$run" --model "$cli:$model" >> "$LOG_DIR/stderr.log" 2>&1 || return 1
+  node "$tu" runs wait "$run" --ceiling-sec 5400 >> "$LOG_DIR/stderr.log" 2>&1
+  status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' \
+           "$HOME/.team-up/runs/$run/STATE.json" 2>/dev/null)
+  if [ "$status" != "done" ] || [ -z "$(git -C "$clone" log --oneline main..HEAD)" ]; then
+    echo "Fix-Run $run: ${status:-unbekannt}, kein PR ($clone)"
+    return 0
+  fi
+  git -C "$clone" push -q -u origin "$BRANCH" >> "$LOG_DIR/stderr.log" 2>&1 || { echo "Fix-Run $run: push fehlgeschlagen"; return 0; }
+  (cd "$clone" && gh pr create --base main --head "$BRANCH" \
+     --title "insights: $(head -1 "$TICKET" | sed 's/^#* *//')" \
+     --body "Automatischer Fix aus dem 48h-Insights-Cron.
+
+Bericht: \`$MD\` · Run: \`$run\` · parent verification: \`npm test\` grün.
+
+$(cat "$TICKET")
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)") 2>> "$LOG_DIR/stderr.log" \
+    || echo "Fix-Run $run: PR-Erstellung fehlgeschlagen ($BRANCH gepusht)"
+}
+FIX=""
+[ "$RC" -eq 0 ] && [ -s "$TICKET" ] && FIX=$(fix_ticket || echo "Fix-Vorbereitung fehlgeschlagen, siehe $LOG_DIR/stderr.log")
+
+MSG="🔎 team-up Insights ($ACTIONABLE auffällig)
+$(head -c 3000 "$DECISION")
+${FIX:+$FIX
+}Bericht: $MD"
+[ "$RC" -ne 0 ] && MSG="⚠️ Insights-Evaluator exit $RC — Bericht liegt trotzdem vor.
+$MSG"
+[ "$(git -C "$REPO" status --porcelain)" != "$BEFORE" ] && MSG="🛑 Evaluator hat den Main-Checkout verändert — bitte prüfen.
+$MSG"
+
+echo "$MSG"
+ESCAPED=$(printf '%s' "$MSG" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+"$HOME/.hermes/bin/send-cron-telegram" "$ESCAPED" || echo "WARN: CronBot telegram send failed" >&2

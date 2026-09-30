@@ -123,6 +123,8 @@ export function writeTypedResult(runId, result, { runDir, atomicWriteJson, atomi
     blocked: "waiting_human",
     failed: "failed",
   };
-  setStatus(runId, statusMap[validated.status] || "failed");
+  setStatus(runId, statusMap[validated.status] || "failed", {
+    reason: validated.validation_error || validated.summary,
+  });
   return { validated, classified: classifyMailbox(runId) };
 }

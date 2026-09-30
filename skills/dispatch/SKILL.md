@@ -137,6 +137,8 @@ Minimum mental model:
 5. On `done`/`failed`: read `mailbox/RESULT.md` (and task-dir artifacts); memory/TIM closeout only if useful.
 6. Once you know whether you kept the work: `$RUNS outcome <id> merged|discarded`.
    `status` says how the run ended, never whether it was worth its cost.
+7. Failing a run by hand: `$RUNS set-status <id> failed --reason "<why>"`. The
+   48h insights cron counts failures by reason; a bare `failed` is noise.
 
 ### Disk artifacts ≠ done
 

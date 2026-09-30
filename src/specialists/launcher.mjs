@@ -442,7 +442,7 @@ export async function launch({
       fs.mkdirSync(dir, { recursive: true });
     }
   } catch (e) {
-    setStatus(state.runId, "failed");
+    setStatus(state.runId, "failed", { reason: `capsule setup: ${e.message}` });
     throw e;
   }
 
