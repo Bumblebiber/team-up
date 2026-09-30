@@ -202,31 +202,11 @@ export function writeProjectPolicy({ dir, projectsDir, policy = null } = {}) {
 // ── approvals ──
 
 /**
- * Where Claude Code puts this project's worktrees, if it has any. An exact
- * grant is bound to one path, so every worktree was a new, unapproved project.
- * Both segments must be real directories: the folder sits in the repo, and a
- * symlink there would widen the grant to wherever it points.
- */
-function worktreeRoot(dir) {
-  const claude = path.join(dir, ".claude");
-  const root = path.join(claude, "worktrees");
-  try {
-    if (fs.lstatSync(claude).isDirectory() && fs.lstatSync(root).isDirectory()) return root;
-  } catch {
-    // no worktrees
-  }
-  return null;
-}
-
-/**
  * Every installed specialist, measured against one project the way the
  * launcher measures it: the project's pin, its command policy checksum, the
  * exact grant. `reason` is the policy error that blocks an approval outright.
- * `worktrees` says whether a worktree carrying this project's policy would be
- * covered too (null: the project has none).
  */
 function projectSpecialists(dir, ids, env) {
-  const wtRoot = worktreeRoot(dir);
   return ids.map((id) => {
     let loaded;
     try {
@@ -239,66 +219,45 @@ function projectSpecialists(dir, ids, env) {
     const row = { id, version: loaded.version, needs_policy: (permissions?.commands || []).length > 0 };
     try {
       const { checksum } = resolveCommandPolicyForApproval({ project: dir, permissions, env });
-      const fields = {
-        id,
-        version: loaded.version,
-        checksum: loaded.checksum,
-        permissions,
-        command_policy_checksum: checksum,
-        env,
-      };
       return {
         ...row,
-        approved: isApproved({ project: dir, ...fields }),
-        // Any path strictly below the root stands in for "a worktree".
-        worktrees: wtRoot ? isApproved({ project: path.join(wtRoot, "_"), ...fields }) : null,
+        approved: isApproved({
+          project: dir,
+          id,
+          version: loaded.version,
+          checksum: loaded.checksum,
+          permissions,
+          command_policy_checksum: checksum,
+          env,
+        }),
       };
     } catch (e) {
-      return { ...row, approved: false, worktrees: wtRoot ? false : null, reason: e.code || "COMMAND_POLICY_INVALID" };
+      return { ...row, approved: false, reason: e.code || "COMMAND_POLICY_INVALID" };
     }
   }).filter(Boolean);
 }
 
 const installedIds = (env) => Object.keys(listInstalled(env).specialists || {}).sort();
 
-/**
- * Approve every not-yet-approved specialist (or just `id`) for one project,
- * and for the project's worktrees. The worktree grant is a clone-root grant:
- * still bound to the package, the permissions and this project's policy
- * checksum, so a worktree whose commands.json differs is refused at launch.
- */
+/** Approve every not-yet-approved specialist (or just `id`) for one project. */
 export async function approveProjectSpecialists({ dir, projectsDir, id = null, env = process.env } = {}) {
   const target = resolveProjectDir(dir, projectsDir);
   if (!target.ok) return target;
-  const wtRoot = worktreeRoot(target.real);
   const results = [];
   for (const s of projectSpecialists(target.real, installedIds(env), env)) {
-    if (id && s.id !== id) continue;
-    if (s.approved && s.worktrees !== false) continue;
+    if (s.approved || (id && s.id !== id)) continue;
     // A policy problem fails the approval anyway; say so without trying.
     if (s.reason) {
       results.push({ id: s.id, version: s.version, ok: false, error: s.reason });
       continue;
     }
-    const grants = [
-      ...(s.approved ? [] : [{ scope: "project", cloneRoot: null }]),
-      ...(s.worktrees === false ? [{ scope: "worktrees", cloneRoot: wtRoot }] : []),
-    ];
-    for (const { scope, cloneRoot } of grants) {
-      const r = await approveSpecialist({
-        idAtVersion: `${s.id}@${s.version}`,
-        project: target.real,
-        cloneRoot,
-        env,
-      });
-      results.push({
-        id: s.id,
-        version: s.version,
-        scope,
-        ok: r.ok,
-        ...(r.ok ? {} : { error: (r.errors || []).join("; ") }),
-      });
-    }
+    const r = await approveSpecialist({ idAtVersion: `${s.id}@${s.version}`, project: target.real, env });
+    results.push({
+      id: s.id,
+      version: s.version,
+      ok: r.ok,
+      ...(r.ok ? {} : { error: (r.errors || []).join("; ") }),
+    });
   }
   return { ok: true, results };
 }

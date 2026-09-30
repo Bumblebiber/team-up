@@ -1226,9 +1226,6 @@ const PROJECTS_AUTO_KEY = "teamup.projectsAutoFix";
 // otherwise be retried, and audited, on every poll.
 const autoFixTried = new Set();
 
-// Not approved for the project, or approved but not for its worktrees.
-const approvableSpec = (s) => !s.reason && (!s.approved || s.worktrees === false);
-
 function policyCell(p) {
   const pol = p.policy || { state: "none" };
   const create = `<button type="button" class="policy-create" data-dir="${esc(p.path)}">Create…</button>`;
@@ -1248,14 +1245,10 @@ function specialistsCell(p) {
   if (!specs.length) return "—";
   const chips = specs.map((s) => {
     const name = s.id.split(".").pop();
-    const ok = s.approved && s.worktrees !== false;
-    const wt = s.worktrees === null ? "" : s.worktrees ? ", worktrees too" : ", worktrees not covered";
-    const title = s.reason
-      ? `${s.id}@${s.version}: ${s.reason}`
-      : `${s.id}@${s.version}: ${s.approved ? "approved" : "not approved"}${wt}`;
-    return `<span class="chip${ok ? "" : " missing"}" title="${esc(title)}">${esc(name)} ${ok ? "✓" : "✗"}</span>`;
+    const title = s.approved ? `${s.id}@${s.version} approved` : `${s.id}@${s.version}: ${s.reason || "not approved"}`;
+    return `<span class="chip${s.approved ? "" : " missing"}" title="${esc(title)}">${esc(name)} ${s.approved ? "✓" : "✗"}</span>`;
   }).join(" ");
-  const approvable = specs.some(approvableSpec);
+  const approvable = specs.some((s) => !s.approved && !s.reason);
   return chips + (approvable ? ` <button type="button" class="project-approve" data-dir="${esc(p.path)}">Approve</button>` : "");
 }
 
@@ -1283,7 +1276,7 @@ async function fixProject(p) {
     wrote = true;
   }
   const approvable = (p.specialists || []).some(
-    (s) => approvableSpec(s) || (wrote && s.reason === "COMMAND_POLICY_MISSING"),
+    (s) => !s.approved && (!s.reason || (wrote && s.reason === "COMMAND_POLICY_MISSING")),
   );
   if (approvable) await approveProject(p);
   return wrote;
@@ -1291,7 +1284,7 @@ async function fixProject(p) {
 
 const needsFix = (p) =>
   (p.policy?.state === "missing" && p.policy.proposal?.auto)
-  || (p.specialists || []).some(approvableSpec);
+  || (p.specialists || []).some((s) => !s.approved && !s.reason);
 
 async function fixProjects(projects) {
   const written = [];

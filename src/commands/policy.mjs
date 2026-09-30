@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { teamUpHome } from "../paths.mjs";
+import { mainCheckoutOf } from "../specialists/worktree.mjs";
 
 export const COMMAND_POLICY_FILE = ".team-up/commands.json";
 
@@ -228,7 +229,17 @@ export function resolveCommandPolicyForApproval({ project, permissions, env: _en
   if (!commands.length) {
     return { checksum: null, policy: null };
   }
-  const loaded = loadProjectCommandPolicy(project);
+  let loaded;
+  try {
+    loaded = loadProjectCommandPolicy(project);
+  } catch (e) {
+    // A worktree on a branch older than the policy has no file of its own;
+    // the checkout it belongs to does. A worktree that carries its own file
+    // is measured by that file, so a changed policy still needs approval.
+    const main = e.code === "COMMAND_POLICY_MISSING" ? mainCheckoutOf(project) : null;
+    if (!main) throw e;
+    loaded = loadProjectCommandPolicy(main);
+  }
   for (const actionId of commands) {
     if (!loaded.policy.commands[actionId]) {
       const err = new Error(

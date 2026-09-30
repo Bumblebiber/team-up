@@ -13,9 +13,7 @@ import {
   approveProjectSpecialists,
 } from "../../src/dashboard/projects.mjs";
 import { installPackage } from "../../src/specialists/store.mjs";
-import { validateCommandPolicy, resolveCommandPolicyForApproval } from "../../src/commands/policy.mjs";
-import { isApproved } from "../../src/specialists/approvals.mjs";
-import { loadInstalledManifest } from "../../src/specialists/store.mjs";
+import { validateCommandPolicy } from "../../src/commands/policy.mjs";
 
 const ROSTER = { clis: { claude: { cmd: ["claude", "--model", "{model}", "{prompt}"] } } };
 
@@ -384,67 +382,4 @@ test("approveProjectSpecialists refuses a folder outside the collecting folder",
   const { root, env } = await approvalFixture(t);
   const res = await approveProjectSpecialists({ dir: os.homedir(), projectsDir: root, env });
   assert.equal(res.ok, false);
-});
-
-// ── worktrees ──
-
-/** Would a launch in `project` pass the approval check right now? */
-function launchApproved(project, id, env) {
-  const loaded = loadInstalledManifest(id, { project, env });
-  const { checksum } = resolveCommandPolicyForApproval({ project, permissions: loaded.manifest.permissions, env });
-  return isApproved({
-    project,
-    id,
-    version: loaded.version,
-    checksum: loaded.checksum,
-    permissions: loaded.manifest.permissions,
-    command_policy_checksum: checksum,
-    env,
-  });
-}
-
-test("approving a project also covers its .claude/worktrees", async (t) => {
-  const { root, env } = await approvalFixture(t);
-  const dir = path.join(root, "alpha");
-  write(path.join(dir, "package.json"), { scripts: { test: "node --test" } });
-  assert.equal(writeProjectPolicy({ dir, projectsDir: root }).ok, true);
-  const wt = path.join(dir, ".claude", "worktrees", "feat-x");
-  fs.mkdirSync(wt, { recursive: true });
-  fs.cpSync(path.join(dir, ".team-up"), path.join(wt, ".team-up"), { recursive: true });
-
-  const before = listProjects(root, { exec: () => "", sessions: [], env }).projects[0];
-  assert.ok(before.specialists.every((s) => s.worktrees === false));
-  assert.equal(launchApproved(wt, "testing.cmd", env), false);
-
-  const res = await approveProjectSpecialists({ dir, projectsDir: root, env });
-  assert.ok(res.results.every((r) => r.ok), JSON.stringify(res.results));
-
-  const after = listProjects(root, { exec: () => "", sessions: [], env }).projects[0];
-  assert.ok(after.specialists.every((s) => s.approved && s.worktrees === true));
-  // The proof that matters: a launch inside a worktree now passes.
-  assert.equal(launchApproved(wt, "testing.cmd", env), true);
-  assert.equal(launchApproved(wt, "review.plain", env), true);
-
-  // A second approve has nothing left to do.
-  assert.deepEqual((await approveProjectSpecialists({ dir, projectsDir: root, env })).results, []);
-});
-
-test("a project without worktrees gets no clone-root grant", async (t) => {
-  const { root, env } = await approvalFixture(t);
-  const dir = path.join(root, "beta");
-  await approveProjectSpecialists({ dir, projectsDir: root, env });
-  const beta = listProjects(root, { exec: () => "", sessions: [], env }).projects.find((p) => p.name === "beta");
-  const plain = beta.specialists.find((s) => s.id === "review.plain");
-  assert.equal(plain.approved, true);
-  assert.equal(plain.worktrees, null);
-});
-
-test("a symlinked .claude/worktrees is never granted", async (t) => {
-  const { root, env } = await approvalFixture(t);
-  const dir = path.join(root, "beta");
-  const elsewhere = tmpProject(t);
-  fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
-  fs.symlinkSync(elsewhere, path.join(dir, ".claude", "worktrees"));
-  await approveProjectSpecialists({ dir, projectsDir: root, env });
-  assert.equal(launchApproved(path.join(elsewhere, "x"), "review.plain", env), false);
 });

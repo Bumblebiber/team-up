@@ -6,6 +6,7 @@ import { specialistApprovalsPath } from "../paths.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import { resolveInstalled, loadInstalledManifest, verifyInstalledIntegrity } from "./store.mjs";
 import { resolveCommandPolicyForApproval } from "../commands/policy.mjs";
+import { mainCheckoutOf } from "./worktree.mjs";
 
 function loadApprovals(env = process.env) {
   try {
@@ -194,7 +195,12 @@ export function isApproved({
     });
     if (expected === storedKey) return true;
   }
-  return false;
+
+  // A git worktree is covered by its main checkout's grant — wherever it
+  // lives — with every other field unchanged. A worktree whose own policy
+  // differs brings a different checksum and so still matches nothing.
+  const main = mainCheckoutOf(target);
+  return main ? isApproved({ project: main, ...fields, env }) : false;
 }
 
 export function listApprovals(env = process.env) {
