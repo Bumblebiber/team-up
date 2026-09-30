@@ -53,3 +53,27 @@ test("setStatus records a reason only for failures, and never overwrites the fir
     assert.equal(runs.loadState("r-1").failure.error, "capsule setup: boom");
   });
 });
+
+test("a run that leaves failed for done drops the failure and re-stamps its end", async () => {
+  await withHome(({ home, runs }) => {
+    plant(home, "r-1", "");
+    runs.setStatus("r-1", "failed", { reason: "worker_stale_timeout" });
+    const staleEnd = runs.loadState("r-1").finishedAt;
+    runs.updateState("r-1", (s) => ({ ...s, status: "watching" }));
+    assert.equal(runs.loadState("r-1").finishedAt, undefined);
+    assert.equal(runs.loadState("r-1").failure, undefined);
+    runs.setStatus("r-1", "done");
+    const state = runs.loadState("r-1");
+    assert.equal(state.failure, undefined);
+    assert.ok(state.finishedAt >= staleEnd);
+  });
+});
+
+test("a retryable failure from a handoff does not shadow the terminal reason", async () => {
+  await withHome(({ home, runs }) => {
+    plant(home, "r-1", "");
+    runs.updateState("r-1", (s) => ({ ...s, status: "handing_off", failure: { type: "usage_refresh_failed", retryable: true, error: "USAGE_REFRESH_FAILED" } }));
+    runs.setStatus("r-1", "failed", { reason: "capsule setup: boom" });
+    assert.equal(runs.loadState("r-1").failure.error, "capsule setup: boom");
+  });
+});

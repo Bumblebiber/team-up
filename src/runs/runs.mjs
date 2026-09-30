@@ -293,6 +293,12 @@ function writeStateUnderLock(state, expectedRevision) {
   state.updatedAt = new Date().toISOString();
   // Every writer passes through here, so this is the one place a run's end
   // time cannot be forgotten. Run analysis needs durations, not guesses.
+  // A run leaving an end state (stale-failed → real done, a retry) is not
+  // over yet, and a done run must not keep the failure it recovered from.
+  if (TERMINAL_RUN_STATUSES.has(current?.status) && current.status !== state.status) {
+    delete state.finishedAt;
+    if (state.status !== "failed") delete state.failure;
+  }
   if (TERMINAL_RUN_STATUSES.has(state.status) && !state.finishedAt) {
     state.finishedAt = state.updatedAt;
   }
@@ -579,8 +585,9 @@ function persistResolvedRunStatus(runId, classified) {
     if (!resolution.changed) return undefined;
     state.status = resolution.state.status;
     // The classifier always knows why a run failed; until now that reason died
-    // here and 39 of 39 failed runs on this host carried none.
-    if (state.status === "failed" && classified?.error && !state.failure) {
+    // here and 39 of 39 failed runs on this host carried none. The run only
+    // just became failed, so this reason beats a retryable one from a handoff.
+    if (state.status === "failed" && classified?.error) {
       state.failure = { error: classified.error, at: new Date().toISOString() };
     }
     return state;
@@ -593,8 +600,9 @@ function persistResolvedRunStatus(runId, classified) {
 export function setStatus(runId, status, { reason = null } = {}) {
   const state = loadState(runId);
   if (!state) throw new Error(`unknown run ${runId}`);
+  const wasFailed = state.status === "failed";
   state.status = status;
-  if (status === "failed" && reason && !state.failure) {
+  if (status === "failed" && reason && !wasFailed) {
     state.failure = { error: String(reason), at: new Date().toISOString() };
   }
   saveState(state);

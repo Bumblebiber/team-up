@@ -509,7 +509,7 @@ function finalizeStaleCleanup(latest, runId, nowIso, hooks = {}) {
   publishStaleResult(latest);
   publishStaleStatus(runId);
   latest.status = "failed";
-  latest.failure ??= { error: "worker_stale_timeout", at: nowIso };
+  latest.failure = { error: "worker_stale_timeout", at: nowIso };
   latest.cleanup = {
     ...(latest.cleanup || {}),
     stale_failed_at: nowIso,
