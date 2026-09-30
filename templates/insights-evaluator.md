@@ -33,8 +33,10 @@ before calling it anything. A 33% fail rate over 3 runs is an anecdote.
 Only if a **fix** finding exists and the change is small and testable, write a
 ticket to `{{TICKET}}` (use a shell heredoc; Edit/Write are disabled). The cron
 wrapper clones team-up, dispatches one implementer on branch `{{BRANCH}}` with
-`npm test` as parent verification, and opens a PR only if it passes. No ticket
-file → no fix.
+`npm test` as parent verification, and if it passes opens a PR and **merges it
+into main unreviewed**. No ticket file → no fix. So: only a fix whose test
+proves it, never a behaviour change a human would want to weigh (that is
+**track**).
 
 The ticket is the implementer's whole context: the finding, two or three
 evidence run ids with what they show, the suspected cause with file:line, and

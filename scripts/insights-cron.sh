@@ -4,7 +4,10 @@
 #   1. scripts/run-insights.mjs turns ~/.team-up/runs into findings (free).
 #   2. Unchanged finding set, or nothing above low → silent, no model is paid.
 #   3. Otherwise a headless Claude evaluates (templates/insights-evaluator.md):
-#      TIM entries always, at most one fix as a verified PR, never a merge.
+#      TIM entries always, at most one fix. The fix is merged into main only
+#      when the worker finished done AND `npm test` passed in its clone (the
+#      repo has no CI; that parent verification is the gate). Benni chose
+#      auto-merge on 2026-09-30; INSIGHTS_NO_MERGE=1 stops at the PR.
 #
 # Cron runs this daily; the stamp gate makes it 48h. `0 x */2 * *` would fire
 # on the 31st and again on the 1st.
@@ -83,13 +86,14 @@ DECISION="${JSON%.json}.decision.md"
 (cd "$REPO" && timeout 3h "${CMD[@]}" < "$PROMPT") > "$DECISION" 2>> "$LOG_DIR/stderr.log"
 RC=$?
 echo "$HASH" > "$HASH_FILE"
+[ "$(git -C "$REPO" status --porcelain)" != "$BEFORE" ] && TAMPERED=1 || TAMPERED=0
 
 # The one fix. Deterministic on purpose: the evaluator's Bash cannot block for
 # the 90 minutes a worker takes, and a push should not hang on a model's mood.
 fix_ticket() {
   local tu="$REPO/bin/team-up.mjs" clone="$HOME/projects/tasks/insights-$STAMP_ID"
-  git clone -q -b main "$REPO" "$clone" || return 1
-  git -C "$clone" remote set-url origin "$(git -C "$REPO" remote get-url origin)"
+  # From GitHub, not the local checkout: its main may lag, and the PR must apply.
+  git clone -q -b main "$(git -C "$REPO" remote get-url origin)" "$clone" || return 1
   git -C "$clone" switch -q -c "$BRANCH" || return 1
   (cd "$clone" && npm ci --silent) >> "$LOG_DIR/stderr.log" 2>&1 || return 1
   local pick cli model run status
@@ -109,7 +113,8 @@ fix_ticket() {
     return 0
   fi
   git -C "$clone" push -q -u origin "$BRANCH" >> "$LOG_DIR/stderr.log" 2>&1 || { echo "Fix-Run $run: push fehlgeschlagen"; return 0; }
-  (cd "$clone" && gh pr create --base main --head "$BRANCH" \
+  local pr
+  pr=$(cd "$clone" && gh pr create --base main --head "$BRANCH" \
      --title "insights: $(head -1 "$TICKET" | sed 's/^#* *//')" \
      --body "Automatischer Fix aus dem 48h-Insights-Cron.
 
@@ -117,11 +122,26 @@ Bericht: \`$MD\` · Run: \`$run\` · parent verification: \`npm test\` grün.
 
 $(cat "$TICKET")
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)") 2>> "$LOG_DIR/stderr.log" \
-    || echo "Fix-Run $run: PR-Erstellung fehlgeschlagen ($BRANCH gepusht)"
+🤖 Generated with [Claude Code](https://claude.com/claude-code)" 2>> "$LOG_DIR/stderr.log") \
+    || { echo "Fix-Run $run: PR-Erstellung fehlgeschlagen ($BRANCH gepusht)"; return 0; }
+  if [ "${INSIGHTS_NO_MERGE:-0}" = "1" ]; then
+    echo "Fix-PR (nicht gemerged): $pr"
+    return 0
+  fi
+  (cd "$clone" && gh pr merge "$pr" --squash --delete-branch) >> "$LOG_DIR/stderr.log" 2>&1 \
+    || { echo "Fix-PR offen, Merge fehlgeschlagen (Konflikt?): $pr"; return 0; }
+  # Crons run from the main checkout, so the fix is only live once it is there.
+  # A checkout on another branch or with conflicting edits is left alone.
+  if [ "$(git -C "$REPO" branch --show-current)" = "main" ] \
+     && git -C "$REPO" pull -q --ff-only >> "$LOG_DIR/stderr.log" 2>&1; then
+    echo "Fix gemerged und live: $pr"
+  else
+    echo "Fix gemerged: $pr — Main-Checkout nicht aktualisiert, bitte pullen"
+  fi
 }
 FIX=""
-[ "$RC" -eq 0 ] && [ -s "$TICKET" ] && FIX=$(fix_ticket || echo "Fix-Vorbereitung fehlgeschlagen, siehe $LOG_DIR/stderr.log")
+# A tampered main checkout means the evaluator broke its rules: no fix on top.
+[ "$RC" -eq 0 ] && [ "$TAMPERED" = "0" ] && [ -s "$TICKET" ] && FIX=$(fix_ticket || echo "Fix-Vorbereitung fehlgeschlagen, siehe $LOG_DIR/stderr.log")
 
 MSG="🔎 team-up Insights ($ACTIONABLE auffällig)
 $(head -c 3000 "$DECISION")
@@ -129,7 +149,7 @@ ${FIX:+$FIX
 }Bericht: $MD"
 [ "$RC" -ne 0 ] && MSG="⚠️ Insights-Evaluator exit $RC — Bericht liegt trotzdem vor.
 $MSG"
-[ "$(git -C "$REPO" status --porcelain)" != "$BEFORE" ] && MSG="🛑 Evaluator hat den Main-Checkout verändert — bitte prüfen.
+[ "$TAMPERED" = "1" ] && MSG="🛑 Evaluator hat den Main-Checkout verändert — bitte prüfen.
 $MSG"
 
 echo "$MSG"
