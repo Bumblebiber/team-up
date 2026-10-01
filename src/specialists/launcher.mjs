@@ -50,6 +50,7 @@ import {
   autoInvokePrefix,
 } from "../capabilities/capsule.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
+import { detectParent } from "../runs/parent.mjs";
 import {
   buildLaunchDescriptor,
   buildCapsuleLaunchRecord,
@@ -171,6 +172,7 @@ export async function launch({
   const materializeCapabilityCapsuleFn =
     dependencyOverrides.materializeCapabilityCapsule ?? materializeCapabilityCapsule;
   const createRunFn = dependencyOverrides.createRun ?? createRun;
+  const detectParentFn = dependencyOverrides.detectParent ?? detectParent;
   const startFromLaunchDescriptorFn =
     dependencyOverrides.startFromLaunchDescriptor ?? startFromLaunchDescriptor;
   const harnessCapabilitiesFn =
@@ -357,7 +359,7 @@ export async function launch({
     cwd: runCwd || undefined,
     project: fsMode === "none" ? null : project,
     role: `specialist:${specialistId}`,
-    parent: { cli: "team-up", attach: "manual" },
+    parent: detectParentFn({ env }),
     worker: { cli: cell.cli, model: cell.model },
     prompt: barePrompt,
     result_protocol: "RESULT.json",

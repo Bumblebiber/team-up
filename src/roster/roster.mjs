@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { detectParent } from "../runs/parent.mjs";
 import {
   linkDispatchToRun,
   runDir,
@@ -166,6 +167,7 @@ export async function spawnInTmux({
   refreshUsage,
   spawn = spawnPinnedInTmux,
   createRun = null,
+  detectParent: detectParentFn = detectParent,
 }) {
   const now = Date.now();
   let usage = usageSnapshot ?? loadJson(usagePath());
@@ -327,7 +329,7 @@ export async function spawnInTmux({
     const state = create({
       cwd: dir,
       role,
-      parent: { cli: "manual", attach: "manual" },
+      parent: detectParentFn({ env }),
       worker: { cli: r.cli, model: r.model },
       prompt,
     });

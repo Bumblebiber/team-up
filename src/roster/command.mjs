@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { linkDispatchToRun } from "../runs/runs.mjs";
+import { detectParent } from "../runs/parent.mjs";
 
 /** First non-flag argv token; skips values that belong to --flags. */
 export function firstPositional(args) {
@@ -114,7 +115,7 @@ export async function spawnPinnedInTmux({
     const state = createRun({
       cwd: dir,
       role,
-      parent: { cli: "manual", attach: "manual" },
+      parent: detectParent(),
       worker: { cli, model },
       prompt,
     });

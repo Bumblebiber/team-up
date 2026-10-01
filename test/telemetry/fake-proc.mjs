@@ -12,7 +12,7 @@ function put(root, rel, text) {
 
 /**
  * A /proc tree with just the files the sampler reads.
- * processes: [{ pid, ppid, comm, rss_kb, utime, stime, children? }]
+ * processes: [{ pid, ppid, comm, rss_kb, utime, stime, start?, children? }]
  * `children` writes task/<pid>/children; leave it out to force the ppid scan.
  */
 export function fakeProc({
@@ -39,7 +39,7 @@ export function fakeProc({
     put(root, "pressure/io", "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
   }
   for (const p of processes) {
-    const fields = ["S", p.ppid, 0, 0, 0, 0, 0, 0, 0, 0, 0, p.utime ?? 0, p.stime ?? 0, 0, 0];
+    const fields = ["S", p.ppid, 0, 0, 0, 0, 0, 0, 0, 0, 0, p.utime ?? 0, p.stime ?? 0, 0, 0, 0, 0, 0, 0, p.start ?? 0];
     put(root, `${p.pid}/stat`, `${p.pid} (${p.comm}) ${fields.join(" ")}\n`);
     put(root, `${p.pid}/status`, `Name:\t${p.comm}\n${p.rss_kb == null ? "" : `VmRSS:\t   ${p.rss_kb} kB\n`}`);
     if (p.children) put(root, `${p.pid}/task/${p.pid}/children`, p.children.length ? `${p.children.join(" ")} ` : "");

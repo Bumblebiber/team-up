@@ -84,6 +84,9 @@ export function parseStat(text) {
     comm: text.slice(open + 1, close),
     ppid: Number(fields[1]),
     cpu_ticks: (Number.isFinite(utime) ? utime : 0) + (Number.isFinite(stime) ? stime : 0),
+    // Start time in ticks since boot: with the pid, it names one process even
+    // after the pid is reused.
+    start_ticks: Number.isFinite(Number(fields[19])) ? Number(fields[19]) : null,
   };
 }
 

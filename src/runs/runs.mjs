@@ -163,6 +163,9 @@ export function createRun({
       sessionId: parent.sessionId || null,
       tmux: attach === "tmux" ? (parent.tmux || null) : null,
       attach,
+      // The parent's own cwd: `claude --resume` finds a transcript only there.
+      cwd: parent.cwd || null,
+      detected_by: parent.detected_by || "flag",
     },
     worker: {
       cli: worker.cli,
@@ -1144,9 +1147,10 @@ function cmdCreate(args) {
   const parentCli = argValue(args, "--parent-cli");
   const parentAttach = argValue(args, "--parent-attach");
   const workerCli = argValue(args, "--worker-cli");
-  if (!cwd || !role || !parentCli || !parentAttach || !workerCli || !promptFile) {
+  // Either both parent flags or neither: half a parent is a typo, not a choice.
+  if (!cwd || !role || !parentCli !== !parentAttach || !workerCli || !promptFile) {
     console.error(
-      "usage: runs.mjs create --cwd <dir> --role <role> --parent-cli <cli> --parent-attach <mode>"
+      "usage: runs.mjs create --cwd <dir> --role <role> [--parent-cli <cli> --parent-attach <mode>]"
       + " [--parent-session <id>] [--parent-tmux <name>] --worker-cli <cli>"
       + " [--worker-model <model>] [--worker-tmux <name>] --prompt-file <file> [--project <id>]"
       + " [--verify-command <shell words>] [--verify-runs N]",
@@ -1165,12 +1169,16 @@ function cmdCreate(args) {
     cwd,
     project: argValue(args, "--project"),
     role,
-    parent: {
-      cli: parentCli,
-      sessionId: argValue(args, "--parent-session"),
-      tmux: argValue(args, "--parent-tmux"),
-      attach: parentAttach,
-    },
+    // No flags: the session that runs this command, if it registered.
+    parent: parentCli
+      ? {
+          cli: parentCli,
+          sessionId: argValue(args, "--parent-session"),
+          tmux: argValue(args, "--parent-tmux"),
+          attach: parentAttach,
+          detected_by: "flag",
+        }
+      : detectParent(),
     worker: {
       cli: workerCli,
       model: argValue(args, "--worker-model"),
@@ -1465,6 +1473,10 @@ async function cmdGc(args) {
   for (const item of report.runs) {
     console.log(`runId: ${item.runId} action: ${item.action}`);
   }
+  // Session records of exited CLIs or earlier boots would name dead parents.
+  for (const file of pruneSessionRecords({ dryRun })) {
+    console.log(`session: ${path.basename(file, ".json")} action: ${dryRun ? "would_prune" : "pruned"}`);
+  }
 }
 
 async function cmdGcInstall() {
@@ -1553,6 +1565,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 
 import { writeTypedResult as writeTypedResultImpl, validateResult } from "../specialists/request.mjs";
+import { detectParent, pruneSessionRecords } from "./parent.mjs";
 
 export function writeTypedResult(runId, result) {
   return writeTypedResultImpl(runId, result, {

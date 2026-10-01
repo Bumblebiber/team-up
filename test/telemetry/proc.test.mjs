@@ -49,7 +49,9 @@ test("missing files degrade to null instead of throwing", () => {
 
 test("parseStat counts fields from the last parenthesis", () => {
   const stat = parseStat("42 (tmux: server (x)) S 7 0 0 0 0 0 0 0 0 0 150 50 0 0\n");
-  assert.deepEqual(stat, { pid: 42, comm: "tmux: server (x)", ppid: 7, cpu_ticks: 200 });
+  assert.deepEqual(stat, { pid: 42, comm: "tmux: server (x)", ppid: 7, cpu_ticks: 200, start_ticks: null });
+  const full = parseStat("42 (claude) S 7 0 0 0 0 0 0 0 0 0 150 50 0 0 20 0 1 0 98765 0 0\n");
+  assert.equal(full.start_ticks, 98765);
   assert.equal(parseStat("garbage"), null);
 });
 

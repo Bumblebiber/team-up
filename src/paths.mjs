@@ -215,3 +215,8 @@ export function secretsPath(env = process.env) {
 export function telemetryDir(env = process.env) {
   return env.TEAM_UP_TELEMETRY || path.join(teamUpHome(env), "telemetry");
 }
+
+/** Agent sessions that may dispatch runs, keyed by the CLI's pid (plan 2). */
+export function sessionsDir(env = process.env) {
+  return path.join(teamUpHome(env), "sessions");
+}
