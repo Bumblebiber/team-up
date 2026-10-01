@@ -53,6 +53,16 @@ off switch that only make sense on a host. This package is a deliberate
 reduction for a capsule. If the two should converge, that is a content decision
 and a version bump, not a rename.
 
+**1.1.0** makes it the first shared-layer package: `"scope": "shared"`, and
+`"auto_invoke": ["caveman"]`, so the launcher opens every worker prompt with
+`/caveman` when the package is enabled for that specialist. Enable it twice to
+share it: `--for all` for the specialists, `--for host` for the host session,
+which links the pool copy into `~/.claude/skills/caveman`. A hand-written
+`~/.claude/skills/caveman` blocks that link until it is moved away — whether
+the host keeps the longer version or switches to this one is the human's call.
+The skill text also gained one rule: uncertainty markers, negations and
+sources are substance, not filler. Reanna's whole output depends on them.
+
 `style.caveman@1.0.0` is unassigned but still in the pool: three unfinished runs
 from 2026-08-15 name it in their state, and `capability remove` refuses while
 that holds — a resume re-verifies the checksum. It goes when they are closed.

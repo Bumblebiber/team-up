@@ -4,6 +4,7 @@ import path from "node:path";
 import { assertSafeSpecialistSegment, assertSafeRelPath, assertPathInsideRoot } from "./safe-id.mjs";
 import { normalizeBudget } from "./budget.mjs";
 import { normalizeRecommendations } from "../capabilities/recommendations.mjs";
+import { skillScopeFromFile } from "../capabilities/skill-scope.mjs";
 
 export const REQUIRED = [
   "schema_version",
@@ -213,6 +214,22 @@ export function validateManifest(manifest, { packageDir } = {}) {
       normalizeRecommendations(manifest.recommendations);
     } catch (e) {
       errors.push(e.message);
+    }
+  }
+
+  if (packageDir && Array.isArray(caps?.skills)) {
+    // A specialist bundle is the third layer by construction. A skill its
+    // author marked main-only does not belong in one, whoever copied it there.
+    for (const skill of caps.skills) {
+      const file = path.join(packageDir, "skills", `${skill}.md`);
+      if (!fs.existsSync(file)) continue;
+      try {
+        if (skillScopeFromFile(file) === "main") {
+          errors.push(`skill ${skill} is marked team-up-scope: main and cannot ship in a specialist`);
+        }
+      } catch (e) {
+        errors.push(e.message);
+      }
     }
   }
 

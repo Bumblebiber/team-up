@@ -155,15 +155,79 @@ intrinsic specialist package
 - assignments explicitly excluding S
 ```
 
-There is no mandatory shared baseline. Capsules materialize only the effective
+There is no mandatory shared baseline: a package reaches a specialist only
+through an assignment a human made. Capsules materialize only the effective
 set under `context/` and `harness/`, with `EFFECTIVE_CAPABILITIES.json` as the
-audit record.
+audit record. Before materializing, the launcher recomputes each package's
+checksum from the pool and refuses `CAPABILITY_TAMPERED` if the files changed
+since install.
+
+### Three skill layers
+
+The host session (the main agent the human talks to) and the specialists see
+different skills on purpose. A capsule never reads the host's `~/.claude`, so
+a skill installed only there is already invisible to every specialist.
+
+| Layer | Who sees it | How it gets there | Examples |
+|---|---|---|---|
+| `main` | host only | host install, or pool `--for host` | memory MCP skills, `dispatch`, `pipeline`, `intake`, `team-up-manage` |
+| `shared` | host and specialists | pool `--for all` **and** `--for host` | `style.caveman` |
+| `specialist` | specialists only | specialist bundle skills, or pool `--for <id>` | `ponytail.build`, `code-review` |
+
+`host` is an assignment target like `all`, and independent of it: `all`
+means every specialist, never the host. Enabling a package `--for host`
+symlinks each of its skill directories from the pool into the host skill
+directory (`~/.claude/skills`, or the `TEAM_UP_HOST_SKILL_ROOTS` list), so the
+host and the specialists run the same bytes under one checksum instead of two
+copies drifting apart. The link points host → pool, never the reverse: the
+pool copy stays the one the checksum covers, and its files are made read-only
+when linked. Only skills can be linked (`HOST_LINK_UNSUPPORTED` otherwise),
+and an existing host entry that is not a team-up link is never replaced
+(`HOST_SKILL_COLLISION`, nothing recorded). Disable `--for host` removes the
+link; rollback moves it.
+
+A skill declares its layer in frontmatter, under the Agent Skills `metadata`
+map; a package may also set `"scope"` in `capability.json`. The two must
+agree.
+
+```yaml
+---
+name: intake
+description: ...
+metadata:
+  team-up-scope: main
+---
+```
+
+- `main` packages can only be enabled `--for host` (`CAPABILITY_SCOPE_MAIN`),
+  are refused at capsule build whatever the assignment file says, and cannot
+  ship inside a specialist bundle.
+- `specialist` packages cannot be enabled `--for host`
+  (`CAPABILITY_SCOPE_SPECIALIST`).
+- Unscoped packages keep the old behaviour.
+
+### Skills the launcher invokes
+
+A package may name one of its skills in `"auto_invoke"`. When that package is
+in a specialist's effective set, the launcher opens the worker prompt with the
+harness's own invocation of it — `/caveman` in Claude Code — ahead of the
+mailbox protocol and the task. The task then arrives as the skill's
+arguments. This is deterministic: it does not depend on the host agent
+remembering to ask for it. Invoked as the first user turn, the skill sits right
+before the task; the same text as an output style sits in the system prompt,
+and in use changed the output far less.
+
+At most one skill per launch can open the prompt; two packages that both ask
+fail the run with `AUTO_INVOKE_CONFLICT`. A harness with no invocation syntax
+in its adapter gets no prefix, and `STATE.json` records
+`auto_invoke.applied: false` with the reason rather than a guessed syntax.
 
 ```bash
 team-up capability scan --root ~/.claude
 team-up capability install ./pkg
 team-up capability install https://github.com/example/x.git --git-ref v1.2.0
 team-up capability enable pkg@1.2.0 --checksum sha256:... --for all
+team-up capability enable pkg@1.2.0 --checksum sha256:... --for host
 team-up capability disable pkg@1.2.0 --checksum sha256:... --for research.reanna
 team-up capability update pkg --git-ref main
 team-up capability rollback pkg@2 --to 1 --checksum sha256:new --prior-checksum sha256:old

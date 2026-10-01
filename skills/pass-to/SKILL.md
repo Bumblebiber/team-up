@@ -2,6 +2,8 @@
 name: pass-to
 description: "Manual session handoff to a named model in its native CLI (tmux). Use when the user invokes /pass-to, says pass to <model>, hand off to opus/composer/codex/hermes, or wants to continue this session in another harness with a TIM + HANDOFF.md checkpoint. Not for automatic limit handoff (that is roster handoff --role) and not for Path-B mailbox workers."
 disable-model-invocation: true
+metadata:
+  team-up-scope: main
 ---
 
 > Config lives in `~/.team-up/`. Rosters left behind by an older o9k install are still read from `~/.o9k/` as a fallback, but every write goes to `~/.team-up/` — copy yours over once. Path B is unchanged: `runs create` → `dispatch --run-id` → `runs wait`.

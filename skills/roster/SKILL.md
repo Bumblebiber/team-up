@@ -1,6 +1,8 @@
 ---
 name: roster
 description: "Role-based model selection for multi-agent delegation. Use when team-up is installed and a roster exists — before delegating to another model/CLI, spawning planner/implementer/reviewer workers, on rate-limit errors (mark-limited), session-limit handoff, or cross-CLI mailbox runs (create/wait/answer/resume). Every external CLI tmux spawn must use runs create + dispatch --run-id + a cheap in-host watcher (runs wait); bare dispatch without a mailbox is incomplete. Not for ordinary in-host search subagents (see dispatch path A). Selection is deterministic code — never reason about which model to use."
+metadata:
+  team-up-scope: main
 ---
 
 > Config lives in `~/.team-up/`. Rosters left behind by an older o9k install are still read from `~/.o9k/` as a fallback, but every write goes to `~/.team-up/` — copy yours over once. Path B is unchanged: `runs create` → `dispatch --run-id` → `runs wait`.

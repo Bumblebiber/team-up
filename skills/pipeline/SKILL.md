@@ -1,6 +1,8 @@
 ---
 name: pipeline
 description: "The shape of a multi-specialist change and the invariants that keep it correct. Use when orchestrating more than one specialist on one piece of work — spec to tickets to parallel writers to a merged review — or when deciding whether a piece of work should be split at all. Covers clone-per-writer, review-once-on-the-merged-result, who may write to memory, and how deep a chain may nest. Not the mechanics of a single spawn: see the dispatch skill for those."
+metadata:
+  team-up-scope: main
 ---
 
 # pipeline — How a change moves through specialists

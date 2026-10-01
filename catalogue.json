@@ -132,9 +132,9 @@
     },
     {
       "id": "style.caveman",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "source": "capabilities/style.caveman",
-      "summary": "Terse prose style. Chat output only \u2014 never applied to code, commits, or written files.",
+      "summary": "Terse prose style, shared layer: enable --for all and --for host. The launcher opens every worker prompt with /caveman. Chat and result prose only \u2014 never code, commits, or written files.",
       "network": false
     }
   ]

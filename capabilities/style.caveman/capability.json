@@ -1,11 +1,17 @@
 {
   "schema_version": 1,
   "id": "style.caveman",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "display_name": "Caveman (terse output style)",
-  "description": "Drop articles, filler and pleasantries; keep every technical term, path, command and error message exact, and never rewrite a code block. Changes how a specialist writes, not what it may do.",
+  "description": "Drop articles, filler and pleasantries; keep every technical term, path, command, error message, uncertainty marker and negation exact, and never rewrite a code block. Shared layer: the launcher opens every worker prompt with /caveman when this package is enabled for the specialist. Changes how a specialist writes, not what it may do.",
+  "scope": "shared",
+  "auto_invoke": [
+    "caveman"
+  ],
   "provides": {
-    "skills": ["skills/caveman/SKILL.md"],
+    "skills": [
+      "skills/caveman/SKILL.md"
+    ],
     "plugins": [],
     "mcps": [],
     "frameworks": []

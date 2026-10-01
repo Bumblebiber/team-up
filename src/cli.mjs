@@ -1,4 +1,4 @@
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";

@@ -9,7 +9,7 @@ worker launch. o9k keeps a thin compatibility adapter only.
 ## Quick start
 
 ```bash
-node bin/team-up.mjs version   # 0.3.0
+node bin/team-up.mjs version   # 0.4.0
 node bin/team-up.mjs validate
 node bin/team-up.mjs pick --role <role>
 node bin/team-up.mjs pick --profile frontier:max
@@ -33,6 +33,16 @@ exclusion wins over `all`.
 Use the supervisor-only `/team-up-manage` skill or deterministic
 `team-up capability` commands. Specialist recommendations are opt-in and
 start unselected.
+
+Skills come in three layers — main-only, shared, specialist-only — declared
+with `team-up-scope` in a skill's frontmatter. `--for host` links a pool
+package into the host's skill directory, so a shared skill is one copy for
+host and specialists alike. A package can ask the launcher to open every
+worker prompt with one of its skills (`style.caveman` does: `/caveman`). See
+[specialists.md](docs/specialists.md#three-skill-layers).
+
+Results nobody has read yet: `team-up runs uncollected`; the host's `intake`
+skill reads, checks and records them, then `team-up runs collect <id>`.
 
 This isolates model context, not Unix files. Workers run as the same trusted
 user. A harness must have a version-keyed verification record that explicitly

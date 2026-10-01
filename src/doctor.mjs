@@ -4,6 +4,7 @@ import { teamUpHome, specialistApprovalsPath } from "./paths.mjs";
 import { listInstalled } from "./specialists/store.mjs";
 import { listInstalledCapabilities } from "./capabilities/store.mjs";
 import { loadAssignments } from "./capabilities/assignments.mjs";
+import { HOST_TARGET } from "./capabilities/skill-scope.mjs";
 import { loadInstalledManifest } from "./specialists/store.mjs";
 import { resolveProfile } from "./roster/profile.mjs";
 import {
@@ -52,6 +53,7 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
     for (const field of ["targets", "exclude"]) {
       for (const target of row[field] ?? []) {
         if (target === "all") continue;
+        if (field === "targets" && target === HOST_TARGET) continue;
         if (ids.has(target)) continue;
         findings.push({
           kind: "assignment_unknown_target",

@@ -202,6 +202,12 @@ export const claudeAdapter = {
     return next;
   },
 
+  // The positional prompt is typed into an interactive session, so a leading
+  // `/name` runs the skill and the rest of the prompt becomes its arguments.
+  skillInvocation(name) {
+    return `/${name}`;
+  },
+
   version({ execFileSync }) {
     const out = execFileSync("claude", ["--version"], {
       encoding: "utf8",

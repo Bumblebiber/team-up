@@ -1,6 +1,8 @@
 ---
 name: roster-refresh
 description: "Refresh team-up roster scores/prices from OpenRouter (Artificial Analysis indices + model catalog), then semiauto-apply chain updates when score rises and cost does not. Use weekly, after major model releases, or when the user asks to update the matrix. Includes hosted open-weight models for Hermes/OpenCode."
+metadata:
+  team-up-scope: main
 ---
 
 > Config lives in `~/.team-up/`. Rosters left behind by an older o9k install are still read from `~/.o9k/` as a fallback, but every write goes to `~/.team-up/` — copy yours over once. Path B is unchanged: `runs create` → `dispatch --run-id` → `runs wait`.
