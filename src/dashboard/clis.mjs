@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { harnessStatus } from "../harness/registry.mjs";
-import { enrichCliRow, INSTALLERS, bootstrapAvailable, installState } from "./installers.mjs";
+import { enrichCliRow, INSTALLERS, bootstrapAvailable, installState, updateAvailable } from "./installers.mjs";
 
 export function commandExists(cmd, { exec = execFileSync } = {}) {
   if (!cmd || typeof cmd !== "string") return null;
@@ -74,6 +74,7 @@ export function buildClisView(roster, opts = {}) {
         install_available: boot.available,
         install_command: boot.available ? boot.command : null,
         install_disabled_reason: boot.available ? null : boot.reason,
+        update_command: updateAvailable(cli).command ?? null,
         install_state: installState(cli, { env }).state,
       };
     });

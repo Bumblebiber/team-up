@@ -769,7 +769,8 @@ function addCliList(addable) {
   if (!addable?.length) return "";
   const items = addable.map((c) => {
     const action = c.present
-      ? '<span class="badge ok">installed</span> <span class="muted">not in the roster yet</span>'
+      ? `<span class="badge ok">installed</span> <span class="muted">not in the roster yet</span>${
+        c.update_command ? ` <button type="button" class="cli-update" data-cli="${esc(c.cli)}">Update</button>` : ""}`
       : c.install_available
         ? `<button type="button" class="cli-install" data-cli="${esc(c.cli)}">Install</button>`
         : `<span class="muted">${esc(c.install_disabled_reason || "")}</span>`;
@@ -832,7 +833,7 @@ async function refreshClis() {
       e.stopPropagation();
       const cli = btn.dataset.cli;
       try {
-        const cmd = data.clis.find((c) => c.cli === cli)?.update_command;
+        const cmd = [...data.clis, ...(data.addable || [])].find((c) => c.cli === cli)?.update_command;
         if (cmd && !confirm(`Run update + verify?\n\n${cmd}`)) return;
         await api(`/api/clis/${encodeURIComponent(cli)}/update`, { method: "POST", body: JSON.stringify({}) });
         selectCli(cli);
