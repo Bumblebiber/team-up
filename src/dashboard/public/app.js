@@ -322,7 +322,7 @@ async function refreshUsage() {
     .sort(([a], [b]) =>
       (providerOf(a) || "\uffff").localeCompare(providerOf(b) || "\uffff") || a.localeCompare(b))
     .map(([key, w]) => `
-    <div class="usage-row"${providerAttr(key)}>
+    <div class="usage-row" data-row="${esc(key)}"${providerAttr(key)}>
       <div class="key">${esc(key)}</div>
       <div class="bar"><span style="width:${w.usedPct != null ? Math.min(100, w.usedPct) : 0}%"></span></div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
@@ -367,19 +367,163 @@ $("#usage-grid").addEventListener("click", async (e) => {
   await refreshUsage();
 });
 
-async function refreshPick() {
-  const data = await api("/api/pick");
-  const rows = data.picks.map((p) => `
-    <tr${providerAttr(p.cli, p.model)}>
-      <td>${esc(p.role)}</td>
-      <td>${p.model ? esc(`${p.cli}:${p.model}`) : "<em>exhausted</em>"}</td>
-      <td>${esc(p.effort || "—")}</td>
-      <td class="skipped">${p.skipped.map((s) => esc(`${s.model}: ${s.reason}`)).join("<br>")}</td>
-    </tr>`).join("");
-  $("#pick-table").innerHTML = `<table>
-    <thead><tr><th>Role</th><th>Pick</th><th>Effort</th><th>Skipped</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="4">No roles</td></tr>'}</tbody></table>`;
+// ── Roles & Models ────────────────────────────────────────────────────────
+// One row per role: its chain, what `pick` would choose right now and why it
+// skipped the rest. Editing happens in a <dialog>, so the five-second redraw
+// of this table never eats a half-built chain.
+let rolesData = null;
+
+const CELL_STATE = {
+  gone: ["red", "gone — the CLI no longer offers it"],
+  missing: ["red", "not in the roster's models"],
+  unknown: ["", "no fresh scan of this CLI — availability unknown"],
+};
+
+function chainChip(c, i) {
+  if (c.invalid) return `<span class="chip missing" title="${esc(c.invalid)}">invalid</span>`;
+  const [cls, why] = CELL_STATE[c.state] || ["", ""];
+  const notes = [why, c.newest ? `newer: ${c.newest}` : "", c.pinned ? "version pinned" : "",
+    c.effort ? `effort ${c.effort}` : ""].filter(Boolean).join(" · ");
+  return `<span class="chip chain-chip ${cls}"${providerAttr(c.cli, c.model)} title="${esc(`${c.cli}:${c.model}${notes ? ` — ${notes}` : ""}`)}">${
+    i + 1}. ${esc(c.label)}${c.pinned ? " 📌" : ""}${c.newest ? " ⬆" : ""}${c.state === "gone" ? " ✗" : ""}</span>`;
 }
+
+async function refreshRoles() {
+  rolesData = await api("/api/roles");
+  const upgrades = rolesData.roles.flatMap((r) => r.chain.filter((c) => c.newest && !c.pinned));
+  const btn = $("#roles-upgrade");
+  btn.classList.toggle("hidden", !upgrades.length);
+  btn.textContent = `⬆ Move ${upgrades.length} entr${upgrades.length === 1 ? "y" : "ies"} to the newest version`;
+  const rows = rolesData.roles.map((r) => `
+    <tr${providerAttr(r.pick?.cli, r.pick?.model)}>
+      <td><strong>${esc(r.role)}</strong>${r.in_triage ? ' <span class="muted" title="routed by triage">⇄</span>' : ""}</td>
+      <td class="nowrap">${r.pick ? `${esc(r.pick.label)} <span class="muted">${esc(r.pick.cli)}${r.pick.effort ? ` · ${esc(r.pick.effort)}` : ""}</span>` : "<em>exhausted</em>"}</td>
+      <td class="chain-cell">${r.chain.map(chainChip).join(" ")}${r.skipped.length
+        ? `<div class="skipped" title="${esc(r.skipped.map((x) => `${x.model}: ${x.reason}`).join("\n"))}">⚠ ${
+          r.skipped.length} skipped right now</div>` : ""}</td>
+      <td><button type="button" class="role-pin" data-role="${esc(r.role)}" title="${r.pin_head
+        ? "Head pinned: the weekly score refresh leaves it alone. Click to let it propose a new head."
+        : "Not pinned: the weekly score refresh may replace the first entry. Click to pin."}">${r.pin_head ? "📌" : "○"}</button></td>
+      <td class="row-actions">
+        <button type="button" class="role-edit" data-role="${esc(r.role)}" title="Edit chain">✎</button>
+        <button type="button" class="role-delete" data-role="${esc(r.role)}" title="Delete role">🗑</button>
+      </td>
+    </tr>`).join("");
+  $("#roles-table").innerHTML = `<table>
+    <thead><tr><th>Role</th><th>Pick now</th><th>Chain</th><th>Pin</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5">No roles</td></tr>'}</tbody></table>`;
+}
+
+async function roleWrite(role, body, note) {
+  const status = $("#roles-status");
+  try {
+    const res = await api(`/api/roles/${encodeURIComponent(role)}`, { method: "POST", body: JSON.stringify(body) });
+    status.textContent = `${note} · backup ${res.backup}`;
+    await refreshRoles();
+    refreshSettings().catch(() => {}); // triage lists the roles by name
+    return true;
+  } catch (err) {
+    status.textContent = `refused: ${err.message}`;
+    return false;
+  }
+}
+
+$("#roles-table").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-role]");
+  if (!btn) return;
+  const role = btn.dataset.role;
+  const r = rolesData?.roles.find((x) => x.role === role);
+  if (btn.classList.contains("role-edit")) openRoleEditor(r);
+  else if (btn.classList.contains("role-pin")) roleWrite(role, { pin_head: !r.pin_head }, `${role} ${r.pin_head ? "unpinned" : "pinned"}`);
+  else if (btn.classList.contains("role-delete")
+    && confirm(`Delete role "${role}"?\n\nAnything that still runs \`team-up pick --role ${role}\` will fail.`)) {
+    roleWrite(role, { delete: true }, `${role} deleted`);
+  }
+});
+
+$("#roles-upgrade").addEventListener("click", async () => {
+  const status = $("#roles-status");
+  try {
+    const res = await api("/api/roles-upgrade", { method: "POST", body: JSON.stringify({}) });
+    status.textContent = res.changes.length
+      ? `${res.changes.map((c) => `${c.role}: ${c.from} → ${c.to}`).join(", ")} · backup ${res.backup}`
+      : "already on the newest versions";
+    await refreshRoles();
+  } catch (err) {
+    status.textContent = `refused: ${err.message}`;
+  }
+});
+
+const roleDialog = $("#role-editor");
+let roleTarget = null;
+
+function chainRow(entry = {}) {
+  const models = rolesData?.models || [];
+  const cli = entry.cli || models[0]?.clis[0] || "";
+  const row = document.createElement("div");
+  row.className = "chain-row";
+  row.innerHTML = `
+    <select class="ce-cli">${(rolesData?.clis || []).map((c) =>
+      `<option${c === cli ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
+    <select class="ce-model"></select>
+    <input type="text" class="ce-effort" placeholder="effort" value="${esc(entry.effort || "")}" size="7"
+      title="Optional — overrides the model's default effort for this role">
+    <label title="Stay on exactly this version; never move to a newer one"><input type="checkbox" class="ce-pinned"${entry.pinned ? " checked" : ""}> pin version</label>
+    <button type="button" class="ce-up" title="Move up">↑</button>
+    <button type="button" class="ce-down" title="Move down">↓</button>
+    <button type="button" class="ce-remove" title="Remove">✕</button>`;
+  const fill = () => {
+    const c = row.querySelector(".ce-cli").value;
+    const keep = row.querySelector(".ce-model").value || entry.model;
+    row.querySelector(".ce-model").innerHTML = models.filter((m) => m.clis.includes(c)).map((m) =>
+      `<option value="${esc(m.id)}"${m.id === keep ? " selected" : ""}>${esc(m.label)}${m.tier ? ` (${esc(m.tier)})` : ""}</option>`).join("");
+  };
+  row.querySelector(".ce-cli").addEventListener("change", fill);
+  fill();
+  return row;
+}
+
+function openRoleEditor(role) {
+  roleTarget = role?.role || null;
+  $("#role-editor-title").textContent = role ? `Edit ${role.role}` : "New role";
+  $("#role-editor-name").value = role?.role || "";
+  $("#role-editor-name").readOnly = !!role;
+  // A hand-written chain pins its head by default; unticking is the opt-out.
+  $("#role-editor-pin").checked = true;
+  $("#role-editor-status").textContent = "";
+  const list = $("#role-editor-chain");
+  list.innerHTML = "";
+  for (const c of role?.chain?.filter((x) => !x.invalid) || [{}]) list.append(chainRow(c));
+  roleDialog.showModal();
+}
+
+$("#role-add").addEventListener("click", () => openRoleEditor(null));
+$("#role-editor-add").addEventListener("click", () => $("#role-editor-chain").append(chainRow()));
+$("#role-editor-cancel").addEventListener("click", () => roleDialog.close());
+$("#role-editor-chain").addEventListener("click", (e) => {
+  const row = e.target.closest(".chain-row");
+  if (!row) return;
+  if (e.target.classList.contains("ce-remove")) row.remove();
+  else if (e.target.classList.contains("ce-up")) row.previousElementSibling?.before(row);
+  else if (e.target.classList.contains("ce-down")) row.nextElementSibling?.after(row);
+});
+$("#role-editor-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const role = $("#role-editor-name").value.trim();
+  if (!roleTarget && rolesData?.roles.some((r) => r.role === role)) {
+    $("#role-editor-status").textContent = `${role} already exists — edit it instead`;
+    return;
+  }
+  const chain = [...$("#role-editor-chain").querySelectorAll(".chain-row")].map((row) => ({
+    cli: row.querySelector(".ce-cli").value,
+    model: row.querySelector(".ce-model").value,
+    effort: row.querySelector(".ce-effort").value.trim() || null,
+    pinned: row.querySelector(".ce-pinned").checked,
+  }));
+  const ok = await roleWrite(role, { chain, pin_head: $("#role-editor-pin").checked }, `${role} saved`);
+  if (ok) roleDialog.close();
+  else $("#role-editor-status").textContent = $("#roles-status").textContent;
+});
 
 /**
  * The tier table. Deliberately outside `refreshAll`: a five-second re-render
@@ -445,7 +589,7 @@ $("#tiers-table").addEventListener("change", async (e) => {
     });
     status.textContent = `saved · backup ${data.backup}`;
     renderTiers(data);
-    refreshPick().catch(() => {});
+    refreshRoles().catch(() => {});
   } catch (err) {
     status.textContent = `refused: ${err.message}`;
     // The roster is unchanged, so the table has to go back to what it says.
@@ -474,7 +618,7 @@ async function refreshProviders() {
   }
   const data = await api("/api/providers");
   const html = data.providers.map((p) => {
-    let body = `<div class="provider-card"${providerAttr(p.id)}><strong>${esc(p.id)}</strong> ${providerStatus(p)}`;
+    let body = `<div class="provider-card"${providerAttr(p.id)} data-row="${esc(p.id)}"><strong>${esc(p.id)}</strong> ${providerStatus(p)}`;
     if (p.class === "A" && p.writable) {
       body += `<form class="provider-form" data-id="${esc(p.id)}">
         <input type="password" name="key" placeholder="OpenRouter API key" autocomplete="off">
@@ -483,9 +627,9 @@ async function refreshProviders() {
         <button type="button" class="validate-key">Validate</button>
       </form>`;
     } else if (p.class === "A" && p.configured) {
-      body += `<p class="muted">Read-only (${esc(p.source || "external")}) · ${esc(p.hint || "")}</p>`;
+      body += ` <span class="muted">read-only (${esc(p.source || "external")})</span>`;
     } else if (p.login_command) {
-      body += `<p class="muted mono">${esc(p.login_command)}</p>`;
+      body += ` <span class="muted mono">${esc(p.login_command)}</span>`;
     }
     return `${body}</div>`;
   }).join("");
@@ -596,7 +740,7 @@ async function refreshClis() {
     }
     if (c.install_available) {
       actions.push(`<button type="button" class="cli-install" data-cli="${esc(c.cli)}">Install</button>`);
-    } else if (c.install_disabled_reason) {
+    } else if (c.install_disabled_reason && !c.present) {
       actions.push(`<span class="muted">${esc(c.install_disabled_reason)}</span>`);
     }
     if (c.login_available) {
@@ -604,19 +748,18 @@ async function refreshClis() {
     }
     return `
     <tr class="clickable ${selectedCli === c.cli ? "selected" : ""}" data-cli="${esc(c.cli)}"${providerAttr(c.cli)}>
-      <td>${esc(c.cli)}</td>
+      <td title="${esc(c.path || "not on PATH")}">${esc(c.cli)}</td>
       <td>${c.present ? '<span class="badge ok">installed</span>' : '<span class="badge stale">missing</span>'}</td>
       <td class="mono">${esc(c.version || "—")}</td>
       <td>${esc(c.harness_label || c.harness?.status || "—")}</td>
       <td>${verdictBadge(c.post_update_verdict)}</td>
       <td>${esc(state)}</td>
-      <td class="path">${esc(c.path || "—")}</td>
       <td>${actions.join(" ")}</td>
     </tr>`;
   }).join("");
   $("#clis-table").innerHTML = `<table>
-    <thead><tr><th>CLI</th><th>Present</th><th>Version</th><th>Harness</th><th>Verify</th><th>Job</th><th>Path</th><th>Actions</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="8">No CLIs</td></tr>'}</tbody></table>`;
+    <thead><tr><th>CLI</th><th>Present</th><th>Version</th><th>Harness</th><th>Verify</th><th>Job</th><th>Actions</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7">No CLIs</td></tr>'}</tbody></table>`;
   $("#clis-table").querySelectorAll("tr[data-cli]").forEach((tr) => {
     tr.addEventListener("click", (e) => {
       if (e.target.closest("button")) return;
@@ -739,77 +882,51 @@ function chips(items) {
 
 let capabilityPool = null;
 
-function specialistSource(entry) {
-  const provides = entry.provides || {};
-  const gives = ["skills", "plugins", "mcps", "frameworks"]
-    .flatMap((kind) => (provides[kind] || []).map((v) => `${kind.replace(/s$/, "")}: ${v}`));
-  return `<li>
-    <strong>${esc(entry.display_name)}</strong>
-    <span class="muted">${esc(entry.package)} · ${esc(entry.checksum)} · ${esc(entry.reason)}</span>
-    <button type="button" class="capability-remove"
-      data-package="${esc(entry.package)}" data-checksum="${esc(entry.checksum_full)}">Remove</button>
-    <div>${chips(gives)}</div>
-  </li>`;
-}
 
+// What the specialist is for stays visible; everything that only matters when
+// something goes wrong (limits, permissions, where it is approved) folds away.
 function renderSpecialist() {
   const body = $("#specialist-detail");
   const id = $("#specialist-select").value;
   const s = (specialistsData?.specialists || []).find((item) => item.id === id);
   if (!s) {
+    $("#specialist-meta").textContent = "";
     body.innerHTML = '<p class="muted">No specialist installed.</p>';
     return;
   }
   const perms = s.permissions || {};
   const budget = s.budget || {};
+  const approved = s.approved_for || [];
+  const profile = s.model_profile ? `${s.model_profile.tier}:${s.model_profile.reasoning}` : null;
+  $("#specialist-meta").textContent = [`v${s.version}`, profile, `approved in ${approved.length}`]
+    .filter(Boolean).join(" · ");
+  const bundled = [...(s.bundled?.skills || []), ...(s.bundled?.mcps || []).map((m) => `mcp:${m}`)];
   body.innerHTML = `
-    <p class="muted">${esc(s.id)} · v${esc(s.version)} · ${esc(s.checksum)}</p>
-    ${
-      (s.versions || []).length > 1
-        ? `<p class="muted">Selected version:
-            ${s.versions.map((v) => `
-              <button type="button" class="version-pin" data-version="${esc(v.version)}"
-                ${v.selected ? "disabled" : ""}>${esc(v.version)}${v.selected ? " ✓" : ""}</button>`).join(" ")}
-          </p>`
-        : ""
-    }
     ${s.error ? `<p class="error">${esc(s.error)}</p>` : ""}
-    <h3>Remit</h3>
     <ul class="remit">${(s.remit || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
-    <h3>Never</h3>
-    <ul class="anti-remit">${(s.anti_remit || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
-    <h3>Bundled in the package</h3>
-    <dl class="kv">
-      <dt>Skills</dt><dd>${chips(s.bundled?.skills)}</dd>
-      <dt>MCPs</dt><dd>${chips(s.bundled?.mcps)}</dd>
-      <dt>Tools</dt><dd>${chips(s.bundled?.tools)}</dd>
-      <dt>Frameworks</dt><dd>${chips(s.bundled?.frameworks)}</dd>
-    </dl>
-    <h3>Assigned capability packages</h3>
-    <ul class="assigned">${
-      (s.assigned || []).map(specialistSource).join("") ||
-      '<li class="muted">none assigned</li>'
-    }</ul>
-    ${
-      s.exclusions?.length
-        ? `<p class="muted">Excluded: ${s.exclusions.map((e) => esc(`${e.package} (${e.reason})`)).join(", ")}</p>`
-        : ""
-    }
-    <h3>Permissions</h3>
-    <dl class="kv">
-      <dt>Filesystem</dt><dd>${esc(perms.filesystem || "—")}</dd>
-      <dt>Writes</dt><dd>${perms.writes ? "yes" : "no"}</dd>
-      <dt>Network</dt><dd>${perms.network ? "yes" : "no"}</dd>
-      <dt>Commands</dt><dd>${chips(perms.commands)}</dd>
-      <dt>Call types</dt><dd>${chips(s.call_types)}</dd>
-      <dt>Timeout</dt><dd>${budget.timeout_seconds ? esc(`${budget.timeout_seconds}s`) : "—"}</dd>
-    </dl>
-    <h3>Approved for</h3>
-    ${
-      s.approved_for?.length
-        ? `<ul class="approved">${s.approved_for.map((p) => `<li><code>${esc(p)}</code></li>`).join("")}</ul>`
-        : '<p class="muted">No project has approved this version.</p>'
-    }`;
+    <p class="caps">${chips(bundled)} ${(s.assigned || []).map((a) =>
+      `<span class="chip assigned" title="${esc(`${a.package} · ${a.reason}`)}">${esc(a.display_name)}
+        <button type="button" class="capability-remove" title="Remove"
+          data-package="${esc(a.package)}" data-checksum="${esc(a.checksum_full)}">✕</button></span>`).join(" ")}</p>
+    <details>
+      <summary>Details</summary>
+      ${(s.versions || []).length > 1
+        ? `<p class="muted">Version: ${s.versions.map((v) => `
+            <button type="button" class="version-pin" data-version="${esc(v.version)}"
+              ${v.selected ? "disabled" : ""}>${esc(v.version)}${v.selected ? " ✓" : ""}</button>`).join(" ")}</p>`
+        : ""}
+      <dl class="kv">
+        <dt>Never</dt><dd>${(s.anti_remit || []).map(esc).join("; ") || "—"}</dd>
+        <dt>Tools</dt><dd>${chips(s.bundled?.tools)}</dd>
+        <dt>Filesystem</dt><dd>${esc(perms.filesystem || "—")}, writes ${perms.writes ? "yes" : "no"}, network ${perms.network ? "yes" : "no"}</dd>
+        <dt>Commands</dt><dd>${chips(perms.commands)}</dd>
+        <dt>Call types</dt><dd>${chips(s.call_types)}</dd>
+        <dt>Timeout</dt><dd>${budget.timeout_seconds ? esc(`${budget.timeout_seconds}s`) : "—"}</dd>
+        <dt>Checksum</dt><dd class="mono">${esc(s.checksum)}</dd>
+        ${s.exclusions?.length ? `<dt>Excluded</dt><dd>${s.exclusions.map((e) => esc(`${e.package} (${e.reason})`)).join(", ")}</dd>` : ""}
+      </dl>
+      <p class="muted">Approved for: ${approved.map((p) => esc(p.replace(/^\/home\/[^/]+\//, "~/"))).join(", ") || "no project"}</p>
+    </details>`;
 }
 
 // Only offer what the specialist does not already hold; assigning a package
@@ -927,8 +1044,8 @@ const LAYOUT_KEY = "teamup.layout";
 const MAX_COLUMNS = 6;
 // What a fresh browser gets: the narrow-content panels left, the wide ones right.
 const DEFAULT_COLUMNS = [
-  ["panel-usage", "panel-tmux", "panel-projects", "panel-tim", "panel-specialists", "panel-setup"],
-  ["panel-runs", "panel-pick", "panel-tiers"],
+  ["panel-usage", "panel-sessions", "panel-projects", "panel-tim", "panel-specialists"],
+  ["panel-roles", "panel-settings", "panel-providers", "panel-models", "panel-clis"],
 ];
 const mainEl = $("main");
 const columns = () => [...mainEl.querySelectorAll(".column")];
@@ -1004,8 +1121,12 @@ function applyLayout() {
   });
   // A panel the stored layout never heard of — a new one shipped since it was
   // written — would otherwise stay outside every column and vanish from view.
+  // It goes where a fresh browser would have it, so merged or renamed panels
+  // land in a sensible column instead of piling up in the first.
   for (const panel of [...mainEl.children].filter((el) => el.classList.contains("panel"))) {
-    if (!placed.has(panel.id)) built[0].append(panel);
+    if (placed.has(panel.id)) continue;
+    const home = DEFAULT_COLUMNS.findIndex((ids) => ids.includes(panel.id));
+    built[Math.min(Math.max(home, 0), built.length - 1)].append(panel);
   }
 
   for (const [id, size] of Object.entries(layout.size || {})) {
@@ -1595,6 +1716,200 @@ $("#tim-tabs").addEventListener("click", (event) => {
   refreshTim().catch(() => {});
 });
 
+// ── Settings ──────────────────────────────────────────────────────────────
+// The roster switches that used to need a text editor. Each control writes
+// one path; the server holds the whitelist, so nothing here can reach the CLI
+// command templates. Not on the five-second cycle: it would reset a field
+// mid-edit, and only this panel changes these values.
+async function refreshSettings() {
+  const d = await api("/api/settings");
+  const num = (path, value, step, title) =>
+    `<input type="number" data-path="${path}" value="${value ?? ""}" step="${step}" title="${esc(title)}">`;
+  const check = (path, on, label, title = "") =>
+    `<label title="${esc(title)}"><input type="checkbox" data-path="${path}"${on ? " checked" : ""}> ${esc(label)}</label>`;
+  const accounts = Object.entries(d.accounts).map(([id, a]) => `
+    <tr data-row="account:${esc(id)}">
+      <td>${check(`accounts.${id}.enabled`, a.enabled, id, a.comment || "")}</td>
+      <td class="muted">${esc(a.kind)}</td>
+      <td>${a.kind === "credit" ? num(`accounts.${id}.remaining`, a.remaining, "any", "Credit left; 0 blocks the account") : ""}</td>
+    </tr>`).join("");
+  const iv = d.usage_watcher.intervals || {};
+  $("#settings-body").innerHTML = `
+    <h3 title="A disabled account takes every model on it out of every chain">Accounts</h3>
+    <table><tbody>${accounts}</tbody></table>
+    <h3 title="Which CLIs run on a subscription with usage windows (the Usage panel)">Subscriptions</h3>
+    <p>${d.clis.map((c) => `<label><input type="checkbox" data-list="subscriptions" value="${esc(c)}"${
+      d.subscriptions.includes(c) ? " checked" : ""}> ${esc(c)}</label>`).join(" ")}</p>
+    <h3>Limits</h3>
+    <dl class="kv">
+      <dt title="Usage share at which a window counts as amber">Warn at</dt><dd>${num("limits.warn_at", d.limits.warn_at, "0.01", "0–1")}</dd>
+      <dt title="Usage share at which a running worker hands off">Hand off at</dt><dd>${num("limits.handoff_at", d.limits.handoff_at, "0.01", "0–1")}</dd>
+    </dl>
+    <h3 title="OpenRouter's router proposes a model per prompt for these roles">Triage</h3>
+    <dl class="kv">
+      <dt>On</dt><dd>${check("triage.enabled", d.triage.enabled, "enabled")}</dd>
+      <dt>Mode</dt><dd><select data-path="triage.mode">${["shadow", "active"].map((m) =>
+        `<option${m === d.triage.mode ? " selected" : ""}>${m}</option>`).join("")}</select>
+        <span class="muted">shadow = log only</span></dd>
+      <dt>Active share</dt><dd>${num("triage.active_share", d.triage.active_share, "0.05", "Share of picks the router decides in active mode, 0–1")}</dd>
+      <dt>Min confidence</dt><dd>${num("triage.min_confidence", d.triage.min_confidence, "0.05", "0–1")}</dd>
+      <dt>Roles</dt><dd>${d.roles.map((r) => `<label><input type="checkbox" data-list="triage.roles" value="${esc(r)}"${
+        d.triage.roles.includes(r) ? " checked" : ""}> ${esc(r)}</label>`).join(" ")}</dd>
+    </dl>
+    <h3 title="How often the usage collector reads each subscription's limits">Usage watcher</h3>
+    <dl class="kv">
+      <dt>Tick (s)</dt><dd>${num("usage_watcher.tick_sec", d.usage_watcher.tick_sec, "1", "")}</dd>
+      ${["idle_min", "active_min", "busy_min", "idle_heartbeat_hours"].map((k) =>
+        `<dt>${k.replace(/_/g, " ")}</dt><dd>${num(`usage_watcher.intervals.${k}`, iv[k], "1", "")}</dd>`).join("")}
+    </dl>`;
+}
+
+$("#settings-body").addEventListener("change", async (e) => {
+  const el = e.target;
+  let path = el.dataset.path;
+  let value;
+  if (el.dataset.list) {
+    path = el.dataset.list;
+    value = [...$("#settings-body").querySelectorAll(`[data-list="${path}"]:checked`)].map((x) => x.value);
+  } else if (!path) {
+    return;
+  } else if (el.type === "checkbox") {
+    value = el.checked;
+  } else if (el.type === "number") {
+    value = Number(el.value);
+  } else {
+    value = el.value;
+  }
+  const status = $("#settings-status");
+  try {
+    const res = await api("/api/settings", { method: "POST", body: JSON.stringify({ path, value }) });
+    status.textContent = `${path} saved · backup ${res.backup}`;
+    refreshRoles().catch(() => {});
+  } catch (err) {
+    status.textContent = `refused: ${err.message}`;
+  }
+  refreshSettings().catch(() => {});
+});
+
+// ── Widget help, colour and visible columns ───────────────────────────────
+// Every panel gets a tooltip on its title and a pencil. The pencil edits two
+// per-browser preferences: a colour, and which table columns (or rows, where a
+// panel lists things rather than tabulating them) to show. Hiding is CSS on
+// data-col / data-row, so the five-second redraw keeps the choice without any
+// renderer knowing about it.
+const PANEL_HELP = {
+  "panel-usage": "Usage windows of every subscription: share used, warn level and when it resets. STALE means the collector stopped reading — one click sends an agent to fix it.",
+  "panel-sessions": "Live tmux sessions (click one to open its terminal) and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
+  "panel-projects": "Repos in the collecting folder: branch, command policy, which specialists are approved there, open sessions. Start opens a CLI session in the repo.",
+  "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
+  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, 📌 keeps the weekly score refresh off its head, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. Model tiers (for specialists) fold out below.",
+  "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions, limits and approvals are under Details.",
+  "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, triage routing, usage watcher intervals. Every change is validated and backs up roster.json.",
+  "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",
+  "panel-models": "The scored model catalogue (OpenRouter + benchmarks). Proposal shows where a model would beat a role's current head.",
+  "panel-clis": "Installed agent CLIs: version, harness verification, update/install/login. Hover a CLI name for its path; click a row for the job log.",
+};
+const PANEL_PREFS_KEY = "teamup.panelPrefs";
+const prefStyle = document.createElement("style");
+document.head.append(prefStyle);
+
+function applyPanelPrefs() {
+  const prefs = readStored(PANEL_PREFS_KEY, {});
+  const rules = [];
+  for (const panel of panels()) {
+    const p = prefs[panel.id] || {};
+    if (p.color) panel.style.setProperty("--panel-color", p.color);
+    else panel.style.removeProperty("--panel-color");
+    panel.classList.toggle("tinted", !!p.color);
+    for (const col of p.cols || []) rules.push(`#${panel.id} [data-col="${CSS.escape(col)}"]`);
+    for (const row of p.rows || []) rules.push(`#${panel.id} [data-row="${CSS.escape(row)}"]`);
+  }
+  prefStyle.textContent = rules.length ? `${rules.join(",\n")} { display: none !important; }` : "";
+}
+
+/**
+ * Give every header and body cell a data-col named after its header. Group
+ * rows that span the whole table stay untagged, so hiding a column never
+ * hides a section heading.
+ */
+function tagColumns(table) {
+  const scope = table.closest(".table-wrap")?.id?.replace(/-table$/, "") || "t";
+  const heads = [...(table.tHead?.rows[0]?.cells || [])];
+  const keys = heads.map((th) => {
+    const text = th.textContent.trim().toLowerCase();
+    return text ? `${scope}:${text}` : null;
+  });
+  heads.forEach((th, i) => { if (keys[i]) th.dataset.col = keys[i]; });
+  for (const row of table.tBodies[0]?.rows || []) {
+    let i = 0;
+    for (const cell of row.cells) {
+      if (cell.colSpan === 1 && keys[i]) cell.dataset.col = keys[i];
+      i += cell.colSpan;
+    }
+  }
+}
+
+function openPanelEditor(panel) {
+  const dialog = $("#panel-editor");
+  const prefs = readStored(PANEL_PREFS_KEY, {});
+  const mine = prefs[panel.id] || {};
+  dialog.dataset.panel = panel.id;
+  $("#panel-editor-title").textContent = panel.querySelector("h2 .title").textContent;
+  $("#panel-editor-color").value = mine.color || "#2563eb";
+  const cols = new Map();
+  panel.querySelectorAll("th[data-col]").forEach((th) => cols.set(th.dataset.col, th.dataset.col));
+  const rows = new Map();
+  panel.querySelectorAll("[data-row]").forEach((el) => rows.set(el.dataset.row, el.dataset.row));
+  const hiddenCols = new Set(mine.cols || []);
+  const hiddenRows = new Set(mine.rows || []);
+  const list = (kind, items, hidden, label) => items.size
+    ? `<label>${label}</label><div class="pref-list">${[...items.keys()].map((k) =>
+      `<label><input type="checkbox" data-kind="${kind}" value="${esc(k)}"${hidden.has(k) ? "" : " checked"}> ${
+        esc(k.replace(":", " › "))}</label>`).join("")}</div>`
+    : "";
+  $("#panel-editor-items").innerHTML = list("cols", cols, hiddenCols, "Visible columns")
+    + list("rows", rows, hiddenRows, "Visible rows");
+  dialog.showModal();
+}
+
+function savePanelEditor(patch) {
+  const id = $("#panel-editor").dataset.panel;
+  const prefs = readStored(PANEL_PREFS_KEY, {});
+  prefs[id] = { ...(prefs[id] || {}), ...patch };
+  writeStored(PANEL_PREFS_KEY, prefs);
+  applyPanelPrefs();
+}
+
+$("#panel-editor-color").addEventListener("input", (e) => savePanelEditor({ color: e.target.value }));
+$("#panel-editor-color-reset").addEventListener("click", () => savePanelEditor({ color: null }));
+$("#panel-editor-items").addEventListener("change", () => {
+  const hidden = (kind) => [...$("#panel-editor-items").querySelectorAll(`input[data-kind="${kind}"]:not(:checked)`)]
+    .map((x) => x.value);
+  savePanelEditor({ cols: hidden("cols"), rows: hidden("rows") });
+});
+$("#panel-editor-reset").addEventListener("click", () => {
+  const id = $("#panel-editor").dataset.panel;
+  const prefs = readStored(PANEL_PREFS_KEY, {});
+  delete prefs[id];
+  writeStored(PANEL_PREFS_KEY, prefs);
+  applyPanelPrefs();
+  $("#panel-editor").close();
+});
+
+function enablePanelChrome() {
+  for (const panel of panels()) {
+    const h2 = panel.querySelector("h2");
+    if (!h2) continue;
+    h2.innerHTML = `<span class="title" title="${esc(PANEL_HELP[panel.id] || "")}">${h2.innerHTML}</span>
+      <button type="button" class="panel-edit" title="Colour and visible columns">✎</button>`;
+    h2.querySelector(".panel-edit").addEventListener("click", () => openPanelEditor(panel));
+    // Renderers replace their tables wholesale; tag whatever they just drew.
+    new MutationObserver(() => panel.querySelectorAll("table").forEach(tagColumns))
+      .observe(panel, { childList: true, subtree: true });
+  }
+  applyPanelPrefs();
+}
+
 function refreshAll() {
   return Promise.allSettled([
     refreshUsage(),
@@ -1602,7 +1917,7 @@ function refreshAll() {
     refreshTmux(),
     refreshProjects(),
     refreshTim(),
-    refreshPick(),
+    refreshRoles(),
     refreshSetup(),
   ]);
 }
@@ -1610,6 +1925,7 @@ function refreshAll() {
 function startPolling() {
   refreshSpecialists().catch(() => {});
   refreshTiers().catch(() => {});
+  refreshSettings().catch(() => {});
   refreshAll();
   if (listTimer) clearInterval(listTimer);
   listTimer = setInterval(refreshAll, 5000);
@@ -1630,5 +1946,6 @@ async function probe() {
 // registering the drop handlers twice would undo every move.
 applyLayout();
 enableLayoutEditing();
+enablePanelChrome();
 
 probe();

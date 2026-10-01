@@ -147,3 +147,18 @@ test("a failed listing is unsupported, not empty", () => {
   assert.equal(r.supported, false);
   assert.match(r.reason, /boom/);
 });
+
+test("claude scan names the concrete model behind each roster alias", () => {
+  const asked = [];
+  const versioned = (bin, args) => {
+    if (args[1] === "--model") {
+      asked.push(args[2]);
+      return `Current model: \`${args[2] === "opus" ? "Opus 5.5" : "?"}\`\n`;
+    }
+    return run(bin, args);
+  };
+  const claude = collectCliModels("claude", { roster: ROSTER, run: versioned, runModelPty });
+  assert.deepEqual(asked, ["opus"], "only aliases the roster sends are resolved");
+  assert.equal(claude.models.find((m) => m.id === "opus").version, "Opus 5.5");
+  assert.equal(claude.models.find((m) => m.id === "sonnet")?.version, undefined);
+});

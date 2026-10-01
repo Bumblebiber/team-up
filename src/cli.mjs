@@ -27,6 +27,9 @@ import { startDashboard } from "./dashboard/server.mjs";
 import { runModelsScan } from "./commands/models-scan.mjs";
 import { runModelsList } from "./commands/models-list.mjs";
 import { defaultRun } from "./collectors/cli-models.mjs";
+import { loadModelsStore } from "./collectors/models-store.mjs";
+import { upgradeChains } from "./roster/latest.mjs";
+import { saveRoster } from "./dashboard/tiers.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -170,7 +173,16 @@ async function cmdModels(args, io) {
   if (sub === "list") {
     return runModelsList(rest, io);
   }
-  io.err("usage: team-up models scan|list [--cli <id>] [--json]");
+  if (sub === "latest") {
+    // Moves chain entries to the newest version the last fresh scan lists.
+    // Dry run unless --apply; pinned entries (`"pinned": true`) never move.
+    const { next, changes } = upgradeChains(requireRoster(), loadModelsStore());
+    for (const c of changes) io.out(`${c.role}: ${c.cli}:${c.from} → ${c.to} (${c.reason})`);
+    if (!changes.length) io.out("every chain is on the newest offered version");
+    else if (rest.includes("--apply")) io.out(`applied · backup ${saveRoster(next).backup}`);
+    return 0;
+  }
+  io.err("usage: team-up models scan|list|latest [--cli <id>] [--json] [--apply]");
   return 1;
 }
 

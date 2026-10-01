@@ -289,7 +289,7 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
 
 .skipped { color: var(--muted); font-size: 0.8rem; }
 
-.setup-panel h3 { margin: 1rem 0 0.5rem; font-size: 0.95rem; }
+.panel h3 { margin: 0.9rem 0 0.35rem; font-size: 0.9rem; }
 .muted { color: var(--muted); font-size: 0.85rem; }
 .mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
 .provider-card {
@@ -378,11 +378,11 @@ tr.greyed td { opacity: 0.55; }
   border-radius: 10px;
   font-size: 0.78rem;
 }
-#panel-specialists h3 { margin: 0.9rem 0 0.3rem; font-size: 0.85rem; }
-#panel-specialists ul { margin: 0; padding-left: 1.1rem; font-size: 0.85rem; }
-#panel-specialists .assigned { list-style: none; padding-left: 0; }
-#panel-specialists .assigned li { margin-bottom: 0.4rem; }
-#panel-specialists .anti-remit { color: var(--muted); }
+#panel-specialists ul { margin: 0.25rem 0; padding-left: 1.1rem; font-size: 0.85rem; }
+#panel-specialists .caps { margin: 0.4rem 0; }
+.chip.assigned { border-color: var(--accent); }
+.chip button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 0 0 0.2rem; }
+details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 .kv {
   display: grid;
   grid-template-columns: 7rem 1fr;
@@ -444,3 +444,47 @@ tr.greyed td { opacity: 0.55; }
 .tier-clis { display: flex; flex-wrap: wrap; gap: 0.1rem 0.5rem; min-width: 12rem; }
 .tier-cli { font-size: 0.8rem; white-space: nowrap; }
 #tiers-status { min-height: 1.2em; margin-bottom: 0.4rem; }
+
+/* Widget chrome: the title carries the help tooltip, the pencil opens the
+   per-browser colour / column editor. */
+.panel > h2 { display: flex; align-items: center; gap: 0.4rem; }
+.panel > h2 .title { cursor: help; }
+.panel-edit {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  opacity: 0.5;
+}
+.panel:hover .panel-edit { opacity: 1; }
+.panel.tinted {
+  background: color-mix(in srgb, var(--panel-color) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--panel-color) 45%, var(--border));
+  border-top: 3px solid var(--panel-color);
+}
+.pref-list { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; font-size: 0.85rem; }
+.pref-list label, .launch-dialog label.inline { display: inline-flex; gap: 0.3rem; margin: 0.2rem 0; }
+
+/* Roles */
+.chain-cell { line-height: 1.9; }
+.chain-chip { white-space: nowrap; }
+.chip[data-provider] { border-color: color-mix(in srgb, var(--prov) 55%, var(--border)); }
+.chip.red { border-color: var(--red); color: var(--red); }
+.row-actions { white-space: nowrap; }
+.row-actions button, .role-pin {
+  border: 0; background: none; cursor: pointer; padding: 0.1rem 0.25rem; color: var(--text);
+}
+.chain-row { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; margin: 0.25rem 0; }
+.chain-row .ce-model { flex: 1; min-width: 12rem; }
+#role-editor-name { width: 100%; }
+#roles-status, #settings-status { min-height: 1.2em; }
+
+/* Settings */
+#settings-body table td { padding: 0.15rem 0.5rem; }
+#settings-body input[type="number"] { width: 6rem; }
+#settings-body label { margin-right: 0.6rem; white-space: nowrap; }
+
+#admin-gate { margin: 0.75rem 1rem 0; background: var(--surface); }
+.nowrap { white-space: nowrap; }

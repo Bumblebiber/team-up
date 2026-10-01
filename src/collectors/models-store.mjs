@@ -43,6 +43,7 @@ export function mergeModelsStore(previous, reports, collectedByCli, scannedAt) {
       models: (collected.models || []).map((m) => ({
         cli_id: m.id,
         display_name: m.display_name,
+        ...(m.version ? { version: m.version } : {}),
         ...(m.current ? { current: true } : {}),
       })),
       gone: report.gone || [],

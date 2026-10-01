@@ -23,6 +23,9 @@ import {
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
 import { buildTierMatrixView, applyModelEdit, saveRoster } from "./tiers.mjs";
+import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView } from "./roles.mjs";
+import { upgradeChains } from "../roster/latest.mjs";
+import { loadModelsStore } from "../collectors/models-store.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
 import { pinSpecialist } from "../specialists/store.mjs";
 import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
@@ -1002,6 +1005,7 @@ export function createDashboardServer({
           { env },
         );
         memo.invalidate("pick");
+        memo.invalidate("roles");
         jsonResponse(res, 200, {
           ok: true,
           backup: path.basename(written.backup),
@@ -1012,6 +1016,39 @@ export function createDashboardServer({
           { actor: "127.0.0.1", action: "roster.model.edit", target: model, result: "fail" },
           { env },
         );
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    // Roles, chains and roster settings: same contract as the tier table —
+    // one edit per request, validated, backed up, audited.
+    const roleMatch = pathname.match(/^\/api\/roles\/([^/]+)$/);
+    const isSettings = pathname === "/api/settings";
+    const isUpgrade = pathname === "/api/roles-upgrade";
+    if (req.method === "POST" && (roleMatch || isSettings || isUpgrade)) {
+      if (!requireWriteAccess(req, res)) return;
+      const target = roleMatch ? decodeURIComponent(roleMatch[1]) : isSettings ? "settings" : "latest";
+      const action = roleMatch ? "roster.role.edit" : isSettings ? "roster.settings.edit" : "roster.chains.upgrade";
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        const roster = loadRoster(env);
+        let next;
+        let changes;
+        if (roleMatch) next = applyRoleEdit(roster, { ...body, role: target });
+        else if (isSettings) next = applySettingsEdit(roster, body);
+        else ({ next, changes } = upgradeChains(roster, loadModelsStore(env)));
+        const written = changes?.length === 0 ? null : saveRoster(next, { env });
+        appendAudit({ actor: "127.0.0.1", action, target: isSettings ? body.path : target, result: "ok" }, { env });
+        memo.invalidate("pick");
+        memo.invalidate("roles");
+        jsonResponse(res, 200, {
+          ok: true,
+          backup: written ? path.basename(written.backup) : null,
+          ...(changes ? { changes } : {}),
+        });
+      } catch (e) {
+        appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
         jsonResponse(res, 400, { error: String(e.message || e) });
       }
       return;
@@ -1345,6 +1382,23 @@ export function createDashboardServer({
         stripAccounts: true,
       });
       jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/roles") {
+      const data = memo.get("roles", () => {
+        const roster = loadRoster(env);
+        const usage = loadJson(usagePath(env)) || {};
+        return sanitizeForDashboard(buildRolesView(roster, usage, loadModelsStore(env), ts), { stripAccounts: true });
+      });
+      jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/settings") {
+      // accounts here are the on/off switches the panel edits; nothing secret
+      // lives in them, and the sanitizer still drops anything key-shaped.
+      jsonResponse(res, 200, sanitizeForDashboard(buildSettingsView(loadRoster(env))));
       return;
     }
 

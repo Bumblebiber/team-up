@@ -22,14 +22,15 @@
       <h1>team-up</h1>
       <nav>
         <a href="#panel-usage">Usage</a>
-        <a href="#panel-runs">Runs</a>
-        <a href="#panel-tmux">tmux</a>
+        <a href="#panel-sessions">Sessions</a>
         <a href="#panel-projects">Projects</a>
         <a href="#panel-tim" id="nav-tim" class="hidden">TIM</a>
-        <a href="#panel-pick">Pick</a>
-        <a href="#panel-tiers">Tiers</a>
+        <a href="#panel-roles">Roles</a>
         <a href="#panel-specialists">Specialists</a>
-        <a href="#panel-setup">Setup</a>
+        <a href="#panel-settings">Settings</a>
+        <a href="#panel-providers">Providers</a>
+        <a href="#panel-models">Models</a>
+        <a href="#panel-clis">CLIs</a>
         <span class="column-controls">
           <button type="button" id="column-remove" title="Remove the last column; its panels move left">−</button>
           <span id="column-count">2</span> columns
@@ -39,6 +40,16 @@
       </nav>
     </header>
 
+    <div id="admin-gate" class="admin-gate hidden">
+      <p>Write actions need a confirmation code from the terminal running <code>team-up dashboard</code>.</p>
+      <button type="button" id="admin-challenge-btn">Request code</button>
+      <form id="admin-confirm-form" class="hidden">
+        <input type="text" id="admin-code-input" placeholder="123-456" autocomplete="off">
+        <button type="submit">Confirm</button>
+      </form>
+      <p id="admin-status" class="muted"></p>
+    </div>
+
     <main>
       <section id="panel-usage" class="panel">
         <h2>Usage</h2>
@@ -47,9 +58,12 @@
         <div id="marked-list"></div>
       </section>
 
-      <section id="panel-tmux" class="panel">
-        <h2>tmux</h2>
+      <section id="panel-sessions" class="panel">
+        <h2>Sessions</h2>
         <div id="tmux-table" class="table-wrap"></div>
+        <h3>Runs <label class="muted"><input type="checkbox" id="active-only" checked> active only</label></h3>
+        <div id="runs-table" class="table-wrap"></div>
+        <div id="run-detail" class="detail hidden"></div>
       </section>
 
       <section id="panel-projects" class="panel">
@@ -81,50 +95,65 @@
         <div id="tim-list" class="table-wrap"></div>
       </section>
 
+      <section id="panel-roles" class="panel">
+        <h2>Roles &amp; Models</h2>
+        <div class="toolbar">
+          <button type="button" id="role-add">+ Role</button>
+          <button type="button" id="roles-upgrade" class="hidden"></button>
+        </div>
+        <p id="roles-status" class="muted"></p>
+        <div id="roles-table" class="table-wrap"></div>
+        <details id="tiers-details">
+          <summary>Model tiers</summary>
+          <p class="muted">
+            A specialist profile asks for a tier and never falls back to another
+            one, so this table decides what a specialist can reach. The weekly
+            refresh leaves these fields alone.
+          </p>
+          <div id="tiers-status" class="muted"></div>
+          <div id="tiers-table" class="table-wrap"></div>
+        </details>
+      </section>
+
       <section id="panel-specialists" class="panel">
         <h2>Specialists</h2>
         <div class="toolbar">
-          <label>Specialist
-            <select id="specialist-select"></select>
-          </label>
+          <select id="specialist-select"></select>
+          <span id="specialist-meta" class="muted"></span>
         </div>
         <div id="specialist-detail"></div>
-
-        <h3>Assign a capability</h3>
         <div class="toolbar">
           <select id="capability-select"></select>
-          <button type="button" id="capability-assign">Assign</button>
+          <button type="button" id="capability-assign">Assign capability</button>
         </div>
         <p id="capability-status" class="muted"></p>
-
-        <h3>Install from GitHub</h3>
-        <div class="toolbar">
-          <input type="text" id="specialist-repo" placeholder="https://github.com/owner/repo#ref">
-          <input type="text" id="specialist-subdir" placeholder="subdir (optional)">
-          <button type="button" id="specialist-install">Install</button>
-        </div>
-        <p id="specialist-install-status" class="muted"></p>
+        <details>
+          <summary>Install a specialist from GitHub</summary>
+          <div class="toolbar">
+            <input type="text" id="specialist-repo" placeholder="https://github.com/owner/repo#ref">
+            <input type="text" id="specialist-subdir" placeholder="subdir (optional)">
+            <button type="button" id="specialist-install">Install</button>
+          </div>
+          <p id="specialist-install-status" class="muted"></p>
+        </details>
       </section>
 
-      <section id="panel-setup" class="panel setup-panel">
-        <h2>Setup</h2>
-        <div id="admin-gate" class="admin-gate hidden">
-          <p>Write actions need a confirmation code from the terminal running <code>team-up dashboard</code>.</p>
-          <button type="button" id="admin-challenge-btn">Request code</button>
-          <form id="admin-confirm-form" class="hidden">
-            <input type="text" id="admin-code-input" placeholder="123-456" autocomplete="off">
-            <button type="submit">Confirm</button>
-          </form>
-          <p id="admin-status" class="muted"></p>
-        </div>
+      <section id="panel-settings" class="panel">
+        <h2>Settings</h2>
+        <p id="settings-status" class="muted"></p>
+        <div id="settings-body"></div>
+      </section>
 
-        <h3>Providers</h3>
+      <section id="panel-providers" class="panel">
+        <h2>Providers</h2>
         <div id="providers-list"></div>
+      </section>
 
-        <h3>Models</h3>
+      <section id="panel-models" class="panel">
+        <h2>Models</h2>
         <div class="toolbar">
           <input type="search" id="models-search" placeholder="Filter models…">
-          <label><input type="checkbox" id="models-roster-only"> In roster only</label>
+          <label><input type="checkbox" id="models-roster-only" checked> In roster only</label>
           <button type="button" id="refresh-scores-btn">Refresh catalogue</button>
         </div>
         <p id="models-meta" class="muted"></p>
@@ -134,35 +163,12 @@
         </div>
         <div id="models-table" class="table-wrap"></div>
         <p id="apply-cli-hint" class="muted"></p>
+      </section>
 
-        <h3>CLIs</h3>
+      <section id="panel-clis" class="panel">
+        <h2>CLIs</h2>
         <div id="clis-table" class="table-wrap"></div>
         <pre id="cli-log" class="pane hidden"></pre>
-      </section>
-
-      <section id="panel-runs" class="panel">
-        <h2>Runs</h2>
-        <div class="toolbar">
-          <label><input type="checkbox" id="active-only" checked> Active only</label>
-        </div>
-        <div id="runs-table" class="table-wrap"></div>
-        <div id="run-detail" class="detail hidden"></div>
-      </section>
-
-      <section id="panel-pick" class="panel">
-        <h2>Pick preview</h2>
-        <div id="pick-table" class="table-wrap"></div>
-      </section>
-
-      <section id="panel-tiers" class="panel">
-        <h2>Tiers</h2>
-        <p class="muted">
-          A profile asks for a tier and never falls back to another one, so this
-          table decides what a specialist can reach. Saved to roster.json on
-          every change, with a backup; the weekly refresh leaves these fields alone.
-        </p>
-        <div id="tiers-status" class="muted"></div>
-        <div id="tiers-table" class="table-wrap"></div>
       </section>
     </main>
   </div>
@@ -222,6 +228,41 @@
       <menu>
         <button type="button" id="policy-editor-cancel">Cancel</button>
         <button type="submit">Create</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="role-editor" class="launch-dialog">
+    <form id="role-editor-form">
+      <h2 id="role-editor-title">Role</h2>
+      <label for="role-editor-name">Name</label>
+      <input type="text" id="role-editor-name" pattern="[a-z0-9][a-z0-9._-]*" required autocomplete="off">
+      <label>Chain — tried top to bottom; the first model with budget left wins</label>
+      <div id="role-editor-chain"></div>
+      <button type="button" id="role-editor-add">+ Model</button>
+      <label class="inline"><input type="checkbox" id="role-editor-pin" checked>
+        Pin the head — the weekly score refresh will not replace the first entry</label>
+      <p class="muted">Pinned version = the entry stays on that exact version even when a newer one ships.</p>
+      <p id="role-editor-status" class="muted"></p>
+      <menu>
+        <button type="button" id="role-editor-cancel">Cancel</button>
+        <button type="submit">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="panel-editor" class="launch-dialog">
+    <form id="panel-editor-form" method="dialog">
+      <h2 id="panel-editor-title"></h2>
+      <label for="panel-editor-color">Colour</label>
+      <span class="launch-row">
+        <input type="color" id="panel-editor-color">
+        <button type="button" id="panel-editor-color-reset">No colour</button>
+      </span>
+      <div id="panel-editor-items"></div>
+      <menu>
+        <button type="button" id="panel-editor-reset">Reset this widget</button>
+        <button type="submit">Done</button>
       </menu>
     </form>
   </dialog>

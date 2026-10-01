@@ -83,19 +83,41 @@ export function parseModelIds(text) {
   return ids;
 }
 
-function collectClaudeModels(bin, { run, runModelPty } = {}) {
+function claudePrint(bin, args, run) {
+  return run
+    ? run(bin, args)
+    : execFileSync(bin, args, {
+        encoding: "utf8",
+        env: { ...process.env, ...COLLECT_ENV },
+        timeout: LIST_TIMEOUT_MS,
+        maxBuffer: 2 * 1024 * 1024,
+        shell: process.platform === "win32",
+      });
+}
+
+/**
+ * Claude lists aliases only (`opus`), which float to the newest model on their
+ * own — so the roster never says which one it is running. `-p --model X /model`
+ * names it ("Opus 5.5") without spending a turn. Only the aliases the roster
+ * sends are asked; a failure leaves the version unknown, nothing else.
+ */
+function addClaudeVersions(bin, models, roster, run) {
+  const sent = new Set(rosterEntriesForCli(roster, "claude").map((e) => e.sent));
+  for (const m of models) {
+    if (!sent.has(m.id)) continue;
+    try {
+      const label = claudePrint(bin, ["-p", "--model", m.id, "/model"], run)
+        .match(/Current model:\s*`([^`]+)`/i)?.[1]?.trim();
+      if (label) m.version = label;
+    } catch { /* version stays unknown */ }
+  }
+  return models;
+}
+
+function collectClaudeModels(bin, { roster, run, runModelPty } = {}) {
   try {
-    const text = run
-      ? run(bin, ["-p", "/model"])
-      : execFileSync(bin, ["-p", "/model"], {
-          encoding: "utf8",
-          env: { ...process.env, ...COLLECT_ENV },
-          timeout: LIST_TIMEOUT_MS,
-          maxBuffer: 2 * 1024 * 1024,
-          shell: process.platform === "win32",
-        });
-    const models = parseClaudeModels(text);
-    if (models.length) return { supported: true, models };
+    const models = parseClaudeModels(claudePrint(bin, ["-p", "/model"], run));
+    if (models.length) return { supported: true, models: addClaudeVersions(bin, models, roster, run) };
     if (run) {
       return { supported: false, reason: `${bin} -p /model listed nothing` };
     }
@@ -117,7 +139,7 @@ function collectClaudeModels(bin, { run, runModelPty } = {}) {
   if (!models.length) {
     return { supported: false, reason: "claude /model listed nothing" };
   }
-  return { supported: true, models };
+  return { supported: true, models: addClaudeVersions(bin, models, roster, run) };
 }
 
 function collectCodexModels(bin, { runModelPty } = {}) {
@@ -146,7 +168,7 @@ export function collectCliModels(cliId, { roster, run, runModelPty } = {}) {
   if (!bin) return { supported: false, reason: `no cli template for "${cliId}"` };
 
   if (cliId === "claude") {
-    return collectClaudeModels(bin, { run, runModelPty });
+    return collectClaudeModels(bin, { roster, run, runModelPty });
   }
   if (cliId === "codex") {
     return collectCodexModels(bin, { runModelPty });

@@ -7,7 +7,7 @@
   "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
   "deepseek/deepseek-v4-flash": "deepseek-v4-flash",
   "deepseek/deepseek-chat-v4": "deepseek-v4-pro",
-  "anthropic/claude-opus-5": "claude-opus",
+  "anthropic/claude-opus-5.5": "claude-opus",
   "anthropic/claude-sonnet-5": "claude-sonnet",
   "anthropic/claude-haiku-4.5": "claude-haiku",
   "x-ai/grok-4.6": "grok-4.6-medium"
