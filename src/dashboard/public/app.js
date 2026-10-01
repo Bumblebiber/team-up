@@ -393,7 +393,7 @@ function chainChip(c, i) {
 
 async function refreshRoles() {
   rolesData = await api("/api/roles");
-  const upgrades = rolesData.roles.flatMap((r) => r.chain.filter((c) => c.newest && !c.pinned));
+  const upgrades = rolesData.roles.flatMap((r) => r.chain.filter((c) => c.newest && (!c.pinned || c.state === "gone")));
   const addable = rolesData.addable || [];
   const btn = $("#roles-upgrade");
   btn.classList.toggle("hidden", !upgrades.length && !addable.length);

@@ -10,7 +10,9 @@
 //   that the CLI's last *fresh* scan lists. Newest means the highest version
 //   number, never the catalogue's idea of latest: a CLI that has not shipped
 //   a model cannot run it.
-// - An object entry with `pinned: true` is the user's override and stays put.
+// - An object entry with `pinned: true` is the user's override and stays put —
+//   until the CLI drops it: a pinned model that can't run pins nothing, so a
+//   gone pin moves to the newest sibling and keeps its pin there.
 //
 // Only fresh, supported scans count. A failed scan says nothing about what the
 // CLI offers, so it never removes or moves anything.
@@ -132,9 +134,9 @@ export function upgradeChains(roster, store, now = Date.now()) {
       const pinned = raw && typeof raw === "object" && raw.pinned === true;
       const cli = parsed.cli ?? next.models?.[parsed.model]?.cli?.[0] ?? null;
       let entry = raw;
-      if (cli && !pinned) {
+      if (cli) {
         const { state, newest } = cellStatus(next, store, cli, parsed.model, now);
-        if (newest) {
+        if (newest && (!pinned || state === "gone")) {
           entry = typeof raw === "string"
             ? (parsed.cli ? `${parsed.cli}:${newest}` : newest)
             : { ...raw, model: newest };
