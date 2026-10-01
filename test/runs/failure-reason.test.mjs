@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -75,5 +76,23 @@ test("a retryable failure from a handoff does not shadow the terminal reason", a
     runs.updateState("r-1", (s) => ({ ...s, status: "handing_off", failure: { type: "usage_refresh_failed", retryable: true, error: "USAGE_REFRESH_FAILED" } }));
     runs.setStatus("r-1", "failed", { reason: "capsule setup: boom" });
     assert.equal(runs.loadState("r-1").failure.error, "capsule setup: boom");
+  });
+});
+
+test("a done run in a git cwd records the commit it ended on", async () => {
+  await withHome(({ home, runs }) => {
+    plant(home, "r-1", "");
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "tu-head-"));
+    try {
+      const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+      execFileSync("git", ["-C", repo, "init", "-q"], { env });
+      execFileSync("git", ["-C", repo, "commit", "-q", "--allow-empty", "-m", "x"], { env });
+      const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      runs.updateState("r-1", (s) => ({ ...s, cwd: repo, base_commit: "0000" }));
+      runs.setStatus("r-1", "done");
+      assert.equal(runs.loadState("r-1").head_commit, head);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

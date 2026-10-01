@@ -302,6 +302,11 @@ function writeStateUnderLock(state, expectedRevision) {
   if (TERMINAL_RUN_STATUSES.has(state.status) && !state.finishedAt) {
     state.finishedAt = state.updatedAt;
   }
+  // base..head is what this run committed; clones are reused across runs, so
+  // without the end commit "was it merged" can only be guessed from timestamps.
+  if (state.status === "done" && state.base_commit && !state.head_commit) {
+    state.head_commit = resolveGitBase(state.cwd, 2000).base_commit;
+  }
   state._stateRevision = expectedRevision + 1;
   atomicWriteJson(path.join(runDir(state.runId), "STATE.json"), state);
   return state;

@@ -37,6 +37,10 @@ if [ "$FORCE" != "1" ] && [ -f "$STAMP" ] \
 fi
 [ "$DRY" = "1" ] || touch "$STAMP"
 
+# Outcomes first: a run whose commits reached main is `merged`, which is the
+# only way most runs ever get one (1 of 269 had it by hand).
+[ "$DRY" = "1" ] || node "$REPO/scripts/run-merge-check.mjs" --apply >> "$LOG_DIR/merge-check.log" 2>&1
+
 JSON=$(node "$REPO/scripts/run-insights.mjs" --since-hours 48 --out-dir "$OUT_DIR" 2>> "$LOG_DIR/stderr.log") \
   || { echo "WARN: run-insights failed, see $LOG_DIR/stderr.log"; exit 0; }
 MD="${JSON%.json}.md"
