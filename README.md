@@ -74,8 +74,11 @@ memory, pressure (PSI), load and every live worker's RSS. After a reboot,
 with a verdict — `team_up_suspected`, `other_cause`, `clean_shutdown` or
 `unknown` — plus the evidence and what could not be checked. The kernel log
 needs membership in `systemd-journal` (or `adm`); without it the verdict leans
-on the samples and says so. A `team_up_suspected` report from the last 7 days
-is a high `doctor` finding.
+on the samples and says so. It also has to survive the reboot: with
+journald's default `Storage=auto` that needs `/var/log/journal` to exist
+(`sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald`);
+`doctor` flags a volatile journal once telemetry runs. A `team_up_suspected`
+report from the last 7 days is a high `doctor` finding.
 
 ## Docs
 

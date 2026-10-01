@@ -245,5 +245,10 @@ differ), over all samples. Plan 3 reads the same numbers through
 
 - Is the kernel journal readable for the user on the target server? If
   not, add the user to `systemd-journal` or accept `unknown` more often.
+  Answered on the target server: readable, but `journalctl -k -b -1` had no
+  entries — journald kept logs in memory only. The report now names a
+  volatile journal (`journalPersistence`) as a gap with the fix, an empty
+  kernel grep over an unlogged boot no longer counts as "no OOM", and
+  `doctor` reports `journal_not_persistent` (medium) once telemetry runs.
 - Is 30 s right? Memory blow-ups by parallel Codeys can take less than that.
   10 s triples the cost and is still small; decide after a week of data.

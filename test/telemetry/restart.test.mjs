@@ -9,6 +9,7 @@ import {
   defaultJournal,
   formatRestartReport,
   listRestartReports,
+  journalPersistence,
   parseKernelOom,
   parseLast,
 } from "../../src/telemetry/restart.mjs";
@@ -54,7 +55,12 @@ function setup(t) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-restart-"));
   const proc = fakeProc({ bootId: BOOT });
   t.after(() => rmrf(home, proc));
-  return { telemetryDir: path.join(home, "telemetry"), logDir: path.join(home, "logs"), procRoot: proc };
+  return {
+    telemetryDir: path.join(home, "telemetry"),
+    logDir: path.join(home, "logs"),
+    procRoot: proc,
+    persistence: () => ({ persistent: true, storage: "persistent", reason: "Storage=persistent" }),
+  };
 }
 
 test("no telemetry from an earlier boot: nothing to judge", (t) => {
@@ -240,4 +246,33 @@ test("defaultJournal falls back to filtering when journalctl has no --grep", () 
   assert.equal(r.entries.length, 1);
   assert.equal(calls.length, 2);
   assert.ok(calls[0].includes(PREV.replaceAll("-", "")));
+});
+
+test("a volatile journal is named, and its empty kernel log does not clear OOM", (t) => {
+  const ctx = setup(t);
+  plantPreviousBoot(ctx.telemetryDir, { endAvailable: 8 * GB, psiFull: 0 });
+  const report = analyzeRestart({
+    ...ctx,
+    persistence: () => ({ persistent: false, storage: "auto", reason: "Storage=auto and /var/log/journal is missing" }),
+    journal: journal({ tail: { ok: true, entries: [], limited: false }, last: { ok: false, error: "no wtmp" } }),
+  });
+  assert.equal(report.verdict, "unknown");
+  assert.ok(report.evidence_gaps.some((g) => /journal is not persistent \(Storage=auto and/.test(g)));
+  assert.ok(report.evidence_gaps.some((g) => /sudo mkdir -p \/var\/log\/journal/.test(g)));
+  assert.ok(report.evidence_gaps.some((g) => /OOM kills cannot be ruled out/.test(g)));
+});
+
+test("journalPersistence reads Storage= with drop-ins winning, and auto falls back to the directory", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tu-journald-"));
+  t.after(() => rmrf(root));
+  const etcDir = path.join(root, "etc");
+  const logDir = path.join(root, "journal");
+  fs.mkdirSync(path.join(etcDir, "journald.conf.d"), { recursive: true });
+  fs.writeFileSync(path.join(etcDir, "journald.conf"), "[Journal]\n#Storage=auto\n");
+  assert.equal(journalPersistence({ etcDir, logDir }).persistent, false);
+  fs.mkdirSync(logDir);
+  assert.equal(journalPersistence({ etcDir, logDir }).persistent, true);
+  fs.writeFileSync(path.join(etcDir, "journald.conf.d", "10-volatile.conf"), "[Journal]\nStorage=volatile\n");
+  assert.deepEqual(journalPersistence({ etcDir, logDir }), { persistent: false, storage: "volatile", reason: "Storage=volatile" });
+  assert.equal(journalPersistence({ etcDir: path.join(root, "none"), logDir }).persistent, null);
 });

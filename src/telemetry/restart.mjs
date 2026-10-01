@@ -100,6 +100,47 @@ function defaultLast() {
 // Evidence
 
 /**
+ * Whether journald keeps logs across a reboot. `Storage=auto` (the default)
+ * only does so when /var/log/journal exists; many cloud images ship without
+ * it, and then the previous boot's kernel log is gone by the time anyone asks.
+ * Null when there is no journald config to read (not a systemd host).
+ */
+export function journalPersistence({ etcDir = "/etc/systemd", logDir = "/var/log/journal" } = {}) {
+  const files = [path.join(etcDir, "journald.conf")];
+  try {
+    const dropins = path.join(etcDir, "journald.conf.d");
+    files.push(...fs.readdirSync(dropins).filter((n) => n.endsWith(".conf")).sort().map((n) => path.join(dropins, n)));
+  } catch {
+    // no drop-ins
+  }
+  let storage = null;
+  let seen = false;
+  for (const file of files) {
+    let text;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    seen = true;
+    for (const line of text.split("\n")) {
+      const m = /^\s*Storage\s*=\s*(\S+)/.exec(line);
+      if (m) storage = m[1].toLowerCase();
+    }
+  }
+  if (!seen && !fs.existsSync(etcDir)) return { persistent: null, storage: null, reason: "no journald config" };
+  const value = storage ?? "auto";
+  if (value === "persistent") return { persistent: true, storage: value, reason: "Storage=persistent" };
+  if (value === "volatile" || value === "none") return { persistent: false, storage: value, reason: `Storage=${value}` };
+  const exists = fs.existsSync(logDir);
+  return {
+    persistent: exists,
+    storage: value,
+    reason: exists ? `Storage=${value}, ${logDir} exists` : `Storage=${value} and ${logDir} is missing`,
+  };
+}
+
+/**
  * How the boot before this one ended, from wtmp: the newest line is the
  * current boot; a `shutdown` record right below it means the previous boot
  * stopped in order, a second `reboot` means it never recorded a stop.
@@ -112,7 +153,7 @@ export function parseLast(text) {
   return null;
 }
 
-function shutdownEvidence({ journal, previousBootId, gaps }) {
+function shutdownEvidence({ journal, previousBootId, gaps, persistence }) {
   const tail = journal.bootTail(previousBootId);
   if (tail.ok && tail.entries.length) {
     const orderly = tail.entries.some((e) => ORDERLY.test(e.message));
@@ -129,6 +170,13 @@ function shutdownEvidence({ journal, previousBootId, gaps }) {
   }
   if (!tail.ok) gaps.push(`previous boot not in the journal: ${tail.error}`);
   else gaps.push("journal holds no entries for the previous boot");
+  const store = persistence?.();
+  if (store && store.persistent === false) {
+    gaps.push(
+      `journal is not persistent (${store.reason}), so every restart erases the previous boot's log; ` +
+        "fix: sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald",
+    );
+  }
   const last = journal.last?.();
   if (last?.ok) {
     const kind = parseLast(last.text);
@@ -198,12 +246,15 @@ function attributeVictims(victims, lastSample) {
   });
 }
 
-function oomEvidence({ journal, previousBootId, lastSample, gaps }) {
+function oomEvidence({ journal, previousBootId, lastSample, gaps, bootLogged }) {
   const victims = [];
   const kernel = journal.kernelOom(previousBootId);
   if (!kernel.ok) gaps.push(`kernel log not readable: ${kernel.error}`);
   else if (kernel.limited) gaps.push("kernel log not readable: user not in systemd-journal/adm");
-  else victims.push(...parseKernelOom(kernel.entries));
+  else if (!kernel.entries.length && !bootLogged) {
+    // An empty grep over a boot the journal never kept is no evidence of "no OOM".
+    gaps.push("no kernel log of the previous boot; OOM kills cannot be ruled out");
+  } else victims.push(...parseKernelOom(kernel.entries));
   const oomd = journal.oomd(previousBootId);
   if (oomd.ok && !oomd.limited) victims.push(...parseOomd(oomd.entries));
   return attributeVictims(victims, lastSample);
@@ -354,6 +405,7 @@ export function analyzeRestart({
   logDir,
   procRoot = "/proc",
   journal = defaultJournal(),
+  persistence = () => journalPersistence(),
   thresholds = DEFAULT_THRESHOLDS,
   now = new Date(),
   write = true,
@@ -377,8 +429,9 @@ export function analyzeRestart({
   const lastSample = samples.at(-1);
 
   const gaps = [];
-  const shutdown = shutdownEvidence({ journal, previousBootId, gaps });
-  const oom = oomEvidence({ journal, previousBootId, lastSample, gaps });
+  const shutdown = shutdownEvidence({ journal, previousBootId, gaps, persistence });
+  const bootLogged = shutdown.source === "journal" || shutdown.source === "journal-user";
+  const oom = oomEvidence({ journal, previousBootId, lastSample, gaps, bootLogged });
   const window = summarizeWindow(samples, { bootEnd: shutdown.source === "journal" ? shutdown.last_entry_at : null });
   if (window?.sampler_gap_s != null && window.sampler_gap_s > 120) {
     gaps.push(`sampler stopped ${window.sampler_gap_s}s before the boot ended; the machine may have stalled`);

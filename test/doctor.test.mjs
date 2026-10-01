@@ -459,3 +459,22 @@ test("a recent restart blamed on team-up is a high finding", () => {
   assert.equal(found[0].severity, "high");
   assert.match(found[0].detail, /OOM kill/);
 });
+
+test("a volatile journal is a medium finding once telemetry runs", () => {
+  const volatile = () => ({ persistent: false, storage: "auto", reason: "Storage=auto and /var/log/journal is missing" });
+  const before = withHome({}, (env) => diagnose(env, { journalStore: volatile }));
+  assert.equal(before.findings.some((f) => f.kind === "journal_not_persistent"), false);
+  const after = withHome({}, (env) => {
+    fs.mkdirSync(path.join(env.TEAM_UP_HOME, "telemetry"));
+    return diagnose(env, { journalStore: volatile });
+  });
+  const found = after.findings.filter((f) => f.kind === "journal_not_persistent");
+  assert.equal(found.length, 1);
+  assert.equal(found[0].severity, "medium");
+  assert.match(found[0].fix, /mkdir -p \/var\/log\/journal/);
+  const persistent = withHome({}, (env) => {
+    fs.mkdirSync(path.join(env.TEAM_UP_HOME, "telemetry"));
+    return diagnose(env, { journalStore: () => ({ persistent: true }) });
+  });
+  assert.equal(persistent.findings.some((f) => f.kind === "journal_not_persistent"), false);
+});

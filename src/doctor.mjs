@@ -18,8 +18,8 @@ import { LIST_TIMEOUT_MS } from "./collectors/cli-models.mjs";
 import { listVerificationRecords, loadVerificationRecord } from "./harness/verify.mjs";
 import { HARNESS_VERIFY_CLIS, UNVERIFIABLE_ISOLATION_REASONS } from "./harness/cli-verify.mjs";
 import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
-import { debugLogDir, handoffsDir } from "./paths.mjs";
-import { listRestartReports } from "./telemetry/restart.mjs";
+import { debugLogDir, handoffsDir, telemetryDir } from "./paths.mjs";
+import { journalPersistence, listRestartReports } from "./telemetry/restart.mjs";
 
 function readJson(file) {
   try {
@@ -39,7 +39,7 @@ function readJson(file) {
  * `exclude` the same staleness is worse: the exclusion stops applying and the
  * package reaches a specialist that was meant to be denied it.
  */
-export function diagnose(env = process.env, { execFileSync } = {}) {
+export function diagnose(env = process.env, { execFileSync, journalStore = journalPersistence } = {}) {
   const findings = [];
   const installed = listInstalled(env).specialists ?? {};
   const ids = new Set(Object.keys(installed));
@@ -383,6 +383,21 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
         `${(report.reasons ?? []).join("; ")}`,
       fix: "run fewer workers at once; team-up telemetry stats shows their footprint",
     });
+  }
+
+  // Telemetry is on, but the kernel log that would say why the machine went
+  // down does not survive the restart it is meant to explain.
+  if (fs.existsSync(telemetryDir(env))) {
+    const store = journalStore();
+    if (store?.persistent === false) {
+      findings.push({
+        kind: "journal_not_persistent",
+        severity: "medium",
+        path: "/var/log/journal",
+        detail: `journald keeps logs in memory only (${store.reason}); restart reports cannot see OOM kills or how the last boot ended`,
+        fix: "sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald (or set Storage=persistent in /etc/systemd/journald.conf)",
+      });
+    }
   }
 
   const count = (s) => findings.filter((f) => f.severity === s).length;
