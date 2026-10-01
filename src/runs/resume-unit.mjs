@@ -8,10 +8,13 @@ import { sanitizeExecutablePath, unitQuote } from "./gc-timer.mjs";
 export const RESUME_UNIT = "team-up-resume.service";
 
 /**
- * A oneshot that runs `runs resume --boot` once per boot. RemainAfterExit
- * keeps the unit active, so the tmux server it may start stays alive instead
- * of being killed with the unit's cgroup when the command returns. PATH is the
- * installer's: a user unit's default PATH finds neither tmux's CLIs nor node.
+ * Runs `runs resume --boot` once per boot. The resume works through its queue
+ * one start at a time (plan 3), which can take many minutes, so the unit is
+ * Type=simple: systemctl and the boot do not wait for it, and no start timeout
+ * cuts it off. RemainAfterExit keeps the unit active once it returns, so the
+ * tmux server it may have started stays alive instead of being killed with
+ * the unit's cgroup. PATH is the installer's: a user unit's default PATH finds
+ * neither tmux's CLIs nor node.
  */
 export function renderResumeUnit({ nodePath, cliPath, envPath, teamUpHome = null }) {
   const node = sanitizeExecutablePath(nodePath);
@@ -22,13 +25,13 @@ export function renderResumeUnit({ nodePath, cliPath, envPath, teamUpHome = null
 Description=Resume team-up runs and their parent sessions after boot
 
 [Service]
-Type=oneshot
+Type=simple
 RemainAfterExit=yes
 ${env.join("\n")}
 # Let the network and the user manager settle first.
 ExecStartPre=/bin/sleep 20
 ExecStart=${unitQuote(node)} ${unitQuote(cli)} runs resume --boot
-TimeoutStartSec=10min
+TimeoutStartSec=infinity
 
 [Install]
 WantedBy=default.target

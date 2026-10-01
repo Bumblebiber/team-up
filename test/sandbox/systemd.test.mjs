@@ -82,3 +82,22 @@ test("a named unit rides along so telemetry can find the worker's cgroup", async
   assert.ok(!plain.some((a) => String(a).startsWith("--unit")));
   assert.throws(() => systemdSandboxArgv({ cwd: "/tmp", command: ["echo"], unit: "bad name;rm" }), /invalid systemd unit name/);
 });
+
+test("memory ceilings become MemoryHigh/MemoryMax only under systemd-run, and say whether they hold", () => {
+  const base = { command: ["/usr/bin/echo"], permissions: { writes: false }, cwd: "/tmp", probe: () => true, enforcement: "best_effort" };
+  const plain = wrapWithSandbox(base);
+  assert.ok(!plain.argv.some((a) => String(a).startsWith("Memory")));
+  assert.equal("memory_max_applied" in plain, false);
+
+  const capped = wrapWithSandbox({ ...base, memoryLimits: { high_kb: 1536, max_kb: 2048 } });
+  const dash = capped.argv.indexOf("--");
+  assert.ok(capped.argv.indexOf("MemoryHigh=1536K") < dash);
+  assert.ok(capped.argv.indexOf("MemoryMax=2048K") < dash);
+  assert.equal(capped.memory_max_applied, true);
+
+  const fallback = wrapWithSandbox({ ...base, probe: () => false, memoryLimits: { high_kb: 1536, max_kb: 2048 } });
+  assert.equal(fallback.sandbox, "none");
+  assert.equal(fallback.memory_max_applied, false);
+  const noIsolation = wrapWithSandbox({ ...base, permissions: {}, memoryLimits: { high_kb: 1, max_kb: 2 } });
+  assert.equal(noIsolation.memory_max_applied, false);
+});

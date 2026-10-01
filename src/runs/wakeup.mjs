@@ -78,15 +78,24 @@ export function parentResumeArgv({ cli, sessionId }, message, cwd = null) {
   return null;
 }
 
+const DEFERRED = "deferred: team-up starts it on its own when the machine has room";
+
 /** What became of a run's worker in this resume, in words for the parent. */
-export function workerOutcome(state, actions, { tmuxExists }) {
-  if (state.status === "waiting_human") return "waiting on a human answer";
+export function workerOutcome(state, actions, { tmuxExists, deferred = null, staggered = false }) {
+  if (deferred || (state.status === "waiting_capacity" && state.capacity?.reason === "resources")) {
+    return `${DEFERRED} (${deferred ?? state.capacity?.admission?.reason ?? "resources"})`;
+  }
+  if (state.status === "waiting_human") {
+    return actions.some((a) => a.kind === "spawn_worker") && staggered
+      ? "waiting on a human answer; worker restarting first in line"
+      : "waiting on a human answer";
+  }
   if (state.status === "waiting_capacity") {
     const at = state.capacity?.resume_not_before;
     return at ? `waiting for capacity until ${at}` : "waiting for capacity";
   }
   if (state.status === "waiting_decision") return "waiting for a decision";
-  if (actions.some((a) => a.kind === "spawn_worker")) return "restarted";
+  if (actions.some((a) => a.kind === "spawn_worker")) return staggered ? "restarting, one worker at a time" : "restarted";
   if (state.worker?.tmux && tmuxExists(state.worker.tmux)) return "still running";
   return "no live worker";
 }
@@ -127,6 +136,14 @@ export function renderParentWakeup({ entries, uncollected = [], restartReport = 
   ];
   if (listed.length < entries.length) {
     lines.push(`- … ${entries.length - listed.length} more, with their commands, in ${overflowPath}`);
+  }
+  const parked = entries.filter((e) => String(e.outcome).startsWith("deferred:")).length;
+  if (parked) {
+    lines.push(
+      "",
+      `${parked} run${parked === 1 ? " is" : "s are"} deferred to spare the machine. Watch ${parked === 1 ? "it" : "them"} like the rest;`,
+      "the watcher waits until the worker has started and finished.",
+    );
   }
   if (uncollected.length) {
     lines.push(

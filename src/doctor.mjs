@@ -20,6 +20,8 @@ import { HARNESS_VERIFY_CLIS, UNVERIFIABLE_ISOLATION_REASONS } from "./harness/c
 import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
 import { debugLogDir, handoffsDir, telemetryDir } from "./paths.mjs";
 import { journalPersistence, listRestartReports } from "./telemetry/restart.mjs";
+import { admissionConfig, memoryDelegation } from "./admission/admission.mjs";
+import { listActiveStates } from "./runs/runs.mjs";
 
 function readJson(file) {
   try {
@@ -39,7 +41,12 @@ function readJson(file) {
  * `exclude` the same staleness is worse: the exclusion stops applying and the
  * package reaches a specialist that was meant to be denied it.
  */
-export function diagnose(env = process.env, { execFileSync, journalStore = journalPersistence } = {}) {
+export function diagnose(env = process.env, {
+  execFileSync,
+  journalStore = journalPersistence,
+  delegation = memoryDelegation,
+  activeStates = () => listActiveStates({ onCorrupt: () => {} }),
+} = {}) {
   const findings = [];
   const installed = listInstalled(env).specialists ?? {};
   const ids = new Set(Object.keys(installed));
@@ -400,6 +407,43 @@ export function diagnose(env = process.env, { execFileSync, journalStore = journ
     }
   }
 
+  // Per-worker memory ceilings (plan 3) only exist where the memory
+  // controller is delegated, and only for workers that run under systemd-run.
+  let ceiling = null;
+  try {
+    ceiling = admissionConfig(env).memory_ceiling;
+  } catch (e) {
+    findings.push({ kind: "admission_config_invalid", severity: "high", path: "roster.json", detail: e.message });
+  }
+  const memoryDelegated = delegation();
+  if (ceiling?.enabled) {
+    if (memoryDelegated.delegated !== true) {
+      findings.push({
+        kind: "memory_ceiling_unavailable",
+        severity: "medium",
+        path: memoryDelegated.path,
+        detail: memoryDelegated.delegated === false
+          ? "admission.memory_ceiling is on, but the user manager has no memory controller: MemoryMax will not hold"
+          : "admission.memory_ceiling is on, but cgroup delegation could not be read",
+        fix: "systemctl edit user@.service → [Service] Delegate=cpu cpuset io memory pids, then reboot",
+      });
+    }
+    let unconstrained = [];
+    try {
+      unconstrained = activeStates().filter((st) => st.sandbox?.memory_max_applied === false).map((st) => st.runId);
+    } catch {
+      // no runs directory yet
+    }
+    if (unconstrained.length) {
+      findings.push({
+        kind: "workers_without_memory_ceiling",
+        severity: "medium",
+        path: "runs",
+        detail: `${unconstrained.length} active worker(s) run without a memory ceiling (no systemd sandbox): ${unconstrained.slice(0, 5).join(", ")}`,
+      });
+    }
+  }
+
   const count = (s) => findings.filter((f) => f.severity === s).length;
   return {
     ok: findings.length === 0,
@@ -408,6 +452,7 @@ export function diagnose(env = process.env, { execFileSync, journalStore = journ
       assignments: assignments.length,
       approvals: Object.keys(approvals).length,
       pins: Object.keys(pins).length,
+      memory_ceiling_possible: memoryDelegated.delegated,
     },
     counts: { high: count("high"), medium: count("medium"), low: count("low") },
     findings,

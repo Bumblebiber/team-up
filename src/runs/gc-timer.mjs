@@ -26,6 +26,9 @@ Description=team-up terminal and stale worker cleanup
 [Service]
 Type=oneshot
 ExecStart=${unitQuote(node)} ${unitQuote(cli)} runs gc
+# gc may start a parked worker. If no tmux server ran yet, that server lands in
+# this unit's cgroup; the default control-group kill would end it with the unit.
+KillMode=process
 `,
     timer: `[Unit]
 Description=Run team-up worker cleanup every five minutes

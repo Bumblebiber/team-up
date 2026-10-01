@@ -14,6 +14,8 @@ test("renderGcUnits uses absolute executables and five minute cadence", () => {
   assert.match(units.timer, /OnBootSec=5min/);
   assert.match(units.timer, /OnUnitActiveSec=5min/);
   assert.match(units.timer, /Persistent=true/);
+  // gc may start a parked worker; its tmux server must outlive the oneshot.
+  assert.match(units.service, /^KillMode=process$/m);
 });
 
 test("renderGcUnits escapes percent specifiers in executable paths", () => {

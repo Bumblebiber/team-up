@@ -2,7 +2,8 @@
 
 ## Status
 
-Plan 3 of 3, agreed in conversation 2026-10-01, not implemented. It needs
+Plan 3 of 3, agreed in conversation 2026-10-01. Implemented 2026-10-01;
+see "Implementation notes and deviations" at the end. It needs
 plan 1 (`2026-10-01-resource-telemetry-and-restart-report.md`) for the
 verdict and the footprint numbers, and plan 2
 (`2026-10-01-parent-session-recovery.md`) for the parent sessions it
@@ -233,3 +234,56 @@ possible on this host.
   separate small budget so a human's session is never the one deferred?
   The current proposal: same limit, but parents are always first in line.
 - Default `reserve_mb`: 1 GB is a guess. Set it from a week of plan 1 data.
+
+## Implementation notes and deviations
+
+- **Parents do not count against the worker limit and are never deferred.**
+  This answers the first open question the other way: the idle baseline the
+  limit is derived from is measured with the parent sessions running, so
+  counting them again would double-count them, and a human's session is the
+  one thing a resume must bring back. Parents still go first and still get a
+  settle pause (15 s) before the next start, since they have no `HEARTBEAT`.
+- **Budget deferrals happen before anyone is woken.** Workers beyond the
+  budget are parked first, so each parent's message already lists them as
+  deferred ("team-up starts it on its own when the machine has room"). A
+  worker refused later by `admit()` (after 120 s of retries) is deferred
+  together with every worker behind it; the parent heard "restarting" for
+  those, and its watcher simply waits longer.
+- **`runs resume` stays the one entry point.** It is async now; there is no
+  separate detached process. The resume unit is `Type=simple`,
+  `TimeoutStartSec=infinity`, and keeps `RemainAfterExit=yes`, so the tmux
+  server it starts survives. A second `runs resume` while the lock is held
+  prints `~/.team-up/resume-queue.json` instead (`team-up admission queue`
+  shows it too). `--all-at-once` skips admission entirely.
+- **The restart cap** lives in `~/.team-up/admission.json`, is applied once
+  per restart (keyed by the previous boot id, so a second resume in the same
+  boot cannot undo `team-up admission reset`), and lapses 24 h after it was
+  set or after the last refusal.
+- **Resource waits replay the resume action.** A worker parked at resume
+  stores its `spawn_worker` action (`capacity.resume_action`) and its previous
+  status and mailbox `STATUS` (a `waiting_human` run goes back to waiting on
+  its human). A launch parked by `--wait-capacity` has no action and starts
+  from its launch descriptor through the existing quota recheck.
+- **The GC timer starts at most one parked run per pass**, under the resume
+  lock, and only waits with `reason: "resources"` (quota waits keep their
+  existing path). The worker it just started has not grown yet, so a second
+  admission in the same pass would judge a machine that is no longer there.
+  The GC service got `KillMode=process`: a tmux server it starts would
+  otherwise die with the oneshot. Existing installs need `runs gc-install`
+  and `runs resume-install` once more.
+- **`team-up dispatch` is guarded too**, not only `specialist run`: it is
+  the Path B launch and where pipeline fan-out happens. It supports
+  `--force-admission`; it has no `--wait-capacity`, because a dispatch run has
+  no launch descriptor to start from later. `handoff` and `pass-to` replace a
+  session rather than add a worker and are not checked.
+- **Rule 2 without a footprint.** Before 20 worker samples exist, the p95 is
+  unknown, the limit is the fallback (2), and the memory rule checks only the
+  reserve; the decision's `notes` say so.
+- **Observer.** A watcher's observer idles while its run is in
+  `waiting_capacity` instead of reading the missing pane as a stall.
+- **Found on the way:** `capacity-waits.json` and the resume log ignored
+  `TEAM_UP_HOME` and wrote into the real `~/.team-up`; both now follow it.
+- **Not measured live:** ceilings on a host with delegated memory (the
+  container has no user manager), and a real boot with a
+  `team_up_suspected` verdict. The queue, budget, deferral and GC restart were
+  exercised end-to-end with real tmux and a stand-in worker binary.

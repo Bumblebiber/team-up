@@ -168,6 +168,9 @@ export async function spawnInTmux({
   spawn = spawnPinnedInTmux,
   createRun = null,
   detectParent: detectParentFn = detectParent,
+  // async ({ cli }) => { ok, reason }: plan 3's admission check. Null skips it
+  // (handoff and pass-to replace a session rather than add a worker).
+  admit = null,
 }) {
   const now = Date.now();
   let usage = usageSnapshot ?? loadJson(usagePath());
@@ -320,6 +323,15 @@ export async function spawnInTmux({
   } catch {
     // stale cache — proceed with pick above
   }
+  if (admit) {
+    // Before the run exists: a refusal leaves nothing behind to clean up.
+    const decision = await admit({ cli: r.cli });
+    if (!decision.ok) {
+      console.error(`ADMISSION_REFUSED: ${decision.reason}`);
+      console.error("dispatch later, or pass --force-admission if you know the machine has room");
+      process.exit(3);
+    }
+  }
   let effectiveRunId = runId;
   if (!effectiveRunId) {
     // Injectable: a test that fakes `spawn` still reached the real
@@ -356,12 +368,13 @@ async function cmdDispatch(args) {
   const runId = argValue(args, "--run-id");
   const modelPin = argValue(args, "--model");
   const noTriage = args.includes("--no-triage");
+  const forceAdmission = args.includes("--force-admission");
   const rosterCfg = requireRoster();
   const useTriage = shouldRunTriage({ roster: rosterCfg, role, modelPin, noTriage });
   const dir = resolveDispatchDir({ dir: argValue(args, "--dir"), runId });
   if (!role || (!promptFile && !runId)) {
     console.error(
-      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>] [--no-triage]",
+      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>] [--no-triage] [--force-admission]",
     );
     console.error("  with --run-id: prefers ~/.team-up/runs/<id>/mailbox/PROMPT.md (mailbox-wrapped)");
     console.error("  --model: pin CLI×model (no role-chain fallback); same query language as pass-to");
@@ -405,6 +418,10 @@ async function cmdDispatch(args) {
     runId,
     modelPin,
     useTriage,
+    admit: forceAdmission ? null : async ({ cli }) => {
+      const { checkAdmission } = await import("../admission/admission.mjs");
+      return checkAdmission({ cli });
+    },
   });
 }
 

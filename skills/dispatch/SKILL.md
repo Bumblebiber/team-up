@@ -124,6 +124,11 @@ RUN_ID=$(echo "$CREATE" | awk '/^runId:/{print $2}')
 $ROSTER pick --role planner          # expect chain exhausted? stop or curate fallbacks
 $ROSTER dispatch --role planner --prompt-file "$PROMPT" --dir "$TASK_DIR" --run-id "$RUN_ID"
 
+#    exit 3 = ADMISSION_REFUSED: the machine has no room for another worker
+#    (reason printed). Do NOT retry in a loop and do NOT spawn a watcher: tell
+#    the human, re-run the same dispatch later, or `$RUNS cancel "$RUN_ID"`.
+#    --force-admission only when the human says the machine has room.
+
 # 3) Cheap in-host watcher (Path A) — sole job:
 #    $RUNS wait "$RUN_ID" --ceiling-sec 7200
 #    return status; see templates/watcher-prompt.md

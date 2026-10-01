@@ -2,14 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadState, saveState, updateState, runDir, setStatus } from "../runs/runs.mjs";
 import { chainCapacityReport } from "./capacity.mjs";
+import { runsPath } from "../paths.mjs";
 import { createAttempt, acquireAttemptLease, releaseAttemptLease } from "./attempts.mjs";
 import {
   resolveLimitWindowsForCell,
 } from "./start.mjs";
 
+// Beside the runs directory. Through runsPath, so TEAM_UP_HOME is honoured:
+// resolving HOME here put a test's waits into the real ~/.team-up.
 function waitsIndexPath(env = process.env) {
-  const root = env.TEAM_UP_RUNS || env.O9K_RUNS || path.join(process.env.HOME || "", ".team-up/runs");
-  return path.join(path.dirname(root), "capacity-waits.json");
+  return path.join(path.dirname(runsPath(env)), "capacity-waits.json");
 }
 
 function loadWaits(env = process.env) {
@@ -63,6 +65,93 @@ export function approveCapacityWait({
   return state.capacity;
 }
 
+export const RESOURCE_RETRY_MS = 2 * 60 * 1000;
+
+/**
+ * Park a run until the machine has room (plan 3). `action` is the resume
+ * action to replay once admitted (a crashed worker's `spawn_worker`); without
+ * one, the run starts from its launch descriptor like a quota wait.
+ */
+export function deferForResources({
+  runId,
+  admission,
+  verdict = null,
+  action = null,
+  now = new Date(),
+  env = process.env,
+}) {
+  const at = now instanceof Date ? now : new Date(now);
+  const resumeAt = new Date(at.getTime() + RESOURCE_RETRY_MS).toISOString();
+  const statusFile = path.join(runDir(runId), "mailbox", "STATUS");
+  let mailboxStatus = null;
+  try {
+    mailboxStatus = fs.readFileSync(statusFile, "utf8").trim() || null;
+  } catch {
+    // no mailbox status yet: a launch parked before its first start
+  }
+  let capacity = null;
+  updateState(runId, (state) => {
+    capacity = {
+      reason: "resources",
+      auto_resume: true,
+      resume_not_before: resumeAt,
+      admission: { reason: admission?.reason ?? null, verdict },
+      resume_action: action,
+      // What the run was before it was parked: a run that asked its human a
+      // question goes back to waiting on the answer, not to "watching".
+      resume_status: state.status === "waiting_capacity" ? state.capacity?.resume_status ?? "watching" : state.status,
+      // The worker's own last word in mailbox/STATUS, put back on resume.
+      resume_mailbox_status: state.status === "waiting_capacity" ? state.capacity?.resume_mailbox_status ?? null : mailboxStatus,
+      wait_cancelled: false,
+      available_actions: ["cancel-wait", "recheck-capacity", "cancel"],
+      approved_at: at.toISOString(),
+    };
+    state.status = "waiting_capacity";
+    state.capacity = capacity;
+    return state;
+  });
+  setStatus(runId, "waiting_capacity");
+  const waits = loadWaits(env);
+  waits.waits[runId] = { runId, resume_not_before: resumeAt, auto_resume: true, approved_at: at.toISOString(), reason: "resources" };
+  saveWaits(waits, env);
+  return capacity;
+}
+
+function postponeResourceWait(runId, admission, now, env) {
+  const resumeAt = new Date(Date.parse(now) + RESOURCE_RETRY_MS).toISOString();
+  updateState(runId, (state) => {
+    state.capacity = {
+      ...(state.capacity || {}),
+      resume_not_before: resumeAt,
+      admission: { ...(state.capacity?.admission || {}), reason: admission.reason },
+      last_recheck_at: now,
+    };
+    return state;
+  });
+  const waits = loadWaits(env);
+  if (waits.waits[runId]) {
+    waits.waits[runId].resume_not_before = resumeAt;
+    saveWaits(waits, env);
+  }
+  return resumeAt;
+}
+
+function finishResourceWait(runId, status, now, env) {
+  let mailboxStatus = null;
+  updateState(runId, (state) => {
+    mailboxStatus = state.capacity?.resume_mailbox_status ?? null;
+    state.status = status;
+    state.capacity = { ...(state.capacity || {}), auto_resume: false, resumed_at: now, last_recheck_at: now };
+    return state;
+  });
+  const statusFile = path.join(runDir(runId), "mailbox", "STATUS");
+  fs.mkdirSync(path.dirname(statusFile), { recursive: true });
+  fs.writeFileSync(statusFile, `${mailboxStatus ?? status}\n`);
+  const waits = loadWaits(env);
+  delete waits.waits[runId];
+  saveWaits(waits, env);
+}
+
 export function cancelCapacityWait({ runId, reason = "cancelled", env = process.env }) {
   const state = loadState(runId);
   if (!state) throw new Error(`unknown run ${runId}`);
@@ -91,12 +180,13 @@ export function cancelCapacityWait({ runId, reason = "cancelled", env = process.
   return state;
 }
 
-export function listDueWaits({ now = new Date().toISOString(), env = process.env } = {}) {
+export function listDueWaits({ now = new Date().toISOString(), env = process.env, reason = null } = {}) {
   const nowMs = Date.parse(now);
   const waits = loadWaits(env);
   const due = [];
   for (const [runId, w] of Object.entries(waits.waits || {})) {
     if (!w.auto_resume || w.cancelled) continue;
+    if (reason && w.reason !== reason) continue;
     const t = Date.parse(w.resume_not_before);
     if (Number.isFinite(t) && nowMs >= t) due.push(runId);
   }
@@ -222,6 +312,13 @@ export async function recheckCapacity({
 
 /**
  * Durable automatic resume for all due capacity waits.
+ *
+ * A `reason: "resources"` wait asks `admit(state)` first and moves two
+ * minutes on when refused. Admitted, it replays its stored resume action, or
+ * falls through to the quota recheck when it has none (a launch that was
+ * parked before it ever started). At most one resources wait starts per call:
+ * the worker just started has not grown yet, so a second admission in the
+ * same breath would judge a machine that is not there any more.
  */
 export async function resumeDueWaits({
   now = new Date().toISOString(),
@@ -231,13 +328,47 @@ export async function resumeDueWaits({
   profileResult,
   startWorker,
   resolveProfileForRun,
+  admit = null,
+  executeAction = null,
+  reason = null,
 } = {}) {
-  const due = listDueWaits({ now, env });
+  const due = listDueWaits({ now, env, reason });
   const results = [];
+  let resourceStarted = false;
   for (const runId of due) {
     const state = loadState(runId);
     if (!state?.capacity?.auto_resume || state.capacity?.wait_cancelled) {
       continue;
+    }
+    if (state.capacity?.reason === "resources") {
+      if (resourceStarted) {
+        results.push({ runId, ok: true, resumed: false, reason: "one_start_per_pass" });
+        continue;
+      }
+      if (typeof admit === "function") {
+        const decision = await admit(state);
+        if (!decision.ok) {
+          const next = postponeResourceWait(runId, decision, now, env);
+          results.push({ runId, ok: true, resumed: false, reason: `admission: ${decision.reason}`, resume_not_before: next });
+          continue;
+        }
+      }
+      const action = state.capacity.resume_action;
+      if (action) {
+        try {
+          if (typeof executeAction !== "function") throw new Error("no executor for a stored resume action");
+          await executeAction(action, state);
+        } catch (e) {
+          const next = postponeResourceWait(runId, { reason: `start failed: ${e.message || e}` }, now, env);
+          results.push({ runId, ok: false, reason: "start_worker_failed", error: String(e.message || e), resume_not_before: next });
+          continue;
+        }
+        finishResourceWait(runId, state.capacity.resume_status || "watching", now, env);
+        resourceStarted = true;
+        results.push({ runId, ok: true, resumed: true, reason: "resources" });
+        continue;
+      }
+      resourceStarted = true;
     }
     let profile = profileResult;
     if (typeof resolveProfileForRun === "function") {

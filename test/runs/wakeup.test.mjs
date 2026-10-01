@@ -147,3 +147,24 @@ test("deliverParentWakeup spawns in the parent's own cwd, or leaves a pending fi
   assert.deepEqual(pending, { pending: "s-2=later" });
   assert.equal(deliverParentWakeup({ parent: P1, delivery: "alive" }, "x"), null);
 });
+
+test("a deferred run says so, in the outcome and in the message", () => {
+  const tmuxExists = () => false;
+  const spawn = [{ kind: "spawn_worker" }];
+  const st = (status, extra = {}) => ({ runId: "r", status, worker: { tmux: "w" }, ...extra });
+  assert.match(workerOutcome(st("watching"), spawn, { tmuxExists, deferred: "resume budget 3" }), /^deferred: .*\(resume budget 3\)$/);
+  assert.match(
+    workerOutcome(st("waiting_capacity", { capacity: { reason: "resources", admission: { reason: "swap rising" } } }), [], { tmuxExists }),
+    /deferred: .*\(swap rising\)/,
+  );
+  assert.equal(workerOutcome(st("watching"), spawn, { tmuxExists, staggered: true }), "restarting, one worker at a time");
+  assert.match(workerOutcome(st("waiting_human"), spawn, { tmuxExists, staggered: true }), /first in line/);
+  const message = renderParentWakeup({
+    entries: [
+      { state: { runId: "a", role: "x", worker: { tmux: "wa" } }, outcome: "restarting, one worker at a time" },
+      { state: { runId: "b", role: "x", worker: { tmux: "wb" } }, outcome: "deferred: team-up starts it on its own when the machine has room (budget)" },
+    ],
+  });
+  assert.match(message, /1 run is deferred to spare the machine/);
+  assert.equal(message.match(/team-up runs wait/g).length, 2);
+});

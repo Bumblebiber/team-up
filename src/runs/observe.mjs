@@ -852,6 +852,11 @@ export async function runObserver(runId, deps = {}) {
         ? fs.readFileSync(path.join(mailboxDir(runId), "STATUS"), "utf8").trim()
         : "";
       if (["done", "failed", "cancelled", "waiting_human"].includes(status)) break;
+      // Parked until the machine has room: no worker yet, so nothing can stall.
+      if (state.status === "waiting_capacity" || status === "waiting_capacity") {
+        await sleep(pollSec);
+        continue;
+      }
 
       const capture = captureFn(session);
       const mailboxAgeSec = deps.mailboxAgeSec ?? getMailboxAge(runId, { now });

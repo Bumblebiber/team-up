@@ -265,6 +265,7 @@ export function buildLaunchDescriptor({
   specialist = null,
   filesystemMode = null,
   writableProject = false,
+  memoryLimits = null,
 }) {
   return {
     schema: LAUNCH_SCHEMA,
@@ -288,6 +289,7 @@ export function buildLaunchDescriptor({
     specialist,
     filesystem_mode: filesystemMode,
     writable_project: Boolean(writableProject),
+    ...(memoryLimits ? { memory_limits: { high_kb: memoryLimits.high_kb, max_kb: memoryLimits.max_kb } } : {}),
   };
 }
 
@@ -675,10 +677,12 @@ export function prepareArgvFromDescriptor(
     sandboxRuntimePaths: descriptor.sandbox_runtime_paths,
     enforcement: "best_effort",
     unit: runId ? sandboxUnitName(runId) : null,
+    memoryLimits: descriptor.memory_limits ?? null,
   });
 
   return {
     argv: wrapped.argv,
+    memory_max_applied: wrapped.memory_max_applied,
     env: adapterEnv,
     sandbox: wrapped.sandbox,
     unit: wrapped.unit ?? null,
@@ -887,6 +891,7 @@ export function startFromLaunchDescriptor({
       warning: prepared.warning,
       enforcement: "best_effort",
       unit: prepared.unit,
+      ...(prepared.memory_max_applied === undefined ? {} : { memory_max_applied: prepared.memory_max_applied }),
     };
     live.last_start_error = null;
     saveState(live);

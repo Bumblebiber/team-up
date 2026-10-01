@@ -307,10 +307,11 @@ ships for this".
 - **Pending messages** are delivered only to Claude Code (the only hook that
   can add context); `additionalContext` reaches the model with the human's
   next prompt.
-- **Boot guard.** Until plan 3 staggers resumes, `runs resume --boot` (what
-  the unit runs) does nothing when the restart report says
-  `team_up_suspected`, so a restart caused by load does not rebuild it.
-- **Unit details.** `RemainAfterExit=yes` keeps the tmux server the unit may
+- **Boot guard.** Until plan 3 staggered resumes, `runs resume --boot` (what
+  the unit runs) did nothing when the restart report said
+  `team_up_suspected`. Plan 3 replaced the guard with its budget and queue.
+- **Unit details.** (Plan 3 made it `Type=simple` with
+  `TimeoutStartSec=infinity`.) `RemainAfterExit=yes` keeps the tmux server the unit may
   start alive (a finished oneshot's cgroup is killed otherwise); the
   installer's `PATH` (and `TEAM_UP_HOME`) are written into the unit; the unit
   is enabled, not started.

@@ -478,3 +478,23 @@ test("a volatile journal is a medium finding once telemetry runs", () => {
   });
   assert.equal(persistent.findings.some((f) => f.kind === "journal_not_persistent"), false);
 });
+
+test("memory ceilings: doctor reports a missing delegation and unconstrained workers, only when enabled", () => {
+  const on = { "roster.json": { admission: { memory_ceiling: { enabled: true } } } };
+  const states = () => [
+    { runId: "r1", sandbox: { memory_max_applied: false } },
+    { runId: "r2", sandbox: { memory_max_applied: true } },
+  ];
+  const off = withHome({}, (env) => diagnose(env, { delegation: () => ({ delegated: false, path: "/x" }), activeStates: states }));
+  assert.equal(off.findings.some((f) => /memory_ceiling|memory_ceiling_unavailable|workers_without/.test(f.kind)), false);
+  assert.equal(off.checked.memory_ceiling_possible, false);
+
+  const missing = withHome(on, (env) => diagnose(env, { delegation: () => ({ delegated: false, path: "/x" }), activeStates: states }));
+  const kinds = missing.findings.map((f) => f.kind);
+  assert.ok(kinds.includes("memory_ceiling_unavailable"));
+  const unconstrained = missing.findings.find((f) => f.kind === "workers_without_memory_ceiling");
+  assert.match(unconstrained.detail, /1 active worker\(s\).*r1/);
+
+  const fine = withHome(on, (env) => diagnose(env, { delegation: () => ({ delegated: true, path: "/x" }), activeStates: () => [] }));
+  assert.equal(fine.findings.some((f) => f.kind === "memory_ceiling_unavailable"), false);
+});

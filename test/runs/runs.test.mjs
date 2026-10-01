@@ -334,7 +334,7 @@ test("listActiveStates skips corrupt STATE.json", withTempRuns(async (dir) => {
   assert.ok(active.some((r) => r.runId === s.runId));
   assert.ok(skipped.includes("corrupt-run"));
   // resumeAll must not throw
-  const report = resumeAll({ dryRun: true, tmuxExists: () => true, logDir: dir });
+  const report = await resumeAll({ dryRun: true, tmuxExists: () => true, logDir: dir });
   assert.ok(report.runs.some((r) => r.runId === s.runId));
 }));
 
@@ -346,7 +346,7 @@ test("resumeAll dry-run lists actions without tmux", withTempRuns(async (dir) =>
     prompt: "x",
   });
   setStatus(s.runId, "watching");
-  const report = resumeAll({ dryRun: true, tmuxExists: () => false, logDir: dir });
+  const report = await resumeAll({ dryRun: true, tmuxExists: () => false, logDir: dir });
   assert.ok(report.runs.some((r) => r.runId === s.runId));
   assert.ok(report.runs[0].actions.some((a) => a.kind === "spawn_worker"));
   assert.equal(report.logFile, null);
@@ -355,7 +355,7 @@ test("resumeAll dry-run lists actions without tmux", withTempRuns(async (dir) =>
 test("resumeAll lock prevents concurrent run", withTempRuns(async (dir) => {
   const lock = path.join(dir, ".resume.lock");
   fs.writeFileSync(lock, String(process.pid));
-  assert.throws(
+  await assert.rejects(
     () => resumeAll({ dryRun: false, tmuxExists: () => true, logDir: dir, execute: () => {} }),
     /lock/,
   );
@@ -364,7 +364,7 @@ test("resumeAll lock prevents concurrent run", withTempRuns(async (dir) => {
 test("resumeAll steals stale lock from dead pid", withTempRuns(async (dir) => {
   const lock = resumeLockPath();
   fs.writeFileSync(lock, "2147483646\n"); // almost certainly dead
-  const report = resumeAll({
+  const report = await resumeAll({
     dryRun: false,
     tmuxExists: () => true,
     logDir: dir,

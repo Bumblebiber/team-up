@@ -31,6 +31,11 @@ Six stages, and the first two never leave your session:
 3. **Tickets.** Cut the spec into pieces that can be done independently.
    What each piece must carry is an invariant below.
 4. **Dispatch.** One writer per ticket, in parallel, each in its own clone.
+   Dispatch them one after another, not in one burst: every start passes an
+   admission check, so expect `ADMISSION_REFUSED` (exit 3) or
+   `waiting_capacity` for the tail of a large fan-out. Those tickets wait;
+   dispatch them when a writer finishes, never with `--force-admission` on
+   your own.
 5. **Merge.** Yours. You have the real tree and you are the only one who can
    ask the human about a conflict. Record what each writer's work was worth as
    you go: `team-up runs outcome <run-id> merged|discarded`. A run's status says

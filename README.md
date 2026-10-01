@@ -9,7 +9,7 @@ worker launch. o9k keeps a thin compatibility adapter only.
 ## Quick start
 
 ```bash
-node bin/team-up.mjs version   # 0.5.0
+node bin/team-up.mjs version   # 0.6.0
 node bin/team-up.mjs validate
 node bin/team-up.mjs pick --role <role>
 node bin/team-up.mjs pick --profile frontier:max
@@ -94,9 +94,30 @@ read from their session env vars. After a restart, `runs resume` restarts the
 workers, then wakes each parent **once**: a parent whose tmux is gone is
 resumed there with a message naming its runs and the `runs wait` command for
 each watcher; a Claude parent outside tmux gets the message at its next
-session start. A live parent is not disturbed. At boot, resume is skipped when
-the restart report blames team-up. Per-CLI details:
+session start. A live parent is not disturbed. Per-CLI details:
 [harness-session-identity.md](docs/harness-session-identity.md).
+
+## Staggered resume and admission
+
+```bash
+node bin/team-up.mjs admission check --cli codex   # would one more worker fit now?
+node bin/team-up.mjs admission queue               # where a boot resume is
+node bin/team-up.mjs admission reset               # lift the cap a restart left
+```
+
+`runs resume` no longer starts everything at once. Parents come first, then
+runs waiting on a human, then the oldest runs; each next start waits for the
+previous worker's `HEARTBEAT` (at most 120 s) and a fresh admission check
+(free memory after the worker's p95 and a reserve, memory pressure, swap
+trend, worker limit). After a `team_up_suspected` restart only half of the
+workers that ran before come back; the rest wait in `waiting_capacity`
+(`reason: "resources"`), the parent's message says which, and the GC timer
+starts them one per pass once there is room. `team-up dispatch` and
+`specialist run` go through the same check and fail with `ADMISSION_REFUSED`
+(exit 3); `--force-admission` overrides it, `specialist run --wait-capacity`
+parks the run instead. Re-run `runs gc-install` and `runs resume-install`
+once after updating so the units pick up the new settings. Keys:
+[configuration.md](docs/configuration.md#admission).
 
 ## Docs
 

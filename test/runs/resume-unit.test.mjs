@@ -5,14 +5,15 @@ import os from "node:os";
 import path from "node:path";
 import { RESUME_UNIT, installResumeUnit, renderResumeUnit } from "../../src/runs/resume-unit.mjs";
 
-test("the resume unit runs resume --boot once, keeps its tmux alive, and carries PATH", () => {
+test("the resume unit runs resume --boot detached, keeps its tmux alive, and carries PATH", () => {
   const unit = renderResumeUnit({
     nodePath: "/opt/node 22/bin/node",
     cliPath: "/srv/team-up/bin/team-up.mjs",
     envPath: "/home/u/.local/bin:/usr/bin:/bin",
     teamUpHome: "/home/u/.tu%home",
   });
-  assert.match(unit, /^Type=oneshot$/m);
+  assert.match(unit, /^Type=simple$/m);
+  assert.match(unit, /^TimeoutStartSec=infinity$/m);
   assert.match(unit, /^RemainAfterExit=yes$/m);
   assert.match(unit, /^ExecStartPre=\/bin\/sleep 20$/m);
   assert.match(unit, /^ExecStart="\/opt\/node 22\/bin\/node" "\/srv\/team-up\/bin\/team-up\.mjs" runs resume --boot$/m);
