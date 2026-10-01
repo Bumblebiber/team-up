@@ -152,9 +152,40 @@ export function upgradeChains(roster, store, now = Date.now()) {
   return { next, changes };
 }
 
-/** Add newly shipped versions, then move every chain onto them. */
+/**
+ * Drop the roster models a CLI no longer offers, once no chain names them.
+ * A gone model a chain still names stays: it has no successor (or is pinned),
+ * and the dashboard flags it red until a human deletes or replaces it. A model
+ * on a switched-off account stays too — the scan can't see it while it's off.
+ * A model on several CLIs only loses the CLI that dropped it.
+ * @returns {{ next: object, removed: Array<{ id, cli }> }}
+ */
+export function pruneGone(roster, store, now = Date.now()) {
+  const next = structuredClone(roster);
+  const removed = [];
+  const named = new Set();
+  for (const spec of Object.values(next.roles || {})) {
+    for (const raw of Array.isArray(spec?.chain) ? spec.chain : []) {
+      try {
+        named.add(parseChainEntry(raw).model);
+      } catch {}
+    }
+  }
+  for (const [id, spec] of Object.entries(next.models || {})) {
+    if (named.has(id) || !Array.isArray(spec?.cli) || accountBlockReason(next, spec.account)) continue;
+    const dropped = spec.cli.filter((cli) => offeredIds(store, cli, now)?.has(cliModelFor(next, id, cli)) === false);
+    if (!dropped.length) continue;
+    for (const cli of dropped) removed.push({ id, cli });
+    spec.cli = spec.cli.filter((cli) => !dropped.includes(cli));
+    if (!spec.cli.length) delete next.models[id];
+  }
+  return { next, removed };
+}
+
+/** Add newly shipped versions, move every chain onto them, drop what's gone. */
 export function bringToLatest(roster, store, now = Date.now()) {
   const { next: withNew, added } = addOfferedVersions(roster, store, now);
-  const { next, changes } = upgradeChains(withNew, store, now);
-  return { next, added, changes };
+  const { next: moved, changes } = upgradeChains(withNew, store, now);
+  const { next, removed } = pruneGone(moved, store, now);
+  return { next, added, changes, removed };
 }

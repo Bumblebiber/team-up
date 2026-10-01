@@ -176,10 +176,11 @@ async function cmdModels(args, io) {
   if (sub === "latest") {
     // Moves chain entries to the newest version the last fresh scan lists.
     // Dry run unless --apply; pinned entries (`"pinned": true`) never move.
-    const { next, added, changes } = bringToLatest(requireRoster(), loadModelsStore());
+    const { next, added, changes, removed } = bringToLatest(requireRoster(), loadModelsStore());
     for (const a of added) io.out(`new model ${a.id} on ${a.cli} (copied from ${a.from})`);
     for (const c of changes) io.out(`${c.role}: ${c.cli}:${c.from} → ${c.to} (${c.reason})`);
-    if (!changes.length && !added.length) io.out("every chain is on the newest offered version");
+    for (const r of removed) io.out(`removed ${r.id} from ${r.cli} (gone, no chain names it)`);
+    if (!changes.length && !added.length && !removed.length) io.out("every chain is on the newest offered version");
     else if (rest.includes("--apply")) io.out(`applied · backup ${saveRoster(next).backup}`);
     else io.out("dry run — add --apply to write roster.json");
     return 0;

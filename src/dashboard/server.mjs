@@ -1093,17 +1093,18 @@ export function createDashboardServer({
         let next;
         let changes;
         let added;
+        let removed;
         if (roleMatch) next = applyRoleEdit(roster, { ...body, role: target });
         else if (isSettings) next = applySettingsEdit(roster, body);
-        else ({ next, changes, added } = bringToLatest(roster, loadModelsStore(env)));
-        const written = changes?.length === 0 && added?.length === 0 ? null : saveRoster(next, { env });
+        else ({ next, changes, added, removed } = bringToLatest(roster, loadModelsStore(env)));
+        const written = changes?.length === 0 && added?.length === 0 && removed?.length === 0 ? null : saveRoster(next, { env });
         appendAudit({ actor: "127.0.0.1", action, target: isSettings ? body.path : target, result: "ok" }, { env });
         memo.invalidate("pick");
         memo.invalidate("roles");
         jsonResponse(res, 200, {
           ok: true,
           backup: written ? path.basename(written.backup) : null,
-          ...(changes ? { changes, added } : {}),
+          ...(changes ? { changes, added, removed } : {}),
         });
       } catch (e) {
         appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });

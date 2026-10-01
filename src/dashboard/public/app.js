@@ -382,7 +382,9 @@ const CELL_STATE = {
 
 function chainChip(c, i) {
   if (c.invalid) return `<span class="chip missing" title="${esc(c.invalid)}">invalid</span>`;
-  const [cls, why] = CELL_STATE[c.state] || ["", ""];
+  const [cls, why] = c.state === "gone" && !c.newest
+    ? ["red", "gone — the CLI no longer offers it and no newer version of this model exists. Delete it from the chain or pick another model"]
+    : CELL_STATE[c.state] || ["", ""];
   const notes = [why, c.newest ? `newer: ${c.newest}` : "", c.pinned ? "version pinned" : "",
     c.effort ? `effort ${c.effort}` : ""].filter(Boolean).join(" · ");
   return `<span class="chip chain-chip ${cls}"${providerAttr(c.cli, c.model)} title="${esc(`${c.cli}:${c.model}${notes ? ` — ${notes}` : ""}`)}">${
@@ -467,7 +469,7 @@ $("#roles-upgrade").addEventListener("click", async () => {
   const status = $("#roles-status");
   try {
     const res = await api("/api/roles-upgrade", { method: "POST", body: JSON.stringify({}) });
-    const done = [...res.added.map((a) => `added ${a.id}`), ...res.changes.map((c) => `${c.role}: ${c.from} → ${c.to}`)];
+    const done = [...res.added.map((a) => `added ${a.id}`), ...(res.removed || []).map((r) => `removed ${r.id}`), ...res.changes.map((c) => `${c.role}: ${c.from} → ${c.to}`)];
     status.textContent = done.length ? `${done.join(", ")} · backup ${res.backup}` : "already on the newest versions";
     refreshTiers().catch(() => {});
     await refreshRoles();

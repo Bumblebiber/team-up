@@ -60,3 +60,17 @@ test("a newly shipped version joins the roster as a copy of its sibling, then th
   assert.deepEqual(next.models["gpt-8-sol"], { cli: ["codex"], account: "codex", tier: "frontier" });
   assert.ok(changes.some((c) => c.from === "gpt-5.6-sol" && c.to === "gpt-8-sol"));
 });
+
+test("a gone model leaves roster.models once no chain names it; one with no successor stays", () => {
+  const r = structuredClone(roster);
+  r.models["gpt-5-luna"] = { cli: ["codex", "cursor"], account: "codex" };
+  r.models["gpt-4-off"] = { cli: ["codex"], account: "off" };
+  r.accounts.off = { kind: "subscription", enabled: false };
+  const { next, removed } = bringToLatest(r, store(["gpt-6-sol"]));
+  assert.deepEqual(removed.map((x) => x.id).sort(), ["gpt-5-luna", "gpt-7-sol"]);
+  assert.equal(next.models["gpt-7-sol"], undefined);
+  assert.deepEqual(next.models["gpt-5-luna"].cli, ["cursor"], "cursor has no scan, so it keeps the model");
+  assert.ok(next.models["gpt-5.6-terra"], "planner still names it — no successor, the dashboard flags it");
+  assert.ok(next.models["gpt-5.6-sol"], "the pinned chain still names it");
+  assert.ok(next.models["gpt-4-off"], "switched-off account");
+});
