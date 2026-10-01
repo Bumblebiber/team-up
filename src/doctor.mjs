@@ -256,7 +256,9 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
         detail:
           `${cli} ${status.installed_version} has no verification record ` +
           `(${status.last_verified_version} passed on ${status.last_checked_at}); ` +
-          "every capability it granted is revoked until it is re-verified",
+          (status.fallback_version
+            ? `launches run the pinned ${status.fallback_version} until it is re-verified`
+            : "every capability it granted is revoked until it is re-verified"),
         fix: cannotVerify
           ? unverifiableFix(cli, null)
           : "team-up harness reverify",
@@ -303,7 +305,8 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
       ...(brokerReason ? { command_broker_reason: brokerReason } : {}),
       detail:
         `${cli} ${status.installed_version} harness verification ${record.status}` +
-        (reasonBits.length ? ` — ${reasonBits.join("; ")}` : ""),
+        (reasonBits.length ? ` — ${reasonBits.join("; ")}` : "") +
+        (status.fallback_version ? ` — launches run the pinned ${status.fallback_version} meanwhile` : ""),
       fix: cannotVerify
         ? unverifiableFix(cli, isoReason)
         : `team-up harness verify ${cli} --fixture-project <path>`,

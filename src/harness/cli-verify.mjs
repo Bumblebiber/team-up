@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { getAdapter } from "./registry.mjs";
 import { verifyHarness } from "./verify.mjs";
+import { pinVerifiedBinary } from "./binary.mjs";
 import { snapshotCommandPolicy } from "../commands/policy.mjs";
 import { packageRoot } from "../paths.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
@@ -632,6 +633,16 @@ export async function runHarnessVerify(args, io = { out: console.log, err: conso
         ? ` (${record.command_broker_reason.detail})`
         : "";
       io.out(`command_broker_reason: ${record.command_broker_reason.code}${detail}`);
+    }
+    // Keep the build that just passed runnable for when its successor does not.
+    // Only a live run measured a real binary; injected runners measured nothing.
+    if (record.status === "verified" && !runners[cli]) {
+      try {
+        const pinned = pinVerifiedBinary(cli, record.cli_version, { env });
+        if (pinned) io.out(`pinned: ${pinned}`);
+      } catch (e) {
+        io.err(`pin failed (fallback unavailable for ${record.cli_version}): ${e.message || e}`);
+      }
     }
     return record.status === "verified" ? 0 : 2;
   } catch (e) {

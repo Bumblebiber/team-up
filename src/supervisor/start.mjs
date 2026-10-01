@@ -6,6 +6,7 @@ import { loadState, saveState, setStatus } from "../runs/runs.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { prepareHarnessLaunch, getAdapter } from "../harness/registry.mjs";
+import { pinnedVerifiedBinary } from "../harness/binary.mjs";
 import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
 import { builtinsForPermissions } from "../specialists/permissions.mjs";
 import { launchDescriptorDir } from "../paths.mjs";
@@ -572,6 +573,17 @@ export function prepareArgvFromDescriptor(
         err.code = "HARNESS_VERIFICATION_VERSION";
         err.cause = e;
         throw err;
+      }
+      // The launcher granted on a pinned older build (installed one not yet
+      // verified): run exactly that build, never the installed one.
+      if (liveVersion !== verification.cli_version && path.basename(argv[0]) === cli) {
+        const pinned = pinnedVerifiedBinary(cli, verification.cli_version, {
+          execFileSync: execFileSyncFn,
+        });
+        if (pinned) {
+          argv = [pinned.path, ...argv.slice(1)];
+          liveVersion = pinned.version;
+        }
       }
       if (liveVersion !== verification.cli_version) {
         const err = new Error(

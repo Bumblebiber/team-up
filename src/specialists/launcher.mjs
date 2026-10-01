@@ -34,6 +34,7 @@ import {
   defaultHarnessCapabilities,
   prepareHarnessLaunch,
   getAdapter,
+  effectiveHarnessBinary,
 } from "../harness/registry.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../harness/capabilities.mjs";
 import { reverifyDrifted } from "../harness/reverify.mjs";
@@ -337,6 +338,14 @@ export async function launch({
     ? { chain: [{ model: cell.model, cli: cell.cli }] }
     : profileResult.profile;
   const harnessCaps = harnessCapabilitiesFn(cell.cli);
+  // Which build those grants were proven on — a pinned older one while the
+  // installed build is not verified. The launch must run that same build.
+  let effectiveBin = null;
+  try {
+    effectiveBin = effectiveHarnessBinary(cell.cli, { env, execFileSync });
+  } catch {
+    // Not installed: the launch fails where it always did.
+  }
   const cliCfg = cliSandboxConfig(roster, cell.cli, { harnessCapabilities: harnessCaps });
 
   const budgetNorm = normalizeBudget(manifest.budget ?? {});
@@ -502,6 +511,9 @@ export async function launch({
     effort: cell.effort,
     dir: dest,
   });
+  if (effectiveBin?.fallback_from && path.basename(cliArgvRaw[0]) === cell.cli) {
+    cliArgvRaw[0] = effectiveBin.bin;
+  }
 
   const runPath = runDir(state.runId);
   const broker = policySnapshot
@@ -524,13 +536,7 @@ export async function launch({
     verification: {
       status: "verified",
       adapter: cell.cli,
-      cli_version: (() => {
-        try {
-          return getAdapter(cell.cli).version({ execFileSync });
-        } catch {
-          return null;
-        }
-      })(),
+      cli_version: effectiveBin?.version ?? null,
       command_broker: harnessCaps.command_broker,
       context_isolation: harnessCaps.context_isolation,
     },
@@ -614,13 +620,7 @@ export async function launch({
     harnessVerification: {
       status: "verified",
       adapter: cell.cli,
-      cli_version: (() => {
-        try {
-          return getAdapter(cell.cli).version({ execFileSync });
-        } catch {
-          return null;
-        }
-      })(),
+      cli_version: effectiveBin?.version ?? null,
       command_broker: harnessCaps.command_broker,
       context_isolation: harnessCaps.context_isolation,
     },

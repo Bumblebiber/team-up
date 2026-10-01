@@ -11,6 +11,7 @@ import {
   UNVERIFIED_CAPABILITIES,
 } from "./capabilities.mjs";
 import { loadVerificationRecord, listVerificationRecords } from "./verify.mjs";
+import { verifiedFallbackBinary } from "./binary.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
 
 const ADAPTERS = Object.freeze({
@@ -48,7 +49,7 @@ export function harnessCapabilities(
   let record = verification;
   if (verification === undefined) {
     try {
-      const version = adapter.version({ execFileSync });
+      const { version } = effectiveHarnessBinary(cli, { env, execFileSync });
       record = loadVerificationRecord(adapter.id, version, env);
     } catch {
       record = null;
@@ -96,6 +97,31 @@ export function harnessCapabilities(
 }
 
 /**
+ * The binary a launch of `cli` runs, and the build its grants come from.
+ *
+ * The installed build when its record is verified; otherwise the newest pinned
+ * build that is (see binary.mjs), so a CLI update the canary cannot clear yet
+ * leaves specialists on the previous build instead of unlaunchable.
+ * `fallback_from` names the installed build that was passed over — the doctor
+ * reports it, so the new build still gets fixed. `bin` is the name on PATH
+ * unless it falls back. Throws when the CLI is not installed.
+ */
+export function effectiveHarnessBinary(
+  cli,
+  { env = process.env, execFileSync = realExecFileSync } = {}
+) {
+  const adapter = getAdapter(cli);
+  const installed = adapter.version({ execFileSync });
+  if (loadVerificationRecord(adapter.id, installed, env)?.status === "verified") {
+    return { bin: cli, version: installed };
+  }
+  const fallback = verifiedFallbackBinary(adapter.id, { env, execFileSync });
+  return fallback
+    ? { bin: fallback.path, version: fallback.version, fallback_from: installed }
+    : { bin: cli, version: installed };
+}
+
+/**
  * Why an adapter grants what it grants.
  *
  * `harnessCapabilities` answers "what may this CLI do", and answers it
@@ -139,9 +165,15 @@ export function harnessStatus(
   }
 
   const records = listVerificationRecords(adapter.id, env);
-  const base = { cli, installed_version: installed };
   const own = records.find((r) => r.version === installed);
-  if (own?.status === "verified") return { ...base, status: "verified" };
+  if (own?.status === "verified") return { cli, installed_version: installed, status: "verified" };
+  // Launches run this build meanwhile; the verdict below stays about the installed one.
+  const fallback = verifiedFallbackBinary(adapter.id, { env, execFileSync });
+  const base = {
+    cli,
+    installed_version: installed,
+    ...(fallback ? { fallback_version: fallback.version } : {}),
+  };
   if (own) return { ...base, status: "failed", record_status: own.status };
   if (!records.length) return { ...base, status: "no_record" };
 
