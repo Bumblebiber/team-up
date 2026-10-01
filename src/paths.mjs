@@ -210,3 +210,8 @@ export function secretsPath(env = process.env) {
   }
   return null;
 }
+
+/** Resource samples, one JSONL file per UTC day. */
+export function telemetryDir(env = process.env) {
+  return env.TEAM_UP_TELEMETRY || path.join(teamUpHome(env), "telemetry");
+}

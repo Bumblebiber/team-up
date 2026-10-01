@@ -144,6 +144,7 @@ export function systemdSandboxArgv({
   writableProject = false,
   execPaths = [],
   setenv = {},
+  unit = null,
 }) {
   const ro = new Set(asPropList(readOnlyPaths));
   const rw = new Set(asPropList(writablePaths));
@@ -208,6 +209,9 @@ export function systemdSandboxArgv({
     "--wait",
     "--collect",
     "--pipe",
+    // A named unit is how telemetry finds the worker's cgroup: its processes
+    // are not descendants of the tmux pane, which only holds this client.
+    ...(unit ? [`--unit=${assertUnitName(unit)}`] : []),
     // A transient unit starts with a clean environment: the caller's env (and a
     // tmux session's -e) never reaches it. Anything the worker must see about
     // itself has to ride along here.
@@ -218,6 +222,21 @@ export function systemdSandboxArgv({
     "--",
     ...command,
   ];
+}
+
+const UNIT_NAME = /^[A-Za-z0-9:_.-]{1,240}$/;
+
+function assertUnitName(unit) {
+  if (!UNIT_NAME.test(unit)) throw new Error(`invalid systemd unit name: ${unit}`);
+  return unit;
+}
+
+/**
+ * Unit name for one start of a run. The suffix keeps a restart within the same
+ * boot from colliding with a unit systemd has not collected yet.
+ */
+export function sandboxUnitName(runId, now = Date.now()) {
+  return assertUnitName(`team-up-${runId}-${now.toString(36)}`);
 }
 
 function isUnderHome(p) {
@@ -380,5 +399,6 @@ export function wrapWithSandbox({
     sandbox: "systemd-run-user",
     enforced: true,
     timeout_enforced,
+    unit: rest.unit ? `${rest.unit}.service` : null,
   };
 }

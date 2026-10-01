@@ -4,7 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-function sanitizeExecutablePath(value) {
+export function sanitizeExecutablePath(value) {
   const str = String(value);
   if (/[\0\n\r]/.test(str)) {
     throw new Error("executable path must not contain control characters");
@@ -12,7 +12,7 @@ function sanitizeExecutablePath(value) {
   return str.replaceAll("%", "%%");
 }
 
-function unitQuote(value) {
+export function unitQuote(value) {
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 

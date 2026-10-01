@@ -439,3 +439,23 @@ test("an adapter with no record at all is not reported as drift", () => {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("a recent restart blamed on team-up is a high finding", () => {
+  const report = withHome({}, (env) => {
+    const logs = path.join(env.TEAM_UP_HOME, "logs");
+    fs.mkdirSync(logs);
+    const base = { schema: "team-up.restart-report/v1", created_at: new Date().toISOString(), previous_boot_id: "p" };
+    fs.writeFileSync(path.join(logs, "restart-a.json"), JSON.stringify({
+      ...base, boot_id: "a", verdict: "team_up_suspected", reasons: ["memory exhaustion: 1 OOM kill(s)"],
+    }));
+    fs.writeFileSync(path.join(logs, "restart-b.json"), JSON.stringify({ ...base, boot_id: "b", verdict: "other_cause" }));
+    fs.writeFileSync(path.join(logs, "restart-c.json"), JSON.stringify({
+      ...base, boot_id: "c", verdict: "team_up_suspected", created_at: "2020-01-01T00:00:00Z",
+    }));
+    return diagnose(env);
+  });
+  const found = report.findings.filter((f) => f.kind === "restart_team_up_suspected");
+  assert.equal(found.length, 1);
+  assert.equal(found[0].severity, "high");
+  assert.match(found[0].detail, /OOM kill/);
+});

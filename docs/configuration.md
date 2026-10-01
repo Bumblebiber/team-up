@@ -9,6 +9,7 @@
 | Usage | `TEAM_UP_USAGE` / `O9K_USAGE` | `~/.team-up/usage.json` | `~/.o9k/usage.json` |
 | Runs | `TEAM_UP_RUNS` / `O9K_RUNS` | `~/.team-up/runs` | — |
 | Scores | `TEAM_UP_SCORES` / `O9K_SCORES` | `~/.team-up/scores.json` | `~/.o9k/roster-scores.json` |
+| Telemetry | `TEAM_UP_TELEMETRY` | `~/.team-up/telemetry` | — |
 
 Writes always target `~/.team-up` (or an explicit `TEAM_UP_*` override).
 
@@ -81,3 +82,19 @@ isolation is applied. See `docs/command-broker.md`.
 
 Session handoff work orders live in `~/.team-up/handoffs/` (open) and
 `~/.team-up/handoffs/done/` (closed). They are not written into project repos.
+
+## Telemetry
+
+The `telemetry` block of `roster.json`. Every key is optional; a value of the
+wrong type is an error rather than a silent default.
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `telemetry.retention_days` | `7` | Day files under `~/.team-up/telemetry/` older than this are deleted by the sampler |
+| `telemetry.verdict.mem_available_ratio` | `0.05` | `MemAvailable / MemTotal` below this in the last 10 minutes counts as memory exhaustion |
+| `telemetry.verdict.psi_full_avg10` | `20` | `full avg10` memory pressure above this counts as memory exhaustion |
+| `telemetry.verdict.team_up_share` | `0.5` | team-up's share of used memory at the tightest sample at or above this makes an unclean, memory-exhausted restart `team_up_suspected` |
+
+An OOM kill whose victim was a team-up worker makes the verdict
+`team_up_suspected` regardless of the share. A kill inside a memory ceiling
+(`CONSTRAINT_MEMCG`) is recorded but is not memory exhaustion.

@@ -6,7 +6,7 @@ import { loadState, saveState, setStatus } from "../runs/runs.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { prepareHarnessLaunch, getAdapter } from "../harness/registry.mjs";
-import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
+import { wrapWithSandbox, systemdAvailable, sandboxUnitName } from "../sandbox/systemd.mjs";
 import { builtinsForPermissions } from "../specialists/permissions.mjs";
 import { launchDescriptorDir } from "../paths.mjs";
 import {
@@ -674,12 +674,14 @@ export function prepareArgvFromDescriptor(
     timeoutSeconds: timeoutSec,
     sandboxRuntimePaths: descriptor.sandbox_runtime_paths,
     enforcement: "best_effort",
+    unit: runId ? sandboxUnitName(runId) : null,
   });
 
   return {
     argv: wrapped.argv,
     env: adapterEnv,
     sandbox: wrapped.sandbox,
+    unit: wrapped.unit ?? null,
     enforced: wrapped.enforced === true,
     warning: wrapped.warning ?? null,
     cli,
@@ -884,6 +886,7 @@ export function startFromLaunchDescriptor({
       enforced: prepared.enforced,
       warning: prepared.warning,
       enforcement: "best_effort",
+      unit: prepared.unit,
     };
     live.last_start_error = null;
     saveState(live);

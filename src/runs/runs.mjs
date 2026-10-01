@@ -3,7 +3,9 @@
 // State: ~/.team-up/runs/<runId>/ (TEAM_UP_HOME or TEAM_UP_RUNS override). Zero dependencies.
 
 import fs from "node:fs";
-import { runsPath } from "../paths.mjs";
+import { debugLogDir, runsPath, telemetryDir } from "../paths.mjs";
+import { analyzeRestart, formatRestartReport } from "../telemetry/restart.mjs";
+import { telemetryConfig } from "../telemetry/config.mjs";
 import { findStaleRuns, findOrphanSessions, DEFAULT_THRESHOLD_MS } from "./stale.mjs";
 import { findUncollectedRuns, DEFAULT_UNCOLLECTED_DAYS } from "./collect.mjs";
 import { listTmuxSessions } from "./tmux.mjs";
@@ -1279,8 +1281,29 @@ function cmdWait(args) {
   process.exitCode = waitExit;
 }
 
+/**
+ * Judge the restart before anything comes back up. Never blocks the resume: a
+ * report that cannot be made is a line on stderr, and the runs still resume.
+ */
+function reportRestart({ dryRun }) {
+  try {
+    const restart = analyzeRestart({
+      telemetryDir: telemetryDir(process.env),
+      logDir: debugLogDir(process.env),
+      thresholds: telemetryConfig(process.env).verdict,
+      write: !dryRun,
+    });
+    if (restart) for (const line of formatRestartReport(restart)) console.log(line);
+    return restart;
+  } catch (error) {
+    console.error(`restart report failed: ${error.message || error}`);
+    return null;
+  }
+}
+
 function cmdResume(args) {
   const dryRun = args.includes("--dry-run");
+  reportRestart({ dryRun });
   const report = resumeAll({ dryRun });
   for (const r of report.runs) {
     console.log(`runId: ${r.runId} status: ${r.status}`);

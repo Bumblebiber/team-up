@@ -62,3 +62,23 @@ test("setenv rides into the transient unit, which starts with a clean environmen
   assert.ok(!argv.some((a) => String(a).includes("TEAMUP_EMPTY")));
   assert.ok(argv.indexOf("--setenv=TEAMUP_WORKER=1") < argv.indexOf("--"));
 });
+
+test("a named unit rides along so telemetry can find the worker's cgroup", async () => {
+  const { sandboxUnitName } = await import("../../src/sandbox/systemd.mjs");
+  const unit = sandboxUnitName("20261001T101500Z-ab12", 1_700_000_000_000);
+  assert.equal(unit, `team-up-20261001T101500Z-ab12-${(1_700_000_000_000).toString(36)}`);
+  const wrapped = wrapWithSandbox({
+    command: ["/bin/echo", "hi"],
+    permissions: { writes: false },
+    cwd: "/tmp",
+    probe: () => true,
+    unit,
+  });
+  assert.ok(wrapped.argv.includes(`--unit=${unit}`));
+  assert.ok(wrapped.argv.indexOf(`--unit=${unit}`) < wrapped.argv.indexOf("--"));
+  assert.equal(wrapped.unit, `${unit}.service`);
+
+  const plain = systemdSandboxArgv({ cwd: "/tmp", command: ["echo"] });
+  assert.ok(!plain.some((a) => String(a).startsWith("--unit")));
+  assert.throws(() => systemdSandboxArgv({ cwd: "/tmp", command: ["echo"], unit: "bad name;rm" }), /invalid systemd unit name/);
+});

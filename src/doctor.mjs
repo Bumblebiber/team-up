@@ -18,7 +18,8 @@ import { LIST_TIMEOUT_MS } from "./collectors/cli-models.mjs";
 import { listVerificationRecords, loadVerificationRecord } from "./harness/verify.mjs";
 import { HARNESS_VERIFY_CLIS, UNVERIFIABLE_ISOLATION_REASONS } from "./harness/cli-verify.mjs";
 import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
-import { handoffsDir } from "./paths.mjs";
+import { debugLogDir, handoffsDir } from "./paths.mjs";
+import { listRestartReports } from "./telemetry/restart.mjs";
 
 function readJson(file) {
   try {
@@ -366,6 +367,21 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
         `open handoff ${path.basename(stale.path)} is ${stale.ageHours}h old ` +
         `(store: ${handoffsDir(env)}) — successor may never have run, or forgot team-up handoff --close`,
       fix: `team-up handoff --close ${stale.path}`,
+    });
+  }
+
+  // Resuming everything at once after a restart team-up probably caused
+  // rebuilds the same load; the human should hear it here, not in a log file.
+  for (const report of listRestartReports({ logDir: debugLogDir(env) })) {
+    if (report.verdict !== "team_up_suspected") continue;
+    findings.push({
+      kind: "restart_team_up_suspected",
+      severity: "high",
+      path: report.path,
+      detail:
+        `restart at ${report.created_at} looks caused by team-up: ` +
+        `${(report.reasons ?? []).join("; ")}`,
+      fix: "run fewer workers at once; team-up telemetry stats shows their footprint",
     });
   }
 

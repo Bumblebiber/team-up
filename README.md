@@ -59,6 +59,24 @@ generic matrix — partial MCP/skill proof must not grant v1. Closed-world
 content manifests require Linux `/proc` fd-based directory walks; other
 platforms fail closed rather than using a weaker path-based fallback.
 
+## Resource telemetry and restart reports
+
+```bash
+node bin/team-up.mjs telemetry install-timer   # sample every 30 s (systemd user timer)
+loginctl enable-linger $USER                   # keep user timers running after logout
+node bin/team-up.mjs telemetry stats           # p50/p95 RSS per worker, per cli and role
+node bin/team-up.mjs telemetry restart-report  # was the last restart team-up's doing?
+```
+
+Each sample (`~/.team-up/telemetry/YYYY-MM-DD.jsonl`, fsynced, 7 days) holds
+memory, pressure (PSI), load and every live worker's RSS. After a reboot,
+`team-up runs resume` first writes `~/.team-up/logs/restart-<boot_id>.json`
+with a verdict — `team_up_suspected`, `other_cause`, `clean_shutdown` or
+`unknown` — plus the evidence and what could not be checked. The kernel log
+needs membership in `systemd-journal` (or `adm`); without it the verdict leans
+on the samples and says so. A `team_up_suspected` report from the last 7 days
+is a high `doctor` finding.
+
 ## Docs
 
 - [configuration.md](docs/configuration.md)

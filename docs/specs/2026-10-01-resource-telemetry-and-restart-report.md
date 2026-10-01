@@ -2,11 +2,43 @@
 
 ## Status
 
-Plan 1 of 3, agreed in conversation 2026-10-01, not implemented. Plans 2
+Plan 1 of 3, agreed in conversation 2026-10-01, implemented 2026-10-01 (`src/telemetry/`). Plans 2
 (`2026-10-01-parent-session-recovery.md`) and 3
 (`2026-10-01-staggered-resume-and-admission.md`) build on the data this one
 records. Ship this first: without measurements there is nothing to base a
 restart verdict or a concurrency limit on.
+
+Where the implementation departs from the design below:
+
+- CPU is `cpu_ms` (ticks at USER_HZ 100, or the cgroup's `usage_usec`), so
+  tmux and cgroup workers share one unit. Each worker row also carries
+  `comms`, the process names, for matching OOM victims.
+- PSI records `avg60` beside `avg10`: a 30 s sampler can miss a 10 s spike.
+- A sandboxed worker's unit is `team-up-<runId>-<base36 start time>`, so a
+  restart within one boot cannot collide with a unit systemd has not
+  collected yet. `state.sandbox.unit` holds it with the `.service` suffix.
+  Its `rss_kb` is the RSS sum of `cgroup.procs`, comparable with tmux
+  workers; `memory.current` (which includes page cache) is kept as
+  `cgroup_kb`.
+- The journal is asked for the previous boot by the `boot_id` the telemetry
+  recorded (`-b <id>`), not `-b -1`, so the evidence and the samples describe
+  the same boot.
+- The share that decides the verdict is team-up's at the sample with the
+  least `MemAvailable` in the window, not at the last sample: workers the OOM
+  killer already took are missing from the last one. An OOM victim matched
+  to a worker (by pid, or by unit name in its cgroup) makes the verdict
+  `team_up_suspected` on its own. A kill inside a memory ceiling
+  (`CONSTRAINT_MEMCG`) is recorded as `contained` and is not exhaustion.
+- With only the user journal readable, an orderly stop of the user manager
+  counts as a clean shutdown, and the report says that a logout reads the
+  same.
+- No telemetry from an earlier boot returns no report (`null`), not
+  `unknown`: on a fresh install there is nothing to judge, and plan 3 must
+  not cap a resume on it.
+- Retention runs on every sample; it is one `readdir`.
+- `workerFootprint` also returns `baseline_used_kb`, the median used memory
+  with no worker running, which plan 3's limit needs.
+- `parents[]` waits for plan 2.
 
 ## Problem
 
