@@ -50,6 +50,7 @@ $("#login-form").addEventListener("submit", async (e) => {
       return;
     }
     $("#token-input").value = "";
+    await pullPrefs().catch(() => {});
     showApp();
     startPolling();
   } catch {
@@ -1037,6 +1038,52 @@ $("#specialist-install").addEventListener("click", async () => {
   }
 });
 
+// ── Synced preferences ────────────────────────────────────────────────────
+// Every `teamup.*` key also lives on the server, so the layout set on one
+// device shows on all of them. localStorage stays the working copy — the page
+// reads it synchronously while it builds — and the server copy replaces it
+// once the login is known. The last device to change something wins.
+const PREF_PREFIX = "teamup.";
+
+function localPrefs() {
+  const out = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key.startsWith(PREF_PREFIX)) out[key] = localStorage.getItem(key);
+    }
+  } catch {
+    // storage blocked: nothing local to sync
+  }
+  return out;
+}
+
+const sameKeys = (a, b) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
+
+function pushPrefs() {
+  // keepalive: "Reset layout" reloads right after, and the push must survive it.
+  api("/api/prefs", { method: "POST", body: JSON.stringify(localPrefs()), keepalive: true }).catch(() => {});
+}
+
+/** Adopt the server's prefs; reloads once when they differ from this browser's. */
+async function pullPrefs() {
+  const remote = await api("/api/prefs");
+  const local = localPrefs();
+  if (!Object.keys(remote).length) {
+    // First device after the switch to server prefs: seed it from here.
+    if (Object.keys(local).length) pushPrefs();
+    return;
+  }
+  if (sameKeys(remote, local)) return;
+  try {
+    for (const key of Object.keys(local)) if (!(key in remote)) localStorage.removeItem(key);
+    for (const [key, value] of Object.entries(remote)) localStorage.setItem(key, value);
+  } catch {
+    return; // storage blocked: keep what is on screen
+  }
+  location.reload();
+}
+
 // ── Panel layout ──────────────────────────────────────────────────────────
 // Panels live in columns the script builds, not in the markup: the number of
 // columns is the user's choice. Each column is its own flex container, so it
@@ -1074,6 +1121,7 @@ function saveLayout() {
     [...column.querySelectorAll(".panel")].map((p) => p.id));
   try {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify({ order, size }));
+    pushPrefs();
   } catch {
     // Private mode or a full quota: the layout just stops surviving reloads.
   }
@@ -1235,6 +1283,7 @@ function enableLayoutEditing() {
   $("#reset-layout-btn").addEventListener("click", () => {
     try {
       localStorage.removeItem(LAYOUT_KEY);
+      pushPrefs();
     } catch {
       // Nothing stored means nothing to clear.
     }
@@ -1459,6 +1508,7 @@ try {
 $("#projects-auto").addEventListener("change", () => {
   try {
     localStorage.setItem(PROJECTS_AUTO_KEY, $("#projects-auto").checked ? "1" : "0");
+    pushPrefs();
   } catch {
     // Private mode: the toggle stops surviving reloads.
   }
@@ -1515,6 +1565,7 @@ $("#policy-editor-form").addEventListener("submit", async (e) => {
 $("#projects-dir").addEventListener("change", () => {
   try {
     localStorage.setItem(PROJECTS_DIR_KEY, $("#projects-dir").value.trim());
+    pushPrefs();
   } catch {
     // Private mode: the folder just stops surviving reloads.
   }
@@ -1542,6 +1593,7 @@ function readStored(key, fallback) {
 function writeStored(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    pushPrefs();
   } catch {
     // Private mode: the choice just stops surviving reloads.
   }
@@ -1938,6 +1990,7 @@ function startPolling() {
 async function probe() {
   try {
     await api("/api/runs?active=1");
+    await pullPrefs();
     showApp();
     startPolling();
   } catch {

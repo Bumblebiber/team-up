@@ -26,6 +26,7 @@ import { buildTierMatrixView, applyModelEdit, saveRoster } from "./tiers.mjs";
 import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView, modelLabel } from "./roles.mjs";
 import { bringToLatest } from "../roster/latest.mjs";
 import { loadModelsStore } from "../collectors/models-store.mjs";
+import { atomicWriteText } from "../json-store.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
 import { pinSpecialist } from "../specialists/store.mjs";
 import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
@@ -68,6 +69,7 @@ import {
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 const COOKIE_NAME = "team_up_dashboard";
 const MAX_BODY = 4096;
+const PREFS_MAX_BODY = 64 * 1024;
 /** 90 days. Revoke early with `team-up dashboard --rotate-token`. */
 const COOKIE_MAX_AGE_SEC = 90 * 24 * 60 * 60;
 
@@ -185,13 +187,13 @@ function textResponse(res, status, body, headers = {}) {
   res.end(body);
 }
 
-function readBody(req) {
+function readBody(req, max = MAX_BODY) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
     req.on("data", (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY) {
+      if (size > max) {
         reject(new Error("body too large"));
         req.destroy();
         return;
@@ -1018,6 +1020,30 @@ export function createDashboardServer({
         );
         jsonResponse(res, 400, { error: String(e.message || e) });
       }
+      return;
+    }
+
+    // Layout, columns, widget colours: the browser's `teamup.*` localStorage
+    // keys, mirrored here so every device shows the same dashboard. Strings
+    // only, prefix-checked, replaced wholesale — it is a preference file, not
+    // a roster, so no backup and no write gate beyond login + CSRF.
+    if (pathname === "/api/prefs") {
+      const file = path.join(teamUpHome(env), "dashboard-prefs.json");
+      if (req.method === "POST") {
+        if (!checkCsrf(req, res)) return;
+        try {
+          const prefs = JSON.parse(await readBody(req, PREFS_MAX_BODY) || "{}");
+          const valid = prefs && typeof prefs === "object" && !Array.isArray(prefs)
+            && Object.entries(prefs).every(([k, v]) => k.startsWith("teamup.") && typeof v === "string");
+          if (!valid) throw new Error("prefs must map teamup.* keys to strings");
+          atomicWriteText(file, `${JSON.stringify(prefs, null, 2)}\n`);
+          jsonResponse(res, 200, { ok: true });
+        } catch (e) {
+          jsonResponse(res, 400, { error: String(e.message || e) });
+        }
+        return;
+      }
+      jsonResponse(res, 200, loadJson(file) || {});
       return;
     }
 

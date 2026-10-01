@@ -667,3 +667,17 @@ test("creating a command policy and approving go through the audited write path"
       fs.rmSync(root, { recursive: true, force: true });
     }
   }));
+
+test("prefs round-trip through the server so every device shares one layout", () =>
+  withHome(async ({ token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    assert.deepEqual((await req(port, "/api/prefs", { token })).json, {});
+    const prefs = { "teamup.layout": '{"order":[["a"],["b"],["c"],["d"]]}' };
+    assert.equal((await req(port, "/api/prefs", { method: "POST", token, body: prefs })).status, 403, "csrf");
+    assert.equal((await req(port, "/api/prefs", { method: "POST", token, csrf: true, body: prefs })).status, 200);
+    assert.deepEqual((await req(port, "/api/prefs", { token })).json, prefs);
+    const bad = await req(port, "/api/prefs", { method: "POST", token, csrf: true, body: { other: "x" } });
+    assert.equal(bad.status, 400);
+    server.close();
+  }));
