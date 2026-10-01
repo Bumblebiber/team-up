@@ -333,6 +333,10 @@ tr.greyed td { opacity: 0.55; }
   resize: vertical;
   overflow: auto;
 }
+/* Once the user has sized a panel, the panel is the one scroll box: the inner
+   tables drop their own height cap so a shrunk panel shows one scrollbar, not
+   two. An unsized panel keeps the caps, which stop it growing without end. */
+.panel[style*="height"] :is(.table-wrap, .detail) { max-height: none; }
 .panel > h2 {
   cursor: grab;
   user-select: none;
