@@ -400,8 +400,10 @@ async function refreshRoles() {
     upgrades.length ? `${upgrades.length} chain entr${upgrades.length === 1 ? "y" : "ies"}` : "",
   ].filter(Boolean).join(" · ")})`;
   const rows = rolesData.roles.map((r) => `
-    <tr${providerAttr(r.pick?.cli, r.pick?.model)}>
-      <td><strong>${esc(r.role)}</strong>${r.in_triage ? ' <span class="muted" title="routed by triage">⇄</span>' : ""}</td>
+    <tr>
+      <td><strong>${esc(r.role)}</strong> <button type="button" class="role-triage${r.in_triage ? "" : " off"}" data-role="${esc(r.role)}" title="${r.in_triage
+        ? "Triage routes this role (OpenRouter proposes a model per prompt). Click to stop."
+        : "Not routed by triage. Click to let triage propose a model per prompt."}">⇄</button></td>
       <td class="nowrap">${r.pick ? `${esc(r.pick.label)} <span class="muted">${esc(r.pick.cli)}${r.pick.effort ? ` · ${esc(r.pick.effort)}` : ""}</span>` : "<em>exhausted</em>"}</td>
       <td class="chain-cell">${r.chain.map(chainChip).join(" ")}${r.skipped.length
         ? `<div class="skipped" title="${esc(r.skipped.map((x) => `${x.model}: ${x.reason}`).join("\n"))}">⚠ ${
@@ -419,13 +421,27 @@ async function refreshRoles() {
     <tbody>${rows || '<tr><td colspan="5">No roles</td></tr>'}</tbody></table>`;
 }
 
+// Triage membership lives in roster.triage.roles; the role row is where it is
+// toggled, since a role triage routes cannot be deleted.
+async function toggleTriage(r) {
+  const status = $("#roles-status");
+  const current = rolesData.roles.filter((x) => x.in_triage).map((x) => x.role);
+  const value = r.in_triage ? current.filter((x) => x !== r.role) : [...current, r.role];
+  try {
+    const res = await api("/api/settings", { method: "POST", body: JSON.stringify({ path: "triage.roles", value }) });
+    status.textContent = `${r.role} ${r.in_triage ? "removed from" : "added to"} triage · backup ${res.backup}`;
+  } catch (err) {
+    status.textContent = `refused: ${err.message}`;
+  }
+  await refreshRoles();
+}
+
 async function roleWrite(role, body, note) {
   const status = $("#roles-status");
   try {
     const res = await api(`/api/roles/${encodeURIComponent(role)}`, { method: "POST", body: JSON.stringify(body) });
     status.textContent = `${note} · backup ${res.backup}`;
     await refreshRoles();
-    refreshSettings().catch(() => {}); // triage lists the roles by name
     return true;
   } catch (err) {
     status.textContent = `refused: ${err.message}`;
@@ -440,6 +456,7 @@ $("#roles-table").addEventListener("click", async (e) => {
   const r = rolesData?.roles.find((x) => x.role === role);
   if (btn.classList.contains("role-edit")) openRoleEditor(r);
   else if (btn.classList.contains("role-pin")) roleWrite(role, { pin_head: !r.pin_head }, `${role} ${r.pin_head ? "unpinned" : "pinned"}`);
+  else if (btn.classList.contains("role-triage")) toggleTriage(r);
   else if (btn.classList.contains("role-delete")
     && confirm(`Delete role "${role}"?\n\nAnything that still runs \`team-up pick --role ${role}\` will fail.`)) {
     roleWrite(role, { delete: true }, `${role} deleted`);
@@ -471,8 +488,7 @@ function chainRow(entry = {}) {
     <select class="ce-cli">${(rolesData?.clis || []).map((c) =>
       `<option${c === cli ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
     <select class="ce-model"></select>
-    <input type="text" class="ce-effort" placeholder="effort" value="${esc(entry.effort || "")}" size="7"
-      title="Optional — overrides the model's default effort for this role">
+    <select class="ce-effort" title="Overrides the model's default effort for this role"></select>
     <label title="Stay on exactly this version; never move to a newer one"><input type="checkbox" class="ce-pinned"${entry.pinned ? " checked" : ""}> pin version</label>
     <button type="button" class="ce-up" title="Move up">↑</button>
     <button type="button" class="ce-down" title="Move down">↓</button>
@@ -481,9 +497,23 @@ function chainRow(entry = {}) {
     const c = row.querySelector(".ce-cli").value;
     const keep = row.querySelector(".ce-model").value || entry.model;
     row.querySelector(".ce-model").innerHTML = models.filter((m) => m.clis.includes(c)).map((m) =>
-      `<option value="${esc(m.id)}"${m.id === keep ? " selected" : ""}>${esc(m.label)}${m.tier ? ` (${esc(m.tier)})` : ""}</option>`).join("");
+      `<option value="${esc(m.id)}"${m.id === keep ? " selected" : ""}>${esc(m.label)}</option>`).join("");
+    fillEffort();
+  };
+  // Effort values are the model's own (codex says xhigh, claude says max), so
+  // the list follows the model picked. A value no longer in the map stays
+  // selectable rather than being dropped silently.
+  const fillEffort = () => {
+    const m = models.find((x) => x.id === row.querySelector(".ce-model").value);
+    const sel = row.querySelector(".ce-effort");
+    const keep = sel.dataset.touched ? sel.value : entry.effort || "";
+    const values = [...new Set([...(m?.efforts || []), ...(keep ? [keep] : [])])];
+    sel.innerHTML = `<option value="">default${m?.default_effort ? ` (${esc(m.default_effort)})` : ""}</option>`
+      + values.map((v) => `<option${v === keep ? " selected" : ""}>${esc(v)}</option>`).join("");
   };
   row.querySelector(".ce-cli").addEventListener("change", fill);
+  row.querySelector(".ce-model").addEventListener("change", fillEffort);
+  row.querySelector(".ce-effort").addEventListener("change", (e) => { e.target.dataset.touched = "1"; });
   fill();
   return row;
 }
@@ -552,7 +582,7 @@ function renderTiers(data) {
       return `<td><select data-kind="effort" data-model="${esc(m.model)}"
         data-level="${esc(level)}">${options}</select></td>`;
     }).join("");
-    return `<tr${providerAttr(m.clis[0] || "", m.model)}>
+    return `<tr>
       <td>${esc(m.label || m.model)}</td>
       <td class="muted">${esc(m.provider || "—")}</td>
       <td><select data-kind="tier" data-model="${esc(m.model)}">${tierOptions}</select></td>
@@ -1088,9 +1118,10 @@ async function pullPrefs() {
 // Panels live in columns the script builds, not in the markup: the number of
 // columns is the user's choice. Each column is its own flex container, so it
 // stacks independently and a tall panel in one leaves no gap in the next.
-// Order comes from dragging a panel by its <h2>, size from the browser's
-// native resize handle. All of it is per-browser preference, so localStorage
-// is the right home for it.
+// Order comes from dragging a panel by its <h2>, height from the browser's
+// native resize handle; the width is always the column's. Stored in
+// localStorage and mirrored to the server (see pullPrefs) so every device
+// shows the same layout.
 const LAYOUT_KEY = "teamup.layout";
 const MAX_COLUMNS = 6;
 // What a fresh browser gets: the narrow-content panels left, the wide ones right.
@@ -1113,9 +1144,7 @@ function readLayout() {
 function saveLayout() {
   const size = {};
   for (const panel of panels()) {
-    if (panel.style.width || panel.style.height) {
-      size[panel.id] = { w: panel.style.width, h: panel.style.height };
-    }
+    if (panel.style.height) size[panel.id] = { h: panel.style.height };
   }
   const order = columns().map((column) =>
     [...column.querySelectorAll(".panel")].map((p) => p.id));
@@ -1184,18 +1213,13 @@ function applyLayout() {
   for (const [id, size] of Object.entries(layout.size || {})) {
     const panel = document.getElementById(id);
     if (!panel) continue;
-    if (size.w) panel.style.width = size.w;
+    // Width is the column's; a stored `w` from before widths were fixed is ignored.
     if (size.h) panel.style.height = size.h;
   }
 }
 
-// A resize writes both width and height, so a panel dragged into another
-// column would carry the old column's pixel width with it. Height is the
-// user's choice and stays.
 function movePanel(panel, place) {
-  const from = panel.parentElement;
   place(panel);
-  if (panel.parentElement !== from) panel.style.width = "";
   saveLayout();
 }
 
@@ -1259,13 +1283,13 @@ function enableLayoutEditing() {
     for (const el of mainEl.querySelectorAll(".drop-target")) el.classList.remove("drop-target");
   });
 
-  // The native resize handle sets inline width/height and fires no event of its
+  // The native resize handle sets an inline height and fires no event of its
   // own; a pointerup anywhere is the cheapest "the drag is over" signal.
   document.addEventListener("pointerup", () => {
     const layout = readLayout();
     const changed = panels().some((panel) => {
       const saved = layout.size?.[panel.id] || {};
-      return panel.style.width !== (saved.w || "") || panel.style.height !== (saved.h || "");
+      return panel.style.height !== (saved.h || "");
     });
     if (changed) saveLayout();
   });
@@ -1288,7 +1312,6 @@ function enableLayoutEditing() {
       // Nothing stored means nothing to clear.
     }
     for (const panel of panels()) {
-      panel.style.width = "";
       panel.style.height = "";
     }
     location.reload();
@@ -1336,29 +1359,16 @@ async function refreshProjects() {
       <td>${esc(p.name)}${p.dirty ? " <span class=\"muted\">*</span>" : ""}</td>
       <td>${esc(p.git ? (p.branch || "detached") : "—")}</td>
       <td>${policyCell(p)}</td>
-      <td>${specialistsCell(p)}</td>
       <td>${p.sessions.map((s) => `<a href="#" class="session-link" data-session="${esc(s)}">${esc(s.replace(/^team-up-proj-/, ""))}</a>`).join(" ") || "—"}</td>
       <td><button type="button" class="project-start" data-dir="${esc(p.path)}">Start</button></td>
     </tr>`).join("");
   $("#projects-table").innerHTML = `<table>
-    <thead><tr><th>Project</th><th>Branch</th><th>Policy</th><th>Specialists</th><th>Sessions</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="6">No projects</td></tr>'}</tbody></table>`;
+    <thead><tr><th>Project</th><th>Branch</th><th>Policy</th><th>Sessions</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5">No projects</td></tr>'}</tbody></table>`;
 
   $("#projects-table").querySelectorAll(".policy-create").forEach((btn) => {
     btn.addEventListener("click", () => openPolicyEditor(projectsByPath.get(btn.dataset.dir)));
   });
-  $("#projects-table").querySelectorAll(".project-approve").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      try {
-        await approveProject(projectsByPath.get(btn.dataset.dir));
-      } catch (err) {
-        projectsNote = err.message;
-      }
-      await refreshProjects();
-    });
-  });
-
   $("#projects-table").querySelectorAll(".session-link").forEach((a) => {
     a.addEventListener("click", (e) => {
       e.preventDefault();
@@ -1412,18 +1422,6 @@ function policyCell(p) {
     return `<span class="badge amber" title="${esc(hint)}">missing</span> ${create}`;
   }
   return `<span class="muted" title="no test command detected">no tests</span> ${create}`;
-}
-
-function specialistsCell(p) {
-  const specs = p.specialists || [];
-  if (!specs.length) return "—";
-  const chips = specs.map((s) => {
-    const name = s.id.split(".").pop();
-    const title = s.approved ? `${s.id}@${s.version} approved` : `${s.id}@${s.version}: ${s.reason || "not approved"}`;
-    return `<span class="chip${s.approved ? "" : " missing"}" title="${esc(title)}">${esc(name)} ${s.approved ? "✓" : "✗"}</span>`;
-  }).join(" ");
-  const approvable = specs.some((s) => !s.approved && !s.reason);
-  return chips + (approvable ? ` <button type="button" class="project-approve" data-dir="${esc(p.path)}">Approve</button>` : "");
 }
 
 async function approveProject(p) {
@@ -1809,8 +1807,6 @@ async function refreshSettings() {
         <span class="muted">shadow = log only</span></dd>
       <dt>Active share</dt><dd>${num("triage.active_share", d.triage.active_share, "0.05", "Share of picks the router decides in active mode, 0–1")}</dd>
       <dt>Min confidence</dt><dd>${num("triage.min_confidence", d.triage.min_confidence, "0.05", "0–1")}</dd>
-      <dt>Roles</dt><dd>${d.roles.map((r) => `<label><input type="checkbox" data-list="triage.roles" value="${esc(r)}"${
-        d.triage.roles.includes(r) ? " checked" : ""}> ${esc(r)}</label>`).join(" ")}</dd>
     </dl>
     <h3 title="How often the usage collector reads each subscription's limits">Usage watcher</h3>
     <dl class="kv">
@@ -1856,9 +1852,9 @@ $("#settings-body").addEventListener("change", async (e) => {
 const PANEL_HELP = {
   "panel-usage": "Usage windows of every subscription: share used, warn level and when it resets. STALE means the collector stopped reading — one click sends an agent to fix it.",
   "panel-sessions": "Live tmux sessions (click one to open its terminal) and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
-  "panel-projects": "Repos in the collecting folder: branch, command policy, which specialists are approved there, open sessions. Start opens a CLI session in the repo.",
+  "panel-projects": "Repos in the collecting folder: branch, command policy, open sessions. Start opens a CLI session in the repo; Fix all / auto-fix write missing policies and approve the specialists there.",
   "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
-  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, 📌 keeps the weekly score refresh off its head, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. Model tiers (for specialists) fold out below.",
+  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, ⇄ toggles triage routing, 📌 keeps the weekly score refresh off its head, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. Model tiers (for specialists) fold out below.",
   "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions, limits and approvals are under Details.",
   "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, triage routing, usage watcher intervals. Every change is validated and backs up roster.json.",
   "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",

@@ -327,14 +327,11 @@ tr.greyed td { opacity: 0.55; }
   main { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Panels are user-arrangeable: the browser's own resize handle sizes them,
-   the <h2> is the drag grip. Layout lives in localStorage, per browser. */
+/* Panels are user-arrangeable: the column sets the width, the browser's own
+   resize handle the height, the <h2> is the drag grip. */
 .panel {
-  resize: both;
+  resize: vertical;
   overflow: auto;
-  /* The resize handle writes a raw pixel width; cap it at the grid column so a
-     wide panel cannot overlap its neighbour. */
-  max-width: 100%;
 }
 .panel > h2 {
   cursor: grab;
@@ -488,3 +485,5 @@ details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 
 #admin-gate { margin: 0.75rem 1rem 0; background: var(--surface); }
 .nowrap { white-space: nowrap; }
+.role-triage { background: none; border: none; cursor: pointer; padding: 0 0.2rem; font: inherit; }
+.role-triage.off { opacity: 0.3; }

@@ -79,6 +79,11 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
       clis: Array.isArray(spec?.cli) ? spec.cli : [],
       tier: spec?.tier ?? null,
       account: spec?.account ?? null,
+      // What the effort picker offers: the CLI values this model's reasoning
+      // map uses, strongest first, and the default it runs at without one.
+      efforts: [...new Set(["max", "high", "medium", "low"]
+        .map((level) => spec?.reasoning?.[level]).filter((v) => typeof v === "string" && v))],
+      default_effort: spec?.effort ?? null,
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
   // Versions a CLI ships that the roster does not know yet; the upgrade
