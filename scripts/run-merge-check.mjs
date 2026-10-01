@@ -3,11 +3,9 @@
 //
 //   node scripts/run-merge-check.mjs [--apply] [--all] [--json]
 //
-// Looks at done runs with a git cwd and a base_commit. The run's commits are
-// base..head_commit; runs from before head_commit was recorded fall back to
-// the commits in base..HEAD made inside the run's time window (clones are
-// reused across runs). The target is the clone's origin; a local path is read
-// in place, a URL origin is fetched.
+// Looks at done runs since STATS_SINCE with a git cwd; the run's commits are
+// base_commit..head_commit. The target is the clone's origin; a local path is
+// read in place, a URL origin is fetched.
 //
 // A commit counts as landed by ancestry (ff / merge commit), by its own
 // patch-id (cherry-pick, rebase) or when the whole range's diff matches one
@@ -18,7 +16,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { listAllStates, setOutcome } from "../src/runs/runs.mjs";
+import { setOutcome } from "../src/runs/runs.mjs";
+import { countedStates } from "./run-insights.mjs";
 
 const BIG = 256 * 1024 * 1024;
 
@@ -51,25 +50,13 @@ function resolveTarget(clone) {
 }
 
 export function runCommits(state) {
-  const head = state.head_commit || "HEAD";
-  const lines = git(state.cwd, ["log", "--format=%H %ct", `${state.base_commit}..${head}`]);
+  const lines = git(state.cwd, ["log", "--format=%H", `${state.base_commit}..${state.head_commit}`]);
   if (lines === null) return null;
-  let commits = lines.split("\n").filter(Boolean).map((l) => {
-    const [sha, ct] = l.split(" ");
-    return { sha, at: Number(ct) * 1000 };
-  });
-  if (!state.head_commit) {
-    // ponytail: legacy runs are attributed by commit time; two overlapping runs
-    // in one clone can mis-assign. Runs that recorded head_commit are exact.
-    const from = new Date(state.createdAt).getTime() - 60_000;
-    const to = new Date(state.finishedAt || state.updatedAt).getTime() + 10 * 60_000;
-    commits = commits.filter((c) => c.at >= from && c.at <= to);
-  }
-  return commits.map((c) => c.sha); // newest first
+  return lines.split("\n").filter(Boolean); // newest first
 }
 
 export function checkRun(state) {
-  if (!state.base_commit || !state.cwd || !fs.existsSync(state.cwd)) return { verdict: "no_git" };
+  if (!state.base_commit || !state.head_commit || !state.cwd || !fs.existsSync(state.cwd)) return { verdict: "no_git" };
   const commits = runCommits(state);
   if (commits === null) return { verdict: "no_git" };
   if (!commits.length) return { verdict: "no_commits" };
@@ -117,7 +104,7 @@ function main(argv) {
   const apply = argv.includes("--apply");
   const all = argv.includes("--all");
   const rows = [];
-  for (const state of listAllStates({ onCorrupt: () => {} })) {
+  for (const state of countedStates()) {
     if (state.status !== "done" || (!all && state.outcome?.value)) continue;
     let result;
     try {

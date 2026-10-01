@@ -18,6 +18,16 @@ import { classifyMailbox, listAllStates, runDir } from "../src/runs/runs.mjs";
 
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
 
+/**
+ * Runs created before this carry no failure reason, end time or end commit;
+ * their numbers would be guesses. Statistics start here (Benni, 2026-10-01).
+ */
+export const STATS_SINCE = "2026-10-01T09:00:00.000Z";
+
+export function countedStates() {
+  return listAllStates({ onCorrupt: () => {} }).filter((s) => (s.createdAt || "") >= STATS_SINCE);
+}
+
 function readText(file) {
   try {
     return fs.readFileSync(file, "utf8");
@@ -200,7 +210,7 @@ export function renderMarkdown(r) {
   const lines = [
     `# team-up insights — ${r.generatedAt}`,
     "",
-    `Window: last ${r.window.sinceHours}h · runs: ${r.totals.runs} · ${["done", "failed", "cancelled", "waiting_human"].map((k) => `${k} ${r.totals[k] || 0}`).join(" · ")}`,
+    `Window: last ${r.window.sinceHours}h${r.window.statsSince ? ` (runs since ${r.window.statsSince} only)` : ""} · runs: ${r.totals.runs} · ${["done", "failed", "cancelled", "waiting_human"].map((k) => `${k} ${r.totals[k] || 0}`).join(" · ")}`,
     "",
     "## Findings",
     "",
@@ -243,7 +253,7 @@ function main(argv) {
   };
   const sinceHours = Number(arg("--since-hours") || 48);
   const outDir = arg("--out-dir");
-  const report = buildInsights(listAllStates({ onCorrupt: () => {} }), {
+  const report = buildInsights(countedStates(), {
     sinceHours,
     doctor: argv.includes("--no-doctor") ? null : runDoctor(),
     runInfo: (s) => {
@@ -251,6 +261,7 @@ function main(argv) {
       return { reason: s.status === "failed" ? failureReason(s, dir) : null, obs: observationStats(dir) };
     },
   });
+  report.window.statsSince = STATS_SINCE;
   if (!outDir) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return;
