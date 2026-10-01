@@ -3,6 +3,9 @@
 // Parsing is pure; the runner is injectable for tests.
 
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { cliModelFor, cliModelAliases } from "../roster/config.mjs";
 import { COLLECT_ENV } from "../usage/usage-pty.mjs";
 import { parseClaudeModels, parseCodexModels } from "./models-pty.mjs";
@@ -142,7 +145,22 @@ function collectClaudeModels(bin, { roster, run, runModelPty } = {}) {
   return { supported: true, models: addClaudeVersions(bin, models, roster, run) };
 }
 
-function collectCodexModels(bin, { runModelPty } = {}) {
+/**
+ * The /model picker shows one screen — 3 of 9 models on 2026-10-01 — so a model
+ * below the fold looked gone and got replaced. Codex keeps the server's full
+ * list in models_cache.json (refreshed on every start, the PTY run included);
+ * hidden slugs run too, so they count.
+ */
+export function readCodexCache(file = path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "models_cache.json")) {
+  try {
+    const slugs = JSON.parse(fs.readFileSync(file, "utf8")).models?.map((m) => m?.slug).filter((s) => typeof s === "string" && s);
+    return slugs?.length ? slugs : null;
+  } catch {
+    return null;
+  }
+}
+
+function collectCodexModels(bin, { runModelPty, codexCache = readCodexCache } = {}) {
   if (!runModelPty) {
     return { supported: false, reason: "codex requires model PTY collector" };
   }
@@ -151,6 +169,9 @@ function collectCodexModels(bin, { runModelPty } = {}) {
     return { supported: false, reason: locked.reason || "codex /model PTY failed" };
   }
   const models = parseCodexModels(locked.transcript);
+  for (const slug of codexCache() || []) {
+    if (!models.some((m) => m.id === slug)) models.push({ id: slug, display_name: slug });
+  }
   if (!models.length) {
     return { supported: false, reason: `${bin} /model listed nothing` };
   }
@@ -162,7 +183,7 @@ function collectCodexModels(bin, { runModelPty } = {}) {
  * @param {{ roster: object, run?: (bin: string, args: string[]) => string, runModelPty?: Function }} opts
  * @returns {{ supported: true, models: Array<{id, display_name, current?}> } | { supported: false, reason: string }}
  */
-export function collectCliModels(cliId, { roster, run, runModelPty } = {}) {
+export function collectCliModels(cliId, { roster, run, runModelPty, codexCache } = {}) {
   const args = LIST_ARGS[cliId];
   const bin = roster?.clis?.[cliId]?.cmd?.[0];
   if (!bin) return { supported: false, reason: `no cli template for "${cliId}"` };
@@ -171,7 +192,7 @@ export function collectCliModels(cliId, { roster, run, runModelPty } = {}) {
     return collectClaudeModels(bin, { roster, run, runModelPty });
   }
   if (cliId === "codex") {
-    return collectCodexModels(bin, { runModelPty });
+    return collectCodexModels(bin, { runModelPty, codexCache });
   }
 
   if (!args) {

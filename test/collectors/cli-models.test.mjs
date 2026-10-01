@@ -108,9 +108,16 @@ test("claude and codex collect via -p and PTY respectively", () => {
   assert.equal(claude.supported, true);
   assert.ok(claude.models.some((m) => m.id === "opus"));
 
-  const codex = collectCliModels("codex", { roster: ROSTER, run, runModelPty });
+  const codex = collectCliModels("codex", { roster: ROSTER, run, runModelPty, codexCache: () => null });
   assert.equal(codex.supported, true);
   assert.ok(codex.models.some((m) => m.id === "gpt-6-astra"));
+});
+
+test("codex adds the models below the picker's fold from its models cache", () => {
+  const codex = collectCliModels("codex", { roster: ROSTER, run, runModelPty, codexCache: () => ["gpt-6-astra", "gpt-6-luna"] });
+  const ids = codex.models.map((m) => m.id);
+  assert.ok(ids.includes("gpt-6-luna"));
+  assert.equal(ids.filter((id) => id === "gpt-6-astra").length, 1);
 });
 
 test("scanCliModels classifies known, new, and gone", () => {
