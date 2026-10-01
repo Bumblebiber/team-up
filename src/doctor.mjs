@@ -152,7 +152,7 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
   // specialist for that project — otherwise every upgrade produces a finding.
   // A root grant is about the root, not the project its policy was measured
   // at, so it must not be masked by an exact grant for that same project.
-  const scopeOf = (a) => (a.scope === "clone_root" ? a.clone_root : a.project);
+  const scopeOf = (a) => (a.scope === "global" ? "*" : a.scope === "clone_root" ? a.clone_root : a.project);
   const covered = new Set();
   for (const a of Object.values(approvals)) {
     if (ids.has(a.id) && installed[a.id].checksum === a.checksum) {

@@ -77,7 +77,27 @@ export function approvalKey({
 }
 
 /**
- * Approve a specialist for a project, or for every clone under a root.
+ * The key of a grant that covers every project. It has no project field at
+ * all — `canonical()` would turn any sentinel into a cwd-relative path — and
+ * no command policy: a policy belongs to a project, so it is trusted on its
+ * own, by checksum, in `trusted_policies`.
+ */
+export function globalApprovalKey({ id, version, checksum, permissions }) {
+  const payload = JSON.stringify({ scope: "global", id, version, checksum, permissions });
+  return crypto.createHash("sha256").update(payload).digest("hex");
+}
+
+/**
+ * Approve a specialist for a project, or for every clone under a root, or —
+ * with `global` — for every project at once.
+ *
+ * A global grant still binds the package checksum and the permissions, so a
+ * new version or a widened permission set needs one more approval. What it
+ * drops is the path. The command policy keeps its own guard: a run whose
+ * project policy is not a trusted checksum is refused, so a worker that edits
+ * `.team-up/commands.json` in its checkout cannot widen what the next run may
+ * execute. Passing `project` along with `global` trusts that project's
+ * current policy.
  *
  * `pipeline` gives each parallel writer its own full clone, so every writer
  * spawn is a new path and — with an exact-path grant — a new permission
@@ -87,7 +107,7 @@ export function approvalKey({
  * measured at `project` and still have to match at launch, so a clone that
  * carries a different policy is refused exactly as an unapproved project is.
  */
-export async function approveSpecialist({ idAtVersion, project, cloneRoot = null, env = process.env }) {
+export async function approveSpecialist({ idAtVersion, project, cloneRoot = null, global = false, env = process.env }) {
   const [id, version] = String(idAtVersion).split("@");
   if (!id || !version) {
     return { ok: false, errors: ["expected <id>@<version>"] };
@@ -116,14 +136,46 @@ export async function approveSpecialist({ idAtVersion, project, cloneRoot = null
   }
 
   let command_policy_checksum = null;
-  try {
-    ({ checksum: command_policy_checksum } = resolveCommandPolicyForApproval({
-      project,
+  if (project) {
+    try {
+      ({ checksum: command_policy_checksum } = resolveCommandPolicyForApproval({
+        project,
+        permissions: loaded.manifest.permissions,
+        env,
+      }));
+    } catch (e) {
+      return { ok: false, errors: [e.message], code: e.code || "COMMAND_POLICY_INVALID" };
+    }
+  } else if (!global) {
+    return { ok: false, errors: ["expected a project (or a global grant)"] };
+  }
+
+  if (global) {
+    if (cloneRoot) return { ok: false, errors: ["a global grant has no clone root"] };
+    const key = globalApprovalKey({
+      id,
+      version: loaded.version,
+      checksum: loaded.checksum,
       permissions: loaded.manifest.permissions,
-      env,
-    }));
-  } catch (e) {
-    return { ok: false, errors: [e.message], code: e.code || "COMMAND_POLICY_INVALID" };
+    });
+    const data = loadApprovals(env);
+    const now = new Date().toISOString();
+    data.approvals[key] = {
+      scope: "global",
+      id,
+      version: loaded.version,
+      checksum: loaded.checksum,
+      permissions: loaded.manifest.permissions,
+      approved_at: now,
+    };
+    if (command_policy_checksum) {
+      data.trusted_policies = {
+        ...(data.trusted_policies ?? {}),
+        [command_policy_checksum]: { project: canonical(project), trusted_at: now },
+      };
+    }
+    saveApprovals(data, env);
+    return { ok: true, key, approval: data.approvals[key], trusted_policy: command_policy_checksum };
   }
 
   // A root is only as narrow as what it holds, and three ways of getting that
@@ -179,6 +231,13 @@ export function isApproved({
   const data = loadApprovals(env);
   const fields = { id, version, checksum, permissions, command_policy_checksum };
   if (data.approvals?.[approvalKey({ project, ...fields })]) return true;
+
+  // A global grant covers the path; the project's command policy, if the
+  // specialist runs commands at all, must be one that was trusted.
+  if (data.approvals?.[globalApprovalKey(fields)]
+    && (!command_policy_checksum || data.trusted_policies?.[command_policy_checksum])) {
+    return true;
+  }
 
   // No exact grant: a clone root may cover this directory. The stored key is
   // recomputed from the launch's own fields, so containment alone proves

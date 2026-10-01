@@ -85,10 +85,12 @@ function describe(id, { env, assignments, installedCaps, approvals, versions }) 
     budget: manifest.budget || {},
     assigned,
     exclusions,
-    // Approvals are per project and bound to a checksum; only the ones that
-    // match the version now selected say anything about a run started today.
+    // Approvals are bound to a checksum; only the ones that match the version
+    // now selected say anything about a run started today.
+    approved_everywhere: approvals.some((row) => row.scope === "global" && row.id === id
+      && row.checksum === loaded.checksum),
     approved_for: approvals
-      .filter((row) => row.id === id && row.checksum === loaded.checksum)
+      .filter((row) => row.id === id && row.checksum === loaded.checksum && row.scope !== "global")
       .map((row) => (row.scope === "clone_root" ? `${row.clone_root}/*` : row.project))
       .sort(),
     error,

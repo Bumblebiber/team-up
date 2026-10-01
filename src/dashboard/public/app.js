@@ -933,7 +933,10 @@ function renderSpecialist() {
   const budget = s.budget || {};
   const approved = s.approved_for || [];
   const profile = s.model_profile ? `${s.model_profile.tier}:${s.model_profile.reasoning}` : null;
-  $("#specialist-meta").textContent = [`v${s.version}`, profile, `approved in ${approved.length}`]
+  $("#specialist-meta").innerHTML = [`v${esc(s.version)}`, profile && esc(profile), s.approved_everywhere
+    ? '<span title="Approved for every project; a new version or new permissions need one more approval">approved everywhere ✓</span>'
+    : `<button type="button" class="specialist-approve" data-version="${esc(s.version)}"
+        title="Approve this version for every project">Approve everywhere</button>`]
     .filter(Boolean).join(" · ");
   const bundled = [...(s.bundled?.skills || []), ...(s.bundled?.mcps || []).map((m) => `mcp:${m}`)];
   body.innerHTML = `
@@ -960,7 +963,7 @@ function renderSpecialist() {
         <dt>Checksum</dt><dd class="mono">${esc(s.checksum)}</dd>
         ${s.exclusions?.length ? `<dt>Excluded</dt><dd>${s.exclusions.map((e) => esc(`${e.package} (${e.reason})`)).join(", ")}</dd>` : ""}
       </dl>
-      <p class="muted">Approved for: ${approved.map((p) => esc(p.replace(/^\/home\/[^/]+\//, "~/"))).join(", ") || "no project"}</p>
+      ${approved.length ? `<p class="muted">Older per-project grants: ${approved.map((p) => esc(p.replace(/^\/home\/[^/]+\//, "~/"))).join(", ")}</p>` : ""}
     </details>`;
 }
 
@@ -1024,6 +1027,25 @@ $("#capability-assign").addEventListener("click", () => {
   const option = $("#capability-select").selectedOptions[0];
   if (!option?.value) return;
   assignCapability(option.value, option.dataset.checksum, "enable");
+});
+
+$("#specialist-meta").addEventListener("click", async (event) => {
+  const btn = event.target.closest(".specialist-approve");
+  if (!btn) return;
+  const id = $("#specialist-select").value;
+  const status = $("#capability-status");
+  btn.disabled = true;
+  try {
+    await api(`/api/specialists/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ version: btn.dataset.version }),
+    });
+    status.textContent = `${id} approved for every project`;
+    await refreshSpecialists();
+  } catch (err) {
+    status.textContent = `refused: ${err.message}`;
+    btn.disabled = false;
+  }
 });
 
 // Delegated, because renderSpecialist replaces the body on every change.

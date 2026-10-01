@@ -239,7 +239,7 @@ function projectSpecialists(dir, ids, env) {
 
 const installedIds = (env) => Object.keys(listInstalled(env).specialists || {}).sort();
 
-/** Approve every not-yet-approved specialist (or just `id`) for one project. */
+/** Approve every not-yet-approved specialist (or just `id`) globally, trusting this project's policy. */
 export async function approveProjectSpecialists({ dir, projectsDir, id = null, env = process.env } = {}) {
   const target = resolveProjectDir(dir, projectsDir);
   if (!target.ok) return target;
@@ -251,7 +251,9 @@ export async function approveProjectSpecialists({ dir, projectsDir, id = null, e
       results.push({ id: s.id, version: s.version, ok: false, error: s.reason });
       continue;
     }
-    const r = await approveSpecialist({ idAtVersion: `${s.id}@${s.version}`, project: target.real, env });
+    // Global: a specialist approved once works in every project. The project
+    // only contributes its command policy, which this trusts.
+    const r = await approveSpecialist({ idAtVersion: `${s.id}@${s.version}`, project: target.real, global: true, env });
     results.push({
       id: s.id,
       version: s.version,

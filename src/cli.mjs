@@ -239,14 +239,18 @@ async function cmdSpecialist(args, io) {
     // one-clone-per-writer fan-out. Package, permissions and command policy
     // are still measured at --project and still have to match at launch.
     const cloneRoot = argValue(rest, "--clone-root");
-    if (!idVer || !project) {
+    // --global covers every project; --project then also trusts that
+    // project's command policy.
+    const global = rest.includes("--global");
+    if (!idVer || (!project && !global)) {
       io.err(
         "usage: team-up specialist approve <id>@<version> --project <absolute-path> "
-        + "[--clone-root <absolute-path>]"
+        + "[--clone-root <absolute-path>]\n"
+        + "       team-up specialist approve <id>@<version> --global [--project <absolute-path>]"
       );
       return 1;
     }
-    const result = await approveSpecialist({ idAtVersion: idVer, project, cloneRoot });
+    const result = await approveSpecialist({ idAtVersion: idVer, project, cloneRoot, global });
     io.out(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }

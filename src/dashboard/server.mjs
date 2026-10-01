@@ -29,6 +29,7 @@ import { loadModelsStore } from "../collectors/models-store.mjs";
 import { atomicWriteText } from "../json-store.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
 import { pinSpecialist } from "../specialists/store.mjs";
+import { approveSpecialist } from "../specialists/approvals.mjs";
 import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
 import {
   isValidRunId,
@@ -980,6 +981,36 @@ export function createDashboardServer({
           { actor: "127.0.0.1", action: "specialist.pin", target: specialistId, result: "fail" },
           { env },
         );
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    const approveMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/approve$/);
+    if (req.method === "POST" && approveMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const specialistId = decodeURIComponent(approveMatch[1]);
+      try {
+        assertSafeSpecialistSegment(specialistId, "id");
+        const body = JSON.parse(await readBody(req) || "{}");
+        const result = await approveSpecialist({
+          idAtVersion: `${specialistId}@${String(body.version || "")}`,
+          global: true,
+          env,
+        });
+        appendAudit(
+          {
+            actor: "127.0.0.1",
+            action: "specialist.approve",
+            target: `${specialistId}@${body.version} (global)`,
+            result: result.ok ? "ok" : "fail",
+          },
+          { env },
+        );
+        clisMemo.invalidate("specialists");
+        if (!result.ok) jsonResponse(res, 400, { error: (result.errors || []).join("; ") });
+        else jsonResponse(res, 200, result);
+      } catch (e) {
         jsonResponse(res, 400, { error: String(e.message || e) });
       }
       return;
