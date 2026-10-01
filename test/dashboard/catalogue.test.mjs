@@ -53,7 +53,7 @@ test("every roster (model, cli) shows up checked, grouped by who bills it", () =
   assert.equal(rows(view).find((r) => r.cli_id === "gpt-6-luna").checked, false);
 });
 
-test("checking adds a model like its sibling; unchecking keeps it and its successors out", () => {
+test("checking adds a model like its sibling; unchecking keeps that id out", () => {
   const on = applyCatalogueToggle(roster, { cli: "codex", cli_id: "gpt-6-luna", on: true });
   assert.deepEqual(on.models["gpt-6-luna"], { provider: "codex", account: "codex", cli: ["codex"] });
   const sol = applyCatalogueToggle(roster, { cli: "codex", cli_id: "gpt-7-sol", on: true });
@@ -68,6 +68,12 @@ test("checking adds a model like its sibling; unchecking keeps it and its succes
   assert.deepEqual(addOfferedVersions(ex, store).added, []);
   // Checking again lifts the exclusion.
   assert.equal(applyCatalogueToggle(off, { cli: "codex", cli_id: "gpt-6-luna", on: true }).models_excluded, undefined);
+});
+
+test("only a roster CLI and an id its scan lists can be checked in", () => {
+  assert.throws(() => applyCatalogueToggle(roster, { cli: "__proto__", cli_id: "x", on: true }), /roster cli/);
+  assert.throws(() => applyCatalogueToggle(roster, { cli: "codex", cli_id: "gpt-9-made-up", on: true }, store), /does not offer/);
+  assert.ok(applyCatalogueToggle(roster, { cli: "codex", cli_id: "gpt-6-luna", on: true }, store).models["gpt-6-luna"]);
 });
 
 test("a checked API model gets its newer version auto-added", () => {

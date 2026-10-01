@@ -5,7 +5,9 @@ import { splitVersion, compareVersions, excludedKey } from "../roster/latest.mjs
 /**
  * The Models tab: per provider, every model it offers, and which of them the
  * roster carries. A checked row is a roster model the chain dropdowns offer;
- * unchecking one removes it and keeps it out — later versions included.
+ * unchecking one removes it and records the (cli, id) in `models_excluded`,
+ * so the newest-version sweep and apply-scores never add that id back. A
+ * newer version still arrives through an older sibling that stays checked.
  *
  * Providers are who gets paid. A subscription provider is one CLI whose scan
  * is its list (Anthropic = claude). An API-key provider is a prefix in the
@@ -111,9 +113,14 @@ export function affectedRoles(roster, cli, ids) {
  *   would dangle need `resolve`: `"strike"` or `{ model, cli }` to replace
  *   them; without it the edit throws with `roles` set.
  */
-export function applyCatalogueToggle(roster, { cli, cli_id: cliId, on, provider, resolve } = {}) {
-  if (typeof cli !== "string" || !cli || typeof cliId !== "string" || !cliId) {
-    throw new Error("cli and cli_id required");
+export function applyCatalogueToggle(roster, { cli, cli_id: cliId, on, provider, resolve } = {}, store = null) {
+  if (typeof cli !== "string" || !own(roster?.clis, cli) || typeof cliId !== "string" || !cliId) {
+    throw new Error("a roster cli and a cli_id required");
+  }
+  // Only what the CLI's scan lists can be checked in; a CLI without a scan
+  // (hermes) has nothing to check, only roster rows to uncheck.
+  if (on && store && !store.clis?.[cli]?.models?.some((m) => m.cli_id === cliId)) {
+    throw new Error(`${cli} does not offer ${cliId}`);
   }
   const next = structuredClone(roster);
   next.models ??= {};

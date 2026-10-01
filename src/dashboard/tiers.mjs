@@ -68,6 +68,9 @@ export function applyModelEdit(roster, { model, tier, cli, action, level, effort
 
   if (tier !== undefined) {
     spec.tier = normalizeTier(tier); // throws on anything but frontier|high|medium|low
+    // A tiered model needs a reasoning map; one checked in from the Models tab
+    // has none yet. All-null = no effort steps until the levels are set.
+    spec.reasoning ??= Object.fromEntries(REASONING_LEVELS.map((l) => [l, null]));
     return next;
   }
 

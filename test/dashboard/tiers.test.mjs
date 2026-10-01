@@ -145,3 +145,13 @@ test("a specialist tier override carries the reasoning and clears back to the re
   assert.equal(applySpecialistTier(set, { id: "rev", tier: null }).specialists, undefined);
   assert.throws(() => applySpecialistTier(roster, { id: "rev", tier: "huge", reasoning: "high" }), /tier must be/);
 });
+
+test("giving a model from the Models tab a tier adds an empty reasoning map", async () => {
+  const { applyModelEdit } = await import("../../src/dashboard/tiers.mjs");
+  const { validateRoster } = await import("../../src/roster/config.mjs");
+  const roster = { accounts: { api: { kind: "credit", enabled: true } }, clis: { opencode: { cmd: ["opencode"] } },
+    models: { "openrouter/z-ai/glm-5.3": { cli: ["opencode"], account: "api" } } };
+  const next = applyModelEdit(roster, { model: "openrouter/z-ai/glm-5.3", tier: "medium" });
+  assert.deepEqual(next.models["openrouter/z-ai/glm-5.3"].reasoning, { max: null, high: null, medium: null, low: null });
+  assert.deepEqual(validateRoster(next).errors, []);
+});

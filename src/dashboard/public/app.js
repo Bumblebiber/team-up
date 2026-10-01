@@ -569,7 +569,7 @@ $("#role-editor-form").addEventListener("submit", async (e) => {
 function renderTiers(data) {
   const efforts = ["", ...data.effort_values];
   const row = (m) => {
-    const tierOptions = data.tiers
+    const tierOptions = (m.tier ? "" : '<option value="" selected>—</option>') + data.tiers
       .map((t) => `<option value="${esc(t)}"${t === m.tier ? " selected" : ""}>${esc(t)}</option>`)
       .join("");
     const clis = data.clis.map((cli) => `
@@ -591,12 +591,15 @@ function renderTiers(data) {
       ${levels}
     </tr>`;
   };
-  const sections = data.tiers.map((tier) => {
-    const models = data.models.filter((m) => m.tier === tier);
+  // Models checked in from the Models tab start without a tier: no specialist
+  // reaches them until one is picked here.
+  const untiered = data.models.filter((m) => !data.tiers.includes(m.tier));
+  const sections = [...data.tiers, ...(untiered.length ? [null] : [])].map((tier) => {
+    const models = tier ? data.models.filter((m) => m.tier === tier) : untiered;
     const body = models.length
       ? models.map(row).join("")
       : `<tr><td colspan="${4 + data.reasoning_levels.length}"><em>no model in this tier</em></td></tr>`;
-    return `<tr class="tier-head"><th colspan="${4 + data.reasoning_levels.length}">${esc(tier)}</th></tr>${body}`;
+    return `<tr class="tier-head"><th colspan="${4 + data.reasoning_levels.length}">${esc(tier || "no tier — specialists never pick these")}</th></tr>${body}`;
   }).join("");
   const levelHeads = data.reasoning_levels.map((l) => `<th>${esc(l)}</th>`).join("");
   $("#tiers-table").innerHTML = `<table class="tiers">

@@ -1042,10 +1042,12 @@ export function createDashboardServer({
       return;
     }
 
-    const tierModelMatch = pathname.match(/^\/api\/tiers\/models\/([^/]+)$/);
+    // `pathname` is already decoded, and API model ids carry slashes
+    // (`openrouter/z-ai/glm-5.3`), so the id is the whole rest of the path.
+    const tierModelMatch = pathname.match(/^\/api\/tiers\/models\/(.+)$/);
     if (req.method === "POST" && tierModelMatch) {
       if (!requireWriteAccess(req, res)) return;
-      const model = decodeURIComponent(tierModelMatch[1]);
+      const model = tierModelMatch[1];
       try {
         const body = JSON.parse(await readBody(req) || "{}");
         // The tier table is the sharpest lever in the roster: a specialist
@@ -1088,7 +1090,7 @@ export function createDashboardServer({
       let body = {};
       try {
         body = JSON.parse(await readBody(req) || "{}");
-        const next = applyCatalogueToggle(loadRoster(env), body);
+        const next = applyCatalogueToggle(loadRoster(env), body, loadModelsStore(env));
         const written = saveRoster(next, { env });
         appendAudit({ actor: "127.0.0.1", action: "roster.catalogue.toggle",
           target: `${body.cli}:${body.cli_id}:${body.on ? "on" : "off"}`, result: "ok" }, { env });
