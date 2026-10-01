@@ -51,6 +51,10 @@ import {
   autoInvokePrefix,
 } from "../capabilities/capsule.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
+import { detectParent } from "../runs/parent.mjs";
+import { admissionConfig, memoryCeiling } from "../admission/admission.mjs";
+import { workerFootprint } from "../telemetry/stats.mjs";
+import { telemetryDir } from "../paths.mjs";
 import {
   buildLaunchDescriptor,
   buildCapsuleLaunchRecord,
@@ -155,6 +159,9 @@ export async function launch({
   runtime = null,
   env = process.env,
   dryRun = false,
+  // "check": refuse with ADMISSION_REFUSED; "wait": park the run in
+  // waiting_capacity; "force": start regardless, and say so in state.
+  admission = "check",
   dependencyOverrides = {},
 }) {
   const resolveEffectiveCapabilities =
@@ -171,6 +178,7 @@ export async function launch({
   const materializeCapabilityCapsuleFn =
     dependencyOverrides.materializeCapabilityCapsule ?? materializeCapabilityCapsule;
   const createRunFn = dependencyOverrides.createRun ?? createRun;
+  const detectParentFn = dependencyOverrides.detectParent ?? detectParent;
   const startFromLaunchDescriptorFn =
     dependencyOverrides.startFromLaunchDescriptor ?? startFromLaunchDescriptor;
   const harnessCapabilitiesFn =
@@ -178,6 +186,9 @@ export async function launch({
   const prepareHarnessLaunchFn =
     dependencyOverrides.prepareHarnessLaunch ?? prepareHarnessLaunch;
   const reverifyDriftedFn = dependencyOverrides.reverifyDrifted ?? reverifyDrifted;
+  const checkAdmissionFn = dependencyOverrides.checkAdmission ?? defaultCheckAdmission;
+  const deferForResourcesFn = dependencyOverrides.deferForResources ?? defaultDeferForResources;
+  const memoryCeilingFn = dependencyOverrides.memoryCeiling ?? defaultMemoryCeiling;
   const installed = loadInstalledManifest(specialistId, { project, env });
   if (!installed) {
     const err = new Error(`specialist not installed: ${specialistId}`);
@@ -337,6 +348,25 @@ export async function launch({
   const launchedProfile = runtimeOverride?.model
     ? { chain: [{ model: cell.model, cli: cell.cli }] }
     : profileResult.profile;
+
+  // Admission (plan 3): one more worker only if the machine has room for it.
+  // Checked before the run exists, so a refusal leaves nothing behind.
+  let admissionRecord = null;
+  if (!dryRun) {
+    if (admission === "force") {
+      admissionRecord = { forced: true, at: new Date().toISOString() };
+    } else {
+      const decision = await checkAdmissionFn({ cli: cell.cli, env });
+      admissionRecord = { ok: decision.ok, reason: decision.reason ?? null, at: new Date().toISOString() };
+      if (!decision.ok && admission !== "wait") {
+        const err = new Error(`ADMISSION_REFUSED: ${decision.reason}`);
+        err.code = "ADMISSION_REFUSED";
+        err.details = decision;
+        throw err;
+      }
+    }
+  }
+  const memoryLimits = dryRun ? null : memoryCeilingFn({ cli: cell.cli, env });
   const harnessCaps = harnessCapabilitiesFn(cell.cli);
   // Which build those grants were proven on — a pinned older one while the
   // installed build is not verified. The launch must run that same build.
@@ -379,7 +409,7 @@ export async function launch({
     cwd: runCwd || undefined,
     project: fsMode === "none" ? null : project,
     role: `specialist:${specialistId}`,
-    parent: { cli: "team-up", attach: "manual" },
+    parent: detectParentFn({ env }),
     worker: { cli: cell.cli, model: cell.model },
     prompt: barePrompt,
     result_protocol: "RESULT.json",
@@ -635,6 +665,7 @@ export async function launch({
       checksum: installed.checksum,
     },
     filesystemMode: fsMode,
+    memoryLimits,
     writableProject:
       fsMode !== "none" &&
       callType === "delegate" &&
@@ -662,9 +693,15 @@ export async function launch({
   stAfter.command_policy = st.command_policy;
   stAfter.output_contract = st.output_contract;
   stAfter.result_protocol = st.result_protocol;
+  if (admissionRecord) stAfter.admission = admissionRecord;
   saveState(stAfter);
 
-  if (!dryRun) {
+  const parked = admissionRecord && admissionRecord.ok === false;
+  if (parked) {
+    // Created and fully described, but not started: the GC timer starts it
+    // from its launch descriptor once admission passes.
+    deferForResourcesFn({ runId: state.runId, admission: admissionRecord, env });
+  } else if (!dryRun) {
     const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
     const startTmux =
       sandbox?.startWorker ||
@@ -702,6 +739,8 @@ export async function launch({
   const live = loadState(state.runId);
   return {
     runId: state.runId,
+    ...(parked ? { waiting_capacity: admissionRecord.reason } : {}),
+    ...(admissionRecord?.forced ? { admission_forced: true } : {}),
     runtime: {
       cli: cell.cli,
       model: cell.model,
@@ -711,7 +750,7 @@ export async function launch({
     sandbox: live?.sandbox?.kind || wrapped.sandbox,
     enforced: live?.sandbox?.enforced === true || wrapped.enforced === true,
     sandbox_warning: live?.sandbox?.warning ?? wrapped.warning ?? null,
-    argv: dryRun
+    argv: dryRun || parked
       ? wrapped.argv
       : prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(state.runId), {
           probe,
@@ -720,6 +759,23 @@ export async function launch({
     permissions: effectivePerms,
     budget: st.budget,
   };
+}
+
+async function defaultCheckAdmission({ cli, env }) {
+  const { checkAdmission } = await import("../admission/admission.mjs");
+  return checkAdmission({ cli, env });
+}
+
+async function defaultDeferForResources(args) {
+  const { deferForResources } = await import("../supervisor/waits.mjs");
+  return deferForResources(args);
+}
+
+/** MemoryHigh/MemoryMax for this worker when ceilings are on, else null. */
+function defaultMemoryCeiling({ cli, env }) {
+  const config = admissionConfig(env);
+  if (!config.memory_ceiling.enabled) return null;
+  return memoryCeiling({ footprint: workerFootprint({ dir: telemetryDir(env) }), cli, config });
 }
 
 /** Alias used by production entrypoint tests. */
@@ -737,25 +793,27 @@ function skillInvocationFor(cli) {
     : null;
 }
 
-export async function runSpecialist(args, io = { out: console.log, err: console.error }) {
+export async function runSpecialist(args, io = { out: console.log, err: console.error }, { launchFn = launch } = {}) {
   const id = argValue(args, "--id") || args[0];
   const callType = argValue(args, "--call-type") || "delegate";
   const project = argValue(args, "--project") || process.cwd();
   const objective = argValue(args, "--objective") || "";
   const dryRun = args.includes("--dry-run");
   const runtime = { cli: argValue(args, "--cli"), model: argValue(args, "--model") };
+  const admission = args.includes("--force-admission") ? "force" : args.includes("--wait-capacity") ? "wait" : "check";
   if (!id || !objective) {
-    io.err("usage: team-up specialist run --id <id> --call-type <consult|delegate|review> --objective <text> --project <path> [--cli <cli>] [--model <model>]");
+    io.err("usage: team-up specialist run --id <id> --call-type <consult|delegate|review> --objective <text> --project <path> [--cli <cli>] [--model <model>] [--wait-capacity|--force-admission]");
     return { code: 1 };
   }
   try {
-    const result = await launch({
+    const result = await launchFn({
       specialistId: id,
       callType,
       objective,
       project,
       runtime,
       dryRun,
+      admission,
     });
     io.out(`run_id: ${result.runId}`);
     io.out(`cli: ${result.runtime.cli}`);
@@ -763,11 +821,14 @@ export async function runSpecialist(args, io = { out: console.log, err: console.
     if (result.runtime.effort != null && result.runtime.effort !== "") {
       io.out(`effort: ${result.runtime.effort}`);
     }
+    if (result.waiting_capacity) io.out(`status: waiting_capacity (${result.waiting_capacity})`);
+    if (result.admission_forced) io.out("admission: forced");
     if (dryRun) io.out("dry_run: true");
     else io.out(`watcher: team-up runs wait ${result.runId}`);
     return { code: 0, result };
   } catch (e) {
     io.err(String(e.message || e));
+    if (e.code === "ADMISSION_REFUSED") return { code: 3, error: e };
     const unavailable = e.code === "PROFILE_UNAVAILABLE" || e.code === "RUNTIME_OVERRIDE_UNAVAILABLE";
     return { code: unavailable ? 2 : 1, error: e };
   }

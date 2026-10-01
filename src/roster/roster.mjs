@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { detectParent } from "../runs/parent.mjs";
 import {
   linkDispatchToRun,
   runDir,
@@ -149,11 +150,16 @@ export async function spawnInTmux({
   prompt,
   runId,
   modelPin,
+  env = process.env,
   usageSnapshot,
   readUsage = () => loadJson(usagePath()),
   refreshUsage,
   spawn = spawnPinnedInTmux,
   createRun = null,
+  detectParent: detectParentFn = detectParent,
+  // async ({ cli }) => { ok, reason }: plan 3's admission check. Null skips it
+  // (handoff and pass-to replace a session rather than add a worker).
+  admit = null,
 }) {
   const now = Date.now();
   let usage = usageSnapshot ?? loadJson(usagePath());
@@ -257,6 +263,15 @@ export async function spawnInTmux({
   } catch {
     // stale cache — proceed with pick above
   }
+  if (admit) {
+    // Before the run exists: a refusal leaves nothing behind to clean up.
+    const decision = await admit({ cli: r.cli });
+    if (!decision.ok) {
+      console.error(`ADMISSION_REFUSED: ${decision.reason}`);
+      console.error("dispatch later, or pass --force-admission if you know the machine has room");
+      process.exit(3);
+    }
+  }
   let effectiveRunId = runId;
   if (!effectiveRunId) {
     // Injectable: a test that fakes `spawn` still reached the real
@@ -266,7 +281,7 @@ export async function spawnInTmux({
     const state = create({
       cwd: dir,
       role,
-      parent: { cli: "manual", attach: "manual" },
+      parent: detectParentFn({ env }),
       worker: { cli: r.cli, model: r.model },
       prompt,
     });
@@ -289,11 +304,12 @@ async function cmdDispatch(args) {
   const promptFile = argValue(args, "--prompt-file");
   const runId = argValue(args, "--run-id");
   const modelPin = argValue(args, "--model");
+  const forceAdmission = args.includes("--force-admission");
   const rosterCfg = requireRoster();
   const dir = resolveDispatchDir({ dir: argValue(args, "--dir"), runId });
   if (!role || (!promptFile && !runId)) {
     console.error(
-      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>]",
+      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>] [--force-admission]",
     );
     console.error("  with --run-id: prefers ~/.team-up/runs/<id>/mailbox/PROMPT.md (mailbox-wrapped)");
     console.error("  --model: pin CLI×model (no role-chain fallback); same query language as pass-to");
@@ -336,6 +352,10 @@ async function cmdDispatch(args) {
     prompt,
     runId,
     modelPin,
+    admit: forceAdmission ? null : async ({ cli }) => {
+      const { checkAdmission } = await import("../admission/admission.mjs");
+      return checkAdmission({ cli });
+    },
   });
 }
 

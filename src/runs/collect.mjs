@@ -57,6 +57,7 @@ export function findUncollectedRuns({
           ? path.join(dir, runId, "mailbox", "RESULT.md")
           : null,
       outcome: state.outcome?.value ?? null,
+      parent: state.parent ?? null,
     });
   }
   return out;

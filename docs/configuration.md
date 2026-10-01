@@ -9,6 +9,7 @@
 | Usage | `TEAM_UP_USAGE` / `O9K_USAGE` | `~/.team-up/usage.json` | `~/.o9k/usage.json` |
 | Runs | `TEAM_UP_RUNS` / `O9K_RUNS` | `~/.team-up/runs` | — |
 | Scores | `TEAM_UP_SCORES` / `O9K_SCORES` | `~/.team-up/scores.json` | `~/.o9k/roster-scores.json` |
+| Telemetry | `TEAM_UP_TELEMETRY` | `~/.team-up/telemetry` | — |
 
 Writes always target `~/.team-up` (or an explicit `TEAM_UP_*` override).
 
@@ -85,3 +86,46 @@ isolation is applied. See `docs/command-broker.md`.
 
 Session handoff work orders live in `~/.team-up/handoffs/` (open) and
 `~/.team-up/handoffs/done/` (closed). They are not written into project repos.
+
+## Telemetry
+
+The `telemetry` block of `roster.json`. Every key is optional; a value of the
+wrong type is an error rather than a silent default.
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `telemetry.retention_days` | `7` | Day files under `~/.team-up/telemetry/` older than this are deleted by the sampler |
+| `telemetry.verdict.mem_available_ratio` | `0.05` | `MemAvailable / MemTotal` below this in the last 10 minutes counts as memory exhaustion |
+| `telemetry.verdict.psi_full_avg10` | `20` | `full avg10` memory pressure above this counts as memory exhaustion |
+| `telemetry.verdict.team_up_share` | `0.5` | team-up's share of used memory at the tightest sample at or above this makes an unclean, memory-exhausted restart `team_up_suspected` |
+
+An OOM kill whose victim was a team-up worker makes the verdict
+`team_up_suspected` regardless of the share. A kill inside a memory ceiling
+(`CONSTRAINT_MEMCG`) is recorded but is not memory exhaustion.
+
+## Admission
+
+The `admission` block of `roster.json` decides whether one more worker may
+start (`team-up dispatch`, `team-up specialist run`, `runs resume`, and parked
+runs started by `runs gc`). Every key is optional; a wrong value is an error.
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `admission.max_workers` | `null` | Fixed worker limit. `null` derives it: `floor((MemTotal × 0.7 − idle used memory) / p95 worker RSS)` from telemetry |
+| `admission.fallback_max_workers` | `2` | The limit while telemetry has fewer than `min_samples` worker samples or no idle baseline |
+| `admission.min_samples` | `20` | Worker samples needed before a per-cli (else overall) p95 is trusted |
+| `admission.reserve_mb` | `1024` | `MemAvailable` that must be left after the new worker's p95 |
+| `admission.psi_some_max` | `10` | Refuse while memory pressure `some avg10` is at or above this |
+| `admission.psi_full_max` | `2` | Refuse while memory pressure `full avg10` is at or above this |
+| `admission.memory_ceiling.enabled` | `false` | Give each sandboxed worker `MemoryHigh`/`MemoryMax` |
+| `admission.memory_ceiling.high_factor` | `1.5` | `MemoryHigh` = p95 × this |
+| `admission.memory_ceiling.max_factor` | `2` | `MemoryMax` = p95 × this; the kernel kills that worker alone above it |
+
+A start is also refused while swap use grew across the last three samples.
+After a `team_up_suspected` restart, `runs resume` caps the limit at half the
+workers that ran before it; the cap holds until `team-up admission reset` or
+24 h without a refusal. `team-up admission check [--cli <cli>]` shows the
+decision and why (exit 3 when refused).
+
+Memory ceilings only hold under `systemd-run --user` with the memory
+controller delegated to the user manager; `doctor` reports both.

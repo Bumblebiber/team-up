@@ -443,3 +443,62 @@ test("an adapter with no record at all is not reported as drift", () => {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("a recent restart blamed on team-up is a high finding", () => {
+  const report = withHome({}, (env) => {
+    const logs = path.join(env.TEAM_UP_HOME, "logs");
+    fs.mkdirSync(logs);
+    const base = { schema: "team-up.restart-report/v1", created_at: new Date().toISOString(), previous_boot_id: "p" };
+    fs.writeFileSync(path.join(logs, "restart-a.json"), JSON.stringify({
+      ...base, boot_id: "a", verdict: "team_up_suspected", reasons: ["memory exhaustion: 1 OOM kill(s)"],
+    }));
+    fs.writeFileSync(path.join(logs, "restart-b.json"), JSON.stringify({ ...base, boot_id: "b", verdict: "other_cause" }));
+    fs.writeFileSync(path.join(logs, "restart-c.json"), JSON.stringify({
+      ...base, boot_id: "c", verdict: "team_up_suspected", created_at: "2020-01-01T00:00:00Z",
+    }));
+    return diagnose(env);
+  });
+  const found = report.findings.filter((f) => f.kind === "restart_team_up_suspected");
+  assert.equal(found.length, 1);
+  assert.equal(found[0].severity, "high");
+  assert.match(found[0].detail, /OOM kill/);
+});
+
+test("a volatile journal is a medium finding once telemetry runs", () => {
+  const volatile = () => ({ persistent: false, storage: "auto", reason: "Storage=auto and /var/log/journal is missing" });
+  const before = withHome({}, (env) => diagnose(env, { journalStore: volatile }));
+  assert.equal(before.findings.some((f) => f.kind === "journal_not_persistent"), false);
+  const after = withHome({}, (env) => {
+    fs.mkdirSync(path.join(env.TEAM_UP_HOME, "telemetry"));
+    return diagnose(env, { journalStore: volatile });
+  });
+  const found = after.findings.filter((f) => f.kind === "journal_not_persistent");
+  assert.equal(found.length, 1);
+  assert.equal(found[0].severity, "medium");
+  assert.match(found[0].fix, /mkdir -p \/var\/log\/journal/);
+  const persistent = withHome({}, (env) => {
+    fs.mkdirSync(path.join(env.TEAM_UP_HOME, "telemetry"));
+    return diagnose(env, { journalStore: () => ({ persistent: true }) });
+  });
+  assert.equal(persistent.findings.some((f) => f.kind === "journal_not_persistent"), false);
+});
+
+test("memory ceilings: doctor reports a missing delegation and unconstrained workers, only when enabled", () => {
+  const on = { "roster.json": { admission: { memory_ceiling: { enabled: true } } } };
+  const states = () => [
+    { runId: "r1", sandbox: { memory_max_applied: false } },
+    { runId: "r2", sandbox: { memory_max_applied: true } },
+  ];
+  const off = withHome({}, (env) => diagnose(env, { delegation: () => ({ delegated: false, path: "/x" }), activeStates: states }));
+  assert.equal(off.findings.some((f) => /memory_ceiling|memory_ceiling_unavailable|workers_without/.test(f.kind)), false);
+  assert.equal(off.checked.memory_ceiling_possible, false);
+
+  const missing = withHome(on, (env) => diagnose(env, { delegation: () => ({ delegated: false, path: "/x" }), activeStates: states }));
+  const kinds = missing.findings.map((f) => f.kind);
+  assert.ok(kinds.includes("memory_ceiling_unavailable"));
+  const unconstrained = missing.findings.find((f) => f.kind === "workers_without_memory_ceiling");
+  assert.match(unconstrained.detail, /1 active worker\(s\).*r1/);
+
+  const fine = withHome(on, (env) => diagnose(env, { delegation: () => ({ delegated: true, path: "/x" }), activeStates: () => [] }));
+  assert.equal(fine.findings.some((f) => f.kind === "memory_ceiling_unavailable"), false);
+});

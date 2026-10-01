@@ -3,7 +3,9 @@
 // State: ~/.team-up/runs/<runId>/ (TEAM_UP_HOME or TEAM_UP_RUNS override). Zero dependencies.
 
 import fs from "node:fs";
-import { runsPath } from "../paths.mjs";
+import { debugLogDir, runsPath, telemetryDir } from "../paths.mjs";
+import { analyzeRestart, formatRestartReport } from "../telemetry/restart.mjs";
+import { telemetryConfig } from "../telemetry/config.mjs";
 import { findStaleRuns, findOrphanSessions, DEFAULT_THRESHOLD_MS } from "./stale.mjs";
 import { findUncollectedRuns, DEFAULT_UNCOLLECTED_DAYS } from "./collect.mjs";
 import { listTmuxSessions } from "./tmux.mjs";
@@ -161,6 +163,9 @@ export function createRun({
       sessionId: parent.sessionId || null,
       tmux: attach === "tmux" ? (parent.tmux || null) : null,
       attach,
+      // The parent's own cwd: `claude --resume` finds a transcript only there.
+      cwd: parent.cwd || null,
+      detected_by: parent.detected_by || "flag",
     },
     worker: {
       cli: worker.cli,
@@ -711,9 +716,6 @@ export function writeAnswer(runId, body, { source = "parent" } = {}) {
 export const INJECT = {
   worker:
     "Host crash recovery. Read mailbox/STATUS and mailbox/PROMPT.md; continue the task. Do not re-init from scratch.",
-  parent: (runId) =>
-    `Host crash recovery. Read ${path.join(runsRoot(), runId, "STATE.json")}. Continue orchestration; do not re-dispatch if worker tmux is alive.`,
-  waitingHuman: " You were blocked on a human question — re-surface it; do not invent an answer.",
 };
 
 function defaultTmuxExists(name) {
@@ -753,8 +755,6 @@ export function buildResumePlan(state, {
   }
   const actions = [];
   const injectWorker = INJECT.worker;
-  let injectParent = INJECT.parent(state.runId);
-  if (state.status === "waiting_human") injectParent += INJECT.waitingHuman;
 
   const crashSpawnDisabled =
     state.recovery?.crash_spawn === false ||
@@ -775,18 +775,8 @@ export function buildResumePlan(state, {
       promptPath: path.join(runDir(state.runId), "mailbox", "PROMPT.md"),
     });
   }
-  if (state.parent?.attach === "tmux" && state.parent.tmux && !tmuxExists(state.parent.tmux)) {
-    actions.push({
-      kind: "spawn_parent",
-      tmux: state.parent.tmux,
-      cwd: state.cwd,
-      cli: state.parent.cli,
-      sessionId: state.parent.sessionId,
-      inject: injectParent,
-    });
-  } else if (state.parent?.attach === "manual") {
-    actions.push({ kind: "parent_awaiting_attach", runId: state.runId, sessionId: state.parent.sessionId });
-  }
+  // Parents are not restarted per run: resumeAll groups runs by parent and
+  // wakes each parent once (buildParentPlan in wakeup.mjs).
   actions.push({ kind: "flag_reattach_watcher", runId: state.runId });
   return { actions };
 }
@@ -981,16 +971,119 @@ export function executeResumeAction(action, state, {
   pasteInject(action.tmux, action.inject || "", { waitReady, readyTimeoutMs });
 }
 
-export function resumeAll({
+/**
+ * One wake-up per parent session, built from what this resume plans for its
+ * runs. Nothing is delivered here: a parent that has to be restarted waits
+ * its turn in the queue, the others are told at once.
+ */
+function planParents(entries, { tmuxExists, logDir, now, restartReport, listUncollected, staggered }) {
+  let uncollected = [];
+  try {
+    uncollected = listUncollected();
+  } catch {
+    // an unread result we cannot list is one line fewer, not a failed resume
+  }
+  const byRun = new Map(entries.map((e) => [e.state.runId, e]));
+  const out = [];
+  for (const group of buildParentPlan(entries.map((e) => e.state), { tmuxExists, uncollected })) {
+    const groupEntries = group.runIds.map((runId) => {
+      const { state, actions, deferred } = byRun.get(runId);
+      return { state, outcome: workerOutcome(state, actions, { tmuxExists, deferred, staggered }) };
+    });
+    const overflow = groupEntries.length > 10 ? overflowPath(logDir, group.key, now) : null;
+    const message = renderParentWakeup({
+      entries: groupEntries,
+      uncollected: group.uncollected,
+      restartReport,
+      overflowPath: overflow,
+    });
+    const item = {
+      key: group.key,
+      cli: group.parent.cli,
+      sessionId: group.parent.sessionId ?? null,
+      tmux: group.parent.tmux ?? null,
+      delivery: group.delivery,
+      runIds: group.runIds,
+      message,
+    };
+    out.push({ group, message, overflow, groupEntries, item, fallbackCwd: byRun.get(group.runIds[0]).state.cwd });
+  }
+  return out;
+}
+
+function deliverPlannedParent(plan, deliver) {
+  try {
+    if (plan.overflow) writeOverflow(plan.groupEntries, plan.overflow);
+    Object.assign(plan.item, deliver(plan.group, plan.message, { fallbackCwd: plan.fallbackCwd }) ?? {});
+  } catch (error) {
+    plan.item.error = error.message || String(error);
+    throw error;
+  }
+}
+
+/** Deliver one parent's wake-up the way its delivery says. */
+export function deliverParentWakeup(group, message, {
+  fallbackCwd = null,
+  run = (args) => execFileSync("tmux", args, { stdio: "ignore" }),
+  paste = pasteInject,
+  writePending = writePendingWakeup,
+} = {}) {
+  const { parent, delivery } = group;
+  if (delivery === "pending") return { pending: writePending(parent.sessionId, message) };
+  if (delivery !== "spawn") return null;
+  // The parent's own cwd: a Claude session's transcript is only found there.
+  const cwd = parent.cwd || fallbackCwd;
+  const resume = parentResumeArgv(parent, message, cwd);
+  if (!resume) return null;
+  run(resumeTmuxArgs({ kind: "spawn_parent", tmux: parent.tmux, cwd }, null, resume.argv));
+  if (resume.paste) paste(parent.tmux, message);
+  return { cwd, cwd_source: parent.cwd ? "parent" : "run" };
+}
+
+/** The worker wrote mailbox/HEARTBEAT after `sinceMs`: it is up. */
+export function heartbeatSince(runId, sinceMs) {
+  try {
+    return fs.statSync(path.join(mailboxDir(runId), "HEARTBEAT")).mtimeMs >= sinceMs;
+  } catch {
+    return false;
+  }
+}
+
+function queueSummary(item, extra = {}) {
+  return {
+    label: item.kind === "parent" ? `parent ${item.key}` : `run ${item.state.runId}`,
+    kind: item.kind,
+    ...extra,
+  };
+}
+
+/**
+ * Bring back what a restart interrupted.
+ *
+ * `admission` is null for a plain resume: every start happens at once, in
+ * queue order. Otherwise it is `{ budget, running, budgetReason, check }`
+ * (see `resumeAdmission`): workers beyond the budget are parked in
+ * `waiting_capacity` before anyone is told anything, so each parent's message
+ * already says which of its runs wait; the rest start one at a time.
+ */
+export async function resumeAll({
   dryRun = false,
   tmuxExists = defaultTmuxExists,
   logDir = null,
   now = new Date(),
   execute = executeResumeAction,
+  restartReport = null,
+  listUncollected = () => findUncollectedRuns(),
+  deliver = deliverParentWakeup,
+  admission = null,
+  defer = null,
+  queue = {},
+  queueFile = null,
 } = {}) {
   const lock = resumeLockPath();
-  const resolvedLogDir = logDir || path.join(os.homedir(), ".team-up/logs");
-  const report = { at: now.toISOString(), runs: [] };
+  const resolvedLogDir = logDir || debugLogDir(process.env);
+  const report = { at: now.toISOString(), runs: [], parents: [], queue: [] };
+  const entries = [];
   if (!dryRun) {
     fs.mkdirSync(runsRoot(), { recursive: true });
     acquireResumeLock(lock);
@@ -1003,18 +1096,89 @@ export function resumeAll({
       }
       const effectiveState = resolved.state;
       const plan = buildResumePlan(effectiveState, { tmuxExists, now });
-      report.runs.push({
-        runId: effectiveState.runId,
-        status: effectiveState.status,
-        actions: plan.actions,
-      });
-      if (dryRun) continue;
-      for (const action of plan.actions) {
-        execute(action, effectiveState);
-      }
-      if (plan.actions.some((action) => action.kind === "flag_reattach_watcher")) {
+      const row = { runId: effectiveState.runId, status: effectiveState.status, actions: plan.actions };
+      report.runs.push(row);
+      entries.push({ state: effectiveState, actions: plan.actions, row, deferred: null });
+      if (!dryRun && plan.actions.some((action) => action.kind === "flag_reattach_watcher")) {
         atomicWriteText(path.join(mailboxDir(effectiveState.runId), "REATTACH_WATCHER"), "1\n");
       }
+    }
+
+    const workers = orderQueue({
+      workers: entries.flatMap((entry) => entry.actions
+        .filter((action) => action.kind === "spawn_worker")
+        .map((action) => ({ kind: "worker", state: entry.state, action, entry }))),
+    });
+    let planned = workers;
+    if (admission) {
+      const slots = Math.max(0, admission.budget - admission.running);
+      planned = workers.slice(0, slots);
+      const deferFn = defer ?? (await import("../supervisor/waits.mjs")).deferForResources;
+      for (const item of workers.slice(slots)) {
+        item.entry.deferred = admission.budgetReason;
+        item.entry.row.deferred = admission.budgetReason;
+        report.queue.push(queueSummary(item, { status: dryRun ? "would_defer" : "deferred", reason: admission.budgetReason }));
+        if (!dryRun) {
+          deferFn({ runId: item.state.runId, admission: { reason: admission.budgetReason }, verdict: admission.verdict, action: item.action, now });
+          item.entry.state = loadState(item.state.runId) ?? item.entry.state;
+        }
+      }
+    }
+
+    const parentPlans = planParents(entries, {
+      tmuxExists,
+      logDir: resolvedLogDir,
+      now,
+      restartReport,
+      listUncollected,
+      staggered: Boolean(admission),
+    });
+    report.parents = parentPlans.map((plan) => plan.item);
+    const parentItems = [];
+    for (const plan of parentPlans) {
+      if (plan.group.delivery === "spawn") {
+        parentItems.push({ kind: "parent", key: plan.group.key, plan });
+      } else if (!dryRun) {
+        try {
+          deliverPlannedParent(plan, deliver);
+        } catch {
+          // recorded on the item; one unreachable parent does not stop the rest
+        }
+      }
+    }
+    const items = orderQueue({ parents: parentItems, workers: planned });
+
+    if (dryRun) {
+      report.queue.unshift(...items.map((item) => queueSummary(item, { status: "would_start" })));
+    } else {
+      const startedAt = new Date().toISOString();
+      const parkedUpfront = report.queue.map((q) => ({ label: q.label, status: q.status, reason: q.reason }));
+      const deferFn = defer ?? (admission ? (await import("../supervisor/waits.mjs")).deferForResources : null);
+      const results = await runQueue(items, {
+        start: async (item) => {
+          if (item.kind === "parent") deliverPlannedParent(item.plan, deliver);
+          else await execute(item.action, item.state);
+        },
+        admit: (item) => admission.check(item),
+        defer: (item, decision) => {
+          item.entry.row.deferred = decision.reason;
+          deferFn?.({ runId: item.state.runId, admission: decision, verdict: admission?.verdict ?? null, action: item.action, now: new Date() });
+        },
+        heartbeatSince: (item, sinceMs) => heartbeatSince(item.state.runId, sinceMs),
+        alive: (item) => tmuxExists(item.action.tmux),
+        slowStart: Boolean(admission),
+        onUpdate: (results) => {
+          if (queueFile) writeQueueStatus(queueFile, { startedAt, results: [...results, ...parkedUpfront] });
+        },
+        ...queue,
+      });
+      report.queue.unshift(...results.map((r) => queueSummary(r.item, {
+        status: r.status,
+        ...(r.reason ? { reason: r.reason } : {}),
+        ...(r.error ? { error: r.error } : {}),
+        ...(r.settle ? { settle: r.settle } : {}),
+      })));
+      if (queueFile) writeQueueStatus(queueFile, { startedAt, results: [...results, ...parkedUpfront], done: true });
     }
   } finally {
     if (!dryRun) {
@@ -1087,6 +1251,13 @@ export function waitMailbox(runId, {
     return { waitExit: 0, classified: resolved.classified };
   }
 
+  // A watcher is attached again: the resume's marker has done its job.
+  try {
+    fs.unlinkSync(path.join(mailboxDir(runId), "REATTACH_WATCHER"));
+  } catch {
+    // none set
+  }
+
   let observerChild = null;
   try {
     if (observe) {
@@ -1140,9 +1311,10 @@ function cmdCreate(args) {
   const parentCli = argValue(args, "--parent-cli");
   const parentAttach = argValue(args, "--parent-attach");
   const workerCli = argValue(args, "--worker-cli");
-  if (!cwd || !role || !parentCli || !parentAttach || !workerCli || !promptFile) {
+  // Either both parent flags or neither: half a parent is a typo, not a choice.
+  if (!cwd || !role || !parentCli !== !parentAttach || !workerCli || !promptFile) {
     console.error(
-      "usage: runs.mjs create --cwd <dir> --role <role> --parent-cli <cli> --parent-attach <mode>"
+      "usage: runs.mjs create --cwd <dir> --role <role> [--parent-cli <cli> --parent-attach <mode>]"
       + " [--parent-session <id>] [--parent-tmux <name>] --worker-cli <cli>"
       + " [--worker-model <model>] [--worker-tmux <name>] --prompt-file <file> [--project <id>]"
       + " [--verify-command <shell words>] [--verify-runs N]",
@@ -1161,12 +1333,16 @@ function cmdCreate(args) {
     cwd,
     project: argValue(args, "--project"),
     role,
-    parent: {
-      cli: parentCli,
-      sessionId: argValue(args, "--parent-session"),
-      tmux: argValue(args, "--parent-tmux"),
-      attach: parentAttach,
-    },
+    // No flags: the session that runs this command, if it registered.
+    parent: parentCli
+      ? {
+          cli: parentCli,
+          sessionId: argValue(args, "--parent-session"),
+          tmux: argValue(args, "--parent-tmux"),
+          attach: parentAttach,
+          detected_by: "flag",
+        }
+      : detectParent(),
     worker: {
       cli: workerCli,
       model: argValue(args, "--worker-model"),
@@ -1277,11 +1453,142 @@ function cmdWait(args) {
   process.exitCode = waitExit;
 }
 
-function cmdResume(args) {
+/**
+ * Judge the restart before anything comes back up. Never blocks the resume: a
+ * report that cannot be made is a line on stderr, and the runs still resume.
+ */
+function reportRestart({ dryRun }) {
+  try {
+    const restart = analyzeRestart({
+      telemetryDir: telemetryDir(process.env),
+      logDir: debugLogDir(process.env),
+      thresholds: telemetryConfig(process.env).verdict,
+      write: !dryRun,
+    });
+    if (restart) for (const line of formatRestartReport(restart)) console.log(line);
+    return restart;
+  } catch (error) {
+    console.error(`restart report failed: ${error.message || error}`);
+    return null;
+  }
+}
+
+/**
+ * What a resume may start: the verdict's budget over what the machine holds,
+ * and the live admission check each start goes through. A team_up_suspected
+ * restart also leaves its budget behind as a cap on normal launches, once per
+ * restart, until `team-up admission reset` or 24 h without a refusal.
+ */
+export async function resumeAdmission(restartReport, { env = process.env, dryRun = false, now = new Date() } = {}) {
+  const {
+    admissionConfig, applyRestartCap, checkAdmission, currentCap, deriveLimits,
+  } = await import("../admission/admission.mjs");
+  const { resumeBudget } = await import("../admission/scheduler.mjs");
+  const { workerFootprint } = await import("../telemetry/stats.mjs");
+  const { takeSample } = await import("../telemetry/sample.mjs");
+  const config = admissionConfig(env);
+  const footprint = workerFootprint({ dir: telemetryDir(env), now });
+  const sample = await takeSample();
+  const limits = deriveLimits({ footprint, memTotalKb: sample.mem?.MemTotal, config, cap: currentCap({ env, now }) });
+  const verdict = restartReport?.verdict ?? null;
+  const workersLast = restartReport?.window?.workers_last ?? null;
+  const budget = resumeBudget({ verdict, maxWorkers: limits.max_workers, workersLast });
+  if (verdict === "team_up_suspected" && !dryRun) {
+    applyRestartCap({ maxWorkers: budget, verdict, restartId: restartReport.previous_boot_id ?? restartReport.path, env, now });
+  }
+  const before = workersLast == null ? "" : `, ${workersLast} before the restart`;
+  return {
+    budget,
+    running: sample.workers.length,
+    verdict,
+    limits,
+    budgetReason: `resume budget ${budget} worker(s) (${verdict ?? "no restart report"}${before}; limit ${limits.max_workers}: ${limits.reason})`,
+    check: (item) => checkAdmission({ cli: item.action?.cli ?? null, env, config, footprint }),
+  };
+}
+
+/**
+ * Due capacity waits, through the unified start path. `reason` limits it to
+ * one kind ("resources" from the GC timer); resource waits pass admission
+ * first and replay their stored resume action.
+ */
+export async function resumeDueCapacityWaits({ dryRun = false, reason = null, log = console.log } = {}) {
+  const { resumeDueWaits, listDueWaits } = await import("../supervisor/waits.mjs");
+  const due = listDueWaits({ now: new Date().toISOString(), reason });
+  if (dryRun) {
+    for (const id of due) log(`due-wait: ${id}`);
+    return [];
+  }
+  if (!due.length) return [];
+  const { loadJson, requireRoster, usagePath } = await import("../roster/config.mjs");
+  const { resolveProfile } = await import("../roster/profile.mjs");
+  const { startFromLaunchDescriptor } = await import("../supervisor/start.mjs");
+  const { checkAdmission } = await import("../admission/admission.mjs");
+  const roster = requireRoster();
+  const usage = loadJson(usagePath()) || {};
+  const results = await resumeDueWaits({
+    now: new Date().toISOString(),
+    usage,
+    roster,
+    reason,
+    admit: (state) => checkAdmission({ cli: state.worker?.cli ?? state.runtime?.cli ?? null }),
+    executeAction: (action, state) => executeResumeAction(action, state),
+    resolveProfileForRun: async (runId, state) => {
+      const profile = state.specialist_profile || null;
+      const specialistId = state.specialist?.id;
+      return resolveProfile({
+        roster,
+        usage,
+        profile,
+        specialistId,
+        requirements:
+          state.harness_requirements ||
+          {},
+      });
+    },
+    startWorker: async ({ attempt, runId }) => {
+      const started = startFromLaunchDescriptor({
+        runId,
+        runtimeOverride: attempt.runtime,
+        attempt,
+      });
+      log(`resumed-wait: ${runId} attempt=${attempt.id} tmux=${started.session}`);
+    },
+  });
+  for (const r of results) {
+    log(`capacity-resume: ${r.runId} ok=${r.ok} resumed=${Boolean(r.resumed)} reason=${r.reason || ""}`);
+  }
+  return results;
+}
+
+async function cmdResume(args) {
   const dryRun = args.includes("--dry-run");
-  const report = resumeAll({ dryRun });
+  const { readQueueStatus, formatQueueStatus, resumeQueuePath } = await import("../admission/scheduler.mjs");
+  // A boot resume may still be working through its queue: say where it is
+  // instead of failing on its lock.
+  if (!dryRun) {
+    const raw = readMaybe(resumeLockPath());
+    const holder = Number.parseInt(String(raw ?? "").trim(), 10);
+    if (Number.isInteger(holder) && holder > 0 && holder !== process.pid && isPidAlive(holder)) {
+      for (const line of formatQueueStatus(readQueueStatus(resumeQueuePath()))) console.log(line);
+      console.log(`a resume is running (pid ${holder}); this one did nothing`);
+      return;
+    }
+  }
+  const restartReport = reportRestart({ dryRun });
+  let admission = null;
+  if (!args.includes("--all-at-once")) {
+    try {
+      admission = await resumeAdmission(restartReport, { dryRun });
+    } catch (error) {
+      // Staggering is a guard; a broken config should not strand every run.
+      console.error(`admission unavailable, resuming without it: ${error.message || error}`);
+    }
+  }
+  if (admission) console.log(admission.budgetReason);
+  const report = await resumeAll({ dryRun, restartReport, admission, queueFile: dryRun ? null : resumeQueuePath() });
   for (const r of report.runs) {
-    console.log(`runId: ${r.runId} status: ${r.status}`);
+    console.log(`runId: ${r.runId} status: ${r.status}${r.deferred ? " deferred" : ""}`);
     for (const a of r.actions) {
       const parts = [`  action: ${a.kind}`];
       if (a.tmux) parts.push(`tmux=${a.tmux}`);
@@ -1289,58 +1596,26 @@ function cmdResume(args) {
       console.log(parts.join(" "));
     }
   }
-  // Durable automatic resume for due capacity waits (unified start path).
-  import("../supervisor/waits.mjs")
-    .then(async ({ resumeDueWaits }) => {
-      const { loadJson, requireRoster, usagePath } = await import("../roster/config.mjs");
-      const { resolveProfile } = await import("../roster/profile.mjs");
-      const { startFromLaunchDescriptor } = await import("../supervisor/start.mjs");
-      const roster = requireRoster();
-      const usage = loadJson(usagePath()) || {};
-      if (dryRun) {
-        const { listDueWaits } = await import("../supervisor/waits.mjs");
-        for (const id of listDueWaits({ now: new Date().toISOString() })) {
-          console.log(`due-wait: ${id}`);
-        }
-        return;
-      }
-      const results = await resumeDueWaits({
-        now: new Date().toISOString(),
-        usage,
-        roster,
-        resolveProfileForRun: async (runId, state) => {
-          const profile = state.specialist_profile || null;
-          const specialistId = state.specialist?.id;
-          return resolveProfile({
-            roster,
-            usage,
-            profile,
-            specialistId,
-            requirements:
-              state.harness_requirements ||
-              {},
-          });
-        },
-        startWorker: async ({ attempt, runId }) => {
-          const started = startFromLaunchDescriptor({
-            runId,
-            runtimeOverride: attempt.runtime,
-            attempt,
-          });
-          console.log(
-            `resumed-wait: ${runId} attempt=${attempt.id} tmux=${started.session}`
-          );
-        },
-      });
-      for (const r of results) {
-        console.log(
-          `capacity-resume: ${r.runId} ok=${r.ok} resumed=${Boolean(r.resumed)} reason=${r.reason || ""}`
-        );
-      }
-    })
-    .catch((e) => {
-      console.error(`capacity resume error: ${e.message || e}`);
-    });
+  for (const p of report.parents) {
+    const parts = [`parent: ${p.key} delivery: ${p.delivery} runs: ${p.runIds.join(",")}`];
+    if (p.tmux) parts.push(`tmux=${p.tmux}`);
+    if (p.pending) parts.push(`pending=${p.pending}`);
+    if (p.error) parts.push(`error=${p.error}`);
+    console.log(parts.join(" "));
+    // Nobody else will tell a parent team-up could not reach.
+    if (p.delivery === "none" || p.delivery === "alive" || dryRun) {
+      for (const line of p.message.trimEnd().split("\n")) console.log(`  | ${line}`);
+    }
+  }
+  for (const q of report.queue) {
+    const extra = q.reason ?? q.error ?? q.settle ?? "";
+    console.log(`queue: ${q.status} ${q.label}${extra ? ` (${extra})` : ""}`);
+  }
+  try {
+    await resumeDueCapacityWaits({ dryRun });
+  } catch (e) {
+    console.error(`capacity resume error: ${e.message || e}`);
+  }
   console.log(`log: ${report.logFile}`);
 }
 
@@ -1438,6 +1713,44 @@ async function cmdGc(args) {
   for (const item of report.runs) {
     console.log(`runId: ${item.runId} action: ${item.action}`);
   }
+  // Session records of exited CLIs or earlier boots would name dead parents.
+  for (const file of pruneSessionRecords({ dryRun })) {
+    console.log(`session: ${path.basename(file, ".json")} action: ${dryRun ? "would_prune" : "pruned"}`);
+  }
+  // Runs parked for want of memory start here, or they wait for the next
+  // `runs resume`. Not while a resume holds the lock: it runs its own queue.
+  if (dryRun) {
+    await resumeDueCapacityWaits({ dryRun, reason: "resources" });
+    return;
+  }
+  try {
+    acquireResumeLock();
+  } catch {
+    console.log("resource waits: a resume is running; skipped");
+    return;
+  }
+  try {
+    await resumeDueCapacityWaits({ reason: "resources" });
+  } catch (e) {
+    console.error(`resource wait resume error: ${e.message || e}`);
+  } finally {
+    try {
+      fs.unlinkSync(resumeLockPath());
+    } catch {
+      /* */
+    }
+  }
+}
+
+async function cmdResumeInstall() {
+  const { installResumeUnit } = await import("./resume-unit.mjs");
+  const { lingerEnabled } = await import("../telemetry/timer.mjs");
+  const result = installResumeUnit();
+  console.log(`service: ${result.servicePath}`);
+  console.log("runs at the next boot: `runs resume --boot`");
+  if (lingerEnabled() !== true) {
+    console.log("linger is off: the unit only runs once you log in. Enable with: loginctl enable-linger $USER");
+  }
 }
 
 async function cmdGcInstall() {
@@ -1503,6 +1816,7 @@ const HANDLERS = {
   cancel: cmdCancel,
   gc: cmdGc,
   "gc-install": cmdGcInstall,
+  "resume-install": cmdResumeInstall,
   stale: cmdStale,
 };
 
@@ -1526,6 +1840,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 
 import { writeTypedResult as writeTypedResultImpl, validateResult } from "../specialists/request.mjs";
+import { detectParent, pruneSessionRecords } from "./parent.mjs";
+import { writePendingWakeup } from "./pending.mjs";
+import { orderQueue, runQueue, writeQueueStatus } from "../admission/scheduler.mjs";
+import {
+  buildParentPlan,
+  overflowPath,
+  parentResumeArgv,
+  renderParentWakeup,
+  workerOutcome,
+  writeOverflow,
+} from "./wakeup.mjs";
 
 export function writeTypedResult(runId, result) {
   return writeTypedResultImpl(runId, result, {

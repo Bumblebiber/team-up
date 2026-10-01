@@ -18,7 +18,10 @@ import { LIST_TIMEOUT_MS } from "./collectors/cli-models.mjs";
 import { listVerificationRecords, loadVerificationRecord } from "./harness/verify.mjs";
 import { HARNESS_VERIFY_CLIS, UNVERIFIABLE_ISOLATION_REASONS } from "./harness/cli-verify.mjs";
 import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
-import { handoffsDir } from "./paths.mjs";
+import { debugLogDir, handoffsDir, telemetryDir } from "./paths.mjs";
+import { journalPersistence, listRestartReports } from "./telemetry/restart.mjs";
+import { admissionConfig, memoryDelegation } from "./admission/admission.mjs";
+import { listActiveStates } from "./runs/runs.mjs";
 
 function readJson(file) {
   try {
@@ -38,7 +41,12 @@ function readJson(file) {
  * `exclude` the same staleness is worse: the exclusion stops applying and the
  * package reaches a specialist that was meant to be denied it.
  */
-export function diagnose(env = process.env, { execFileSync } = {}) {
+export function diagnose(env = process.env, {
+  execFileSync,
+  journalStore = journalPersistence,
+  delegation = memoryDelegation,
+  activeStates = () => listActiveStates({ onCorrupt: () => {} }),
+} = {}) {
   const findings = [];
   const installed = listInstalled(env).specialists ?? {};
   const ids = new Set(Object.keys(installed));
@@ -368,6 +376,73 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
     });
   }
 
+  // Resuming everything at once after a restart team-up probably caused
+  // rebuilds the same load; the human should hear it here, not in a log file.
+  for (const report of listRestartReports({ logDir: debugLogDir(env) })) {
+    if (report.verdict !== "team_up_suspected") continue;
+    findings.push({
+      kind: "restart_team_up_suspected",
+      severity: "high",
+      path: report.path,
+      detail:
+        `restart at ${report.created_at} looks caused by team-up: ` +
+        `${(report.reasons ?? []).join("; ")}`,
+      fix: "run fewer workers at once; team-up telemetry stats shows their footprint",
+    });
+  }
+
+  // Telemetry is on, but the kernel log that would say why the machine went
+  // down does not survive the restart it is meant to explain.
+  if (fs.existsSync(telemetryDir(env))) {
+    const store = journalStore();
+    if (store?.persistent === false) {
+      findings.push({
+        kind: "journal_not_persistent",
+        severity: "medium",
+        path: "/var/log/journal",
+        detail: `journald keeps logs in memory only (${store.reason}); restart reports cannot see OOM kills or how the last boot ended`,
+        fix: "sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald (or set Storage=persistent in /etc/systemd/journald.conf)",
+      });
+    }
+  }
+
+  // Per-worker memory ceilings (plan 3) only exist where the memory
+  // controller is delegated, and only for workers that run under systemd-run.
+  let ceiling = null;
+  try {
+    ceiling = admissionConfig(env).memory_ceiling;
+  } catch (e) {
+    findings.push({ kind: "admission_config_invalid", severity: "high", path: "roster.json", detail: e.message });
+  }
+  const memoryDelegated = delegation();
+  if (ceiling?.enabled) {
+    if (memoryDelegated.delegated !== true) {
+      findings.push({
+        kind: "memory_ceiling_unavailable",
+        severity: "medium",
+        path: memoryDelegated.path,
+        detail: memoryDelegated.delegated === false
+          ? "admission.memory_ceiling is on, but the user manager has no memory controller: MemoryMax will not hold"
+          : "admission.memory_ceiling is on, but cgroup delegation could not be read",
+        fix: "systemctl edit user@.service → [Service] Delegate=cpu cpuset io memory pids, then reboot",
+      });
+    }
+    let unconstrained = [];
+    try {
+      unconstrained = activeStates().filter((st) => st.sandbox?.memory_max_applied === false).map((st) => st.runId);
+    } catch {
+      // no runs directory yet
+    }
+    if (unconstrained.length) {
+      findings.push({
+        kind: "workers_without_memory_ceiling",
+        severity: "medium",
+        path: "runs",
+        detail: `${unconstrained.length} active worker(s) run without a memory ceiling (no systemd sandbox): ${unconstrained.slice(0, 5).join(", ")}`,
+      });
+    }
+  }
+
   const count = (s) => findings.filter((f) => f.severity === s).length;
   return {
     ok: findings.length === 0,
@@ -376,6 +451,7 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
       assignments: assignments.length,
       approvals: Object.keys(approvals).length,
       pins: Object.keys(pins).length,
+      memory_ceiling_possible: memoryDelegated.delegated,
     },
     counts: { high: count("high"), medium: count("medium"), low: count("low") },
     findings,

@@ -9,7 +9,7 @@ worker launch. o9k keeps a thin compatibility adapter only.
 ## Quick start
 
 ```bash
-node bin/team-up.mjs version   # 0.4.0
+node bin/team-up.mjs version   # 0.6.0
 node bin/team-up.mjs validate
 node bin/team-up.mjs pick --role <role>
 node bin/team-up.mjs specialist inspect ../team-up-with-tessa
@@ -58,11 +58,72 @@ generic matrix — partial MCP/skill proof must not grant v1. Closed-world
 content manifests require Linux `/proc` fd-based directory walks; other
 platforms fail closed rather than using a weaker path-based fallback.
 
+## Resource telemetry and restart reports
+
+```bash
+node bin/team-up.mjs telemetry install-timer   # sample every 30 s (systemd user timer)
+loginctl enable-linger $USER                   # keep user timers running after logout
+node bin/team-up.mjs telemetry stats           # p50/p95 RSS per worker, per cli and role
+node bin/team-up.mjs telemetry restart-report  # was the last restart team-up's doing?
+```
+
+Each sample (`~/.team-up/telemetry/YYYY-MM-DD.jsonl`, fsynced, 7 days) holds
+memory, pressure (PSI), load and every live worker's RSS. After a reboot,
+`team-up runs resume` first writes `~/.team-up/logs/restart-<boot_id>.json`
+with a verdict — `team_up_suspected`, `other_cause`, `clean_shutdown` or
+`unknown` — plus the evidence and what could not be checked. The kernel log
+needs membership in `systemd-journal` (or `adm`); without it the verdict leans
+on the samples and says so. It also has to survive the reboot: with
+journald's default `Storage=auto` that needs `/var/log/journal` to exist
+(`sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald`);
+`doctor` flags a volatile journal once telemetry runs. A `team_up_suspected`
+report from the last 7 days is a high `doctor` finding.
+
+## Parent session recovery
+
+```bash
+node bin/team-up.mjs runs resume-install   # run `runs resume --boot` at every boot
+loginctl enable-linger $USER               # so it runs without a login
+```
+
+Every run records the session that dispatched it (`STATE.json` →
+`parent`, with `detected_by`). For Claude Code the plugin's `SessionStart`
+hook writes `~/.team-up/sessions/<pid>.json`; Hermes, Codex and OpenCode are
+read from their session env vars. After a restart, `runs resume` restarts the
+workers, then wakes each parent **once**: a parent whose tmux is gone is
+resumed there with a message naming its runs and the `runs wait` command for
+each watcher; a Claude parent outside tmux gets the message at its next
+session start. A live parent is not disturbed. Per-CLI details:
+[harness-session-identity.md](docs/harness-session-identity.md).
+
+## Staggered resume and admission
+
+```bash
+node bin/team-up.mjs admission check --cli codex   # would one more worker fit now?
+node bin/team-up.mjs admission queue               # where a boot resume is
+node bin/team-up.mjs admission reset               # lift the cap a restart left
+```
+
+`runs resume` no longer starts everything at once. Parents come first, then
+runs waiting on a human, then the oldest runs; each next start waits for the
+previous worker's `HEARTBEAT` (at most 120 s) and a fresh admission check
+(free memory after the worker's p95 and a reserve, memory pressure, swap
+trend, worker limit). After a `team_up_suspected` restart only half of the
+workers that ran before come back; the rest wait in `waiting_capacity`
+(`reason: "resources"`), the parent's message says which, and the GC timer
+starts them one per pass once there is room. `team-up dispatch` and
+`specialist run` go through the same check and fail with `ADMISSION_REFUSED`
+(exit 3); `--force-admission` overrides it, `specialist run --wait-capacity`
+parks the run instead. Re-run `runs gc-install` and `runs resume-install`
+once after updating so the units pick up the new settings. Keys:
+[configuration.md](docs/configuration.md#admission).
+
 ## Docs
 
 - [configuration.md](docs/configuration.md)
 - [specialists.md](docs/specialists.md)
 - [command-broker.md](docs/command-broker.md)
+- [harness-session-identity.md](docs/harness-session-identity.md)
 - Runtime supervision design: `docs/specs/2026-07-25-runtime-supervision-design.md`
 
 ## Tests

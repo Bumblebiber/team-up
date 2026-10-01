@@ -251,11 +251,10 @@ test("buildResumePlan noops worker when tmux exists", () => {
     worker: { cli: "codex", tmux: "w1" },
   }, { tmuxExists: (n) => n === "w1" });
   assert.ok(!plan.actions.some((a) => a.kind === "spawn_worker"));
-  assert.ok(plan.actions.some((a) => a.kind === "parent_awaiting_attach"));
   assert.ok(plan.actions.some((a) => a.kind === "flag_reattach_watcher"));
 });
 
-test("buildResumePlan parent tmux when attach=tmux", () => {
+test("buildResumePlan leaves the parent to the grouped wake-up", () => {
   const plan = buildResumePlan({
     status: "waiting_human",
     runId: "r1",
@@ -264,9 +263,7 @@ test("buildResumePlan parent tmux when attach=tmux", () => {
     worker: { cli: "codex", tmux: "w1" },
   }, { tmuxExists: () => false });
   const kinds = plan.actions.map((a) => a.kind);
-  assert.ok(kinds.includes("spawn_worker"));
-  assert.ok(kinds.includes("spawn_parent"));
-  assert.match(plan.actions.find((a) => a.kind === "spawn_parent").inject, /human question/);
+  assert.deepEqual(kinds, ["spawn_worker", "flag_reattach_watcher"]);
 });
 
 test("buildCliArgv claude resume", () => {
@@ -337,7 +334,7 @@ test("listActiveStates skips corrupt STATE.json", withTempRuns(async (dir) => {
   assert.ok(active.some((r) => r.runId === s.runId));
   assert.ok(skipped.includes("corrupt-run"));
   // resumeAll must not throw
-  const report = resumeAll({ dryRun: true, tmuxExists: () => true, logDir: dir });
+  const report = await resumeAll({ dryRun: true, tmuxExists: () => true, logDir: dir });
   assert.ok(report.runs.some((r) => r.runId === s.runId));
 }));
 
@@ -349,7 +346,7 @@ test("resumeAll dry-run lists actions without tmux", withTempRuns(async (dir) =>
     prompt: "x",
   });
   setStatus(s.runId, "watching");
-  const report = resumeAll({ dryRun: true, tmuxExists: () => false, logDir: dir });
+  const report = await resumeAll({ dryRun: true, tmuxExists: () => false, logDir: dir });
   assert.ok(report.runs.some((r) => r.runId === s.runId));
   assert.ok(report.runs[0].actions.some((a) => a.kind === "spawn_worker"));
   assert.equal(report.logFile, null);
@@ -358,7 +355,7 @@ test("resumeAll dry-run lists actions without tmux", withTempRuns(async (dir) =>
 test("resumeAll lock prevents concurrent run", withTempRuns(async (dir) => {
   const lock = path.join(dir, ".resume.lock");
   fs.writeFileSync(lock, String(process.pid));
-  assert.throws(
+  await assert.rejects(
     () => resumeAll({ dryRun: false, tmuxExists: () => true, logDir: dir, execute: () => {} }),
     /lock/,
   );
@@ -367,7 +364,7 @@ test("resumeAll lock prevents concurrent run", withTempRuns(async (dir) => {
 test("resumeAll steals stale lock from dead pid", withTempRuns(async (dir) => {
   const lock = resumeLockPath();
   fs.writeFileSync(lock, "2147483646\n"); // almost certainly dead
-  const report = resumeAll({
+  const report = await resumeAll({
     dryRun: false,
     tmuxExists: () => true,
     logDir: dir,

@@ -144,6 +144,7 @@ export function systemdSandboxArgv({
   writableProject = false,
   execPaths = [],
   setenv = {},
+  unit = null,
 }) {
   const ro = new Set(asPropList(readOnlyPaths));
   const rw = new Set(asPropList(writablePaths));
@@ -208,6 +209,9 @@ export function systemdSandboxArgv({
     "--wait",
     "--collect",
     "--pipe",
+    // A named unit is how telemetry finds the worker's cgroup: its processes
+    // are not descendants of the tmux pane, which only holds this client.
+    ...(unit ? [`--unit=${assertUnitName(unit)}`] : []),
     // A transient unit starts with a clean environment: the caller's env (and a
     // tmux session's -e) never reaches it. Anything the worker must see about
     // itself has to ride along here.
@@ -218,6 +222,21 @@ export function systemdSandboxArgv({
     "--",
     ...command,
   ];
+}
+
+const UNIT_NAME = /^[A-Za-z0-9:_.-]{1,240}$/;
+
+function assertUnitName(unit) {
+  if (!UNIT_NAME.test(unit)) throw new Error(`invalid systemd unit name: ${unit}`);
+  return unit;
+}
+
+/**
+ * Unit name for one start of a run. The suffix keeps a restart within the same
+ * boot from colliding with a unit systemd has not collected yet.
+ */
+export function sandboxUnitName(runId, now = Date.now()) {
+  return assertUnitName(`team-up-${runId}-${now.toString(36)}`);
 }
 
 function isUnderHome(p) {
@@ -255,9 +274,14 @@ export function wrapWithSandbox({
   requireHomeRuntime = false,
   execPaths = [],
   enforcement = "required",
+  // { high_kb, max_kb } from admission.memory_ceiling, or null.
+  memoryLimits = null,
   ...rest
 }) {
   const timeoutSeconds = timeoutSecondsArg ?? rest.timeoutSeconds ?? null;
+  // A ceiling exists only inside a systemd unit. Every return below says
+  // whether it was applied: one that silently does not apply is worse than none.
+  const memoryWanted = Boolean(memoryLimits?.max_kb);
   // `network` is deliberately absent: it governs which web tools a specialist
   // holds, not whether it needs a mount namespace.
   const needsIsolation =
@@ -291,6 +315,7 @@ export function wrapWithSandbox({
       sandbox: "none",
       enforced: false,
       timeout_enforced: timed.timeout_enforced,
+      ...(memoryWanted ? { memory_max_applied: false } : {}),
     };
   }
 
@@ -304,6 +329,7 @@ export function wrapWithSandbox({
         warning:
           "best-effort sandbox unavailable; trusted specialist runs without OS isolation",
         timeout_enforced: timed.timeout_enforced,
+        ...(memoryWanted ? { memory_max_applied: false } : {}),
       };
     }
     const err = new Error("SANDBOX_UNAVAILABLE: systemd-run --user cannot enforce requested permissions");
@@ -375,10 +401,24 @@ export function wrapWithSandbox({
       timeout_enforced = true;
     }
   }
+  let memory_max_applied = memoryWanted ? false : undefined;
+  if (memoryWanted) {
+    const idx = argv.indexOf("--");
+    if (idx !== -1) {
+      const high = Math.min(memoryLimits.high_kb ?? memoryLimits.max_kb, memoryLimits.max_kb);
+      argv = [...argv];
+      // MemoryHigh throttles first; MemoryMax is where the kernel OOM-kills
+      // this unit alone instead of the machine's biggest process.
+      argv.splice(idx, 0, "-p", `MemoryHigh=${Math.round(high)}K`, "-p", `MemoryMax=${Math.round(memoryLimits.max_kb)}K`);
+      memory_max_applied = true;
+    }
+  }
   return {
     argv,
     sandbox: "systemd-run-user",
     enforced: true,
     timeout_enforced,
+    unit: rest.unit ? `${rest.unit}.service` : null,
+    ...(memory_max_applied === undefined ? {} : { memory_max_applied }),
   };
 }

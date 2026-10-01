@@ -193,7 +193,8 @@ that to the user verbatim and stop — never substitute your own model choice.
    are failed and stopped only after another 10 minutes without either signal.
    Human questions, capacity/decision waits, and handoff states are never
    stale-killed.
-6. After host reboot: `team-up runs resume` (no unit ships for this — run it yourself, or wire your own). If `REATTACH_WATCHER` exists, respawn watcher; do not double-dispatch if worker tmux lives.
+6. After host reboot: `team-up runs resume` — or install `team-up runs resume-install` once (needs `loginctl enable-linger $USER`) and it runs at boot. Resume wakes each parent session **once** with a message listing its runs and the exact `team-up runs wait <id>` per watcher, then restarts workers one at a time as memory allows. Runs marked `deferred` wait in `waiting_capacity` and start on their own later. If you get that message: re-spawn one watcher per run (deferred ones too), read `runs uncollected` via `intake`, do not re-dispatch. `REATTACH_WATCHER` marks a run still without a watcher; `runs wait` clears it, `runs stale` reports it after 10 min.
+7. The parent session is recorded automatically (`parent.detected_by`): the plugin's SessionStart hook for Claude Code, the session env var for Hermes, Codex and OpenCode. `--parent-*` flags on `runs create` are only for overriding it.
 
 **Stuck recovery:** task-dir has `PLAN.md` but `team-up runs classify <id>` still says
 `watching` → worker skipped mailbox closeout. Write `mailbox/RESULT.md`, then

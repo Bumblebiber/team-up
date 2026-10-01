@@ -62,3 +62,42 @@ test("setenv rides into the transient unit, which starts with a clean environmen
   assert.ok(!argv.some((a) => String(a).includes("TEAMUP_EMPTY")));
   assert.ok(argv.indexOf("--setenv=TEAMUP_WORKER=1") < argv.indexOf("--"));
 });
+
+test("a named unit rides along so telemetry can find the worker's cgroup", async () => {
+  const { sandboxUnitName } = await import("../../src/sandbox/systemd.mjs");
+  const unit = sandboxUnitName("20261001T101500Z-ab12", 1_700_000_000_000);
+  assert.equal(unit, `team-up-20261001T101500Z-ab12-${(1_700_000_000_000).toString(36)}`);
+  const wrapped = wrapWithSandbox({
+    command: ["/bin/echo", "hi"],
+    permissions: { writes: false },
+    cwd: "/tmp",
+    probe: () => true,
+    unit,
+  });
+  assert.ok(wrapped.argv.includes(`--unit=${unit}`));
+  assert.ok(wrapped.argv.indexOf(`--unit=${unit}`) < wrapped.argv.indexOf("--"));
+  assert.equal(wrapped.unit, `${unit}.service`);
+
+  const plain = systemdSandboxArgv({ cwd: "/tmp", command: ["echo"] });
+  assert.ok(!plain.some((a) => String(a).startsWith("--unit")));
+  assert.throws(() => systemdSandboxArgv({ cwd: "/tmp", command: ["echo"], unit: "bad name;rm" }), /invalid systemd unit name/);
+});
+
+test("memory ceilings become MemoryHigh/MemoryMax only under systemd-run, and say whether they hold", () => {
+  const base = { command: ["/usr/bin/echo"], permissions: { writes: false }, cwd: "/tmp", probe: () => true, enforcement: "best_effort" };
+  const plain = wrapWithSandbox(base);
+  assert.ok(!plain.argv.some((a) => String(a).startsWith("Memory")));
+  assert.equal("memory_max_applied" in plain, false);
+
+  const capped = wrapWithSandbox({ ...base, memoryLimits: { high_kb: 1536, max_kb: 2048 } });
+  const dash = capped.argv.indexOf("--");
+  assert.ok(capped.argv.indexOf("MemoryHigh=1536K") < dash);
+  assert.ok(capped.argv.indexOf("MemoryMax=2048K") < dash);
+  assert.equal(capped.memory_max_applied, true);
+
+  const fallback = wrapWithSandbox({ ...base, probe: () => false, memoryLimits: { high_kb: 1536, max_kb: 2048 } });
+  assert.equal(fallback.sandbox, "none");
+  assert.equal(fallback.memory_max_applied, false);
+  const noIsolation = wrapWithSandbox({ ...base, permissions: {}, memoryLimits: { high_kb: 1, max_kb: 2 } });
+  assert.equal(noIsolation.memory_max_applied, false);
+});

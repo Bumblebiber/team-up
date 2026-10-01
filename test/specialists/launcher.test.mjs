@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { launch, resolveRuntimeOverride } from "../../src/specialists/launcher.mjs";
+import { launch, resolveRuntimeOverride, runSpecialist } from "../../src/specialists/launcher.mjs";
 import { wrapWithSandbox } from "../../src/sandbox/systemd.mjs";
 import { installPackage } from "../../src/specialists/store.mjs";
 import { approveSpecialist } from "../../src/specialists/approvals.mjs";
@@ -384,4 +384,72 @@ test("an auto_invoke package opens the worker prompt with its skill", async () =
   } finally {
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg, capPkg]);
   }
+});
+
+test("admission: a refusal creates nothing, --wait-capacity parks the run, --force-admission is recorded", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  const base = {
+    ...ISOLATED,
+    startFromLaunchDescriptor: () => {},
+    prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
+    memoryCeiling: () => null,
+  };
+  const refused = async () => ({ ok: false, reason: "MemAvailable 900 MB - 1200 MB for the worker < reserve 1024 MB" });
+  try {
+    const created = [];
+    await assert.rejects(() => launch({
+      ...fixture.args,
+      dryRun: false,
+      dependencyOverrides: { ...base, checkAdmission: refused, createRun: (a) => { created.push(a); return createRun(a); } },
+    }), (e) => e.code === "ADMISSION_REFUSED" && /reserve 1024 MB/.test(e.message));
+    assert.equal(created.length, 0);
+
+    const parkedArgs = [];
+    let started = false;
+    const parked = await launch({
+      ...fixture.args,
+      dryRun: false,
+      admission: "wait",
+      dependencyOverrides: {
+        ...base,
+        checkAdmission: refused,
+        startFromLaunchDescriptor: () => { started = true; },
+        deferForResources: (args) => parkedArgs.push(args),
+      },
+    });
+    assert.equal(started, false);
+    assert.match(parked.waiting_capacity, /reserve 1024 MB/);
+    assert.equal(parkedArgs.length, 1);
+    assert.equal(parkedArgs[0].runId, parked.runId);
+
+    let checked = false;
+    const forced = await launch({
+      ...fixture.args,
+      dryRun: false,
+      admission: "force",
+      dependencyOverrides: { ...base, checkAdmission: async () => { checked = true; return { ok: false, reason: "x" }; } },
+    });
+    assert.equal(checked, false);
+    assert.equal(forced.admission_forced, true);
+    const state = JSON.parse(fs.readFileSync(path.join(fixture.env.TEAM_UP_RUNS, forced.runId, "STATE.json"), "utf8"));
+    assert.equal(state.admission.forced, true);
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});
+
+test("specialist run maps ADMISSION_REFUSED to exit 3 and passes the admission flags", async () => {
+  const seen = [];
+  const io = { out: () => {}, err: (line) => seen.push(line) };
+  const refuse = async (args) => {
+    seen.push(args.admission);
+    throw Object.assign(new Error("ADMISSION_REFUSED: 3 workers running, limit 3"), { code: "ADMISSION_REFUSED" });
+  };
+  const base = ["--id", "x", "--objective", "o"];
+  assert.equal((await runSpecialist(base, io, { launchFn: refuse })).code, 3);
+  await runSpecialist([...base, "--wait-capacity"], io, { launchFn: refuse });
+  await runSpecialist([...base, "--force-admission"], io, { launchFn: refuse });
+  assert.deepEqual(seen.filter((s) => !String(s).startsWith("ADMISSION")), ["check", "wait", "force"]);
+  assert.ok(seen.some((s) => /ADMISSION_REFUSED: 3 workers running/.test(s)));
 });

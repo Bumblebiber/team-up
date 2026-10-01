@@ -121,3 +121,16 @@ test("a worker terminal no unfinished run claims is an orphan", () => {
   assert.deepEqual(orphans, ["team-up-finished", "team-up-nobody"]);
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("a resume marker nobody consumed within ten minutes is reported", () => {
+  const root = runsRoot();
+  const dir = plant(root, "r-orphaned", { status: "watching", session: "team-up-x", heartbeatAgeMs: 1 * HOUR });
+  const marker = path.join(dir, "mailbox", "REATTACH_WATCHER");
+  fs.writeFileSync(marker, "1\n");
+  fs.utimesSync(marker, new Date(NOW - 5 * 60_000), new Date(NOW - 5 * 60_000));
+  assert.deepEqual(findStaleRuns({ root, now: NOW, sessionAlive: alwaysAlive }), []);
+  fs.utimesSync(marker, new Date(NOW - 11 * 60_000), new Date(NOW - 11 * 60_000));
+  const [found] = findStaleRuns({ root, now: NOW, sessionAlive: alwaysAlive });
+  assert.deepEqual(found.reasons, ["nobody re-attached a watcher"]);
+  fs.rmSync(root, { recursive: true, force: true });
+});

@@ -7,7 +7,7 @@ import { buildCommand, tmuxArgs } from "../roster/command.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { prepareHarnessLaunch, getAdapter } from "../harness/registry.mjs";
 import { pinnedVerifiedBinary } from "../harness/binary.mjs";
-import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
+import { wrapWithSandbox, systemdAvailable, sandboxUnitName } from "../sandbox/systemd.mjs";
 import { builtinsForPermissions } from "../specialists/permissions.mjs";
 import { launchDescriptorDir } from "../paths.mjs";
 import {
@@ -266,6 +266,7 @@ export function buildLaunchDescriptor({
   specialist = null,
   filesystemMode = null,
   writableProject = false,
+  memoryLimits = null,
 }) {
   return {
     schema: LAUNCH_SCHEMA,
@@ -289,6 +290,7 @@ export function buildLaunchDescriptor({
     specialist,
     filesystem_mode: filesystemMode,
     writable_project: Boolean(writableProject),
+    ...(memoryLimits ? { memory_limits: { high_kb: memoryLimits.high_kb, max_kb: memoryLimits.max_kb } } : {}),
   };
 }
 
@@ -686,12 +688,16 @@ export function prepareArgvFromDescriptor(
     timeoutSeconds: timeoutSec,
     sandboxRuntimePaths: descriptor.sandbox_runtime_paths,
     enforcement: "best_effort",
+    unit: runId ? sandboxUnitName(runId) : null,
+    memoryLimits: descriptor.memory_limits ?? null,
   });
 
   return {
     argv: wrapped.argv,
+    memory_max_applied: wrapped.memory_max_applied,
     env: adapterEnv,
     sandbox: wrapped.sandbox,
+    unit: wrapped.unit ?? null,
     enforced: wrapped.enforced === true,
     warning: wrapped.warning ?? null,
     cli,
@@ -896,6 +902,8 @@ export function startFromLaunchDescriptor({
       enforced: prepared.enforced,
       warning: prepared.warning,
       enforcement: "best_effort",
+      unit: prepared.unit,
+      ...(prepared.memory_max_applied === undefined ? {} : { memory_max_applied: prepared.memory_max_applied }),
     };
     live.last_start_error = null;
     saveState(live);

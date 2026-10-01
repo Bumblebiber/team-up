@@ -206,7 +206,7 @@ test("typed blocked result rejects non-array questions without aborting resume",
     assert.match(classified.resultPath, /RESULT\.json$/);
   }
 
-  const report = runs.resumeAll({
+  const report = await runs.resumeAll({
     dryRun: true,
     tmuxExists: () => false,
     logDir: dir,
@@ -281,7 +281,7 @@ test("resumeAll dry-run plans from terminal mailbox but leaves STATE untouched",
   runs.atomicWriteText(path.join(runs.mailboxDir(state.runId), "RESULT.md"), "complete");
   const before = fs.readFileSync(path.join(runs.runDir(state.runId), "STATE.json"), "utf8");
 
-  const report = runs.resumeAll({
+  const report = await runs.resumeAll({
     dryRun: true,
     tmuxExists: () => false,
     logDir: dir,
@@ -308,7 +308,7 @@ test("resumeAll dry-run returns a plan without any filesystem writes", withTempR
     entries: fs.readdirSync(dir).sort(),
   };
 
-  const report = runs.resumeAll({
+  const report = await runs.resumeAll({
     dryRun: true,
     tmuxExists: () => false,
     logDir,
@@ -333,7 +333,7 @@ test("resumeAll dry-run returns a plan without any filesystem writes", withTempR
   const missingRoot = path.join(dir, "missing-runs");
   const missingLogs = path.join(dir, "missing-logs");
   process.env.TEAM_UP_RUNS = missingRoot;
-  const emptyReport = runs.resumeAll({
+  const emptyReport = await runs.resumeAll({
     dryRun: true,
     tmuxExists: () => false,
     logDir: missingLogs,
@@ -354,7 +354,7 @@ test("resumeAll persists terminal mailbox and emits no worker, parent, or watche
   }
   const executed = [];
 
-  const report = runs.resumeAll({
+  const report = await runs.resumeAll({
     dryRun: false,
     tmuxExists: () => false,
     logDir: dir,
@@ -415,7 +415,7 @@ test("resumeAll reconciliation preserves a critical-window STATE update", withTe
 
   let report;
   try {
-    report = runs.resumeAll({
+    report = await runs.resumeAll({
       dryRun: false,
       tmuxExists: () => true,
       logDir: dir,
@@ -450,7 +450,7 @@ test("resumeAll maps question to waiting_human before planning recovery", withTe
   });
   runs.atomicWriteText(path.join(runs.mailboxDir(state.runId), "QUESTIONS.md"), "Which database?");
 
-  const report = runs.resumeAll({
+  const report = await runs.resumeAll({
     dryRun: false,
     tmuxExists: () => false,
     logDir: dir,
@@ -461,7 +461,8 @@ test("resumeAll maps question to waiting_human before planning recovery", withTe
   const entry = report.runs.find((item) => item.runId === state.runId);
   assert.equal(entry.status, "waiting_human");
   assert.equal(runs.loadState(state.runId).status, "waiting_human");
-  assert.match(entry.actions.find((action) => action.kind === "spawn_parent").inject, /human question/);
+  const parent = report.parents.find((item) => item.runIds.includes(state.runId));
+  assert.match(parent.message, /re-surface it to the human/);
   assert.match(runs.classifyMailbox(state.runId).question, /Which database/);
 }));
 
@@ -541,7 +542,7 @@ test("resumeAll preserves waiting_capacity when mailbox says watching", withTemp
   };
   runs.saveState(state);
 
-  const report = runs.resumeAll({
+  const report = await runs.resumeAll({
     dryRun: true,
     tmuxExists: () => false,
     logDir: dir,
@@ -587,7 +588,7 @@ test("capacity QUESTIONS.md does not bypass capacity-specific resume routing", w
   assert.equal(runs.classifyMailbox(due.runId).status, "question");
   assert.equal(runs.classifyMailbox(decision.runId).status, "question");
 
-  const report = runs.resumeAll({
+  const report = await runs.resumeAll({
     dryRun: true,
     tmuxExists: () => false,
     logDir: dir,
@@ -605,4 +606,103 @@ test("capacity QUESTIONS.md does not bypass capacity-specific resume routing", w
   assert.deepEqual(decisionEntry.actions, []);
   assert.equal(runs.loadState(due.runId).status, "waiting_capacity");
   assert.equal(runs.loadState(decision.runId).status, "waiting_decision");
+}));
+
+test("resumeAll wakes a parent with three runs once, before its workers", withTempRuns(async (dir) => {
+  const parent = { cli: "claude", sessionId: "p-1", tmux: "main", attach: "tmux", cwd: "/home/u/proj", detected_by: "registry" };
+  const ids = [0, 1, 2].map((i) => runs.createRun({
+    cwd: "/tmp/project",
+    role: "specialist:coding.codey",
+    parent,
+    worker: { cli: "codex", tmux: `team-up-w${i}` },
+    prompt: "work",
+    now: new Date(Date.parse("2026-10-01T09:00:00Z") + i * 60_000),
+  }).runId);
+  for (const id of ids) runs.setStatus(id, "watching");
+  const order = [];
+  const delivered = [];
+  const report = await runs.resumeAll({
+    dryRun: false,
+    tmuxExists: () => false,
+    logDir: dir,
+    now: new Date("2026-10-01T10:00:00Z"),
+    execute: (action, state) => order.push(`${action.kind}:${state.runId}`),
+    restartReport: { verdict: "other_cause", path: "/r.json" },
+    listUncollected: () => [],
+    deliver: (group, message) => {
+      order.push("parent");
+      delivered.push({ group, message });
+      return { cwd: group.parent.cwd };
+    },
+  });
+  assert.equal(delivered.length, 1);
+  // Parents first: they are what the human talks to (plan 3).
+  assert.equal(order[0], "parent");
+  assert.equal(order.filter((o) => o.startsWith("spawn_worker")).length, 3);
+  assert.deepEqual(delivered[0].group.runIds, ids);
+  assert.equal(delivered[0].group.delivery, "spawn");
+  assert.match(delivered[0].message, /verdict: other_cause/);
+  assert.equal(delivered[0].message.match(/team-up runs wait/g).length, 3);
+  assert.match(delivered[0].message, /\(restarted\)/);
+  assert.equal(report.parents.length, 1);
+  assert.equal(report.parents[0].cwd, "/home/u/proj");
+  for (const id of ids) assert.ok(fs.existsSync(path.join(runs.mailboxDir(id), "REATTACH_WATCHER")));
+}));
+
+test("a staggered resume after a team_up_suspected restart starts half and parks the rest", withTempRuns(async (dir) => {
+  const parent = { cli: "claude", sessionId: "p-2", tmux: "main", attach: "tmux", cwd: "/home/u/proj", detected_by: "registry" };
+  const ids = [0, 1, 2, 3, 4, 5].map((i) => runs.createRun({
+    cwd: "/tmp/project",
+    role: "specialist:coding.codey",
+    parent,
+    worker: { cli: "codex", tmux: `team-up-s${i}` },
+    prompt: "work",
+    now: new Date(Date.parse("2026-10-01T09:00:00Z") + i * 60_000),
+  }).runId);
+  for (const id of ids) runs.setStatus(id, "watching");
+  // The newest run asked its human a question: it goes first among workers.
+  runs.setStatus(ids[5], "waiting_human");
+  const order = [];
+  const delivered = [];
+  const deferred = [];
+  const report = await runs.resumeAll({
+    dryRun: false,
+    tmuxExists: () => false,
+    logDir: dir,
+    now: new Date("2026-10-01T10:00:00Z"),
+    execute: (action, state) => order.push(state.runId),
+    restartReport: { verdict: "team_up_suspected", path: "/r.json" },
+    listUncollected: () => [],
+    deliver: (group, message) => {
+      order.push("parent");
+      delivered.push(message);
+      return {};
+    },
+    admission: {
+      budget: 3,
+      running: 0,
+      verdict: "team_up_suspected",
+      budgetReason: "resume budget 3",
+      check: async () => ({ ok: true }),
+    },
+    defer: (args) => {
+      deferred.push(args.runId);
+      runs.updateState(args.runId, (st) => {
+        st.status = "waiting_capacity";
+        st.capacity = { reason: "resources", admission: { reason: args.admission.reason } };
+        return st;
+      });
+    },
+    queue: { sleep: async () => {}, heartbeatSince: () => true },
+  });
+  assert.deepEqual(order, ["parent", ids[5], ids[0], ids[1]]);
+  assert.deepEqual(deferred, [ids[2], ids[3], ids[4]]);
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].match(/deferred: team-up starts it on its own/g).length, 3);
+  assert.match(delivered[0], /3 runs are deferred to spare the machine/);
+  assert.equal(delivered[0].match(/team-up runs wait/g).length, 6);
+  assert.deepEqual(report.queue.map((q) => q.status), ["started", "started", "started", "started", "deferred", "deferred", "deferred"]);
+  for (const id of [ids[2], ids[3], ids[4]]) {
+    assert.equal(report.runs.find((r) => r.runId === id).deferred, "resume budget 3");
+  }
 }));

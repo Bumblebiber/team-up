@@ -1,4 +1,4 @@
-export const VERSION = "0.4.0";
+export const VERSION = "0.6.0";
 
 import { execFileSync } from "node:child_process";
 import { pick } from "./roster/chain.mjs";
@@ -20,6 +20,8 @@ import { runHarnessVerify } from "./harness/cli-verify.mjs";
 import { runHarnessReverify } from "./harness/reverify.mjs";
 import { diagnose } from "./doctor.mjs";
 import { runCapabilityCli } from "./capabilities/cli.mjs";
+import { runTelemetryCli } from "./telemetry/cli.mjs";
+import { runAdmissionCli } from "./admission/cli.mjs";
 import { startDashboard } from "./dashboard/server.mjs";
 import { runModelsScan } from "./commands/models-scan.mjs";
 import { runModelsList } from "./commands/models-list.mjs";
@@ -265,6 +267,8 @@ export async function runCli(args, io = { out: console.log, err: console.error }
   }
   if (cmd === "specialist") return cmdSpecialist(rest, io);
   if (cmd === "capability") return runCapabilityCli(rest, io);
+  if (cmd === "telemetry") return runTelemetryCli(rest, io);
+  if (cmd === "admission") return runAdmissionCli(rest, io);
   if (cmd === "harness") {
     const [sub, ...harnessArgs] = rest;
     if (sub === "verify") return runHarnessVerify(harnessArgs, io);
@@ -314,7 +318,7 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     return runRosterCli(args);
   }
   io.err(
-    "usage: team-up <version|init|validate|doctor|pick|models|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness|dashboard>"
+    "usage: team-up <version|init|validate|doctor|pick|models|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|telemetry|admission|harness|dashboard>"
   );
   return 1;
 }
