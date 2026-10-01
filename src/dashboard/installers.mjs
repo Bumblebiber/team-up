@@ -73,9 +73,9 @@ export const INSTALLERS = {
     update: { shell: "hermes update --yes", confirmed: "2026-09-25" },
     login: null,
   },
-  // Not in the roster yet — the dashboard offers it under "Add CLI". Running
-  // it through team-up (clis.gemini.cmd, harness, usage, models scan) is a
-  // separate step; installing only puts the binary on PATH.
+  // Not in the roster yet: its CLIs-table row is off until switched on in the
+  // panel's ✎. Running it through team-up (clis.gemini.cmd, harness, usage,
+  // models scan) is a separate step; installing only puts the binary on PATH.
   gemini: {
     bootstrap: {
       shell: "npm install -g @google/gemini-cli",
@@ -85,6 +85,7 @@ export const INSTALLERS = {
     update: { shell: "npm install -g @google/gemini-cli@latest", confirmed: "2026-10-01" },
     // First start asks how to sign in; finish it in the tmux session.
     login: { shell: "gemini" },
+    uninstall: { shell: "npm uninstall -g @google/gemini-cli" },
   },
 };
 
@@ -169,6 +170,12 @@ export function updateAvailable(cli) {
   const spec = INSTALLERS[cli];
   if (!spec?.update?.shell) return { available: false, reason: "no update command" };
   return { available: true, command: spec.update.shell };
+}
+
+export function uninstallAvailable(cli) {
+  const spec = INSTALLERS[cli];
+  if (!spec?.uninstall?.shell) return { available: false };
+  return { available: true, command: spec.uninstall.shell };
 }
 
 export function loginAvailable(cli) {
@@ -389,10 +396,10 @@ export function buildJobShell({
         `echo 0 > ${JSON.stringify(exitPath)}`,
       ].join("; ");
     }
-  } else if (phase === "login") {
-    const login = spec.login?.shell;
-    if (!login) throw new Error("no login command");
-    inner = login;
+  } else if (phase === "login" || phase === "uninstall") {
+    const cmd = spec[phase]?.shell;
+    if (!cmd) throw new Error(`no ${phase} command`);
+    inner = cmd;
   } else {
     throw new Error(`unknown phase: ${phase}`);
   }
@@ -439,6 +446,7 @@ export function enrichCliRow(row, roster, { allowInstall = false, env = process.
   const upd = updateAvailable(cli);
   const state = installState(cli, { env });
   const login = loginAvailable(cli);
+  const uninstall = uninstallAvailable(cli);
   let logLines = [];
   try {
     logLines = fs.readFileSync(installLogPath(cli, env), "utf8").split("\n");
@@ -464,6 +472,7 @@ export function enrichCliRow(row, roster, { allowInstall = false, env = process.
     update_command: upd.available ? upd.command : null,
     login_available: login.available,
     login_command: login.available ? login.command : null,
+    uninstall_command: uninstall.available ? uninstall.command : null,
     install_state: state.state,
     job_session: state.session,
     post_update_verdict: state.state === "succeeded" && upd.available ? verdict : null,

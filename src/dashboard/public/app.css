@@ -487,5 +487,3 @@ details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 .nowrap { white-space: nowrap; }
 .role-triage { background: none; border: none; cursor: pointer; padding: 0 0.2rem; font: inherit; }
 .role-triage.off { opacity: 0.3; }
-.add-cli ul { list-style: none; margin: 0.2rem 0 0; padding: 0; }
-.add-cli li { padding: 0.25rem 0; cursor: pointer; }

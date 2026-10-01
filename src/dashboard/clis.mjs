@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { harnessStatus } from "../harness/registry.mjs";
-import { enrichCliRow, INSTALLERS, bootstrapAvailable, installState, updateAvailable } from "./installers.mjs";
+import { enrichCliRow, INSTALLERS } from "./installers.mjs";
 
 export function commandExists(cmd, { exec = execFileSync } = {}) {
   if (!cmd || typeof cmd !== "string") return null;
@@ -34,8 +34,13 @@ export function harnessLabel(status) {
 
 export function detectClis(roster, { exec = execFileSync, env = process.env } = {}) {
   const rows = [];
-  for (const cli of Object.keys(roster?.clis || {}).sort()) {
-    const spec = roster.clis[cli];
+  // Roster CLIs, plus the ones the installer catalogue can add — those rows
+  // carry in_roster:false and stay hidden until switched on in the panel's ✎.
+  // A catalogue key is its binary name.
+  const ids = [...new Set([...Object.keys(roster?.clis || {}), ...Object.keys(INSTALLERS)])].sort();
+  for (const cli of ids) {
+    const inRoster = Object.hasOwn(roster?.clis || {}, cli);
+    const spec = inRoster ? roster.clis[cli] : { cmd: [cli] };
     const binary = Array.isArray(spec?.cmd) ? spec.cmd[0] : null;
     const pathFound = binary ? commandExists(binary, { exec }) : null;
     let harness = null;
@@ -46,6 +51,7 @@ export function detectClis(roster, { exec = execFileSync, env = process.env } = 
     }
     rows.push({
       cli,
+      in_roster: inRoster,
       binary,
       present: !!pathFound,
       path: pathFound,
@@ -60,26 +66,7 @@ export function detectClis(roster, { exec = execFileSync, env = process.env } = 
 export function buildClisView(roster, opts = {}) {
   const { allowInstall = false, env = process.env, ...detectOpts } = opts;
   const detected = detectClis(roster, detectOpts);
-  // CLIs the installer catalogue knows and the roster doesn't: the
-  // "Add CLI" list under the table. The catalogue key is the binary name.
-  const addable = Object.keys(INSTALLERS)
-    .filter((cli) => !Object.hasOwn(roster?.clis || {}, cli))
-    .sort()
-    .map((cli) => {
-      const boot = bootstrapAvailable(cli, { allowInstall });
-      return {
-        cli,
-        present: !!commandExists(cli),
-        doc_url: INSTALLERS[cli].bootstrap?.doc_url ?? null,
-        install_available: boot.available,
-        install_command: boot.available ? boot.command : null,
-        install_disabled_reason: boot.available ? null : boot.reason,
-        update_command: updateAvailable(cli).command ?? null,
-        install_state: installState(cli, { env }).state,
-      };
-    });
   return {
     clis: detected.clis.map((row) => enrichCliRow(row, roster, { allowInstall, env })),
-    addable,
   };
 }

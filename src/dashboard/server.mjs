@@ -61,6 +61,7 @@ import {
   loginAvailable,
   hermesInstallRefusal,
   spawnCliJob,
+  uninstallAvailable,
   readInstallLog,
   classifyVerificationVerdict,
   installState,
@@ -781,19 +782,20 @@ export function createDashboardServer({
       return;
     }
 
-    const cliLoginMatch = pathname.match(/^\/api\/clis\/([^/]+)\/login$/);
+    // Login and uninstall: one catalogue command each, run in the job session.
+    const cliLoginMatch = pathname.match(/^\/api\/clis\/([^/]+)\/(login|uninstall)$/);
     if (req.method === "POST" && cliLoginMatch) {
       if (!requireWriteAccess(req, res)) return;
-      const cli = cliLoginMatch[1];
+      const [, cli, phase] = cliLoginMatch;
       try {
         const roster = loadRoster(env);
         if (!isValidCliId(cli, roster)) {
           jsonResponse(res, 400, { error: "unknown cli id" });
           return;
         }
-        const login = loginAvailable(cli);
+        const login = phase === "login" ? loginAvailable(cli) : uninstallAvailable(cli);
         if (!login.available) {
-          jsonResponse(res, 400, { error: "login not available for this cli" });
+          jsonResponse(res, 400, { error: `${phase} not available for this cli` });
           return;
         }
         const running = installState(cli, { env, sessionExists });
@@ -801,13 +803,13 @@ export function createDashboardServer({
           jsonResponse(res, 200, { ok: true, joined: true, job: running });
           return;
         }
-        const spawned = spawnCliJob(cli, "login", { env, exec, sessionExists });
+        const spawned = spawnCliJob(cli, phase, { env, exec, sessionExists });
         if (!spawned.ok) {
           jsonResponse(res, spawned.status, spawned);
           return;
         }
         appendAudit(
-          { actor: "127.0.0.1", action: "cli.login", target: cli, result: "ok", detail: "spawned" },
+          { actor: "127.0.0.1", action: `cli.${phase}`, target: cli, result: "ok", detail: "spawned" },
           { env },
         );
         jsonResponse(res, 200, {
@@ -819,7 +821,7 @@ export function createDashboardServer({
         });
       } catch (e) {
         appendAudit(
-          { actor: "127.0.0.1", action: "cli.login", target: cli, result: "fail" },
+          { actor: "127.0.0.1", action: `cli.${phase}`, target: cli, result: "fail" },
           { env },
         );
         jsonResponse(res, 500, { error: String(e.message || e) });
