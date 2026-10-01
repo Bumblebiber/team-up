@@ -718,9 +718,6 @@ export function writeAnswer(runId, body, { source = "parent" } = {}) {
 export const INJECT = {
   worker:
     "Host crash recovery. Read mailbox/STATUS and mailbox/PROMPT.md; continue the task. Do not re-init from scratch.",
-  parent: (runId) =>
-    `Host crash recovery. Read ${path.join(runsRoot(), runId, "STATE.json")}. Continue orchestration; do not re-dispatch if worker tmux is alive.`,
-  waitingHuman: " You were blocked on a human question — re-surface it; do not invent an answer.",
 };
 
 function defaultTmuxExists(name) {
@@ -760,8 +757,6 @@ export function buildResumePlan(state, {
   }
   const actions = [];
   const injectWorker = INJECT.worker;
-  let injectParent = INJECT.parent(state.runId);
-  if (state.status === "waiting_human") injectParent += INJECT.waitingHuman;
 
   const crashSpawnDisabled =
     state.recovery?.crash_spawn === false ||
@@ -782,18 +777,8 @@ export function buildResumePlan(state, {
       promptPath: path.join(runDir(state.runId), "mailbox", "PROMPT.md"),
     });
   }
-  if (state.parent?.attach === "tmux" && state.parent.tmux && !tmuxExists(state.parent.tmux)) {
-    actions.push({
-      kind: "spawn_parent",
-      tmux: state.parent.tmux,
-      cwd: state.cwd,
-      cli: state.parent.cli,
-      sessionId: state.parent.sessionId,
-      inject: injectParent,
-    });
-  } else if (state.parent?.attach === "manual") {
-    actions.push({ kind: "parent_awaiting_attach", runId: state.runId, sessionId: state.parent.sessionId });
-  }
+  // Parents are not restarted per run: resumeAll groups runs by parent and
+  // wakes each parent once (buildParentPlan in wakeup.mjs).
   actions.push({ kind: "flag_reattach_watcher", runId: state.runId });
   return { actions };
 }
@@ -988,16 +973,86 @@ export function executeResumeAction(action, state, {
   pasteInject(action.tmux, action.inject || "", { waitReady, readyTimeoutMs });
 }
 
+/**
+ * Wake each parent session once, after its runs' workers were handled, with a
+ * message built from what actually happened to them.
+ */
+function resumeParents(entries, { dryRun, tmuxExists, logDir, now, restartReport, listUncollected, deliver }) {
+  let uncollected = [];
+  try {
+    uncollected = listUncollected();
+  } catch {
+    // an unread result we cannot list is one line fewer, not a failed resume
+  }
+  const byRun = new Map(entries.map((e) => [e.state.runId, e]));
+  const out = [];
+  for (const group of buildParentPlan(entries.map((e) => e.state), { tmuxExists, uncollected })) {
+    const groupEntries = group.runIds.map((runId) => {
+      const { state, actions } = byRun.get(runId);
+      return { state, outcome: workerOutcome(state, actions, { tmuxExists }) };
+    });
+    const overflow = groupEntries.length > 10 ? overflowPath(logDir, group.key, now) : null;
+    const message = renderParentWakeup({
+      entries: groupEntries,
+      uncollected: group.uncollected,
+      restartReport,
+      overflowPath: overflow,
+    });
+    const item = {
+      key: group.key,
+      cli: group.parent.cli,
+      sessionId: group.parent.sessionId ?? null,
+      tmux: group.parent.tmux ?? null,
+      delivery: group.delivery,
+      runIds: group.runIds,
+      message,
+    };
+    if (!dryRun) {
+      try {
+        if (overflow) writeOverflow(groupEntries, overflow);
+        Object.assign(item, deliver(group, message, { fallbackCwd: byRun.get(group.runIds[0]).state.cwd }) ?? {});
+      } catch (error) {
+        item.error = error.message || String(error);
+      }
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+/** Deliver one parent's wake-up the way its delivery says. */
+export function deliverParentWakeup(group, message, {
+  fallbackCwd = null,
+  run = (args) => execFileSync("tmux", args, { stdio: "ignore" }),
+  paste = pasteInject,
+  writePending = writePendingWakeup,
+} = {}) {
+  const { parent, delivery } = group;
+  if (delivery === "pending") return { pending: writePending(parent.sessionId, message) };
+  if (delivery !== "spawn") return null;
+  // The parent's own cwd: a Claude session's transcript is only found there.
+  const cwd = parent.cwd || fallbackCwd;
+  const resume = parentResumeArgv(parent, message, cwd);
+  if (!resume) return null;
+  run(resumeTmuxArgs({ kind: "spawn_parent", tmux: parent.tmux, cwd }, null, resume.argv));
+  if (resume.paste) paste(parent.tmux, message);
+  return { cwd, cwd_source: parent.cwd ? "parent" : "run" };
+}
+
 export function resumeAll({
   dryRun = false,
   tmuxExists = defaultTmuxExists,
   logDir = null,
   now = new Date(),
   execute = executeResumeAction,
+  restartReport = null,
+  listUncollected = () => findUncollectedRuns(),
+  deliver = deliverParentWakeup,
 } = {}) {
   const lock = resumeLockPath();
   const resolvedLogDir = logDir || path.join(os.homedir(), ".team-up/logs");
-  const report = { at: now.toISOString(), runs: [] };
+  const report = { at: now.toISOString(), runs: [], parents: [] };
+  const entries = [];
   if (!dryRun) {
     fs.mkdirSync(runsRoot(), { recursive: true });
     acquireResumeLock(lock);
@@ -1015,6 +1070,7 @@ export function resumeAll({
         status: effectiveState.status,
         actions: plan.actions,
       });
+      entries.push({ state: effectiveState, actions: plan.actions });
       if (dryRun) continue;
       for (const action of plan.actions) {
         execute(action, effectiveState);
@@ -1023,6 +1079,15 @@ export function resumeAll({
         atomicWriteText(path.join(mailboxDir(effectiveState.runId), "REATTACH_WATCHER"), "1\n");
       }
     }
+    report.parents = resumeParents(entries, {
+      dryRun,
+      tmuxExists,
+      logDir: resolvedLogDir,
+      now,
+      restartReport,
+      listUncollected,
+      deliver,
+    });
   } finally {
     if (!dryRun) {
       try {
@@ -1092,6 +1157,13 @@ export function waitMailbox(runId, {
   ) {
     cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
     return { waitExit: 0, classified: resolved.classified };
+  }
+
+  // A watcher is attached again: the resume's marker has done its job.
+  try {
+    fs.unlinkSync(path.join(mailboxDir(runId), "REATTACH_WATCHER"));
+  } catch {
+    // none set
   }
 
   let observerChild = null;
@@ -1311,8 +1383,15 @@ function reportRestart({ dryRun }) {
 
 function cmdResume(args) {
   const dryRun = args.includes("--dry-run");
-  reportRestart({ dryRun });
-  const report = resumeAll({ dryRun });
+  const restartReport = reportRestart({ dryRun });
+  // At boot nobody is watching: if team-up probably caused the restart,
+  // bringing everything back at once would rebuild the same load. A human
+  // runs `runs resume` by hand instead (plan 3 replaces this with staggering).
+  if (args.includes("--boot") && restartReport?.verdict === "team_up_suspected") {
+    console.log("boot resume skipped: the last restart looks caused by team-up; run `team-up runs resume` by hand");
+    return;
+  }
+  const report = resumeAll({ dryRun, restartReport });
   for (const r of report.runs) {
     console.log(`runId: ${r.runId} status: ${r.status}`);
     for (const a of r.actions) {
@@ -1320,6 +1399,17 @@ function cmdResume(args) {
       if (a.tmux) parts.push(`tmux=${a.tmux}`);
       if (a.runId) parts.push(`runId=${a.runId}`);
       console.log(parts.join(" "));
+    }
+  }
+  for (const p of report.parents) {
+    const parts = [`parent: ${p.key} delivery: ${p.delivery} runs: ${p.runIds.join(",")}`];
+    if (p.tmux) parts.push(`tmux=${p.tmux}`);
+    if (p.pending) parts.push(`pending=${p.pending}`);
+    if (p.error) parts.push(`error=${p.error}`);
+    console.log(parts.join(" "));
+    // Nobody else will tell a parent team-up could not reach.
+    if (p.delivery === "none" || p.delivery === "alive" || dryRun) {
+      for (const line of p.message.trimEnd().split("\n")) console.log(`  | ${line}`);
     }
   }
   // Durable automatic resume for due capacity waits (unified start path).
@@ -1479,6 +1569,17 @@ async function cmdGc(args) {
   }
 }
 
+async function cmdResumeInstall() {
+  const { installResumeUnit } = await import("./resume-unit.mjs");
+  const { lingerEnabled } = await import("../telemetry/timer.mjs");
+  const result = installResumeUnit();
+  console.log(`service: ${result.servicePath}`);
+  console.log("runs at the next boot: `runs resume --boot`");
+  if (lingerEnabled() !== true) {
+    console.log("linger is off: the unit only runs once you log in. Enable with: loginctl enable-linger $USER");
+  }
+}
+
 async function cmdGcInstall() {
   const { installGcTimer } = await import("./gc-timer.mjs");
   const result = installGcTimer();
@@ -1542,6 +1643,7 @@ const HANDLERS = {
   cancel: cmdCancel,
   gc: cmdGc,
   "gc-install": cmdGcInstall,
+  "resume-install": cmdResumeInstall,
   stale: cmdStale,
 };
 
@@ -1566,6 +1668,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 import { writeTypedResult as writeTypedResultImpl, validateResult } from "../specialists/request.mjs";
 import { detectParent, pruneSessionRecords } from "./parent.mjs";
+import { writePendingWakeup } from "./pending.mjs";
+import {
+  buildParentPlan,
+  overflowPath,
+  parentResumeArgv,
+  renderParentWakeup,
+  workerOutcome,
+  writeOverflow,
+} from "./wakeup.mjs";
 
 export function writeTypedResult(runId, result) {
   return writeTypedResultImpl(runId, result, {

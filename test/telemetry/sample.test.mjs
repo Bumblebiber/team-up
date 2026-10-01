@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { takeSample, workerRows } from "../../src/telemetry/sample.mjs";
+import { parentRows, takeSample, workerRows } from "../../src/telemetry/sample.mjs";
 import { BOOT, fakeCgroup, fakeProc, rmrf } from "./fake-proc.mjs";
 
 const PROCS = [
@@ -39,6 +39,7 @@ test("takeSample records the machine and one row per live worker", async () => {
       states: STATES,
       panePids: (s) => PANES[s] ?? [],
       unitCgroup: (unit) => (unit === "team-up-run-b-x.service" ? "/user.slice/team-up-run-b-x.service" : null),
+      sessions: [{ cli: "claude", session_id: "p-1", pid: 100, tmux: { session: "main" } }],
     });
     assert.equal(sample.schema, "team-up.telemetry/v1");
     assert.equal(sample.at, "2026-10-01T10:00:00.000Z");
@@ -52,6 +53,10 @@ test("takeSample records the machine and one row per live worker", async () => {
     ]);
     assert.equal(sample.workers[1].cgroup_kb, 300 * 1024);
     assert.equal(sample.team_up_rss_kb, 652_000);
+    // Parents are listed, and stay out of the team-up total.
+    assert.deepEqual(sample.parents, [
+      { cli: "claude", session_id: "p-1", pid: 100, tmux: "main", rss_kb: 402_000, cpu_ms: 0, processes: 2 },
+    ]);
   } finally {
     rmrf(root, cg);
   }
@@ -66,6 +71,16 @@ test("a sandboxed worker without a readable unit says its RSS is the pane only",
     assert.equal(rows[0].source, "tmux");
     assert.equal(rows[0].rss_kb, 3000);
     assert.match(rows[0].note, /without a recorded unit/);
+  } finally {
+    rmrf(root);
+  }
+});
+
+test("parentRows skips nothing and reads a gone process as empty", () => {
+  const root = fakeProc({ processes: PROCS });
+  try {
+    const rows = parentRows([{ cli: "hermes", session_id: "h", pid: 999, tmux: null }], { procRoot: root });
+    assert.deepEqual(rows, [{ cli: "hermes", session_id: "h", pid: 999, tmux: null, rss_kb: 0, cpu_ms: 0, processes: 0 }]);
   } finally {
     rmrf(root);
   }

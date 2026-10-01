@@ -38,7 +38,7 @@ Where the implementation departs from the design below:
 - Retention runs on every sample; it is one `readdir`.
 - `workerFootprint` also returns `baseline_used_kb`, the median used memory
   with no worker running, which plan 3's limit needs.
-- `parents[]` waits for plan 2.
+- `parents[]` came with plan 2: each live registered session's process tree, kept out of `team_up_rss_kb`.
 
 ## Problem
 

@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { debugLogDir, sessionsDir } from "../src/paths.mjs";
-import { currentTmux, findCliProcess, writeSessionRecord } from "../src/runs/parent.mjs";
+import { CLI_PROCESS_NAMES, currentTmux, findCliProcess, writeSessionRecord } from "../src/runs/parent.mjs";
 import { takePendingWakeup } from "../src/runs/pending.mjs";
 
 function log(env, message) {
@@ -30,7 +30,28 @@ function readStdin() {
 export function runSessionStart({ input, env = process.env, ppid = process.ppid, procRoot = "/proc", exec } = {}) {
   const event = JSON.parse(input || "{}");
   if (!event.session_id) throw new Error("hook input has no session_id");
-  const cli = findCliProcess(ppid, { procRoot, cli: "claude" });
+  // The Cursor CLI runs Claude Code hooks too (on by default). Its chat is not
+  // a Claude session: record it as Cursor, only where its process is found.
+  if (event.cursor_version || env.CURSOR_VERSION) {
+    const cursor = findCliProcess(ppid, { procRoot, cli: "cursor" });
+    if (!cursor || !CLI_PROCESS_NAMES.cursor.includes(cursor.comm)) return null;
+    writeSessionRecord({
+      cli: "cursor",
+      sessionId: event.session_id,
+      cwd: event.workspace_roots?.[0] ?? env.CURSOR_PROJECT_DIR ?? null,
+      pid: cursor.pid,
+      tmux: currentTmux(env, exec ? { exec } : undefined),
+      source: event.hook_event_name ?? null,
+      procRoot,
+      dir: sessionsDir(env),
+    });
+    return null;
+  }
+  // CLAUDE_PID names the CLI directly; without it, walk up past `sh -c`.
+  const exported = Number(env.CLAUDE_PID);
+  const cli = Number.isInteger(exported) && exported > 1
+    ? { pid: exported }
+    : findCliProcess(ppid, { procRoot, cli: "claude" });
   writeSessionRecord({
     cli: "claude",
     sessionId: event.session_id,

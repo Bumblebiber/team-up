@@ -93,6 +93,32 @@ export function workerRows(states, {
  *
  * `states` defaults to the active runs on disk; pass a list in tests.
  */
+/**
+ * Live parent sessions from the registry, each with its process tree. Kept
+ * apart from the team-up total: the session would run without team-up, but a
+ * restart report should still see what the parents held.
+ */
+export function parentRows(records, { procRoot = "/proc" } = {}) {
+  const children = childLookup(procRoot);
+  return records.map((record) => {
+    const total = sumProcesses(processTree(record.pid, { procRoot, children }));
+    return {
+      cli: record.cli,
+      session_id: record.session_id,
+      pid: record.pid,
+      tmux: record.tmux?.session ?? null,
+      rss_kb: total.rss_kb,
+      cpu_ms: total.cpu_ms,
+      processes: total.pids.length,
+    };
+  });
+}
+
+async function defaultSessionRecords(procRoot) {
+  const { listLiveSessionRecords } = await import("../runs/parent.mjs");
+  return listLiveSessionRecords({ procRoot });
+}
+
 export async function takeSample({
   now = new Date(),
   procRoot = "/proc",
@@ -100,9 +126,16 @@ export async function takeSample({
   states,
   panePids,
   unitCgroup,
+  sessions,
 } = {}) {
   const runs = states ?? await defaultListStates();
   const workers = workerRows(runs, { procRoot, cgroupRoot, panePids, unitCgroup });
+  let parents = [];
+  try {
+    parents = parentRows(sessions ?? await defaultSessionRecords(procRoot), { procRoot });
+  } catch {
+    // a sample without parents still says what the workers did
+  }
   return {
     schema: SAMPLE_SCHEMA,
     at: now.toISOString(),
@@ -113,5 +146,6 @@ export async function takeSample({
     psi: readPressure(procRoot),
     workers,
     team_up_rss_kb: workers.reduce((sum, w) => sum + (w.rss_kb ?? 0), 0),
+    parents,
   };
 }

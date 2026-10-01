@@ -2,9 +2,9 @@
 
 ## Status
 
-Plan 2 of 3, agreed in conversation 2026-10-01, not implemented. It has a
-research phase (phase 0) that must finish before the non-Claude CLIs are
-built. Plan 1 (`2026-10-01-resource-telemetry-and-restart-report.md`)
+Plan 2 of 3, agreed in conversation 2026-10-01. **Implemented 2026-10-01**
+(phases 0–3; deviations below). Phase 0's findings are in
+`docs/harness-session-identity.md`. Plan 1 (`2026-10-01-resource-telemetry-and-restart-report.md`)
 counts parent sessions in telemetry once this plan records them. Plan 3
 (`2026-10-01-staggered-resume-and-admission.md`) decides *when* each
 session restarts; this plan decides *what* gets restarted and what it is
@@ -276,3 +276,46 @@ ships for this".
 - Does a resumed Claude session need the original cwd to find its
   transcript? `spawn_parent` uses `state.cwd`, which is the worker's cwd,
   not the parent's. The registry's `cwd` must be used instead.
+
+## Implementation notes and deviations
+
+- **Env detection beside the hook.** Phase 0 found session-id env vars for
+  Claude Code (`CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`), Hermes, Codex and
+  OpenCode 2.x. `detectParent` asks the registry first, then these
+  (`SESSION_ENV`), and accepts a variable only when the CLI process that owns
+  it is among its own ancestors: a worker whose tmux server inherited a
+  parent's environment would otherwise claim that parent. Codex tools run
+  under a shared daemon, so a Codex parent never takes `$TMUX_PANE` (it is
+  `attach: "manual"`) and its cwd is the tool's working directory.
+- **Hook pid.** The hook uses `$CLAUDE_PID` and walks up past `sh -c` only
+  without it. Registry records carry `pid_start` (start time in ticks), so a
+  reused pid does not resurrect an old session.
+- **Cursor runs Claude hooks** (third-party hooks, on by default). The hook
+  records such a chat as `cli: "cursor"` when the Cursor process is found by
+  name, and otherwise skips it; it never records a Cursor chat as Claude.
+- **Live parent: not pasted into.** The spec pasted the message into a live
+  parent tmux. A live session may be mid-turn or mid-typing, and its watcher
+  may still be running; it is left alone (`delivery: "alive"`) and the message
+  is printed by `runs resume`. `REATTACH_WATCHER` + `runs stale` cover a
+  watcher that really is gone.
+- **Delivery by command line for every CLI.** Claude `--resume <id> "<msg>"`,
+  Codex `resume <id> -C <cwd> "<msg>"`, Hermes `chat --resume <id> -q
+  "<msg>"`, Cursor `--resume <id> "<msg>"`. No paste race. OpenCode is not
+  resumed automatically (1.x ignores `--prompt` with `-s`; 2.x continues
+  interrupted turns itself) and Gemini has no detection yet: both get
+  `delivery: "none"`, and the message is printed.
+- **Pending messages** are delivered only to Claude Code (the only hook that
+  can add context); `additionalContext` reaches the model with the human's
+  next prompt.
+- **Boot guard.** Until plan 3 staggers resumes, `runs resume --boot` (what
+  the unit runs) does nothing when the restart report says
+  `team_up_suspected`, so a restart caused by load does not rebuild it.
+- **Unit details.** `RemainAfterExit=yes` keeps the tmux server the unit may
+  start alive (a finished oneshot's cgroup is killed otherwise); the
+  installer's `PATH` (and `TEAM_UP_HOME`) are written into the unit; the unit
+  is enabled, not started.
+- **Telemetry.** Samples now carry `parents[]` (each live registry session's
+  process tree), outside `team_up_rss_kb`.
+- **Not measured live:** see the open items in
+  `docs/harness-session-identity.md`. Gemini (extension hook) and OpenCode
+  resume remain follow-ups.

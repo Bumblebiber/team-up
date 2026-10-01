@@ -251,11 +251,10 @@ test("buildResumePlan noops worker when tmux exists", () => {
     worker: { cli: "codex", tmux: "w1" },
   }, { tmuxExists: (n) => n === "w1" });
   assert.ok(!plan.actions.some((a) => a.kind === "spawn_worker"));
-  assert.ok(plan.actions.some((a) => a.kind === "parent_awaiting_attach"));
   assert.ok(plan.actions.some((a) => a.kind === "flag_reattach_watcher"));
 });
 
-test("buildResumePlan parent tmux when attach=tmux", () => {
+test("buildResumePlan leaves the parent to the grouped wake-up", () => {
   const plan = buildResumePlan({
     status: "waiting_human",
     runId: "r1",
@@ -264,9 +263,7 @@ test("buildResumePlan parent tmux when attach=tmux", () => {
     worker: { cli: "codex", tmux: "w1" },
   }, { tmuxExists: () => false });
   const kinds = plan.actions.map((a) => a.kind);
-  assert.ok(kinds.includes("spawn_worker"));
-  assert.ok(kinds.includes("spawn_parent"));
-  assert.match(plan.actions.find((a) => a.kind === "spawn_parent").inject, /human question/);
+  assert.deepEqual(kinds, ["spawn_worker", "flag_reattach_watcher"]);
 });
 
 test("buildCliArgv claude resume", () => {

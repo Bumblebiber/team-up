@@ -145,3 +145,59 @@ test("the hook process exits 0 and logs on bad input", (t) => {
   assert.equal(r.stdout, "");
   assert.match(fs.readFileSync(path.join(home, "logs", "hooks.log"), "utf8"), /session-start error/);
 });
+
+test("env detection: CLAUDE_CODE_SESSION_ID counts only with CLAUDE_PID in our ancestry", (t) => {
+  const { proc, dir } = setup(t);
+  fs.symlinkSync("/home/u/proj", path.join(proc, "20", "cwd"));
+  const env = { CLAUDE_CODE_SESSION_ID: "env-id", CLAUDE_PID: "20" };
+  assert.deepEqual(detectParent({ env, procRoot: proc, dir, pid: 40 }), {
+    cli: "claude", sessionId: "env-id", tmux: null, attach: "manual", cwd: "/home/u/proj", detected_by: "env",
+  });
+  // An inherited id whose CLI is not above us is somebody else's.
+  const stray = detectParent({ env: { ...env, CLAUDE_PID: "99" }, procRoot: proc, dir, pid: 40 });
+  assert.equal(stray.detected_by, "none");
+  assert.equal(stray.sessionId, null);
+});
+
+test("env detection: HERMES_SESSION_ID with a hermes ancestor", (t) => {
+  const { proc, dir } = setup(t, [
+    { pid: 20, ppid: 1, comm: "hermes" },
+    { pid: 30, ppid: 20, comm: "bash" },
+  ]);
+  const env = { HERMES_SESSION_ID: "20261001_101500_ab12", TMUX: "x", TMUX_PANE: "%1" };
+  const parent = detectParent({ env, procRoot: proc, dir, pid: 30, exec: () => "work\n" });
+  assert.equal(parent.cli, "hermes");
+  assert.equal(parent.sessionId, "20261001_101500_ab12");
+  assert.equal(parent.tmux, "work");
+  assert.equal(parent.attach, "tmux");
+  // Codex: the id counts, the inherited pane does not (tools run under a daemon).
+  const { proc: codexProc } = setup(t, [{ pid: 20, ppid: 1, comm: "codex" }, { pid: 30, ppid: 20, comm: "bash" }]);
+  fs.symlinkSync("/work/tree", path.join(codexProc, "30", "cwd"));
+  const codex = detectParent({ env: { CODEX_SESSION_ID: "0199-uuid", TMUX: "x", TMUX_PANE: "%9" }, procRoot: codexProc, dir, pid: 30, exec: () => "wrong\n" });
+  assert.deepEqual(codex, { cli: "codex", sessionId: "0199-uuid", tmux: null, attach: "manual", cwd: "/work/tree", detected_by: "env" });
+  // Same Hermes variable under a codex process: not a Hermes parent.
+  const { proc: other } = setup(t, [{ pid: 20, ppid: 1, comm: "codex" }, { pid: 30, ppid: 20, comm: "bash" }]);
+  assert.equal(detectParent({ env, procRoot: other, dir, pid: 30 }).detected_by, "none");
+});
+
+test("the hook prefers CLAUDE_PID over walking the tree", (t) => {
+  const { proc, home, env } = setup(t);
+  const input = JSON.stringify({ session_id: "abc", cwd: "/p", source: "resume" });
+  runSessionStart({ input, env: { ...env, CLAUDE_PID: "20" }, ppid: 40, procRoot: proc });
+  assert.equal(readSessionRecord(20, { dir: path.join(home, "sessions") }).source, "resume");
+});
+
+test("the hook does not record a Cursor chat as Claude", (t) => {
+  const { proc, home, env } = setup(t);
+  const input = JSON.stringify({ session_id: "chat-1", cursor_version: "2026.09.28", workspace_roots: ["/w"] });
+  assert.equal(runSessionStart({ input, env, ppid: 30, procRoot: proc }), null);
+  assert.equal(fs.existsSync(path.join(home, "sessions")), false);
+  const { proc: cursorProc, home: cursorHome, env: cursorEnv } = setup(t, [
+    { pid: 20, ppid: 1, comm: "cursor-agent" },
+    { pid: 30, ppid: 20, comm: "bash" },
+  ]);
+  runSessionStart({ input, env: cursorEnv, ppid: 30, procRoot: cursorProc });
+  const record = readSessionRecord(20, { dir: path.join(cursorHome, "sessions") });
+  assert.equal(record.cli, "cursor");
+  assert.equal(record.cwd, "/w");
+});

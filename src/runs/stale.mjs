@@ -9,6 +9,9 @@ const TERMINAL = new Set(["done", "failed", "cancelled"]);
 /** Default age past which a quiet run is worth a human's attention. */
 export const DEFAULT_THRESHOLD_MS = 6 * 60 * 60 * 1000;
 
+/** How long a resumed parent has to re-attach a watcher before it counts. */
+export const REATTACH_GRACE_MS = 10 * 60 * 1000;
+
 /**
  * Runs that are not finished and are not going anywhere.
  *
@@ -58,7 +61,15 @@ export function findStaleRuns({
     }
     const silentMs = heartbeatMs === null ? null : now - heartbeatMs;
 
+    let reattachMs = null;
+    try {
+      reattachMs = fs.statSync(path.join(dir, runId, "mailbox", "REATTACH_WATCHER")).mtimeMs;
+    } catch {
+      reattachMs = null;
+    }
+
     const reasons = [];
+    if (reattachMs !== null && now - reattachMs > REATTACH_GRACE_MS) reasons.push("nobody re-attached a watcher");
     if (!session) reasons.push("never got a terminal");
     else if (!alive) reasons.push("terminal is gone");
     if (heartbeatMs === null) reasons.push("no heartbeat was ever written");

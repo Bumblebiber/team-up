@@ -115,8 +115,8 @@ TASK_DIR="~/projects/tasks/task-foo"
 PROMPT="$TASK_DIR/PLANNER_PROMPT.md"   # bare task text is fine — create wraps it
 
 # 1) Mailbox (wraps PROMPT with templates/worker-prompt.md → HEARTBEAT + STATUS=done)
+# the parent (this session) is detected; --parent-cli/--parent-attach only override it
 CREATE=$($RUNS create --cwd "$TASK_DIR" --role planner \
-  --parent-cli cursor --parent-attach manual \
   --worker-cli claude --prompt-file "$PROMPT" --project P0062)
 RUN_ID=$(echo "$CREATE" | awk '/^runId:/{print $2}')
 
@@ -158,8 +158,10 @@ wakes on `done|failed|cancelled|waiting_human`. A watcher that returns
 `watching` after a few seconds is a bug (or ceiling), not success.
 
 Watcher is disposable; mailbox on disk is continuity. Parent does not hot-loop
-poll. After host crash: `$RUNS resume` (agentless) — not your problem mid-turn
-unless the user asks.
+poll. After host crash: `$RUNS resume` (agentless, or at boot via
+`$RUNS resume-install`) — not your problem mid-turn unless the user asks. It
+wakes you once with your runs and their `runs wait` commands: re-spawn one
+watcher per run, never re-dispatch.
 
 ## Receiving results
 

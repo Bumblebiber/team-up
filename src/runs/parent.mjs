@@ -19,14 +19,33 @@ export const CLI_PROCESS_NAMES = Object.freeze({
   hermes: ["hermes"],
 });
 
-// Env vars a CLI sets for its own child processes that carry its session id.
-// Filled per CLI from docs/harness-session-identity.md; an entry here makes
-// the registry hook unnecessary for that CLI.
-export const SESSION_ENV = Object.freeze({});
+// Env vars a CLI sets for its own child processes: the session id, and the
+// CLI's pid where it exports one (docs/harness-session-identity.md). Claude
+// Code's id can lag behind after `--continue`, which is why the registry the
+// SessionStart hook writes is asked first.
+//   tmux  whether $TMUX_PANE in a tool's env is the session's own pane.
+//         Codex tools run under a shared daemon that kept the env it started
+//         with, so its pane may be another session's.
+//   cwd   "owner": the CLI process's cwd; "self": this process's cwd (the
+//         tool's working directory), where the owner is a daemon.
+export const SESSION_ENV = Object.freeze({
+  claude: { session: "CLAUDE_CODE_SESSION_ID", pid: "CLAUDE_PID", tmux: true, cwd: "owner" },
+  hermes: { session: "HERMES_SESSION_ID", pid: null, tmux: true, cwd: "owner" },
+  codex: { session: "CODEX_SESSION_ID", pid: null, tmux: false, cwd: "self" },
+  opencode: { session: "OPENCODE_SESSION_ID", pid: null, tmux: true, cwd: "self" },
+});
 
 function readStat(pid, procRoot) {
   try {
     return parseStat(fs.readFileSync(path.join(procRoot, String(pid), "stat"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readCwd(pid, procRoot) {
+  try {
+    return fs.readlinkSync(path.join(procRoot, String(pid), "cwd"));
   } catch {
     return null;
   }
@@ -131,6 +150,22 @@ function recordIsLive(record, { procRoot, bootId }) {
   return record.pid_start == null || stat.start_ticks == null || record.pid_start === stat.start_ticks;
 }
 
+/** Records whose process still runs in this boot: the live parent sessions. */
+export function listLiveSessionRecords({ dir = sessionsDir(), procRoot = "/proc" } = {}) {
+  const bootId = readBootId(procRoot);
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .map((name) => /^(\d+)\.json$/.exec(name))
+    .filter(Boolean)
+    .map((m) => readSessionRecord(Number(m[1]), { dir }))
+    .filter((record) => recordIsLive(record, { procRoot, bootId }));
+}
+
 /** Remove records whose process is gone or from an earlier boot. */
 export function pruneSessionRecords({ dir = sessionsDir(), procRoot = "/proc", dryRun = false } = {}) {
   const bootId = readBootId(procRoot);
@@ -185,16 +220,21 @@ export function detectParent({
   }
   const guess = chain.map((p) => cliForComm(p.comm)).find(Boolean) ?? null;
   for (const [cli, vars] of Object.entries(SESSION_ENV)) {
-    if (guess && guess !== cli) continue;
-    const name = vars.find((v) => env[v]);
-    if (!name) continue;
-    const tmux = currentTmux(env, { exec });
+    if (guess !== cli || !env[vars.session]) continue;
+    // The variable must belong to a CLI process above us: a worker started
+    // from a tmux server that inherited a parent's environment would carry
+    // that parent's id otherwise.
+    const owner = vars.pid && env[vars.pid]
+      ? chain.find((p) => p.pid === Number(env[vars.pid]))
+      : chain.find((p) => CLI_PROCESS_NAMES[cli].includes(p.comm));
+    if (!owner) continue;
+    const tmux = vars.tmux ? currentTmux(env, { exec }) : null;
     return {
       cli,
-      sessionId: env[name],
+      sessionId: env[vars.session],
       tmux: tmux?.session ?? null,
       attach: tmux ? "tmux" : "manual",
-      cwd: null,
+      cwd: vars.cwd === "owner" ? readCwd(owner.pid, procRoot) : readCwd(pid, procRoot),
       detected_by: "env",
     };
   }

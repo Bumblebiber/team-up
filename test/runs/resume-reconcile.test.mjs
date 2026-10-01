@@ -461,7 +461,8 @@ test("resumeAll maps question to waiting_human before planning recovery", withTe
   const entry = report.runs.find((item) => item.runId === state.runId);
   assert.equal(entry.status, "waiting_human");
   assert.equal(runs.loadState(state.runId).status, "waiting_human");
-  assert.match(entry.actions.find((action) => action.kind === "spawn_parent").inject, /human question/);
+  const parent = report.parents.find((item) => item.runIds.includes(state.runId));
+  assert.match(parent.message, /re-surface it to the human/);
   assert.match(runs.classifyMailbox(state.runId).question, /Which database/);
 }));
 
@@ -605,4 +606,44 @@ test("capacity QUESTIONS.md does not bypass capacity-specific resume routing", w
   assert.deepEqual(decisionEntry.actions, []);
   assert.equal(runs.loadState(due.runId).status, "waiting_capacity");
   assert.equal(runs.loadState(decision.runId).status, "waiting_decision");
+}));
+
+test("resumeAll wakes a parent with three runs once, after its workers", withTempRuns(async (dir) => {
+  const parent = { cli: "claude", sessionId: "p-1", tmux: "main", attach: "tmux", cwd: "/home/u/proj", detected_by: "registry" };
+  const ids = [0, 1, 2].map((i) => runs.createRun({
+    cwd: "/tmp/project",
+    role: "specialist:coding.codey",
+    parent,
+    worker: { cli: "codex", tmux: `team-up-w${i}` },
+    prompt: "work",
+    now: new Date(Date.parse("2026-10-01T09:00:00Z") + i * 60_000),
+  }).runId);
+  for (const id of ids) runs.setStatus(id, "watching");
+  const order = [];
+  const delivered = [];
+  const report = runs.resumeAll({
+    dryRun: false,
+    tmuxExists: () => false,
+    logDir: dir,
+    now: new Date("2026-10-01T10:00:00Z"),
+    execute: (action, state) => order.push(`${action.kind}:${state.runId}`),
+    restartReport: { verdict: "other_cause", path: "/r.json" },
+    listUncollected: () => [],
+    deliver: (group, message) => {
+      order.push("parent");
+      delivered.push({ group, message });
+      return { cwd: group.parent.cwd };
+    },
+  });
+  assert.equal(delivered.length, 1);
+  assert.equal(order.at(-1), "parent");
+  assert.equal(order.filter((o) => o.startsWith("spawn_worker")).length, 3);
+  assert.deepEqual(delivered[0].group.runIds, ids);
+  assert.equal(delivered[0].group.delivery, "spawn");
+  assert.match(delivered[0].message, /verdict: other_cause/);
+  assert.equal(delivered[0].message.match(/team-up runs wait/g).length, 3);
+  assert.match(delivered[0].message, /\(restarted\)/);
+  assert.equal(report.parents.length, 1);
+  assert.equal(report.parents[0].cwd, "/home/u/proj");
+  for (const id of ids) assert.ok(fs.existsSync(path.join(runs.mailboxDir(id), "REATTACH_WATCHER")));
 }));

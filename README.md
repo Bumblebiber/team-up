@@ -9,7 +9,7 @@ worker launch. o9k keeps a thin compatibility adapter only.
 ## Quick start
 
 ```bash
-node bin/team-up.mjs version   # 0.4.0
+node bin/team-up.mjs version   # 0.5.0
 node bin/team-up.mjs validate
 node bin/team-up.mjs pick --role <role>
 node bin/team-up.mjs pick --profile frontier:max
@@ -80,11 +80,30 @@ journald's default `Storage=auto` that needs `/var/log/journal` to exist
 `doctor` flags a volatile journal once telemetry runs. A `team_up_suspected`
 report from the last 7 days is a high `doctor` finding.
 
+## Parent session recovery
+
+```bash
+node bin/team-up.mjs runs resume-install   # run `runs resume --boot` at every boot
+loginctl enable-linger $USER               # so it runs without a login
+```
+
+Every run records the session that dispatched it (`STATE.json` →
+`parent`, with `detected_by`). For Claude Code the plugin's `SessionStart`
+hook writes `~/.team-up/sessions/<pid>.json`; Hermes, Codex and OpenCode are
+read from their session env vars. After a restart, `runs resume` restarts the
+workers, then wakes each parent **once**: a parent whose tmux is gone is
+resumed there with a message naming its runs and the `runs wait` command for
+each watcher; a Claude parent outside tmux gets the message at its next
+session start. A live parent is not disturbed. At boot, resume is skipped when
+the restart report blames team-up. Per-CLI details:
+[harness-session-identity.md](docs/harness-session-identity.md).
+
 ## Docs
 
 - [configuration.md](docs/configuration.md)
 - [specialists.md](docs/specialists.md)
 - [command-broker.md](docs/command-broker.md)
+- [harness-session-identity.md](docs/harness-session-identity.md)
 - Runtime supervision design: `docs/specs/2026-07-25-runtime-supervision-design.md`
 
 ## Tests
