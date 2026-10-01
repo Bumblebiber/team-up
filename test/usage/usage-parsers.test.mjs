@@ -107,6 +107,33 @@ test("parseCodexStatus reads a panel repainted with cursor moves", () => {
   for (const r of Object.values(w)) assert.match(r.resets_at, /^\d{4}-\d{2}-\d{2}T/);
 });
 
+// codex diffs each repaint against the screen and jumps over cells that
+// already hold the right character. Its /status rows land on the "Limits:
+// refresh requested" placeholder, so `(\e[25;67Hesets` skipped an "r" left over
+// from "shortly": a blank there lost the 5h window, and a skipped first "9" of
+// "99%" would have read as 9% left (used 0.91) instead of 1%.
+test("parseCodexStatus reads cells a diff repaint skipped", () => {
+  const row = "│  5h limit:   [████] 99% left (resets 19:14) │";
+  const nine = row.indexOf("99%");
+  const r = row.indexOf("(resets") + 1;
+  const placeholder = "│  Limits:".padEnd(nine) + "9".padEnd(r - nine) + "refresh requested │";
+  const repaint =
+    row.slice(0, nine) +
+    `\x1b[5;${nine + 2}H` + // skips the "9" already on screen
+    row.slice(nine + 1, r) +
+    `\x1b[5;${r + 2}H` + // skips the "r" already on screen
+    row.slice(r + 1);
+  const text =
+    "\x1b[?1049h\x1b[1;1H\x1b[J" +
+    `\x1b[5;1H${placeholder}` +
+    `\x1b[5;1H${repaint}` +
+    "\x1b[6;1H│  Weekly limit: [███░] 94% left (resets 16:22 on 4 Oct) │";
+  const w = parseCodexStatus(text, { now: "2026-10-01T14:44:00.000Z" });
+  assert.equal(w["codex:5h"].used, 0.01);
+  assert.equal(w["codex:5h"].resets_at_raw, "19:14");
+  assert.equal(w["codex:weekly"].used, 0.06);
+});
+
 test("parseCodexStatus never lends one row's number to another label", () => {
   const text =
     "⚠ 5h limit: only 1% left · /status·weekly 50% left" +
