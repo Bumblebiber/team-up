@@ -127,6 +127,12 @@ mailbox and nobody lifts it. `resumeAll` recovers the run; it does not write the
 TIM entry. The current bbbee setup has a Worker-Reaper cron for exactly this and
 team-up runs need an equivalent.
 
+*Addressed 2026-10-01:* `team-up runs uncollected` lists finished runs no host
+session has lifted yet, `team-up runs collect <id>` marks one read, and the
+main-only `intake` skill is the procedure between the two. A dead session's
+results are now one command away for the next one; writing the memory entry
+is still a host-session act, by design.
+
 ## Dropped — the Planner, and the ticket-overlap check
 
 **Paul the Planner is not being built.** A specialist earns its keep for one of

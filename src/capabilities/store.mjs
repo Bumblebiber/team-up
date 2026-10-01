@@ -124,3 +124,23 @@ export function inspectInstalledCapability(selector, {
   }
   return matches[0];
 }
+
+/**
+ * Recompute an installed package's checksum from what is on disk now.
+ *
+ * The pool is content-addressed, but nothing stops a write into it — and a
+ * package shared with the host by symlink is one editor save away from one.
+ * A changed file would otherwise reach every specialist under the checksum
+ * the human approved for the old content.
+ */
+export function verifyInstalledCapability(item) {
+  const manifest = normalizeCapabilityManifest(JSON.parse(fs.readFileSync(
+    path.join(item.packageDir, "capability.json"), "utf8"
+  )), { packageDir: item.packageDir });
+  const files = declaredCapabilityFiles(item.packageDir, manifest);
+  const actual = checksumFiles(item.packageDir, files, manifest);
+  if (actual !== item.checksum) {
+    throw new Error(`CAPABILITY_TAMPERED: ${item.package} is ${actual} on disk, installed as ${item.checksum}; reinstall it or roll back`);
+  }
+  return item;
+}

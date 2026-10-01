@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import { runsPath } from "../paths.mjs";
 import { findStaleRuns, findOrphanSessions, DEFAULT_THRESHOLD_MS } from "./stale.mjs";
+import { findUncollectedRuns, DEFAULT_UNCOLLECTED_DAYS } from "./collect.mjs";
 import { listTmuxSessions } from "./tmux.mjs";
 import os from "node:os";
 import path from "node:path";
@@ -640,6 +641,24 @@ export function setOutcome(runId, outcome, { note = null, now = () => new Date()
   });
 }
 
+/**
+ * The host session read this result and did what it called for.
+ *
+ * Separate from `outcome`: a consult or a review is never merged or
+ * discarded, but it can still be left unread. Set by the host's intake, never
+ * by the worker — a worker that marked itself collected would hide exactly
+ * the result nobody read.
+ */
+export function markCollected(runId, { note = null, now = () => new Date().toISOString() } = {}) {
+  return updateState(runId, (state) => {
+    if (!["done", "failed", "cancelled"].includes(state.status)) {
+      throw new Error(`run ${runId} is ${state.status}; only a finished run can be collected`);
+    }
+    state.collected = { at: now(), ...(note ? { note } : {}) };
+    return state;
+  });
+}
+
 /** Counts per role, so a before/after comparison needs no jq. */
 export function outcomeSummary(states = listAllStates({ onCorrupt: () => {} })) {
   const rows = new Map();
@@ -1215,6 +1234,38 @@ function cmdOutcome(args) {
   console.log(`${runId}: ${state.outcome.value}`);
 }
 
+function cmdCollect(args) {
+  const runId = args[0];
+  if (!runId || runId.startsWith("--")) {
+    console.error("usage: runs.mjs collect <runId> [--note <text>]");
+    process.exitCode = 1;
+    return;
+  }
+  const state = markCollected(runId, { note: argValue(args, "--note") });
+  console.log(`${runId}: collected ${state.collected.at}`);
+}
+
+function cmdUncollected(args) {
+  const daysRaw = argValue(args, "--days");
+  const days = args.includes("--all") ? null
+    : daysRaw === undefined ? DEFAULT_UNCOLLECTED_DAYS : Number(daysRaw);
+  if (days !== null && (!Number.isFinite(days) || days <= 0)) {
+    console.error("usage: runs.mjs uncollected [--days N | --all] [--json]");
+    process.exitCode = 1;
+    return;
+  }
+  const runs = findUncollectedRuns({ days });
+  if (args.includes("--json")) {
+    console.log(JSON.stringify({ days, runs }, null, 2));
+  } else {
+    for (const r of runs) {
+      console.log(`${r.runId}  ${r.status}  ${r.role ?? "-"}  finished=${r.finishedAt}  ${r.result ?? "(no result file)"}`);
+    }
+  }
+  // Exit 1 when something waits, so a session-start hook can branch on it.
+  process.exitCode = runs.length ? 1 : 0;
+}
+
 function cmdWait(args) {
   const runId = args[0];
   const ceilingRaw = argValue(args, "--ceiling-sec");
@@ -1439,6 +1490,8 @@ const HANDLERS = {
   answer: cmdAnswer,
   "set-status": cmdSetStatus,
   outcome: cmdOutcome,
+  collect: cmdCollect,
+  uncollected: cmdUncollected,
   wait: cmdWait,
   resume: cmdResume,
   capacity: cmdCapacity,

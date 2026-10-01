@@ -1,6 +1,8 @@
 ---
 name: dispatch
 description: "Cost-gated subagent dispatch for context isolation. Use for broad searches, lookups, log analysis, doc digestion, independent subtasks, OR whenever you spawn an external CLI worker (planner/implementer/reviewer in tmux, cursor-agent/claude/codex/hermes). Path A = in-host RESULT subagents. Path B = mailbox run + team-up dispatch --run-id + cheap in-host watcher (runs wait) — REQUIRED for every external CLI tmux spawn when a team-up roster exists; bare dispatch without a watcher is an incomplete spawn (parent never gets notified)."
+metadata:
+  team-up-scope: main
 ---
 
 # dispatch — Subagent Isolation
@@ -134,7 +136,9 @@ Minimum mental model:
 3. Spawn a **cheap** in-host watcher: only `$RUNS wait <runId>`, return
    `{question|done|failed|watching}`, exit.
 4. On `question`: answer or escalate to human → `$RUNS answer` → **respawn** watcher.
-5. On `done`/`failed`: read `mailbox/RESULT.md` (and task-dir artifacts); memory/TIM closeout only if useful.
+5. On `done`/`failed`: run `intake` — read the result, check it, record what is
+   durable, then `$RUNS collect <id>`. `$RUNS uncollected` lists what a dead
+   session left unread.
 6. Once you know whether you kept the work: `$RUNS outcome <id> merged|discarded`.
    `status` says how the run ended, never whether it was worth its cost.
 7. Failing a run by hand: `$RUNS set-status <id> failed --reason "<why>"`. The

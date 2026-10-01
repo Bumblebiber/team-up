@@ -343,3 +343,39 @@ test("a dry run previews the refusal instead of paying for a verification", asyn
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }
 });
+
+test("an auto_invoke package opens the worker prompt with its skill", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  const capPkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-launch-cap-"));
+  fs.mkdirSync(path.join(capPkg, "skills", "caveman"), { recursive: true });
+  fs.writeFileSync(path.join(capPkg, "skills", "caveman", "SKILL.md"), "# Caveman\n");
+  fs.writeFileSync(path.join(capPkg, "capability.json"), JSON.stringify({
+    schema_version: 1, id: "style.caveman", version: "1", display_name: "C",
+    auto_invoke: ["caveman"],
+    provides: { skills: ["skills/caveman/SKILL.md"] },
+    permissions: { network: false, commands: [] },
+  }));
+  try {
+    const result = await launch({
+      ...fixture.args,
+      dependencyOverrides: {
+        ...ISOLATED,
+        resolveEffectiveCapabilities: () => ({
+          packages: [{
+            package: "style.caveman@1", id: "style.caveman", version: "1",
+            checksum: "sha256:a", packageDir: capPkg, reason: "target:all",
+          }],
+          exclusions: [],
+        }),
+      },
+    });
+    const runPath = path.join(fixture.env.TEAM_UP_RUNS, result.runId);
+    const prompt = fs.readFileSync(path.join(runPath, "mailbox", "PROMPT.md"), "utf8");
+    assert.match(prompt, /^\/caveman\n\n# Worker task/);
+    const state = JSON.parse(fs.readFileSync(path.join(runPath, "STATE.json"), "utf8"));
+    assert.deepEqual(state.auto_invoke, { skills: ["caveman"], applied: true });
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg, capPkg]);
+  }
+});

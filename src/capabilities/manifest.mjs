@@ -5,6 +5,7 @@ import {
   assertSafeRelPath,
   assertSafeSpecialistSegment,
 } from "../specialists/safe-id.mjs";
+import { SKILL_SCOPES, providedSkillNames } from "./skill-scope.mjs";
 
 const PROVIDE_TYPES = ["skills", "plugins", "mcps", "frameworks"];
 const FORBIDDEN = new Set([
@@ -53,9 +54,35 @@ export function normalizeCapabilityManifest(input, { packageDir } = {}) {
       "permissions require boolean network, commands array, and valid filesystem"
     );
   }
+  if (input.scope !== undefined && !SKILL_SCOPES.includes(input.scope)) {
+    throw new Error(`scope must be one of ${SKILL_SCOPES.join("|")}`);
+  }
   const manifest = { ...input, provides, permissions };
+  if (input.auto_invoke !== undefined) {
+    manifest.auto_invoke = normalizeAutoInvoke(input.auto_invoke, manifest);
+  }
   if (packageDir) declaredCapabilityFiles(packageDir, manifest);
   return manifest;
+}
+
+/**
+ * Skills the launcher invokes at the top of every worker prompt.
+ *
+ * At most one: a harness takes one slash command per message, and a second
+ * one would be pasted as plain text the model is free to read as data.
+ */
+function normalizeAutoInvoke(value, manifest) {
+  if (!Array.isArray(value) || value.length > 1 ||
+      value.some((name) => typeof name !== "string" || !name)) {
+    throw new Error("auto_invoke must be an array of at most one skill name");
+  }
+  const provided = providedSkillNames(manifest);
+  for (const name of value) {
+    if (!provided.includes(name)) {
+      throw new Error(`auto_invoke names a skill the package does not provide: ${name}`);
+    }
+  }
+  return [...value];
 }
 
 export function declaredCapabilityFiles(packageDir, manifest) {

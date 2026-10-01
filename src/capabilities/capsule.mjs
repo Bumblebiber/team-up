@@ -8,6 +8,7 @@ import {
   mcpSchemaBytesFromToolsList,
 } from "./mcp-schema.mjs";
 import { assertPathInsideRunRoot } from "./content-manifest.mjs";
+import { capabilityScope } from "./skill-scope.mjs";
 
 const DESTINATIONS = {
   skills: ["context", "skills"],
@@ -178,6 +179,11 @@ export function materializeCapabilityCapsule({
       const manifest = normalizeCapabilityManifest(JSON.parse(fs.readFileSync(
         path.join(item.packageDir, "capability.json"), "utf8"
       )), { packageDir: item.packageDir });
+      // Last line of defence for the main-only layer: an assignment row can be
+      // hand-edited, but nothing reaches a specialist without passing here.
+      if (capabilityScope(manifest, item.packageDir) === "main") {
+        throw new Error(`CAPABILITY_SCOPE_MAIN: ${item.package} is main-only and never enters a capsule`);
+      }
       const resolved = { skills: [], plugins: [], mcps: [], frameworks: [] };
       for (const [type, entries] of Object.entries(manifest.provides)) {
         for (const rel of entries) {
@@ -221,6 +227,7 @@ export function materializeCapabilityCapsule({
       records.push({
         package: item.package, id: item.id, version: item.version,
         checksum: item.checksum, reason: item.reason, resolved,
+        auto_invoke: manifest.auto_invoke ?? [],
         estimated_description_tokens: item.estimated_description_tokens ?? 0,
         mcp_tool_count: item.mcp_tool_count ?? 0,
         // Exact harness tokenizer unavailable — persist explicit estimate metadata only.
@@ -256,6 +263,28 @@ export function materializeCapabilityCapsule({
   };
   atomicWriteJson(path.join(runRoot, "EFFECTIVE_CAPABILITIES.json"), record);
   return record;
+}
+
+/**
+ * The skill invocation that opens a worker prompt, decided by the launcher
+ * rather than left to the host agent's memory.
+ *
+ * A skill invoked as a command lands as the first user turn, right before the
+ * task; the same text as an output style or system-prompt fragment sits far
+ * from it, and in use changed the output far less. `invocation` comes from the harness
+ * adapter, because the syntax is per CLI (`/name` in Claude Code). A harness
+ * without one gets no prefix and a recorded reason, never a guessed syntax.
+ */
+export function autoInvokePrefix(effective, invocation) {
+  const names = [...new Set((effective?.packages ?? []).flatMap((item) => item.auto_invoke ?? []))];
+  if (names.length === 0) return { skills: [], prefix: "", skipped: null };
+  if (names.length > 1) {
+    throw new Error(`AUTO_INVOKE_CONFLICT: ${names.join(", ")} — a prompt opens with one skill invocation; disable all but one for this specialist`);
+  }
+  if (typeof invocation !== "function") {
+    return { skills: names, prefix: "", skipped: "harness has no skill invocation syntax" };
+  }
+  return { skills: names, prefix: `${invocation(names[0])}\n\n`, skipped: null };
 }
 
 export function buildStrictMcpConfig(effective, runRoot) {

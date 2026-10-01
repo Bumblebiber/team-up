@@ -38,12 +38,16 @@ import {
 import { CONTEXT_ISOLATION_CAPABILITY } from "../harness/capabilities.mjs";
 import { reverifyDrifted } from "../harness/reverify.mjs";
 import { loadAssignments } from "../capabilities/assignments.mjs";
-import { listInstalledCapabilities } from "../capabilities/store.mjs";
+import {
+  listInstalledCapabilities,
+  verifyInstalledCapability,
+} from "../capabilities/store.mjs";
 import { resolveCapabilities } from "../capabilities/resolve.mjs";
 import {
   materializeCapabilityCapsule,
   buildStrictMcpConfig,
   collectCapsuleMcpTools,
+  autoInvokePrefix,
 } from "../capabilities/capsule.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import {
@@ -155,11 +159,15 @@ export async function launch({
 }) {
   const resolveEffectiveCapabilities =
     dependencyOverrides.resolveEffectiveCapabilities ??
-    (() => resolveCapabilities({
-      specialistId,
-      assignments: loadAssignments({ env }).assignments,
-      installed: listInstalledCapabilities({ env }),
-    }));
+    (() => {
+      const resolution = resolveCapabilities({
+        specialistId,
+        assignments: loadAssignments({ env }).assignments,
+        installed: listInstalledCapabilities({ env }),
+      });
+      for (const item of resolution.packages) verifyInstalledCapability(item);
+      return resolution;
+    });
   const materializeCapabilityCapsuleFn =
     dependencyOverrides.materializeCapabilityCapsule ?? materializeCapabilityCapsule;
   const createRunFn = dependencyOverrides.createRun ?? createRun;
@@ -458,12 +466,30 @@ export async function launch({
 
   atomicWriteJson(path.join(runDir(state.runId), "mailbox", "REQUEST.json"), request);
 
-  const workerPrompt = wrapPromptWithMailboxProtocol(barePrompt, {
+  let autoInvoke;
+  try {
+    autoInvoke = autoInvokePrefix(effective, skillInvocationFor(cell.cli));
+  } catch (e) {
+    setStatus(state.runId, "failed", { reason: `capsule setup: ${e.message}` });
+    throw e;
+  }
+  // Prefixed after wrapping: the invocation has to be the first thing the
+  // harness reads, ahead of the mailbox protocol.
+  const workerPrompt = autoInvoke.prefix + wrapPromptWithMailboxProtocol(barePrompt, {
     runId: state.runId,
     runDirectory: runDir(state.runId),
     resultProtocol: "RESULT.json",
   });
   atomicWriteText(path.join(runDir(state.runId), "mailbox", "PROMPT.md"), workerPrompt);
+  if (autoInvoke.skills.length) {
+    const stInvoke = loadState(state.runId);
+    stInvoke.auto_invoke = {
+      skills: autoInvoke.skills,
+      applied: autoInvoke.prefix !== "",
+      ...(autoInvoke.skipped ? { skipped: autoInvoke.skipped } : {}),
+    };
+    saveState(stInvoke);
+  }
 
   const cliArgvRaw = buildCommand({
     roster,
@@ -695,6 +721,18 @@ export async function launch({
 
 /** Alias used by production entrypoint tests. */
 export const launchSpecialist = launch;
+
+function skillInvocationFor(cli) {
+  let adapter;
+  try {
+    adapter = getAdapter(cli);
+  } catch {
+    return null;
+  }
+  return typeof adapter.skillInvocation === "function"
+    ? (name) => adapter.skillInvocation(name)
+    : null;
+}
 
 export async function runSpecialist(args, io = { out: console.log, err: console.error }) {
   const id = argValue(args, "--id") || args[0];

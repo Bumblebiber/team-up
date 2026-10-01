@@ -21,6 +21,9 @@ import {
   removeCapability,
 } from "./lifecycle.mjs";
 import { scanCapabilityRoots, normalizeDetectedCandidate } from "./scan.mjs";
+import { normalizeCapabilityManifest } from "./manifest.mjs";
+import { capabilityScope, assertScopeAllowsTarget } from "./skill-scope.mjs";
+import { listHostLinks, planHostLinks, syncHostLinks } from "./host-links.mjs";
 import { atomicWriteJson, loadJson } from "../json-store.mjs";
 import {
   capabilityAssignmentsPath,
@@ -51,6 +54,13 @@ function resolveInstalledSelector(subject, { checksum, env } = {}) {
     throw new Error(`capability selector must resolve exactly once: ${subject}`);
   }
   return matches[0];
+}
+
+function installedScope(item) {
+  const manifest = normalizeCapabilityManifest(JSON.parse(fs.readFileSync(
+    path.join(item.packageDir, "capability.json"), "utf8"
+  )), { packageDir: item.packageDir });
+  return capabilityScope(manifest, item.packageDir);
 }
 
 /** Statuses after which a run can no longer be holding anything open. */
@@ -153,6 +163,7 @@ async function dispatch(args, io, env) {
     io.out(JSON.stringify({
       packages: listInstalledCapabilities({ env }),
       assignments: loadAssignments({ env }).assignments,
+      host_links: listHostLinks({ env }),
     }, null, 2));
     return 0;
   }
@@ -178,9 +189,25 @@ async function dispatch(args, io, env) {
     // `resolveCapabilities`, at every specialist launch. Resolve it here so the
     // error lands on the command that typed it. Disable stays unchecked: it
     // only ever reduces reach, and must keep working on a stale row.
-    if (sub === "enable") inspectInstalledCapability(subject, { checksum, env });
+    if (sub === "enable") {
+      const item = inspectInstalledCapability(subject, { checksum, env });
+      assertScopeAllowsTarget(installedScope(item), target, item.package);
+    }
     const fn = sub === "enable" ? enableCapability : disableCapability;
-    io.out(JSON.stringify(fn({ package: subject, checksum, target, env }), null, 2));
+    const installed = listInstalledCapabilities({ env });
+    // Refuse before writing: a host collision found after the row is stored
+    // would leave an assignment claiming a share the host never got. Only
+    // this package's collisions refuse; another package's stay reported.
+    const beforeWrite = sub === "disable" ? undefined : (doc) => {
+      const plan = planHostLinks({ assignments: doc.assignments, installed, env });
+      const mine = plan.conflicts.filter((c) => c.package === subject);
+      if (mine.length) {
+        throw new Error(`HOST_SKILL_COLLISION: ${mine.map((c) => c.path).join(", ")} already exists and is not a team-up link; move it away first`);
+      }
+    };
+    const doc = fn({ package: subject, checksum, target, env, beforeWrite });
+    const host = syncHostLinks({ assignments: doc.assignments, installed, env });
+    io.out(JSON.stringify({ ...doc, host }, null, 2));
     return 0;
   }
   if (sub === "update") {
@@ -221,12 +248,20 @@ async function dispatch(args, io, env) {
     const prior = inspectInstalledCapability(`${id}@${toVersion}`, {
       checksum: priorChecksum, env,
     });
-    io.out(JSON.stringify(rollbackCapability({
+    const result = rollbackCapability({
       current,
       prior,
       assignments: loadAssignments({ env }).assignments,
       writeAssignments: (doc) => atomicWriteJson(capabilityAssignmentsPath(env), doc),
-    }), null, 2));
+    });
+    // A rolled-back row that targets the host must move its links too, or the
+    // host keeps running the version the specialists just left.
+    const host = syncHostLinks({
+      assignments: loadAssignments({ env }).assignments,
+      installed: listInstalledCapabilities({ env }),
+      env,
+    });
+    io.out(JSON.stringify({ ...result, host }, null, 2));
     return 0;
   }
   if (sub === "remove") {
@@ -263,6 +298,6 @@ async function dispatch(args, io, env) {
 }
 
 function usage(io) {
-  io.err("usage: team-up capability <install|inspect|list|enable|disable|recommendations|update|rollback|remove|scan>");
+  io.err("usage: team-up capability <install|inspect|list|enable|disable|recommendations|update|rollback|remove|scan>  (enable/disable --for <specialist-id|all|host>)");
   return 1;
 }
