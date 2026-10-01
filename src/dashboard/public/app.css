@@ -487,3 +487,6 @@ details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 .nowrap { white-space: nowrap; }
 .role-triage { background: none; border: none; cursor: pointer; padding: 0 0.2rem; font: inherit; }
 .role-triage.off { opacity: 0.3; }
+.catalogue-provider { margin: 0.4em 0; }
+.catalogue-provider table { margin-top: 0.3em; }
+#catalogue-search { margin-left: 1em; }

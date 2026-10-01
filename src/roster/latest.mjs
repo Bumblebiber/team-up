@@ -40,6 +40,11 @@ export function compareVersions(a, b) {
   return 0;
 }
 
+/** `models_excluded` entry: a (cli, cli id) the user unchecked in the dashboard. */
+export const excludedKey = (cli, cliId) => `${cli}:${cliId}`;
+export const isExcluded = (roster, cli, cliId) =>
+  Array.isArray(roster?.models_excluded) && roster.models_excluded.includes(excludedKey(cli, cliId));
+
 /** A scan older than this says nothing about today — models get added after it. */
 export const SCAN_MAX_AGE_MS = 48 * 3600 * 1000;
 
@@ -68,7 +73,7 @@ export function addOfferedVersions(roster, store, now = Date.now()) {
     const offered = offeredIds(store, cli, now);
     if (!offered) continue;
     for (const cliId of offered) {
-      if (Object.hasOwn(next.models || {}, cliId)) continue;
+      if (Object.hasOwn(next.models || {}, cliId) || isExcluded(next, cli, cliId)) continue;
       const { family, version } = splitVersion(cliId);
       if (!version) continue;
       let sibling = null;

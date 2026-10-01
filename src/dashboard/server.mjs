@@ -22,13 +22,14 @@ import {
   approveProjectSpecialists,
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
-import { buildTierMatrixView, applyModelEdit, saveRoster } from "./tiers.mjs";
+import { buildTierMatrixView, applyModelEdit, saveRoster, applySpecialistTier } from "./tiers.mjs";
+import { buildCatalogueView, applyCatalogueToggle } from "./catalogue.mjs";
 import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView, modelLabel } from "./roles.mjs";
 import { bringToLatest } from "../roster/latest.mjs";
 import { loadModelsStore } from "../collectors/models-store.mjs";
 import { atomicWriteText } from "../json-store.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
-import { pinSpecialist } from "../specialists/store.mjs";
+import { pinSpecialist, loadInstalledManifest } from "../specialists/store.mjs";
 import { approveSpecialist } from "../specialists/approvals.mjs";
 import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
 import {
@@ -37,12 +38,10 @@ import {
   joinTmuxSessions,
   buildUsageView,
   buildPickAllView,
-  buildModelsView,
   readMailboxFiles,
   sanitizeForDashboard,
 } from "./data.mjs";
-import { loadScores, collectScores, buildRoleScores, writeScores } from "../scores/scores.mjs";
-import { scoresPath } from "../paths.mjs";
+import { collectScores, buildRoleScores, writeScores } from "../scores/scores.mjs";
 import { createAdminGate } from "./admin.mjs";
 import { appendAudit } from "./audit.mjs";
 import {
@@ -988,6 +987,31 @@ export function createDashboardServer({
       return;
     }
 
+    const specialistTierMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/tier$/);
+    if (req.method === "POST" && specialistTierMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const specialistId = decodeURIComponent(specialistTierMatch[1]);
+      try {
+        assertSafeSpecialistSegment(specialistId, "id");
+        const body = JSON.parse(await readBody(req) || "{}");
+        const manifest = loadInstalledManifest(specialistId, { env })?.manifest;
+        if (!manifest) throw new Error(`not installed: ${specialistId}`);
+        const recommended = manifest.model_profile || {};
+        // Picking the recommendation again clears the override.
+        const tier = body.tier && body.tier !== recommended.tier ? body.tier : null;
+        const written = saveRoster(applySpecialistTier(loadRoster(env),
+          { id: specialistId, tier, reasoning: recommended.reasoning }), { env });
+        appendAudit({ actor: "127.0.0.1", action: "specialist.tier",
+          target: `${specialistId}:${tier ?? "recommended"}`, result: "ok" }, { env });
+        clisMemo.invalidate("specialists");
+        jsonResponse(res, 200, { ok: true, backup: path.basename(written.backup) });
+      } catch (e) {
+        appendAudit({ actor: "127.0.0.1", action: "specialist.tier", target: specialistId, result: "fail" }, { env });
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     const approveMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/approve$/);
     if (req.method === "POST" && approveMatch) {
       if (!requireWriteAccess(req, res)) return;
@@ -1051,6 +1075,33 @@ export function createDashboardServer({
           { actor: "127.0.0.1", action: "roster.model.edit", target: model, result: "fail" },
           { env },
         );
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    // Models tab: check or uncheck one provider model. Unchecking a model a
+    // chain still names answers 409 with the roles, and the browser asks for a
+    // replacement (or to strike it) before sending `resolve`.
+    if (req.method === "POST" && pathname === "/api/catalogue/toggle") {
+      if (!requireWriteAccess(req, res)) return;
+      let body = {};
+      try {
+        body = JSON.parse(await readBody(req) || "{}");
+        const next = applyCatalogueToggle(loadRoster(env), body);
+        const written = saveRoster(next, { env });
+        appendAudit({ actor: "127.0.0.1", action: "roster.catalogue.toggle",
+          target: `${body.cli}:${body.cli_id}:${body.on ? "on" : "off"}`, result: "ok" }, { env });
+        memo.invalidate("pick");
+        memo.invalidate("roles");
+        jsonResponse(res, 200, { ok: true, backup: path.basename(written.backup) });
+      } catch (e) {
+        if (e.roles) {
+          jsonResponse(res, 409, { error: String(e.message), roles: e.roles });
+          return;
+        }
+        appendAudit({ actor: "127.0.0.1", action: "roster.catalogue.toggle",
+          target: `${body.cli}:${body.cli_id}`, result: "fail" }, { env });
         jsonResponse(res, 400, { error: String(e.message || e) });
       }
       return;
@@ -1425,8 +1476,14 @@ export function createDashboardServer({
     if (pathname === "/api/specialists") {
       // Reads a handful of JSON indexes and no subprocess, but nothing here
       // changes between polls — the 30s memo keeps it off the 5s cycle.
-      const data = clisMemo.get("specialists", () =>
-        sanitizeForDashboard(buildSpecialistsView({ env })));
+      const data = clisMemo.get("specialists", () => {
+        const overrides = loadRoster(env).specialists || {};
+        const view = buildSpecialistsView({ env });
+        for (const s of view.specialists) {
+          s.tier_override = Object.hasOwn(overrides, s.id) ? overrides[s.id]?.model_profile?.tier ?? null : null;
+        }
+        return sanitizeForDashboard(view);
+      });
       jsonResponse(res, 200, data);
       return;
     }
@@ -1491,19 +1548,8 @@ export function createDashboardServer({
       return;
     }
 
-    if (pathname === "/api/models") {
-      const q = url.searchParams.get("q") || "";
-      const inRosterParam = url.searchParams.get("in_roster");
-      const inRoster = inRosterParam === "1" ? true : inRosterParam === "0" ? false : undefined;
-      const page = Math.max(0, Number(url.searchParams.get("page") || 0) || 0);
-      const data = memo.get(`models:${q}:${inRosterParam}:${page}`, () => {
-        const roster = loadRoster(env);
-        const scores = loadScores(scoresPath(env)) || { models: {} };
-        return sanitizeForDashboard(
-          buildModelsView(scores, roster, { q, in_roster: inRoster, page, store: loadModelsStore(env) }),
-        );
-      });
-      jsonResponse(res, 200, data);
+    if (pathname === "/api/catalogue") {
+      jsonResponse(res, 200, sanitizeForDashboard(buildCatalogueView(loadRoster(env), loadModelsStore(env)), { stripAccounts: true }));
       return;
     }
 

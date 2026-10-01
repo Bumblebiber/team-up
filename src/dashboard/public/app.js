@@ -1,7 +1,6 @@
 const $ = (sel) => document.querySelector(sel);
 
 let adminChallengeId = null;
-let modelsPage = 0;
 
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
@@ -634,6 +633,139 @@ $("#tiers-table").addEventListener("change", async (e) => {
   }
 });
 
+// ── Models tab ──────────────────────────────────────────────────────────────
+// Per provider, every model it offers; checked = in the roster, so the chain
+// dropdowns offer it. Like the tier table it stays out of `refreshAll`: it
+// redraws on tab switch and after a toggle, so open providers stay open.
+const ROLES_TAB_KEY = "teamup.rolesTab";
+const CATALOGUE_KIND_KEY = "teamup.catalogueKind";
+const catalogueOpen = new Set();
+let catalogueData = null;
+
+function showRolesTab(tab) {
+  for (const btn of $("#roles-tabs").querySelectorAll(".tim-tab")) btn.classList.toggle("is-active", btn.dataset.tab === tab);
+  for (const body of $("#panel-roles").querySelectorAll("[data-tab-body]")) body.classList.toggle("hidden", body.dataset.tabBody !== tab);
+  if (tab === "models") refreshCatalogue().catch((err) => { $("#catalogue-status").textContent = err.message; });
+}
+
+function renderCatalogue() {
+  if (!catalogueData) return;
+  const kind = readStored(CATALOGUE_KIND_KEY, "subscription");
+  for (const btn of $("#catalogue-tabs").querySelectorAll(".tim-tab")) btn.classList.toggle("is-active", btn.dataset.kind === kind);
+  const q = $("#catalogue-search").value.trim().toLowerCase();
+  const html = catalogueData.providers.filter((p) => p.tab === kind).map((p) => {
+    const models = p.models.filter((m) => !q || `${m.cli_id} ${m.name || ""}`.toLowerCase().includes(q));
+    if (q && !models.length) return "";
+    const inRoster = p.models.filter((m) => m.checked).length;
+    const rows = models.map((m) => `<tr>
+      <td><input type="checkbox" class="catalogue-toggle" data-provider="${esc(p.id)}" data-cli="${esc(m.cli)}"
+        data-cli-id="${esc(m.cli_id)}"${m.checked ? " checked" : ""}></td>
+      <td class="mono">${esc(m.cli_id)}</td>
+      <td>${m.name && m.name !== m.cli_id ? esc(m.name) : ""}</td>
+      <td class="muted">${esc(m.cli)}${m.unscanned ? " · not in any scan" : ""}</td>
+    </tr>`).join("");
+    return `<details class="catalogue-provider" data-provider="${esc(p.tab)}:${esc(p.id)}"${catalogueOpen.has(`${p.tab}:${p.id}`) || q ? " open" : ""}>
+      <summary><strong>${esc(p.label)}</strong> <span class="muted">${inRoster} of ${p.models.length} in roster</span></summary>
+      <table><thead><tr><th></th><th>Model</th><th>Name</th><th>CLI</th></tr></thead><tbody>${rows}</tbody></table>
+    </details>`;
+  }).join("");
+  $("#catalogue-list").innerHTML = html || '<p class="muted">No models — run <code>team-up models scan</code>.</p>';
+}
+
+async function refreshCatalogue() {
+  catalogueData = await api("/api/catalogue");
+  renderCatalogue();
+}
+
+$("#roles-tabs").addEventListener("click", (e) => {
+  const tab = e.target.closest(".tim-tab")?.dataset.tab;
+  if (!tab) return;
+  writeStored(ROLES_TAB_KEY, tab);
+  showRolesTab(tab);
+});
+$("#catalogue-tabs").addEventListener("click", (e) => {
+  const kind = e.target.closest(".tim-tab")?.dataset.kind;
+  if (!kind) return;
+  writeStored(CATALOGUE_KIND_KEY, kind);
+  renderCatalogue();
+});
+$("#catalogue-search").addEventListener("input", renderCatalogue);
+$("#catalogue-list").addEventListener("toggle", (e) => {
+  const id = e.target.dataset?.provider;
+  if (!id || $("#catalogue-search").value.trim()) return;
+  if (e.target.open) catalogueOpen.add(id);
+  else catalogueOpen.delete(id);
+}, true);
+
+/** Raw POST: a 409 carries the roles that still name the model. */
+async function catalogueToggle(body) {
+  const res = await fetch("/api/catalogue/toggle", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-Team-Up-CSRF": "1" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) showLogin();
+  return { status: res.status, data: await res.json().catch(() => ({})) };
+}
+
+/** Ask what replaces the model in those chains: { model, cli }, "strike", or null for cancel. */
+function askReplacement(cliId, cli, roles) {
+  const dialog = $("#model-replace");
+  $("#model-replace-msg").textContent = `${cliId} (${cli}) is in the chain of ${roles.join(", ")}. Pick a replacement, or remove it from those chains.`;
+  const gone = new Set((catalogueData?.providers || []).flatMap((p) => p.models)
+    .filter((m) => m.cli === cli && m.cli_id === cliId).flatMap((m) => m.roster_ids));
+  const options = (rolesData?.models || []).flatMap((m) => m.clis
+    .filter((c) => !(gone.has(m.id) && c === cli))
+    .map((c) => `<option value="${esc(`${c}:${m.id}`)}">${esc(m.label || m.id)} · ${esc(c)}</option>`));
+  $("#model-replace-select").innerHTML = options.join("");
+  return new Promise((resolve) => {
+    const done = (value) => {
+      dialog.removeEventListener("close", onClose);
+      dialog.close();
+      resolve(value);
+    };
+    const onClose = () => done(null);
+    dialog.addEventListener("close", onClose);
+    $("#model-replace-cancel").onclick = () => done(null);
+    $("#model-replace-strike").onclick = () => done("strike");
+    $("#model-replace-form").onsubmit = (e) => {
+      e.preventDefault();
+      const value = $("#model-replace-select").value;
+      if (!value) return;
+      const i = value.indexOf(":");
+      done({ cli: value.slice(0, i), model: value.slice(i + 1) });
+    };
+    dialog.showModal();
+  });
+}
+
+$("#catalogue-list").addEventListener("change", async (e) => {
+  const box = e.target.closest(".catalogue-toggle");
+  if (!box) return;
+  const status = $("#catalogue-status");
+  const body = { cli: box.dataset.cli, cli_id: box.dataset.cliId, provider: box.dataset.provider, on: box.checked };
+  box.disabled = true;
+  try {
+    let r = await catalogueToggle(body);
+    if (r.status === 409) {
+      const resolve = await askReplacement(body.cli_id, body.cli, r.data.roles || []);
+      if (resolve == null) {
+        box.checked = !body.on;
+        status.textContent = "";
+        return;
+      }
+      r = await catalogueToggle({ ...body, resolve });
+    }
+    if (r.status !== 200) throw new Error(r.data.error || `HTTP ${r.status}`);
+    status.textContent = `${body.cli_id} ${body.on ? "added to" : "removed from"} the roster · backup ${r.data.backup}`;
+  } catch (err) {
+    status.textContent = `refused: ${err.message}`;
+  } finally {
+    await Promise.allSettled([refreshCatalogue(), refreshRoles(), refreshTiers()]);
+  }
+});
+
 function providerStatus(p) {
   if (p.class === "A") {
     if (!p.configured) return '<span class="badge stale">not connected</span>';
@@ -701,33 +833,6 @@ async function refreshProviders() {
       }
     });
   });
-}
-
-async function refreshModels() {
-  const q = $("#models-search").value.trim();
-  const inRoster = $("#models-roster-only").checked ? "1" : "";
-  const params = new URLSearchParams();
-  if (q) params.set("q", q);
-  if (inRoster) params.set("in_roster", inRoster);
-  params.set("page", String(modelsPage));
-  const data = await api(`/api/models?${params}`);
-  const pageCount = Math.max(1, Math.ceil(data.total / data.pageSize));
-  if (modelsPage >= pageCount) modelsPage = Math.max(0, pageCount - 1);
-  $("#models-meta").textContent = `${data.total} models (page ${data.page + 1} of ${pageCount}, showing ${data.models.length})`;
-  $("#models-prev").disabled = data.page <= 0;
-  $("#models-next").disabled = data.page + 1 >= pageCount;
-  $("#apply-cli-hint").textContent = `To apply roster chain changes: ${data.apply_cli}`;
-  const rows = data.models.map((m) => `
-    <tr class="${m.in_roster && m.reachable === false ? "greyed" : ""}"${providerAttr(m.model, m.provider)}>
-      <td>${esc(m.label || m.model)}</td>
-      <td>${esc(m.display_name || "—")}</td>
-      <td>${m.in_roster ? "yes" : "no"}</td>
-      <td>${esc(m.tier || "—")}</td>
-      <td>${m.proposal ? esc(`+${m.proposal.gap?.toFixed?.(1) ?? "?"} vs ${m.proposal.head}`) : "—"}</td>
-    </tr>`).join("");
-  $("#models-table").innerHTML = `<table>
-    <thead><tr><th>Model</th><th>Name</th><th>Roster</th><th>Tier</th><th>Proposal</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="5">No models — run refresh</td></tr>'}</tbody></table>`;
 }
 
 let selectedCli = null;
@@ -872,35 +977,8 @@ async function refreshClis() {
 }
 
 async function refreshSetup() {
-  await Promise.allSettled([refreshProviders(), refreshModels(), refreshClis()]);
+  await Promise.allSettled([refreshProviders(), refreshClis()]);
 }
-
-$("#models-search").addEventListener("input", () => {
-  modelsPage = 0;
-  refreshModels();
-});
-$("#models-roster-only").addEventListener("change", () => {
-  modelsPage = 0;
-  refreshModels();
-});
-$("#models-prev").addEventListener("click", () => {
-  if (modelsPage > 0) {
-    modelsPage -= 1;
-    refreshModels();
-  }
-});
-$("#models-next").addEventListener("click", () => {
-  modelsPage += 1;
-  refreshModels();
-});
-$("#refresh-scores-btn").addEventListener("click", async () => {
-  try {
-    await api("/api/refresh", { method: "POST", body: JSON.stringify({}) });
-    await refreshModels();
-  } catch (err) {
-    alert(err.message);
-  }
-});
 
 $("#admin-challenge-btn").addEventListener("click", async () => {
   try {
@@ -955,8 +1033,12 @@ function renderSpecialist() {
   const perms = s.permissions || {};
   const budget = s.budget || {};
   const approved = s.approved_for || [];
-  const profile = s.model_profile ? `${s.model_profile.tier}:${s.model_profile.reasoning}` : null;
-  $("#specialist-meta").innerHTML = [`v${esc(s.version)}`, profile && esc(profile), s.approved_everywhere
+  // The manifest's tier is a recommendation; the roster may override it.
+  const rec = s.model_profile?.tier;
+  const profile = rec ? `<select class="specialist-tier" title="The manifest recommends ${esc(rec)}; pick another tier to override it">${
+    ["frontier", "high", "medium", "low"].map((t) => `<option value="${t}"${t === (s.tier_override || rec) ? " selected" : ""}>${
+      t}${t === rec ? " (recommended)" : ""}</option>`).join("")}</select> ${esc(s.model_profile.reasoning || "")}` : null;
+  $("#specialist-meta").innerHTML = [`v${esc(s.version)}`, profile, s.approved_everywhere
     ? '<span title="Approved for every project; a new version or new permissions need one more approval">approved everywhere ✓</span>'
     : `<button type="button" class="specialist-approve" data-version="${esc(s.version)}"
         title="Approve this version for every project">Approve everywhere</button>`]
@@ -1094,6 +1176,20 @@ $("#specialist-detail").addEventListener("click", async (event) => {
   }
 });
 
+$("#specialist-meta").addEventListener("change", async (event) => {
+  const sel = event.target.closest(".specialist-tier");
+  if (!sel) return;
+  const id = $("#specialist-select").value;
+  const status = $("#capability-status");
+  try {
+    await api(`/api/specialists/${encodeURIComponent(id)}/tier`, { method: "POST", body: JSON.stringify({ tier: sel.value }) });
+    status.textContent = `${id} runs on ${sel.value} models`;
+  } catch (err) {
+    status.textContent = err.message;
+  }
+  await refreshSpecialists();
+});
+
 $("#specialist-install").addEventListener("click", async () => {
   const status = $("#specialist-install-status");
   const repo = $("#specialist-repo").value.trim();
@@ -1172,7 +1268,7 @@ const MAX_COLUMNS = 6;
 // What a fresh browser gets: the narrow-content panels left, the wide ones right.
 const DEFAULT_COLUMNS = [
   ["panel-usage", "panel-sessions", "panel-projects", "panel-tim", "panel-specialists"],
-  ["panel-roles", "panel-settings", "panel-providers", "panel-models", "panel-clis"],
+  ["panel-roles", "panel-settings", "panel-providers", "panel-clis"],
 ];
 const mainEl = $("main");
 const columns = () => [...mainEl.querySelectorAll(".column")];
@@ -1899,11 +1995,10 @@ const PANEL_HELP = {
   "panel-sessions": "Live tmux sessions (click one to open its terminal) and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
   "panel-projects": "Repos in the collecting folder: branch, command policy, open sessions. Start opens a CLI session in the repo; Fix all / auto-fix write missing policies and approve the specialists there.",
   "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
-  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, ⇄ toggles triage routing, 📌 keeps the weekly score refresh off its head, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. Model tiers (for specialists) fold out below.",
+  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, ⇄ toggles triage routing, 📌 keeps the weekly score refresh off its head, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. The Models tab lists every model per provider; a checked one is in the roster and offered in the chains. Model tiers (for specialists) fold out below it.",
   "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions, limits and approvals are under Details.",
   "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, triage routing, usage watcher intervals. Every change is validated and backs up roster.json.",
   "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",
-  "panel-models": "The scored model catalogue (OpenRouter + benchmarks). Proposal shows where a model would beat a role's current head.",
   "panel-clis": "Agent CLIs: version, harness verification, update/install/login. CLIs team-up can install but the roster doesn't run yet are rows you switch on in ✎. Hover a CLI name for its path; click a row for the job log.",
 };
 const PANEL_PREFS_KEY = "teamup.panelPrefs";
@@ -2032,6 +2127,7 @@ function refreshAll() {
 function startPolling() {
   refreshSpecialists().catch(() => {});
   refreshTiers().catch(() => {});
+  showRolesTab(readStored(ROLES_TAB_KEY, "roles") === "models" ? "models" : "roles");
   refreshSettings().catch(() => {});
   refreshAll();
   if (listTimer) clearInterval(listTimer);

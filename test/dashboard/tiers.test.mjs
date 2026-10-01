@@ -128,3 +128,20 @@ test("effortValues offers what the roster actually uses", () => {
     ["xhigh"]
   );
 });
+
+test("a specialist tier override carries the reasoning and clears back to the recommendation", async () => {
+  const { applySpecialistTier } = await import("../../src/dashboard/tiers.mjs");
+  const { resolveProfile } = await import("../../src/roster/profile.mjs");
+  const roster = {
+    accounts: { codex: { kind: "subscription", enabled: true } },
+    clis: { codex: { cmd: ["codex"] } },
+    models: { m: { tier: "low", cli: ["codex"], account: "codex", reasoning: { high: "high" } } },
+  };
+  const set = applySpecialistTier(roster, { id: "rev", tier: "low", reasoning: "high" });
+  assert.deepEqual(set.specialists, { rev: { model_profile: { tier: "low", reasoning: "high" } } });
+  const r = resolveProfile({ roster: set, profile: { tier: "frontier", reasoning: "high" }, specialistId: "rev",
+    harnessCapabilities: () => ({}) });
+  assert.equal(r.profile.tier, "low");
+  assert.equal(applySpecialistTier(set, { id: "rev", tier: null }).specialists, undefined);
+  assert.throws(() => applySpecialistTier(roster, { id: "rev", tier: "huge", reasoning: "high" }), /tier must be/);
+});

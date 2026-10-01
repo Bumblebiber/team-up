@@ -2,6 +2,7 @@
 // No I/O. Spec: docs/superpowers/specs/2026-07-16-o9k-roster-scores-design.md
 
 import { parseChainEntry } from "../roster/roster.mjs";
+import { isExcluded } from "../roster/latest.mjs";
 
 /** AA blended convention: (3*in + 1*out) / 4 per 1M tokens. */
 export function blendedPrice(price) {
@@ -253,11 +254,13 @@ export function applyProposals({ roster, scoresFile, proposals }) {
 
     if (!next.models[proposed.model] && autoAdd) {
       const src = scoresFile.models?.[proposed.model];
-      if (src?.open_weight) {
+      const clis = src?.hosted_clis || ["hermes", "opencode"];
+      // A model the user unchecked in the dashboard stays out.
+      if (src?.open_weight && !clis.some((cli) => isExcluded(next, cli, proposed.model))) {
         next.models[proposed.model] = {
           provider: src.provider || "open-weight",
           tier: "mid",
-          cli: src.hosted_clis || ["hermes", "opencode"],
+          cli: clis,
           price: src.price || { in: null, out: null },
           open_weight: true,
         };

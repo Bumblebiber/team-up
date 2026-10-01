@@ -25,11 +25,10 @@
         <a href="#panel-sessions">Sessions</a>
         <a href="#panel-projects">Projects</a>
         <a href="#panel-tim" id="nav-tim" class="hidden">TIM</a>
-        <a href="#panel-roles">Roles</a>
+        <a href="#panel-roles">Roles &amp; Models</a>
         <a href="#panel-specialists">Specialists</a>
         <a href="#panel-settings">Settings</a>
         <a href="#panel-providers">Providers</a>
-        <a href="#panel-models">Models</a>
         <a href="#panel-clis">CLIs</a>
         <span class="column-controls">
           <button type="button" id="column-remove" title="Remove the last column; its panels move left">−</button>
@@ -98,21 +97,41 @@
       <section id="panel-roles" class="panel">
         <h2>Roles &amp; Models</h2>
         <div class="toolbar">
-          <button type="button" id="role-add">+ Role</button>
-          <button type="button" id="roles-upgrade" class="hidden"></button>
+          <span class="tabs" id="roles-tabs">
+            <button type="button" class="tim-tab is-active" data-tab="roles">Roles</button>
+            <button type="button" class="tim-tab" data-tab="models">Models</button>
+          </span>
         </div>
-        <p id="roles-status" class="muted"></p>
-        <div id="roles-table" class="table-wrap"></div>
-        <details id="tiers-details">
-          <summary>Model tiers</summary>
-          <p class="muted">
-            A specialist profile asks for a tier and never falls back to another
-            one, so this table decides what a specialist can reach. The weekly
-            refresh leaves these fields alone.
-          </p>
-          <div id="tiers-status" class="muted"></div>
-          <div id="tiers-table" class="table-wrap"></div>
-        </details>
+        <div data-tab-body="roles">
+          <div class="toolbar">
+            <button type="button" id="role-add">+ Role</button>
+            <button type="button" id="roles-upgrade" class="hidden"></button>
+          </div>
+          <p id="roles-status" class="muted"></p>
+          <div id="roles-table" class="table-wrap"></div>
+        </div>
+        <div data-tab-body="models" class="hidden">
+          <div class="toolbar">
+            <span class="tabs" id="catalogue-tabs">
+              <button type="button" class="tim-tab is-active" data-kind="subscription">Subscription</button>
+              <button type="button" class="tim-tab" data-kind="api">API key</button>
+            </span>
+            <input type="search" id="catalogue-search" placeholder="Filter models…">
+          </div>
+          <p id="catalogue-status" class="muted"></p>
+          <div id="catalogue-list"></div>
+          <details id="tiers-details">
+            <summary>Model tiers</summary>
+            <p class="muted">
+              A specialist runs only on models of its tier — the one its manifest
+              recommends, or the one picked in the Specialists widget — so this
+              table decides what a specialist can reach. The weekly refresh leaves
+              these fields alone.
+            </p>
+            <div id="tiers-status" class="muted"></div>
+            <div id="tiers-table" class="table-wrap"></div>
+          </details>
+        </div>
       </section>
 
       <section id="panel-specialists" class="panel">
@@ -147,22 +166,6 @@
       <section id="panel-providers" class="panel">
         <h2>Providers</h2>
         <div id="providers-list"></div>
-      </section>
-
-      <section id="panel-models" class="panel">
-        <h2>Models</h2>
-        <div class="toolbar">
-          <input type="search" id="models-search" placeholder="Filter models…">
-          <label><input type="checkbox" id="models-roster-only" checked> In roster only</label>
-          <button type="button" id="refresh-scores-btn">Refresh catalogue</button>
-        </div>
-        <p id="models-meta" class="muted"></p>
-        <div class="toolbar">
-          <button type="button" id="models-prev">Previous</button>
-          <button type="button" id="models-next">Next</button>
-        </div>
-        <div id="models-table" class="table-wrap"></div>
-        <p id="apply-cli-hint" class="muted"></p>
       </section>
 
       <section id="panel-clis" class="panel">
@@ -247,6 +250,20 @@
       <menu>
         <button type="button" id="role-editor-cancel">Cancel</button>
         <button type="submit">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="model-replace" class="launch-dialog">
+    <form id="model-replace-form" method="dialog">
+      <h2>Model still in use</h2>
+      <p id="model-replace-msg"></p>
+      <label for="model-replace-select">Replace it with</label>
+      <select id="model-replace-select"></select>
+      <menu>
+        <button type="button" id="model-replace-cancel">Cancel</button>
+        <button type="button" id="model-replace-strike">Remove from chains</button>
+        <button type="submit">Replace</button>
       </menu>
     </form>
   </dialog>

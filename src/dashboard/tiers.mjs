@@ -109,3 +109,26 @@ export function saveRoster(next, { env = process.env, now = () => new Date() } =
   fs.writeFileSync(dest, `${JSON.stringify(next, null, 2)}\n`);
   return { path: dest, backup };
 }
+
+/**
+ * A specialist's manifest tier is a recommendation: `roster.specialists[id]`
+ * overrides it, and `resolveProfile` takes that profile whole — so the
+ * override always carries the manifest's reasoning along. `tier: null` drops
+ * it, back to the recommendation.
+ */
+export function applySpecialistTier(roster, { id, tier, reasoning }) {
+  const next = structuredClone(roster);
+  if (tier == null) {
+    if (next.specialists && Object.hasOwn(next.specialists, id)) {
+      delete next.specialists[id].model_profile;
+      if (!Object.keys(next.specialists[id]).length) delete next.specialists[id];
+      if (!Object.keys(next.specialists).length) delete next.specialists;
+    }
+    return next;
+  }
+  if (!TIERS.includes(tier)) throw new Error(`tier must be ${TIERS.join("|")}`);
+  if (!reasoning) throw new Error("the specialist's manifest names no reasoning level");
+  next.specialists ??= {};
+  next.specialists[id] = { ...(Object.hasOwn(next.specialists, id) ? next.specialists[id] : {}), model_profile: { tier, reasoning } };
+  return next;
+}
