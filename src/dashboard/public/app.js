@@ -390,8 +390,17 @@ function chainChip(c, i) {
     i + 1}. ${esc(c.label)}${c.pinned ? " 📌" : ""}${c.newest ? " ⬆" : ""}${c.state === "gone" ? " ✗" : ""}</span>`;
 }
 
+let specialistRolesKey = "";
+
 async function refreshRoles() {
   rolesData = await api("/api/roles");
+  // The specialist's assign dropdown lists the roles; redraw it only when they
+  // change, so the 5s poll never resets it mid-pick.
+  const rolesKey = rolesData.roles.map((r) => r.role).join(",");
+  if (rolesKey !== specialistRolesKey) {
+    specialistRolesKey = rolesKey;
+    renderSpecialist();
+  }
   const upgrades = rolesData.roles.flatMap((r) => r.chain.filter((c) => c.newest && (!c.pinned || c.state === "gone")));
   const addable = rolesData.addable || [];
   const btn = $("#roles-upgrade");
@@ -402,9 +411,7 @@ async function refreshRoles() {
   ].filter(Boolean).join(" · ")})`;
   const rows = rolesData.roles.map((r) => `
     <tr>
-      <td><strong>${esc(r.role)}</strong> <button type="button" class="role-triage${r.in_triage ? "" : " off"}" data-role="${esc(r.role)}" title="${r.in_triage
-        ? "Triage routes this role (OpenRouter proposes a model per prompt). Click to stop."
-        : "Not routed by triage. Click to let triage propose a model per prompt."}">⇄</button></td>
+      <td><strong>${esc(r.role)}</strong></td>
       <td class="nowrap">${r.pick ? `${esc(r.pick.label)} <span class="muted">${esc(r.pick.cli)}${r.pick.effort ? ` · ${esc(r.pick.effort)}` : ""}</span>` : "<em>exhausted</em>"}</td>
       <td class="chain-cell">${r.chain.map(chainChip).join(" ")}${r.skipped.length
         ? `<div class="skipped" title="${esc(r.skipped.map((x) => `${x.model}: ${x.reason}`).join("\n"))}">⚠ ${
@@ -420,21 +427,6 @@ async function refreshRoles() {
   $("#roles-table").innerHTML = `<table>
     <thead><tr><th>Role</th><th>Pick now</th><th>Chain</th><th>Pin</th><th></th></tr></thead>
     <tbody>${rows || '<tr><td colspan="5">No roles</td></tr>'}</tbody></table>`;
-}
-
-// Triage membership lives in roster.triage.roles; the role row is where it is
-// toggled, since a role triage routes cannot be deleted.
-async function toggleTriage(r) {
-  const status = $("#roles-status");
-  const current = rolesData.roles.filter((x) => x.in_triage).map((x) => x.role);
-  const value = r.in_triage ? current.filter((x) => x !== r.role) : [...current, r.role];
-  try {
-    const res = await api("/api/settings", { method: "POST", body: JSON.stringify({ path: "triage.roles", value }) });
-    status.textContent = `${r.role} ${r.in_triage ? "removed from" : "added to"} triage · backup ${res.backup}`;
-  } catch (err) {
-    status.textContent = `refused: ${err.message}`;
-  }
-  await refreshRoles();
 }
 
 async function roleWrite(role, body, note) {
@@ -457,7 +449,6 @@ $("#roles-table").addEventListener("click", async (e) => {
   const r = rolesData?.roles.find((x) => x.role === role);
   if (btn.classList.contains("role-edit")) openRoleEditor(r);
   else if (btn.classList.contains("role-pin")) roleWrite(role, { pin_head: !r.pin_head }, `${role} ${r.pin_head ? "unpinned" : "pinned"}`);
-  else if (btn.classList.contains("role-triage")) toggleTriage(r);
   else if (btn.classList.contains("role-delete")
     && confirm(`Delete role "${role}"?\n\nAnything that still runs \`team-up pick --role ${role}\` will fail.`)) {
     roleWrite(role, { delete: true }, `${role} deleted`);
@@ -470,7 +461,6 @@ $("#roles-upgrade").addEventListener("click", async () => {
     const res = await api("/api/roles-upgrade", { method: "POST", body: JSON.stringify({}) });
     const done = [...res.added.map((a) => `added ${a.id}`), ...(res.removed || []).map((r) => `removed ${r.id}`), ...res.changes.map((c) => `${c.role}: ${c.from} → ${c.to}`)];
     status.textContent = done.length ? `${done.join(", ")} · backup ${res.backup}` : "already on the newest versions";
-    refreshTiers().catch(() => {});
     await refreshRoles();
   } catch (err) {
     status.textContent = `refused: ${err.message}`;
@@ -519,23 +509,34 @@ function chainRow(entry = {}) {
   return row;
 }
 
-function openRoleEditor(role) {
-  roleTarget = role?.role || null;
-  $("#role-editor-title").textContent = role ? `Edit ${role.role}` : "New role";
-  $("#role-editor-name").value = role?.role || "";
-  $("#role-editor-name").readOnly = !!role;
+// Set while the role editor edits a specialist's own chain instead of a role.
+let specialistChainTarget = null;
+
+function openRoleEditor(role, specialist = null) {
+  specialistChainTarget = specialist;
+  roleTarget = specialist ? null : role?.role || null;
+  $("#role-editor-title").textContent = specialist ? `Own chain for ${specialist}` : role ? `Edit ${role.role}` : "New role";
+  $("#role-editor-name").value = specialist || role?.role || "";
+  $("#role-editor-name").readOnly = !!(role || specialist);
+  // A specialist's chain is not touched by the weekly score refresh.
+  $("#role-editor-pin").closest("label").hidden = !!specialist;
   // A hand-written chain pins its head by default; unticking is the opt-out.
   $("#role-editor-pin").checked = true;
   $("#role-editor-status").textContent = "";
   const list = $("#role-editor-chain");
   list.innerHTML = "";
-  for (const c of role?.chain?.filter((x) => !x.invalid) || [{}]) list.append(chainRow(c));
+  const rows = role?.chain?.filter((x) => !x.invalid);
+  for (const c of rows?.length ? rows : [{}]) list.append(chainRow(c));
   roleDialog.showModal();
 }
 
 $("#role-add").addEventListener("click", () => openRoleEditor(null));
 $("#role-editor-add").addEventListener("click", () => $("#role-editor-chain").append(chainRow()));
-$("#role-editor-cancel").addEventListener("click", () => roleDialog.close());
+$("#role-editor-cancel").addEventListener("click", () => {
+  roleDialog.close();
+  // The assign dropdown already shows "own chain…"; put it back.
+  if (specialistChainTarget) renderSpecialist();
+});
 $("#role-editor-chain").addEventListener("click", (e) => {
   const row = e.target.closest(".chain-row");
   if (!row) return;
@@ -556,90 +557,20 @@ $("#role-editor-form").addEventListener("submit", async (e) => {
     effort: row.querySelector(".ce-effort").value.trim() || null,
     pinned: row.querySelector(".ce-pinned").checked,
   }));
+  if (specialistChainTarget) {
+    if (await assignSpecialist(specialistChainTarget, { chain }, `${specialistChainTarget} runs on its own chain`)) roleDialog.close();
+    else $("#role-editor-status").textContent = $("#capability-status").textContent;
+    return;
+  }
   const ok = await roleWrite(role, { chain, pin_head: $("#role-editor-pin").checked }, `${role} saved`);
   if (ok) roleDialog.close();
   else $("#role-editor-status").textContent = $("#roles-status").textContent;
 });
 
-/**
- * The tier table. Deliberately outside `refreshAll`: a five-second re-render
- * would reset a dropdown mid-edit, and nothing changes this file except this
- * panel. It redraws from what the write returns.
- */
-function renderTiers(data) {
-  const efforts = ["", ...data.effort_values];
-  const row = (m) => {
-    const tierOptions = (m.tier ? "" : '<option value="" selected>—</option>') + data.tiers
-      .map((t) => `<option value="${esc(t)}"${t === m.tier ? " selected" : ""}>${esc(t)}</option>`)
-      .join("");
-    const clis = data.clis.map((cli) => `
-      <label class="tier-cli"><input type="checkbox" data-kind="cli" data-model="${esc(m.model)}"
-        data-cli="${esc(cli)}"${m.clis.includes(cli) ? " checked" : ""}> ${esc(cli)}</label>`).join("");
-    const levels = data.reasoning_levels.map((level) => {
-      const current = m.reasoning[level];
-      const options = efforts.map((value) =>
-        `<option value="${esc(value)}"${value === (current ?? "") ? " selected" : ""}>${
-          value ? esc(value) : "—"}</option>`).join("");
-      return `<td><select data-kind="effort" data-model="${esc(m.model)}"
-        data-level="${esc(level)}">${options}</select></td>`;
-    }).join("");
-    return `<tr>
-      <td>${esc(m.label || m.model)}</td>
-      <td class="muted">${esc(m.provider || "—")}</td>
-      <td><select data-kind="tier" data-model="${esc(m.model)}">${tierOptions}</select></td>
-      <td class="tier-clis">${clis}</td>
-      ${levels}
-    </tr>`;
-  };
-  // Models checked in from the Models tab start without a tier: no specialist
-  // reaches them until one is picked here.
-  const untiered = data.models.filter((m) => !data.tiers.includes(m.tier));
-  const sections = [...data.tiers, ...(untiered.length ? [null] : [])].map((tier) => {
-    const models = tier ? data.models.filter((m) => m.tier === tier) : untiered;
-    const body = models.length
-      ? models.map(row).join("")
-      : `<tr><td colspan="${4 + data.reasoning_levels.length}"><em>no model in this tier</em></td></tr>`;
-    return `<tr class="tier-head"><th colspan="${4 + data.reasoning_levels.length}">${esc(tier || "no tier — specialists never pick these")}</th></tr>${body}`;
-  }).join("");
-  const levelHeads = data.reasoning_levels.map((l) => `<th>${esc(l)}</th>`).join("");
-  $("#tiers-table").innerHTML = `<table class="tiers">
-    <thead><tr><th>Model</th><th>Provider</th><th>Tier</th><th>CLIs</th>${levelHeads}</tr></thead>
-    <tbody>${sections}</tbody></table>`;
-}
-
-async function refreshTiers() {
-  renderTiers(await api("/api/tiers"));
-}
-
-$("#tiers-table").addEventListener("change", async (e) => {
-  const el = e.target;
-  const model = el.dataset.model;
-  if (!model) return;
-  let body;
-  if (el.dataset.kind === "tier") body = { tier: el.value };
-  else if (el.dataset.kind === "cli") body = { cli: el.dataset.cli, action: el.checked ? "add" : "remove" };
-  else if (el.dataset.kind === "effort") body = { level: el.dataset.level, effort: el.value || null };
-  else return;
-  const status = $("#tiers-status");
-  try {
-    const data = await api(`/api/tiers/models/${encodeURIComponent(model)}`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    status.textContent = `saved · backup ${data.backup}`;
-    renderTiers(data);
-    refreshRoles().catch(() => {});
-  } catch (err) {
-    status.textContent = `refused: ${err.message}`;
-    // The roster is unchanged, so the table has to go back to what it says.
-    refreshTiers().catch(() => {});
-  }
-});
-
 // ── Models tab ──────────────────────────────────────────────────────────────
 // Per provider, every model it offers; checked = in the roster, so the chain
-// dropdowns offer it. Like the tier table it stays out of `refreshAll`: it
-// redraws on tab switch and after a toggle, so open providers stay open.
+// dropdowns offer it. It stays out of `refreshAll`: it redraws on tab switch
+// and after a toggle, so open providers stay open.
 const ROLES_TAB_KEY = "teamup.rolesTab";
 const CATALOGUE_KIND_KEY = "teamup.catalogueKind";
 const catalogueOpen = new Set();
@@ -766,7 +697,7 @@ $("#catalogue-list").addEventListener("change", async (e) => {
   } catch (err) {
     status.textContent = `refused: ${err.message}`;
   } finally {
-    await Promise.allSettled([refreshCatalogue(), refreshRoles(), refreshTiers()]);
+    await Promise.allSettled([refreshCatalogue(), refreshRoles()]);
   }
 });
 
@@ -1037,12 +968,17 @@ function renderSpecialist() {
   const perms = s.permissions || {};
   const budget = s.budget || {};
   const approved = s.approved_for || [];
-  // The manifest's tier is a recommendation; the roster may override it.
-  const rec = s.model_profile?.tier;
-  const profile = rec ? `<select class="specialist-tier" title="The manifest recommends ${esc(rec)}; pick another tier to override it">${
-    ["frontier", "high", "medium", "low"].map((t) => `<option value="${t}"${t === (s.tier_override || rec) ? " selected" : ""}>${
-      t}${t === rec ? " (recommended)" : ""}</option>`).join("")}</select> ${esc(s.model_profile.reasoning || "")}` : null;
-  $("#specialist-meta").innerHTML = [`v${esc(s.version)}`, profile, s.approved_everywhere
+  // Which chain it runs on: a role's, or its own. Unassigned does not launch.
+  const a = s.assignment;
+  const current = a?.role ? `role:${a.role}` : a?.chain ? "chain" : "";
+  const roles = [...new Set([...(rolesData?.roles || []).map((r) => r.role), ...(a?.role ? [a.role] : [])])];
+  const assign = `<select class="specialist-assign" title="The chain this specialist runs on">
+    <option value=""${current ? "" : " selected"}>— unassigned, won't launch —</option>
+    ${roles.map((r) => `<option value="role:${esc(r)}"${current === `role:${r}` ? " selected" : ""}>role: ${esc(r)}</option>`).join("")}
+    <option value="chain"${current === "chain" ? " selected" : ""}>own chain…</option></select>${a?.chain
+    ? ` <span class="muted">${a.chain.map((e) => esc(typeof e === "string" ? e : `${e.cli ? `${e.cli}:` : ""}${e.model}`)).join(" → ")}</span>
+       <button type="button" class="specialist-chain-edit" title="Edit its chain">✎</button>` : ""}`;
+  $("#specialist-meta").innerHTML = [`v${esc(s.version)}`, assign, s.approved_everywhere
     ? '<span title="Approved for every project; a new version or new permissions need one more approval">approved everywhere ✓</span>'
     : `<button type="button" class="specialist-approve" data-version="${esc(s.version)}"
         title="Approve this version for every project">Approve everywhere</button>`]
@@ -1180,18 +1116,50 @@ $("#specialist-detail").addEventListener("click", async (event) => {
   }
 });
 
-$("#specialist-meta").addEventListener("change", async (event) => {
-  const sel = event.target.closest(".specialist-tier");
-  if (!sel) return;
-  const id = $("#specialist-select").value;
+async function assignSpecialist(id, body, note) {
   const status = $("#capability-status");
   try {
-    await api(`/api/specialists/${encodeURIComponent(id)}/tier`, { method: "POST", body: JSON.stringify({ tier: sel.value }) });
-    status.textContent = `${id} runs on ${sel.value} models`;
+    await api(`/api/specialists/${encodeURIComponent(id)}/assign`, { method: "POST", body: JSON.stringify(body) });
+    status.textContent = note;
+    await refreshSpecialists();
+    return true;
   } catch (err) {
-    status.textContent = err.message;
+    status.textContent = `refused: ${err.message}`;
+    await refreshSpecialists();
+    return false;
   }
-  await refreshSpecialists();
+}
+
+/** Raw roster chain entries → the editor's {cli, model, effort, pinned}. */
+function editorChain(chain) {
+  return (chain || []).map((e) => {
+    if (typeof e !== "string") return e;
+    const i = e.indexOf(":");
+    return i === -1 ? { model: e } : { cli: e.slice(0, i), model: e.slice(i + 1) };
+  });
+}
+
+function openSpecialistChain(s) {
+  // Start from what it runs on now, so "own chain" is an edit, not a blank.
+  const a = s.assignment;
+  const chain = a?.chain ? editorChain(a.chain) : rolesData?.roles.find((r) => r.role === a?.role)?.chain;
+  openRoleEditor({ chain }, s.id);
+}
+
+$("#specialist-meta").addEventListener("change", async (event) => {
+  const sel = event.target.closest(".specialist-assign");
+  if (!sel) return;
+  const id = $("#specialist-select").value;
+  const s = (specialistsData?.specialists || []).find((item) => item.id === id);
+  if (sel.value === "chain") openSpecialistChain(s);
+  else if (sel.value) await assignSpecialist(id, { role: sel.value.slice(5) }, `${id} runs on ${sel.value.slice(5)}`);
+  else await assignSpecialist(id, {}, `${id} unassigned — it will not launch`);
+});
+
+$("#specialist-meta").addEventListener("click", (event) => {
+  if (!event.target.closest(".specialist-chain-edit")) return;
+  const id = $("#specialist-select").value;
+  openSpecialistChain((specialistsData?.specialists || []).find((item) => item.id === id));
 });
 
 $("#specialist-install").addEventListener("click", async () => {
@@ -1826,7 +1794,7 @@ function fillModels() {
     { value: "", label: "— CLI default —" },
     ...timModels
       .filter((m) => !cli || (m.clis || []).includes(cli))
-      .map((m) => ({ value: m.id, label: m.tier ? `${m.label || m.id} (${m.tier})` : m.label || m.id })),
+      .map((m) => ({ value: m.id, label: m.label || m.id })),
   ]);
 }
 
@@ -1849,11 +1817,8 @@ function showRemit() {
     $("#tim-launch-remit").textContent = "";
     return;
   }
-  const profile = spec.model_profile
-    ? ` Its profile asks for ${spec.model_profile.tier}:${spec.model_profile.reasoning}.`
-    : "";
   $("#tim-launch-remit").textContent =
-    `${spec.display_name || spec.id}: ${(spec.remit || []).join("; ")}.${profile}`
+    `${spec.display_name || spec.id}: ${(spec.remit || []).join("; ")}.`
     + " Interactive session — no sandbox, approval or RESULT.json.";
 }
 
@@ -1944,15 +1909,6 @@ async function refreshSettings() {
       <dt title="Usage share at which a window counts as amber">Warn at</dt><dd>${num("limits.warn_at", d.limits.warn_at, "0.01", "0–1")}</dd>
       <dt title="Usage share at which a running worker hands off">Hand off at</dt><dd>${num("limits.handoff_at", d.limits.handoff_at, "0.01", "0–1")}</dd>
     </dl>
-    <h3 title="OpenRouter's router proposes a model per prompt for these roles">Triage</h3>
-    <dl class="kv">
-      <dt>On</dt><dd>${check("triage.enabled", d.triage.enabled, "enabled")}</dd>
-      <dt>Mode</dt><dd><select data-path="triage.mode">${["shadow", "active"].map((m) =>
-        `<option${m === d.triage.mode ? " selected" : ""}>${m}</option>`).join("")}</select>
-        <span class="muted">shadow = log only</span></dd>
-      <dt>Active share</dt><dd>${num("triage.active_share", d.triage.active_share, "0.05", "Share of picks the router decides in active mode, 0–1")}</dd>
-      <dt>Min confidence</dt><dd>${num("triage.min_confidence", d.triage.min_confidence, "0.05", "0–1")}</dd>
-    </dl>
     <h3 title="How often the usage collector reads each subscription's limits">Usage watcher</h3>
     <dl class="kv">
       <dt>Tick (s)</dt><dd>${num("usage_watcher.tick_sec", d.usage_watcher.tick_sec, "1", "")}</dd>
@@ -1999,9 +1955,9 @@ const PANEL_HELP = {
   "panel-sessions": "Live tmux sessions (click one to open its terminal) and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
   "panel-projects": "Repos in the collecting folder: branch, command policy, open sessions. Start opens a CLI session in the repo; Fix all / auto-fix write missing policies and approve the specialists there.",
   "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
-  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, ⇄ toggles triage routing, 📌 keeps the weekly score refresh off its head, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. The Models tab lists every model per provider; a checked one is in the roster and offered in the chains. Model tiers (for specialists) fold out below it.",
+  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, 📌 keeps the weekly score refresh off its head, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. The Roster tab lists every model per provider; a checked one is in the roster and offered in the chains. Specialists run on a role's chain or their own — picked in the Specialists widget.",
   "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions, limits and approvals are under Details.",
-  "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, triage routing, usage watcher intervals. Every change is validated and backs up roster.json.",
+  "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
   "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",
   "panel-clis": "Agent CLIs: version, harness verification, update/install/login. CLIs team-up can install but the roster doesn't run yet are rows you switch on in ✎. Hover a CLI name for its path; click a row for the job log.",
 };
@@ -2130,7 +2086,6 @@ function refreshAll() {
 
 function startPolling() {
   refreshSpecialists().catch(() => {});
-  refreshTiers().catch(() => {});
   showRolesTab(readStored(ROLES_TAB_KEY, "roles") === "models" ? "models" : "roles");
   refreshSettings().catch(() => {});
   refreshAll();

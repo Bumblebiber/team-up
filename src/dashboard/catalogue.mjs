@@ -83,7 +83,7 @@ export function buildCatalogueView(roster, store) {
   return { providers: list.sort((a, b) => a.label.localeCompare(b.label)) };
 }
 
-/** Where a newly checked model inherits tier, reasoning and limits from. */
+/** Where a newly checked model inherits reasoning and limits from. */
 function familySibling(roster, cli, cliId) {
   const { family, version } = splitVersion(cliId);
   if (!version) return null;
@@ -113,7 +113,7 @@ export function affectedRoles(roster, cli, ids) {
 
 /**
  * Check or uncheck one (cli, cli_id) row.
- * - on: adds a roster model (copying a same-family sibling's tier/reasoning)
+ * - on: adds a roster model (copying a same-family sibling's reasoning)
  *   and lifts the exclusion.
  * - off: drops the CLI from every roster model that runs it there, deletes a
  *   model left with no CLI, and records the exclusion. Chain entries that

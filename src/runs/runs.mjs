@@ -675,7 +675,7 @@ export function outcomeSummary(states = listAllStates({ onCorrupt: () => {} })) 
 }
 
 /** After roster dispatch spawns tmux, link session to run registry. */
-export function linkDispatchToRun(runId, session, { model, cli, tier, effort, triage: triageResult } = {}) {
+export function linkDispatchToRun(runId, session, { model, cli, effort } = {}) {
   if (!runId) return false;
   const st = loadState(runId);
   if (!st) return false;
@@ -683,9 +683,7 @@ export function linkDispatchToRun(runId, session, { model, cli, tier, effort, tr
   st.worker.tmux = session;
   if (model !== undefined) st.worker.model = model;
   if (cli !== undefined) st.worker.cli = cli;
-  if (tier !== undefined) st.worker.tier = tier;
   if (effort !== undefined) st.worker.effort = effort ?? null;
-  if (triageResult !== undefined) st.triage = triageResult;
   st.watcher = { ...(st.watcher || { kind: "internal_subagent" }), attached: true };
   saveState(st);
   setStatus(runId, "watching");
@@ -1311,14 +1309,13 @@ function cmdResume(args) {
         usage,
         roster,
         resolveProfileForRun: async (runId, state) => {
-          const profile = state.specialist_profile || state.profile || {
-            tier: "frontier",
-            reasoning: "max",
-          };
+          const profile = state.specialist_profile || null;
+          const specialistId = state.specialist?.id;
           return resolveProfile({
             roster,
             usage,
             profile,
+            specialistId,
             requirements:
               state.harness_requirements ||
               {},
@@ -1394,14 +1391,13 @@ async function cmdRecheckCapacity(args) {
   const roster = requireRoster();
   const usage = loadJson(usagePath()) || {};
   const state = loadState(runId);
-  const profile = state?.specialist_profile || state?.profile || {
-    tier: "frontier",
-    reasoning: "max",
-  };
+  const profile = state?.specialist_profile || null;
+  const specialistId = state?.specialist?.id;
   const profileResult = resolveProfile({
     roster,
     usage,
     profile,
+    specialistId,
     requirements:
       state?.harness_requirements ||
       {},

@@ -3,9 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { lookupKey, parseEnvFileLine, keyHint } from "../src/keys.mjs";
+import { lookupKey, parseEnvFileLine, keyHint, openRouterKeyFiles } from "../src/keys.mjs";
 import { secretsPath } from "../src/paths.mjs";
-import { lookupTriageKey } from "../src/roster/triage.mjs";
 
 test("parseEnvFileLine handles quotes and comments", () => {
   assert.equal(parseEnvFileLine("# comment"), null);
@@ -26,7 +25,7 @@ test("lookupKey prefers env over files", () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test("lookupKey reads secrets.env then triage key_file", () => {
+test("lookupKey reads secrets.env then the roster key_file", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-keys-"));
   const secrets = path.join(home, "secrets.env");
   const hermes = path.join(home, "hermes.env");
@@ -63,21 +62,11 @@ test("lookupKey refuses group/world-readable files", () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test("lookupTriageKey checks secrets.env before triage.key_file", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-keys-"));
-  const prev = process.env.TEAM_UP_HOME;
-  process.env.TEAM_UP_HOME = home;
-  fs.mkdirSync(home, { recursive: true });
-  fs.writeFileSync(secretsPath(), "OPENROUTER_API_KEY=from-secrets\n", { mode: 0o600 });
-  const keyFile = path.join(home, "other.env");
-  fs.writeFileSync(keyFile, "OPENROUTER_API_KEY=from-file\n", { mode: 0o600 });
-  const hit = lookupTriageKey({
-    roster: { triage: { key_env: "OPENROUTER_API_KEY", key_file: keyFile } },
-  });
-  assert.equal(hit.key, "from-secrets");
-  if (prev === undefined) delete process.env.TEAM_UP_HOME;
-  else process.env.TEAM_UP_HOME = prev;
-  fs.rmSync(home, { recursive: true, force: true });
+test("OpenRouter key files: secrets.env first, then roster openrouter.key_file", () => {
+  const env = { TEAM_UP_SECRETS: "/s/secrets.env" };
+  assert.deepEqual(openRouterKeyFiles(env, { openrouter: { key_file: "~/.hermes/.env" } }),
+    ["/s/secrets.env", "~/.hermes/.env"]);
+  assert.deepEqual(openRouterKeyFiles(env, {}), ["/s/secrets.env"]);
 });
 
 test("keyHint returns last four characters only", () => {

@@ -94,13 +94,13 @@ test("specialist launch proceeds with best-effort when probe fails", async () =>
         clis: { cursor: { cmd: ["true", "{prompt}"] } },
         models: {
           m: {
-            tier: "medium",
             cli: ["cursor"],
             account: "cursor",
             reasoning: { low: null },
             priority: 1,
           },
         },
+        specialists: { "testing.beste": { chain: ["cursor:m"] } },
       })
     );
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));

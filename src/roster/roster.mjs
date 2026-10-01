@@ -23,14 +23,6 @@ import {
 import {
   firstPositional, buildCommand, tmuxArgs, spawnPinnedInTmux, resolveEffort,
 } from "./command.mjs";
-import {
-  triage as runTriage,
-  isTriageEnabled,
-  isRoleTriagable,
-  shouldRunTriage,
-  shouldUseActiveTriage,
-  resolveTriageDispatch,
-} from "./triage.mjs";
 
 export {
   configPath, usagePath, loadJson, validateRoster, requireRoster, rosterWritePath, usageWritePath,
@@ -157,10 +149,6 @@ export async function spawnInTmux({
   prompt,
   runId,
   modelPin,
-  useTriage = false,
-  random = Math.random,
-  fetchFn = globalThis.fetch,
-  env = process.env,
   usageSnapshot,
   readUsage = () => loadJson(usagePath()),
   refreshUsage,
@@ -171,43 +159,6 @@ export async function spawnInTmux({
   let usage = usageSnapshot ?? loadJson(usagePath());
   let r;
   let pinResolved = null;
-  let triageResult = null;
-  let triageSelected = false;
-
-  if (useTriage && !modelPin && isTriageEnabled(rosterCfg) && isRoleTriagable(rosterCfg, role)) {
-    triageResult = await runTriage({
-      roster: rosterCfg,
-      prompt,
-      role,
-      env,
-      fetch: fetchFn,
-      now,
-      random,
-    });
-    console.log(
-      `triage: ${triageResult.source}${triageResult.profile ? ` → ${triageResult.profile.tier}:${triageResult.profile.reasoning}` : ""}${triageResult.fallback_reason ? ` (${triageResult.fallback_reason})` : ""}`,
-    );
-
-    const mode = rosterCfg.triage?.mode ?? "shadow";
-    if (
-      mode === "active" &&
-      shouldUseActiveTriage(rosterCfg, random) &&
-      triageResult.profile
-    ) {
-      const dispatch = resolveTriageDispatch({
-        roster: rosterCfg,
-        usage,
-        triageOutput: triageResult,
-        role,
-        now,
-      });
-      if (!dispatch.useRoleChain && dispatch.cell?.model) {
-        r = dispatch.cell;
-        triageSelected = true;
-        for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
-      }
-    }
-  }
 
   if (modelPin) {
     const { resolvePassTo } = await import("./pass-to.mjs");
@@ -245,7 +196,7 @@ export async function spawnInTmux({
       console.error(`pinned model "${modelPin}" cannot run`);
       process.exit(2);
     }
-  } else if (!r) {
+  } else {
     r = pick({ roster: rosterCfg, usage, role, now });
     for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
     if (!r.model) {
@@ -282,18 +233,6 @@ export async function spawnInTmux({
             entryEffort,
             now,
           });
-        } else if (triageSelected) {
-          const dispatch = resolveTriageDispatch({
-            roster: rosterCfg,
-            usage,
-            triageOutput: triageResult,
-            role,
-            now,
-          });
-          r = dispatch.useRoleChain
-            ? pick({ roster: rosterCfg, usage, role, now })
-            : dispatch.cell;
-          triageSelected = !dispatch.useRoleChain;
         } else {
           r = resolvePickAfterRefresh({
             roster: rosterCfg,
@@ -341,9 +280,6 @@ export async function spawnInTmux({
     prompt,
     runId: effectiveRunId,
     effort: r.effort,
-    triage: triageResult
-      ? { ...triageResult, mode: rosterCfg.triage?.mode ?? "shadow", applied: triageSelected }
-      : undefined,
     sessionPrefix: `team-up-${role}`,
   });
 }
@@ -353,13 +289,11 @@ async function cmdDispatch(args) {
   const promptFile = argValue(args, "--prompt-file");
   const runId = argValue(args, "--run-id");
   const modelPin = argValue(args, "--model");
-  const noTriage = args.includes("--no-triage");
   const rosterCfg = requireRoster();
-  const useTriage = shouldRunTriage({ roster: rosterCfg, role, modelPin, noTriage });
   const dir = resolveDispatchDir({ dir: argValue(args, "--dir"), runId });
   if (!role || (!promptFile && !runId)) {
     console.error(
-      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>] [--no-triage]",
+      "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>]",
     );
     console.error("  with --run-id: prefers ~/.team-up/runs/<id>/mailbox/PROMPT.md (mailbox-wrapped)");
     console.error("  --model: pin CLI×model (no role-chain fallback); same query language as pass-to");
@@ -402,7 +336,6 @@ async function cmdDispatch(args) {
     prompt,
     runId,
     modelPin,
-    useTriage,
   });
 }
 

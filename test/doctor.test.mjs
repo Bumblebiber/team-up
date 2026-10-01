@@ -171,96 +171,100 @@ function installedPackage(home, manifest) {
   return dir;
 }
 
-// One cell, and a valid one: the doctor resolves against the roster of the
-// home it is given, so this fixture is the whole world these two tests see.
-// It has to survive validateRoster (an invalid roster exits the process) and
-// reach the resolver, or the assertions below would be about nothing.
-const ROSTER_FRONTIER_ONLY = {
+// Two cells, both valid: the doctor resolves against the roster of the home it
+// is given, so this fixture is the whole world these tests see. It has to
+// survive validateRoster (an invalid roster exits the process) and reach the
+// resolver, or the assertions below would be about nothing. review.example
+// runs on a reachable role; coding.example on a chain whose only cell sits on a
+// disabled account.
+const ROSTER = {
   schema_version: 1,
   models: {
     "some-frontier": {
-      tier: "frontier",
       reasoning: { max: "high", medium: "medium", low: "low" },
       cli: ["claude"],
       account: "a",
     },
+    "off-frontier": { cli: ["claude"], account: "off" },
   },
-  accounts: { a: { kind: "subscription", enabled: true } },
+  accounts: {
+    a: { kind: "subscription", enabled: true },
+    off: { kind: "subscription", enabled: false },
+  },
   clis: { claude: { cmd: ["claude"] } },
+  roles: { reviewer: { chain: ["claude:some-frontier"] } },
+  specialists: {
+    "review.example": { role: "reviewer" },
+    "coding.example": { chain: ["off-frontier"] },
+  },
 };
 
-test("a specialist no roster model can satisfy is reported before launch", () => {
+function installExample(home, id, permissions) {
+  const manifest = {
+    schema_version: 1,
+    id,
+    version: "0.1.0",
+    display_name: "Example",
+    call_types: ["delegate"],
+    output_contract: "team-up.result/v1",
+    capabilities: { skills: [], tools: [], mcps: [], frameworks: [] },
+    permissions: permissions ?? { filesystem: "project", writes: true, network: false, commands: [] },
+  };
+  const dir = installedPackage(home, manifest);
+  fs.writeFileSync(
+    path.join(home, "specialists-index.json"),
+    JSON.stringify({ specialists: { [id]: { id, version: manifest.version, checksum: "sha256:abc", path: dir } } })
+  );
+  fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify(ROSTER));
+}
+
+test("a specialist whose chain no roster cell can reach is reported before launch", () => {
   // coding.codey was built, published, installed and approved on this host and
   // could never have run. Nothing between building it and running it said so.
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
   try {
-    const manifest = {
-      schema_version: 1,
-      id: "coding.example",
-      version: "0.1.0",
-      display_name: "Example",
-      call_types: ["delegate"],
-      output_contract: "team-up.result/v1",
-      capabilities: { skills: [], tools: [], mcps: [], frameworks: [] },
-      permissions: { filesystem: "project", writes: true, network: false, commands: [] },
-      model_profile: { tier: "high", reasoning: "medium" },
-    };
-    const dir = installedPackage(home, manifest);
-    fs.writeFileSync(
-      path.join(home, "specialists-index.json"),
-      JSON.stringify({
-        specialists: {
-          "coding.example": {
-            id: manifest.id,
-            version: manifest.version,
-            checksum: "sha256:abc",
-            path: dir,
-          },
-        },
-      })
-    );
-    fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify(ROSTER_FRONTIER_ONLY));
+    installExample(home, "coding.example");
 
     const report = diagnose(homeEnv(home));
     const finding = report.findings.find((f) => f.kind === "no_model_for_profile");
-    assert.ok(finding, "a profile no cell satisfies must be reported");
+    assert.ok(finding, "a chain no cell satisfies must be reported");
     assert.equal(finding.id, "coding.example");
     assert.equal(finding.severity, "high");
+    assert.deepEqual(finding.profile, { chain: ["off-frontier"] });
     // The reasons come from the real resolver, so they say why rather than
     // just that it failed — and they are about the fixture cell only. A host
     // model appearing here means the doctor read a roster it was not given.
     assert.deepEqual(finding.skipped, [
-      { model: "some-frontier", reason: "tier frontier != high" },
+      { model: "off-frontier", reason: "account unavailable" },
     ]);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
-test("a satisfiable profile is not reported", () => {
+test("a specialist with no role or chain is reported before launch", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
   try {
-    const manifest = {
-      schema_version: 1,
-      id: "review.example",
-      version: "0.1.0",
-      display_name: "Example",
-      call_types: ["review"],
-      output_contract: "team-up.result/v1",
-      capabilities: { skills: [], tools: [], mcps: [], frameworks: [] },
-      permissions: { filesystem: "project_readonly", writes: false, network: false, commands: [] },
-      model_profile: { tier: "frontier", reasoning: "max" },
-    };
-    const dir = installedPackage(home, manifest);
-    fs.writeFileSync(
-      path.join(home, "specialists-index.json"),
-      JSON.stringify({
-        specialists: {
-          "review.example": { id: manifest.id, version: manifest.version, checksum: "sha256:abc", path: dir },
-        },
-      })
-    );
-    fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify(ROSTER_FRONTIER_ONLY));
+    installExample(home, "coding.unassigned");
+
+    const report = diagnose(homeEnv(home));
+    const finding = report.findings.find((f) => f.kind === "no_model_for_profile");
+    assert.ok(finding, "an unassigned specialist must be reported");
+    assert.equal(finding.id, "coding.unassigned");
+    assert.equal(finding.profile, null);
+    assert.match(finding.skipped[0].reason, /no role or chain assigned to coding\.unassigned/);
+    assert.match(finding.detail, /no role or chain assigned/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a specialist on a reachable role is not reported", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    installExample(home, "review.example", {
+      filesystem: "project_readonly", writes: false, network: false, commands: [],
+    });
     const verifyDir = path.join(home, "harness-verification", "claude");
     fs.mkdirSync(verifyDir, { recursive: true });
     fs.writeFileSync(

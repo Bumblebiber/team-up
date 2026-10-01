@@ -61,13 +61,13 @@ async function fixtureLaunch(overrides = {}) {
     clis: { claude: { cmd: ["claude", "{prompt}"] } },
     models: {
       m: {
-        tier: "medium",
         cli: ["claude"],
         account: "anthropic",
         reasoning: { low: null },
         priority: 1,
       },
     },
+    specialists: { "testing.capsule": { chain: ["claude:m"] } },
   }));
   fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
   writePkg(pkg, {
@@ -159,7 +159,6 @@ test("profile skips harness verified for broker but not isolation", () => {
       clis: { claude: { cmd: ["claude", "{prompt}"] } },
       models: {
         m: {
-          tier: "medium",
           cli: ["claude"],
           account: "anthropic",
           reasoning: { low: null },
@@ -168,7 +167,7 @@ test("profile skips harness verified for broker but not isolation", () => {
       },
     },
     usage: {},
-    profile: { tier: "medium", reasoning: "low" },
+    profile: { chain: ["claude:m"] },
     requirements: {
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
       command_broker: "team-up.command-broker/v1",
@@ -194,44 +193,51 @@ const ISOLATED = {
   }),
 };
 
-/** Two more cells beside the fixture's medium `m`, for the override tests. */
+/** Two more models beside the fixture's `m`, off the specialist's chain, for
+ *  the override tests. */
 function widenRoster(env) {
   const roster = JSON.parse(fs.readFileSync(env.TEAM_UP_ROSTER, "utf8"));
   // The fixture's `claude` is the home-installed one; the sandbox refuses it
   // without explicit runtime paths, and that refusal is not what is under test.
   roster.clis.claude.sandbox_runtime_paths = ["/usr/bin", "/bin"];
   roster.models.big = {
-    tier: "frontier", cli: ["claude"], account: "anthropic", reasoning: { low: null }, priority: 1,
+    cli: ["claude"], account: "anthropic", reasoning: { low: null }, priority: 1,
   };
   roster.accounts.broke = { kind: "subscription", enabled: false };
   roster.models.unreachable = {
-    tier: "frontier", cli: ["claude"], account: "broke", reasoning: { low: null }, priority: 0,
+    cli: ["claude"], account: "broke", reasoning: { low: null }, priority: 0,
   };
   fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify(roster));
 }
 
 test("resolveRuntimeOverride refuses what the roster does not have", () => {
-  const roster = { clis: { claude: { cmd: ["claude"] } }, models: { m: { tier: "medium" } } };
+  const roster = { clis: { claude: { cmd: ["claude"] } }, models: { m: { cli: ["claude"] } } };
   assert.equal(resolveRuntimeOverride(roster, null), null);
   assert.equal(resolveRuntimeOverride(roster, {}), null);
   assert.deepEqual(resolveRuntimeOverride(roster, { model: "m" }), {
-    cli: null, model: "m", profile: { tier: "medium" },
+    cli: null, model: "m",
   });
   assert.throws(() => resolveRuntimeOverride(roster, { model: "nope" }), /unknown model/);
   assert.throws(() => resolveRuntimeOverride(roster, { cli: "nope" }), /unknown cli/);
 });
 
-test("a one-off model override crosses the tier the specialist asked for", async () => {
+test("a one-off model override replaces the specialist's chain with that one cell", async () => {
   const fixture = await fixtureLaunch();
   widenRoster(fixture.env);
+  const storedProfile = (result) => JSON.parse(fs.readFileSync(
+    path.join(fixture.env.TEAM_UP_RUNS, result.runId, "STATE.json"), "utf8",
+  )).specialist_profile;
   try {
     const plain = await launch({ ...fixture.args, dependencyOverrides: ISOLATED });
     assert.equal(plain.runtime.model, "m");
+    assert.deepEqual(storedProfile(plain), { chain: ["claude:m"] });
     const overridden = await launch({
       ...fixture.args, runtime: { model: "big" }, dependencyOverrides: ISOLATED,
     });
     assert.equal(overridden.runtime.model, "big");
     assert.equal(overridden.runtime.cli, "claude");
+    // A capacity wait re-resolves the cell the caller asked for, not the chain.
+    assert.deepEqual(storedProfile(overridden), { chain: [{ model: "big", cli: "claude" }] });
   } finally {
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }

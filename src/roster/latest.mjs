@@ -60,7 +60,7 @@ export function offeredIds(store, cli, now = Date.now()) {
 /**
  * A CLI that ships `gpt-7-sol` while the roster only knows `gpt-6-sol` has
  * nothing to move a chain to — the model is not in `roster.models`. Add it as
- * a copy of its newest sibling on that CLI (tier, reasoning, account, limit
+ * a copy of its newest sibling on that CLI (reasoning, account, limit
  * windows), minus anything that describes the old version (price, notes).
  * Only families the roster already runs on that CLI; a new family is a
  * judgement for `team-up propose`, not for a version bump.

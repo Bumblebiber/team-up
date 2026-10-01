@@ -186,13 +186,13 @@ test("non-empty commands without verified command broker → PROFILE_UNAVAILABLE
       },
       models: {
         m: {
-          tier: "medium",
           cli: ["cursor"],
           account: "cursor",
           reasoning: { low: null },
           priority: 1,
         },
       },
+      specialists: { "testing.cmds": { chain: ["cursor:m"] } },
     }));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
     writePkg(pkg, validManifest({
@@ -485,13 +485,13 @@ test("max_tokens is advisory and does not block launch", async () => {
       },
       models: {
         m: {
-          tier: "medium",
           cli: ["cursor"],
           account: "cursor",
           reasoning: { low: null },
           priority: 1,
         },
       },
+      specialists: { "testing.tokens": { chain: ["cursor:m"] } },
     }));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
     writePkg(pkg, validManifest({
@@ -536,28 +536,17 @@ test("max_tokens is advisory and does not block launch", async () => {
   }
 });
 
-// --- reviewed pushback: explicit null vs missing reasoning ---
+// --- reviewed pushback: a cell with no effort anywhere runs without one ---
 
-test("explicit null reasoning is supported; missing key is not", () => {
-  const base = {
+test("a cell with no effort anywhere runs without the flag; the nearest effort wins", () => {
+  const roster = {
     accounts: { cursor: { kind: "subscription", enabled: true } },
     clis: { cursor: { cmd: ["cursor-agent", "--model", "{model}", "{prompt}"] } },
-    models: {},
+    models: { m: { cli: ["cursor"], account: "cursor", priority: 1 } },
+    roles: { r: { chain: ["cursor:m"] } },
+    specialists: { x: { chain: ["cursor:m"] } },
   };
-
-  const withNull = {
-    ...base,
-    models: {
-      m: {
-        tier: "medium",
-        cli: ["cursor"],
-        account: "cursor",
-        reasoning: { low: null },
-        priority: 1,
-      },
-    },
-  };
-  const ok = resolveProfile({ roster: withNull, profile: { tier: "medium", reasoning: "low" }, usage: {} });
+  const ok = resolveProfile({ roster, specialistId: "x", usage: {} });
   assert.equal(ok.code, "OK");
   assert.equal(ok.chain[0].effort, null);
   // buildCommand drops effort flag when null
@@ -574,21 +563,22 @@ test("explicit null reasoning is supported; missing key is not", () => {
   });
   assert.deepEqual(argv, ["cursor-agent", "--model", "m", "p"]);
 
-  const missing = {
-    ...base,
-    models: {
-      m: {
-        tier: "medium",
-        cli: ["cursor"],
-        account: "cursor",
-        reasoning: { high: "high" }, // low absent
-        priority: 1,
-      },
+  // chain entry effort > role effort > the model's default effort.
+  const effortOf = (patch, profile) => resolveProfile({
+    roster: {
+      ...roster,
+      models: { m: { ...roster.models.m, ...patch.model } },
+      roles: { r: { ...roster.roles.r, ...patch.role } },
     },
-  };
-  const bad = resolveProfile({ roster: missing, profile: { tier: "medium", reasoning: "low" }, usage: {} });
-  assert.equal(bad.code, "PROFILE_UNAVAILABLE");
-  assert.ok(bad.skipped.some((s) => /no reasoning mapping for low/.test(s.reason)));
+    profile,
+    usage: {},
+  }).chain[0].effort;
+  assert.equal(effortOf({ model: { effort: "medium" } }, { chain: ["cursor:m"] }), "medium");
+  assert.equal(effortOf({ model: { effort: "medium" }, role: { effort: "high" } }, { role: "r" }), "high");
+  assert.equal(effortOf(
+    { model: { effort: "medium" }, role: { effort: "high" } },
+    { chain: [{ model: "m", cli: "cursor", effort: "low" }] },
+  ), "low");
 });
 
 test("a project without a command policy launches the specialist without its commands", async () => {
@@ -609,7 +599,8 @@ test("a project without a command policy launches the specialist without its com
     fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify({
       accounts: { cursor: { kind: "subscription", enabled: true } },
       clis: { cursor: { cmd: ["true", "{prompt}"] } },
-      models: { m: { tier: "medium", cli: ["cursor"], account: "cursor", reasoning: { low: null }, priority: 1 } },
+      models: { m: { cli: ["cursor"], account: "cursor", reasoning: { low: null }, priority: 1 } },
+      specialists: { "testing.nopol": { chain: ["cursor:m"] } },
     }));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
     writePkg(pkg, validManifest({

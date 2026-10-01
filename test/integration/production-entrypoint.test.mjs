@@ -188,7 +188,6 @@ async function withEntrypointEnv(fn) {
       },
       models: {
         "frontier-a": {
-          tier: "frontier",
           cli: ["claude"],
           account: "anthropic",
           provider: "anthropic",
@@ -197,7 +196,6 @@ async function withEntrypointEnv(fn) {
           limit_windows: ["claude:5h"],
         },
         "frontier-b": {
-          tier: "frontier",
           cli: ["claude"],
           account: "anthropic",
           provider: "anthropic",
@@ -206,9 +204,12 @@ async function withEntrypointEnv(fn) {
           limit_windows: ["claude:7d"],
         },
       },
+      // frontier-b is the successor a forced handoff moves to.
+      roles: { implementer: { chain: ["claude:frontier-a", "claude:frontier-b"] } },
+      specialists: { "testing.entrypoint": { role: "implementer" } },
       limits: { handoff_at: 0.95 },
       specialist_handoff: { prepare_at: 0.9, force_at: 0.95 },
-      // Exact-tier collect only needs claude for this fixture.
+      // Collect only needs claude for this fixture.
       subscriptions: ["claude"],
     })
   );

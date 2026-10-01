@@ -118,11 +118,10 @@ function needsCommandMediation(effectivePerms, manifest) {
 
 
 /**
- * A one-off {cli, model} for this launch. The named model's own tier replaces
- * the one the specialist's profile asks for — that demand is the standard
- * being overridden — and the chain is then filtered down to that cell. Account,
- * harness capability and usage gates run unchanged, so an override can only
- * pick something the gates already allowed; it cannot conjure a cell.
+ * A one-off {cli, model} for this launch. A named model replaces the
+ * specialist's chain with that one cell; a bare cli filters the chain down to
+ * it. Account, harness capability and usage gates run unchanged, so an
+ * override can only pick something the gates already allowed.
  */
 export function resolveRuntimeOverride(roster, runtime) {
   const cli = runtime?.cli || null;
@@ -138,7 +137,7 @@ export function resolveRuntimeOverride(roster, runtime) {
     err.code = "RUNTIME_OVERRIDE_UNKNOWN";
     throw err;
   }
-  return { cli, model, profile: model ? { tier: roster.models[model].tier } : null };
+  return { cli, model };
 }
 
 /**
@@ -271,14 +270,14 @@ export async function launch({
     const profileResult = resolveProfile({
       roster,
       usage,
-      profile: manifest.model_profile,
       specialistId,
-      callType,
       requirements,
       harnessCapabilities: harnessCapabilitiesFn,
-      override: runtimeOverride?.profile ?? null,
+      override: runtimeOverride,
     });
-    if (profileResult.code !== "OK") {
+    // A named model resolves to that one cell; when a gate drops it, the
+    // refusal below names the override, not the specialist's chain.
+    if (profileResult.code !== "OK" && !runtimeOverride?.model) {
       const err = new Error(`PROFILE_UNAVAILABLE: ${JSON.stringify(profileResult.skipped.slice(0, 5))}`);
       err.code = "PROFILE_UNAVAILABLE";
       err.details = profileResult;
@@ -293,8 +292,7 @@ export async function launch({
     // to whatever the chain offered instead: the caller asked for that one.
     if (!cell) {
       const want = [runtimeOverride?.cli, runtimeOverride?.model].filter(Boolean).join(":");
-      // Why the asked-for cell was dropped comes first; a list of other models'
-      // tier mismatches answers a question nobody asked.
+      // Why the asked-for cell was dropped comes first.
       const mine = profileResult.skipped.filter((sk) =>
         !runtimeOverride?.model || String(sk.model).endsWith(runtimeOverride.model));
       const err = new Error(
@@ -333,6 +331,11 @@ export async function launch({
     if (repaired) ({ profileResult, cell, err: cellErr } = pickCell());
   }
   if (cellErr) throw cellErr;
+  // What a capacity wait re-resolves later: the assignment, or the one cell a
+  // model override asked for.
+  const launchedProfile = runtimeOverride?.model
+    ? { chain: [{ model: cell.model, cli: cell.cli }] }
+    : profileResult.profile;
   const harnessCaps = harnessCapabilitiesFn(cell.cli);
   const cliCfg = cliSandboxConfig(roster, cell.cli, { harnessCapabilities: harnessCaps });
 
@@ -622,7 +625,7 @@ export async function launch({
       context_isolation: harnessCaps.context_isolation,
     },
     capsuleLaunch,
-    specialistProfile: profileResult.profile,
+    specialistProfile: launchedProfile,
     limitWindows,
     timeoutSeconds: timeoutSec,
     sandboxRuntimePaths: cliCfg.sandbox_runtime_paths,
@@ -648,7 +651,7 @@ export async function launch({
     enforcement: "best_effort",
   };
   stAfter.harness_requirements = requirements;
-  stAfter.specialist_profile = profileResult.profile;
+  stAfter.specialist_profile = launchedProfile;
   stAfter.runtime = {
     cli: cell.cli,
     model: cell.model,

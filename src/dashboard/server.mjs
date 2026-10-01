@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { teamUpHome, usageWatcherStatePath } from "../paths.mjs";
 import { readRepairState, readRepairReport, spawnUsageRepair } from "./repair.mjs";
-import { loadJson, configPath, usagePath } from "../roster/config.mjs";
+import { loadJson, configPath, usagePath, saveRoster } from "../roster/config.mjs";
+import { specialistAssignment } from "../roster/profile.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
 import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
 import { assertPathInsideRoot } from "../specialists/safe-id.mjs";
@@ -22,9 +23,8 @@ import {
   approveProjectSpecialists,
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
-import { buildTierMatrixView, applyModelEdit, saveRoster, applySpecialistTier } from "./tiers.mjs";
 import { buildCatalogueView, applyCatalogueToggle } from "./catalogue.mjs";
-import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView, modelLabel } from "./roles.mjs";
+import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView, modelLabel, applySpecialistAssignment } from "./roles.mjs";
 import { bringToLatest } from "../roster/latest.mjs";
 import { loadModelsStore } from "../collectors/models-store.mjs";
 import { atomicWriteText } from "../json-store.mjs";
@@ -987,26 +987,22 @@ export function createDashboardServer({
       return;
     }
 
-    const specialistTierMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/tier$/);
-    if (req.method === "POST" && specialistTierMatch) {
+    const specialistAssignMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/assign$/);
+    if (req.method === "POST" && specialistAssignMatch) {
       if (!requireWriteAccess(req, res)) return;
-      const specialistId = decodeURIComponent(specialistTierMatch[1]);
+      const specialistId = decodeURIComponent(specialistAssignMatch[1]);
       try {
         assertSafeSpecialistSegment(specialistId, "id");
         const body = JSON.parse(await readBody(req) || "{}");
-        const manifest = loadInstalledManifest(specialistId, { env })?.manifest;
-        if (!manifest) throw new Error(`not installed: ${specialistId}`);
-        const recommended = manifest.model_profile || {};
-        // Picking the recommendation again clears the override.
-        const tier = body.tier && body.tier !== recommended.tier ? body.tier : null;
-        const written = saveRoster(applySpecialistTier(loadRoster(env),
-          { id: specialistId, tier, reasoning: recommended.reasoning }), { env });
-        appendAudit({ actor: "127.0.0.1", action: "specialist.tier",
-          target: `${specialistId}:${tier ?? "recommended"}`, result: "ok" }, { env });
+        if (!loadInstalledManifest(specialistId, { env })) throw new Error(`not installed: ${specialistId}`);
+        const written = saveRoster(applySpecialistAssignment(loadRoster(env),
+          { id: specialistId, role: body.role ?? null, chain: body.chain ?? null }), { env });
+        appendAudit({ actor: "127.0.0.1", action: "specialist.assign",
+          target: `${specialistId}:${body.role ?? (body.chain ? "chain" : "none")}`, result: "ok" }, { env });
         clisMemo.invalidate("specialists");
         jsonResponse(res, 200, { ok: true, backup: path.basename(written.backup) });
       } catch (e) {
-        appendAudit({ actor: "127.0.0.1", action: "specialist.tier", target: specialistId, result: "fail" }, { env });
+        appendAudit({ actor: "127.0.0.1", action: "specialist.assign", target: specialistId, result: "fail" }, { env });
         jsonResponse(res, 400, { error: String(e.message || e) });
       }
       return;
@@ -1037,46 +1033,6 @@ export function createDashboardServer({
         if (!result.ok) jsonResponse(res, 400, { error: (result.errors || []).join("; ") });
         else jsonResponse(res, 200, result);
       } catch (e) {
-        jsonResponse(res, 400, { error: String(e.message || e) });
-      }
-      return;
-    }
-
-    // `pathname` is already decoded, and API model ids carry slashes
-    // (`openrouter/z-ai/glm-5.3`), so the id is the whole rest of the path.
-    const tierModelMatch = pathname.match(/^\/api\/tiers\/models\/(.+)$/);
-    if (req.method === "POST" && tierModelMatch) {
-      if (!requireWriteAccess(req, res)) return;
-      const model = tierModelMatch[1];
-      try {
-        const body = JSON.parse(await readBody(req) || "{}");
-        // The tier table is the sharpest lever in the roster: a specialist
-        // reaches a model or it does not, with no fallback across tiers. So
-        // every edit names one field, is validated by the roster validator,
-        // and leaves a backup behind.
-        const next = applyModelEdit(loadRoster(env), {
-          model,
-          ...(body.tier !== undefined ? { tier: body.tier } : {}),
-          ...(body.cli !== undefined ? { cli: body.cli, action: body.action } : {}),
-          ...(body.level !== undefined ? { level: body.level, effort: body.effort ?? null } : {}),
-        });
-        const written = saveRoster(next, { env });
-        appendAudit(
-          { actor: "127.0.0.1", action: "roster.model.edit", target: model, result: "ok" },
-          { env },
-        );
-        memo.invalidate("pick");
-        memo.invalidate("roles");
-        jsonResponse(res, 200, {
-          ok: true,
-          backup: path.basename(written.backup),
-          ...sanitizeForDashboard(buildTierMatrixView(next, loadModelsStore(env)), { stripAccounts: true }),
-        });
-      } catch (e) {
-        appendAudit(
-          { actor: "127.0.0.1", action: "roster.model.edit", target: model, result: "fail" },
-          { env },
-        );
         jsonResponse(res, 400, { error: String(e.message || e) });
       }
       return;
@@ -1133,8 +1089,8 @@ export function createDashboardServer({
       return;
     }
 
-    // Roles, chains and roster settings: same contract as the tier table —
-    // one edit per request, validated, backed up, audited.
+    // Roles, chains and roster settings: one edit per request, validated,
+    // backed up, audited.
     const roleMatch = pathname.match(/^\/api\/roles\/([^/]+)$/);
     const isSettings = pathname === "/api/settings";
     const isUpgrade = pathname === "/api/roles-upgrade";
@@ -1247,7 +1203,7 @@ export function createDashboardServer({
           ...buildTimView(dir, { exec, work }),
           clis: promptClis(roster),
           models: Object.entries(roster.models || {})
-            .map(([id, spec]) => ({ id, label: modelLabel(roster, store, id), tier: spec.tier ?? null, clis: spec.cli ?? [] }))
+            .map(([id, spec]) => ({ id, label: modelLabel(roster, store, id), clis: spec.cli ?? [] }))
             .sort((a, b) => a.id.localeCompare(b.id)),
         });
       } catch (e) {
@@ -1479,11 +1435,9 @@ export function createDashboardServer({
       // Reads a handful of JSON indexes and no subprocess, but nothing here
       // changes between polls — the 30s memo keeps it off the 5s cycle.
       const data = clisMemo.get("specialists", () => {
-        const overrides = loadRoster(env).specialists || {};
+        const roster = loadRoster(env);
         const view = buildSpecialistsView({ env });
-        for (const s of view.specialists) {
-          s.tier_override = Object.hasOwn(overrides, s.id) ? overrides[s.id]?.model_profile?.tier ?? null : null;
-        }
+        for (const s of view.specialists) s.assignment = specialistAssignment(roster, s.id);
         return sanitizeForDashboard(view);
       });
       jsonResponse(res, 200, data);
@@ -1493,16 +1447,6 @@ export function createDashboardServer({
     if (pathname === "/api/capability-pool") {
       const data = clisMemo.get("capability-pool", () =>
         sanitizeForDashboard(buildCapabilityPoolView({ env })));
-      jsonResponse(res, 200, data);
-      return;
-    }
-
-    if (pathname === "/api/tiers") {
-      // Straight off roster.json, and it changes only when this panel writes
-      // it — but accounts never reach the browser, same as every other view.
-      const data = sanitizeForDashboard(buildTierMatrixView(loadRoster(env), loadModelsStore(env)), {
-        stripAccounts: true,
-      });
       jsonResponse(res, 200, data);
       return;
     }

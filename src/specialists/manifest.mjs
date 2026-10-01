@@ -19,7 +19,6 @@ export const REQUIRED = [
   "capabilities",
   "permissions",
   "budget",
-  "model_profile",
   "eval_suite",
 ];
 
@@ -35,8 +34,6 @@ const FORBIDDEN_KEYS = new Set([
   "scripts",
 ]);
 
-const VALID_TIERS = new Set(["frontier", "high", "medium", "low"]);
-const VALID_REASONING = new Set(["max", "high", "medium", "low"]);
 const VALID_CALL_TYPES = new Set(["consult", "delegate", "review"]);
 const VALID_FS = new Set(["none", "project_readonly", "project", "home"]);
 const VALID_WRITES = new Set([false, true, "delegated_only"]);
@@ -122,15 +119,9 @@ export function validateManifest(manifest, { packageDir } = {}) {
     errors.push("call_types must be an array");
   }
 
-  const profile = manifest.model_profile;
-  if (profile && typeof profile === "object") {
-    if (!VALID_TIERS.has(profile.tier)) {
-      errors.push(`model_profile.tier must be frontier|high|medium|low (got ${profile.tier})`);
-    }
-    if (!VALID_REASONING.has(profile.reasoning)) {
-      errors.push(`model_profile.reasoning must be max|high|medium|low (got ${profile.reasoning})`);
-    }
-  }
+  // `model_profile` ({tier, reasoning}) is accepted and ignored: the roster
+  // assigns each specialist a role or a chain. Packages that still carry it
+  // keep installing.
 
   const perms = manifest.permissions;
   if (perms && typeof perms === "object") {

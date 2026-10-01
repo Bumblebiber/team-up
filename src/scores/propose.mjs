@@ -259,7 +259,6 @@ export function applyProposals({ roster, scoresFile, proposals }) {
       if (src?.open_weight && !clis.some((cli) => isExcluded(next, cli, proposed.model))) {
         next.models[proposed.model] = {
           provider: src.provider || "open-weight",
-          tier: "mid",
           cli: clis,
           price: src.price || { in: null, out: null },
           open_weight: true,

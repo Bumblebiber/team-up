@@ -434,7 +434,7 @@ export function buildProductionSuperviseDeps({
       try {
         const roster = requireRoster();
         const clis = subscriptionsFromRoster(roster).filter((c) => c === "claude");
-        // Exact-tier Claude path only — other CLIs remain unsupported for live collect here.
+        // Claude only — other CLIs remain unsupported for live collect here.
         const results = await collectUsage({
           clis: clis.length ? clis : ["claude"],
           roster,
@@ -459,7 +459,8 @@ export function buildProductionSuperviseDeps({
       const roster = requireRoster();
       const usage = loadJson(usagePath()) || {};
       const st = ctx.runId ? loadState(ctx.runId) : null;
-      const profile = st?.specialist_profile || st?.profile || { tier: "frontier", reasoning: "max" };
+      const profile = st?.specialist_profile || null;
+      const specialistId = st?.specialist?.id;
       let requirements =
         st?.harness_requirements || {};
       if (!requirements?.command_broker) {
@@ -475,6 +476,7 @@ export function buildProductionSuperviseDeps({
         roster,
         usage,
         profile,
+        specialistId,
         requirements,
       });
       let chain = [...(resolved.chain || [])];
@@ -596,10 +598,8 @@ export async function superviseProductionRuns({
       usage,
       roster,
       resolveProfileForRun: async (runId, state) => {
-        const profile = state.specialist_profile || state.profile || {
-          tier: "frontier",
-          reasoning: "max",
-        };
+        const profile = state.specialist_profile || null;
+        const specialistId = state.specialist?.id;
         let requirements = state.harness_requirements || {};
         if (!requirements?.command_broker) {
           try {
@@ -615,6 +615,7 @@ export async function superviseProductionRuns({
           roster,
           usage,
           profile,
+          specialistId,
           requirements,
         });
       },

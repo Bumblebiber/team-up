@@ -60,8 +60,7 @@ export function parseChainEntry(entry) {
  * Why the account behind a model bars it, or null.
  *
  * An unknown account id is *not* a block here: a chain entry is human intent,
- * and rosters predating `accounts` have none. `resolveProfile` discovers models
- * by tier instead and denies those separately.
+ * and rosters predating `accounts` have none.
  */
 export function accountBlockReason(roster, accountId) {
   const account = roster?.accounts?.[accountId];

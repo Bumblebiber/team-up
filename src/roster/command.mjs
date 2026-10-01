@@ -102,7 +102,6 @@ export async function spawnPinnedInTmux({
   prompt,
   runId,
   effort = null,
-  triage = undefined,
   sessionPrefix = "team-up-pass",
   role = "pass-to",
 }) {
@@ -128,9 +127,7 @@ export async function spawnPinnedInTmux({
   linkDispatchToRun(effectiveRunId, session, {
     model,
     cli,
-    tier: roster.models?.[model]?.tier ?? null,
     effort: effort ?? null,
-    triage,
   });
   console.log(`model: ${model} (${cli})`);
   if (effort) console.log(`effort: ${effort}`);

@@ -26,6 +26,12 @@ test("accepts valid abstract manifest", () => {
   assert.equal(validateManifest(valid).ok, true);
 });
 
+test("model_profile is optional and no longer checked — the roster assigns a role or chain", () => {
+  const { model_profile, ...without } = valid;
+  assert.equal(validateManifest(without).ok, true);
+  assert.equal(validateManifest({ ...valid, model_profile: { tier: "huge", reasoning: "x" } }).ok, true);
+});
+
 test("rejects concrete model names and install hooks", () => {
   assert.match(validateManifest({ ...valid, model: "grok-4.5-high" }).errors.join("\n"), /model/);
   assert.match(validateManifest({ ...valid, install: "curl x | sh" }).errors.join("\n"), /install/);

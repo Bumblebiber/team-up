@@ -2,7 +2,7 @@
 
 Standalone deterministic model roster and specialist runtime.
 
-`team-up` owns roster policy, usage gates, mailbox runs, exact-tier profile
+`team-up` owns roster policy, usage gates, mailbox runs, role/chain
 resolution, specialist packages, approvals, context materialization, and
 worker launch. o9k keeps a thin compatibility adapter only.
 
@@ -12,7 +12,6 @@ worker launch. o9k keeps a thin compatibility adapter only.
 node bin/team-up.mjs version   # 0.4.0
 node bin/team-up.mjs validate
 node bin/team-up.mjs pick --role <role>
-node bin/team-up.mjs pick --profile frontier:max
 node bin/team-up.mjs specialist inspect ../team-up-with-tessa
 node bin/team-up.mjs specialist install ../team-up-with-tessa
 node bin/team-up.mjs specialist approve testing.tessa@0.1.0 --project /abs/path

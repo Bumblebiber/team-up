@@ -394,13 +394,12 @@ test("linkDispatchToRun sets worker.tmux and watching", withTempRuns(async () =>
     prompt: "x",
   });
   assert.equal(linkDispatchToRun(s.runId, "o9k-sess-1", {
-    cli: "cursor", model: "new-model", tier: "high", effort: "high",
+    cli: "cursor", model: "new-model", effort: "high",
   }), true);
   const st = loadState(s.runId);
   assert.equal(st.worker.tmux, "o9k-sess-1");
   assert.equal(st.worker.cli, "cursor");
   assert.equal(st.worker.model, "new-model");
-  assert.equal(st.worker.tier, "high");
   assert.equal(st.worker.effort, "high");
   assert.equal(st.status, "watching");
   assert.equal(st.watcher.attached, true);

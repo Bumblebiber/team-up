@@ -100,13 +100,13 @@ test("setting mediated_commands true cannot bypass missing command broker capabi
         },
         models: {
           m: {
-            tier: "medium",
             cli: ["cursor"],
             account: "cursor",
             reasoning: { low: null },
             priority: 1,
           },
         },
+        specialists: { "testing.bypass": { chain: ["cursor:m"] } },
       })
     );
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
@@ -180,13 +180,13 @@ test("max_tokens is advisory and does not block launch", async () => {
         },
         models: {
           m: {
-            tier: "medium",
             cli: ["cursor"],
             account: "cursor",
             reasoning: { low: null },
             priority: 1,
           },
         },
+        specialists: { "testing.tokbypass": { chain: ["cursor:m"] } },
       })
     );
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));

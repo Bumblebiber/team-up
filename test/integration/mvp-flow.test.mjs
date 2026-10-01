@@ -17,7 +17,7 @@ const REPOS = findSpecialistRepos(path.dirname(fileURLToPath(import.meta.url)));
 const TESSA = path.join(REPOS, "team-up-with-tessa");
 const REANNA = path.join(REPOS, "team-up-with-reanna");
 
-test("mvp flow: install, approve, exact tier, materialize, typed result, reapproval", async () => {
+test("mvp flow: install, approve, assigned role, materialize, typed result, reapproval", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-mvp-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "proj-"));
   const env = {
@@ -32,7 +32,7 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
   Object.assign(process.env, env);
 
   try {
-    // 1. Import legacy-shaped roster (frontier + medium models)
+    // 1. Roster: four models, Tessa runs on the reviewer role
     const roster = {
       accounts: {
         api: { kind: "credit", enabled: true, remaining: 10 },
@@ -44,34 +44,32 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
       },
       models: {
         "frontier-a": {
-          tier: "frontier",
           cli: ["codex"],
           account: "api",
           reasoning: { max: "xhigh" },
           priority: 1,
         },
         "high-a": {
-          tier: "high",
           cli: ["codex"],
           account: "api",
           reasoning: { max: "high" },
           priority: 1,
         },
         "medium-a": {
-          tier: "medium",
           cli: ["cursor"],
           account: "cursor",
           reasoning: { low: null },
           priority: 1,
         },
         "low-a": {
-          tier: "low",
           cli: ["cursor"],
           account: "cursor",
           reasoning: { low: null },
           priority: 1,
         },
       },
+      roles: { reviewer: { chain: ["codex:frontier-a"], effort: "xhigh" } },
+      specialists: { "testing.tessa": { role: "reviewer" } },
     };
     fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify(roster, null, 2));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
@@ -106,14 +104,16 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
     });
     assert.equal(approval.ok, true, approval.errors?.join("; "));
 
-    // 4–5. Resolve frontier+max only
+    // 4–5. Resolve Tessa's role chain only
     const resolved = resolveProfile({
       roster,
       usage: {},
-      profile: { tier: "frontier", reasoning: "max" },
+      specialistId: "testing.tessa",
     });
     assert.equal(resolved.code, "OK");
+    assert.deepEqual(resolved.profile, { role: "reviewer" });
     assert.deepEqual(resolved.chain.map((c) => c.model), ["frontier-a"]);
+    assert.equal(resolved.chain[0].effort, "xhigh");
     assert.ok(!resolved.chain.some((c) => ["high-a", "medium-a", "low-a"].includes(c.model)));
 
     // 6. Create review request
@@ -200,27 +200,31 @@ test("mvp flow: install, approve, exact tier, materialize, typed result, reappro
       })
     );
 
-    // 10. Unavailable tier
+    // 10. Unavailable assignments
+    // Reanna is installed but has no role or chain.
+    const unassigned = resolveProfile({ roster, usage: {}, specialistId: "testing.reanna" });
+    assert.equal(unassigned.code, "PROFILE_UNAVAILABLE");
+    assert.equal(unassigned.profile, null);
+    assert.match(unassigned.skipped[0].reason, /no role or chain assigned to testing\.reanna/);
+    // A chain naming a model the roster does not have.
     const missing = resolveProfile({
-      roster,
-      usage: {},
-      profile: { tier: "high", reasoning: "max" },
-    });
-    // high-a exists — use a tier with no models
-    const missing2 = resolveProfile({
       roster: { ...roster, models: { "frontier-a": roster.models["frontier-a"] } },
       usage: {},
-      profile: { tier: "low", reasoning: "low" },
+      profile: { chain: ["cursor:low-a"] },
     });
-    assert.equal(missing2.code, "PROFILE_UNAVAILABLE");
-    assert.deepEqual(missing2.chain, []);
-    // also prove high exists but we can still request unavailable reasoning
-    const noReason = resolveProfile({
+    assert.equal(missing.code, "PROFILE_UNAVAILABLE");
+    assert.deepEqual(missing.chain, []);
+    assert.deepEqual(missing.skipped, [{ model: "low-a", reason: "not in models" }]);
+    // A model that exists, asked for on a CLI it does not run on.
+    const wrongCli = resolveProfile({
       roster,
       usage: {},
-      profile: { tier: "medium", reasoning: "max" },
+      profile: { chain: ["cursor:frontier-a"] },
     });
-    assert.equal(noReason.code, "PROFILE_UNAVAILABLE");
+    assert.equal(wrongCli.code, "PROFILE_UNAVAILABLE");
+    assert.deepEqual(wrongCli.skipped, [
+      { model: "cursor:frontier-a", reason: "frontier-a does not run on cursor" },
+    ]);
   } finally {
     for (const k of Object.keys(process.env)) {
       if (!(k in prev)) delete process.env[k];

@@ -10,49 +10,32 @@ import { resolveProfile } from "../../src/roster/profile.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const examplePath = path.join(root, "roster.example.json");
 
-test("shipped example roster migrates and resolves Tessa + Reanna exact tiers", () => {
+test("shipped example roster resolves every starter specialist through its role", () => {
+  const example = JSON.parse(fs.readFileSync(examplePath, "utf8"));
+  assert.deepEqual(validateRoster(example).errors, []);
+  for (const [id, { role }] of Object.entries(example.specialists)) {
+    const r = resolveProfile({ roster: example, usage: {}, specialistId: id, harnessCapabilities: () => ({}) });
+    assert.equal(r.code, "OK", `${id}: ${JSON.stringify(r.skipped.slice(0, 8))}`);
+    assert.deepEqual(r.profile, { role });
+  }
+});
+
+test("migration drops tiers, specialist tier profiles and triage, keeping the OpenRouter key file", () => {
   const legacy = JSON.parse(fs.readFileSync(examplePath, "utf8"));
-  // Simulate legacy mid tier still present on a copy
-  const withMid = structuredClone(legacy);
-  withMid.models["claude-sonnet-5"].tier = "mid";
-  // Strip accounts/reasoning to force migration fill
-  const stripped = structuredClone(withMid);
-  delete stripped.accounts;
-  for (const m of Object.values(stripped.models)) {
-    delete m.account;
-    delete m.reasoning;
-  }
+  delete legacy.openrouter;
+  delete legacy.specialists;
+  legacy.models["claude-sonnet-5"].tier = "mid";
+  legacy.triage = { enabled: false, key_file: "~/.hermes/.env", roles: ["implementer"] };
+  legacy.specialists = { "review.revan": { model_profile: { tier: "frontier", reasoning: "max" } } };
+  delete legacy.accounts;
 
-  const migrated = migrateRoster(stripped);
-  assert.equal(migrated.models["claude-sonnet-5"].tier, "medium");
-  const { errors } = validateRoster(migrated);
-  assert.equal(errors.length, 0, errors.join("; "));
-
-  const tessa = resolveProfile({
-    roster: migrated,
-    usage: {},
-    profile: { tier: "frontier", reasoning: "max" },
-    specialistId: "testing.tessa",
-    callType: "review",
-  });
-  assert.equal(tessa.code, "OK", JSON.stringify(tessa.skipped.slice(0, 8)));
-  assert.ok(tessa.chain.length >= 1);
-  for (const c of tessa.chain) {
-    assert.equal(migrated.models[c.model].tier, "frontier");
-  }
-
-  const reanna = resolveProfile({
-    roster: migrated,
-    usage: {},
-    profile: { tier: "medium", reasoning: "low" },
-    specialistId: "research.reanna",
-    callType: "consult",
-  });
-  assert.equal(reanna.code, "OK", JSON.stringify(reanna.skipped.slice(0, 8)));
-  for (const c of reanna.chain) {
-    assert.equal(migrated.models[c.model].tier, "medium");
-  }
-  assert.ok(!reanna.chain.some((c) => ["frontier", "high", "low"].includes(migrated.models[c.model].tier)));
+  const migrated = migrateRoster(legacy);
+  assert.equal(migrated.models["claude-sonnet-5"].tier, undefined);
+  assert.equal(migrated.triage, undefined);
+  assert.deepEqual(migrated.openrouter, { key_file: "~/.hermes/.env" });
+  assert.equal(migrated.specialists, undefined);
+  assert.ok(migrated.accounts.claude);
+  assert.deepEqual(validateRoster(migrated).errors, []);
 });
 
 test("legacy Claude command gains an effort slot without losing tmux auto-approval", () => {
@@ -91,17 +74,16 @@ test("hot provider without limit_windows is gated like pick()", () => {
     models: {
       grok: {
         provider: "xai",
-        tier: "high",
         cli: ["cursor"],
         account: "cursor",
-        reasoning: { max: "high", high: "high" },
         // intentionally no limit_windows
       },
     },
+    specialists: { x: { chain: ["cursor:grok"] } },
   };
   const hot = resolveProfile({
     roster,
-    profile: { tier: "high", reasoning: "high" },
+    specialistId: "x",
     usage: { providers: { xai: { used: 0.99 } } },
   });
   assert.equal(hot.code, "PROFILE_UNAVAILABLE");
@@ -109,7 +91,7 @@ test("hot provider without limit_windows is gated like pick()", () => {
 
   const cool = resolveProfile({
     roster,
-    profile: { tier: "high", reasoning: "high" },
+    specialistId: "x",
     usage: { providers: { xai: { used: 0.1 } } },
   });
   assert.equal(cool.code, "OK");

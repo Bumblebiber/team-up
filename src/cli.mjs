@@ -1,11 +1,8 @@
 export const VERSION = "0.4.0";
 
-import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { pick } from "./roster/chain.mjs";
-import { loadJson, configPath, usagePath, requireRoster, validateRoster } from "./roster/config.mjs";
-import { resolveProfile, parseProfileString } from "./roster/profile.mjs";
-import { triage } from "./roster/triage.mjs";
+import { loadJson, configPath, usagePath, requireRoster, validateRoster, saveRoster } from "./roster/config.mjs";
 import { runRosterCli } from "./roster/roster.mjs";
 import {
   validateManifest,
@@ -29,7 +26,6 @@ import { runModelsList } from "./commands/models-list.mjs";
 import { defaultRun } from "./collectors/cli-models.mjs";
 import { loadModelsStore } from "./collectors/models-store.mjs";
 import { bringToLatest } from "./roster/latest.mjs";
-import { saveRoster } from "./dashboard/tiers.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -48,50 +44,7 @@ function pickJsonPayload({ model, cli, effort, skipped, quota_blocked = [] }) {
 
 async function cmdPick(args, io) {
   const json = args.includes("--json");
-  const profileStr = argValue(args, "--profile");
   const role = argValue(args, "--role");
-  if (profileStr && role) {
-    io.err("usage: team-up pick --role <role> | --profile <tier>:<reasoning> [--json]");
-    return 1;
-  }
-  if (profileStr) {
-    const profile = parseProfileString(profileStr);
-    const roster = requireRoster();
-    const usage = loadJson(usagePath());
-    const result = resolveProfile({ roster, usage, profile });
-    if (!json) {
-      for (const s of result.skipped) io.out(`skipped ${s.model}: ${s.reason}`);
-    }
-    if (result.code !== "OK" || !result.chain.length) {
-      if (json) {
-        io.out(JSON.stringify(pickJsonPayload({
-          model: null,
-          cli: null,
-          effort: null,
-          skipped: result.skipped,
-          quota_blocked: result.quota_blocked ?? [],
-        })));
-      } else {
-        io.err(`PROFILE_UNAVAILABLE for ${profile.tier}:${profile.reasoning}`);
-      }
-      return 2;
-    }
-    const top = result.chain[0];
-    if (json) {
-      io.out(JSON.stringify(pickJsonPayload({
-        model: top.model,
-        cli: top.cli,
-        effort: top.effort,
-        skipped: result.skipped,
-        quota_blocked: result.quota_blocked ?? [],
-      })));
-      return 0;
-    }
-    io.out(`model: ${top.model}`);
-    io.out(`cli: ${top.cli}`);
-    if (top.effort != null && top.effort !== "") io.out(`effort: ${top.effort}`);
-    return 0;
-  }
   if (role) {
     const roster = requireRoster();
     const usage = loadJson(usagePath());
@@ -128,40 +81,8 @@ async function cmdPick(args, io) {
     if (r.effort) io.out(`effort: ${r.effort}`);
     return 0;
   }
-  io.err("usage: team-up pick --role <role> | --profile <tier>:<reasoning> [--json]");
+  io.err("usage: team-up pick --role <role> [--json]");
   return 1;
-}
-
-async function cmdTriage(args, io) {
-  const promptFile = argValue(args, "--prompt-file");
-  const role = argValue(args, "--role");
-  const json = args.includes("--json");
-  if (!promptFile) {
-    io.err("usage: team-up triage --prompt-file <file> [--role <role>] [--json]");
-    return 1;
-  }
-  const prompt = fs.readFileSync(promptFile, "utf8");
-  const roster = requireRoster();
-  const result = await triage({
-    roster,
-    prompt,
-    role,
-    env: process.env,
-    fetch: globalThis.fetch,
-  });
-  if (json) {
-    io.out(JSON.stringify(result));
-    return 0;
-  }
-  if (result.source === "fallback" || !result.profile) {
-    io.out(`triage fallback${result.fallback_reason ? `: ${result.fallback_reason}` : ""}`);
-    return 0;
-  }
-  io.out(`profile: ${result.profile.tier}:${result.profile.reasoning}`);
-  io.out(`source: ${result.source}`);
-  if (result.fallback_reason) io.out(`note: ${result.fallback_reason}`);
-  io.out(`latency_ms: ${result.latency_ms}`);
-  return 0;
 }
 
 async function cmdModels(args, io) {
@@ -332,7 +253,6 @@ export async function runCli(args, io = { out: console.log, err: console.error }
   if (cmd === "models") return cmdModels(rest, io);
   if (cmd === "validate") return cmdValidate(rest, io);
   if (cmd === "pick") return cmdPick(rest, io);
-  if (cmd === "triage") return cmdTriage(rest, io);
   if (cmd === "runs") return cmdRuns(rest, io);
   if (cmd === "doctor") {
     // Real runner: doctor stays hermetic when called without one (tests), and
@@ -394,7 +314,7 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     return runRosterCli(args);
   }
   io.err(
-    "usage: team-up <version|init|validate|doctor|pick|triage|models|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness|dashboard>"
+    "usage: team-up <version|init|validate|doctor|pick|models|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|harness|dashboard>"
   );
   return 1;
 }

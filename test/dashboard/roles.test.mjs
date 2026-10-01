@@ -10,7 +10,7 @@ const roster = {
     "gpt-6-sol": { cli: ["codex"] },
   },
   roles: { planner: { chain: ["claude:claude-opus"] }, implementer: { chain: ["codex:gpt-6-sol"] } },
-  triage: { roles: ["implementer"] },
+  specialists: { "code-writer": { role: "implementer" } },
 };
 const store = { clis: { claude: { supported: true, scanned_at: "2026-09-30T12:00:00Z", models: [{ cli_id: "opus", version: "Opus 5.5" }] } } };
 
@@ -36,8 +36,8 @@ test("a chain naming a model on the wrong CLI is refused", () => {
   assert.throws(() => applyRoleEdit(roster, { role: "Bad Name", chain: [{ cli: "codex", model: "gpt-6-sol" }] }), /role name/);
 });
 
-test("delete is refused while triage routes to the role", () => {
-  assert.throws(() => applyRoleEdit(roster, { role: "implementer", delete: true }), /triage.roles/);
+test("delete is refused while a specialist runs on the role", () => {
+  assert.throws(() => applyRoleEdit(roster, { role: "implementer", delete: true }), /code-writer run on implementer — reassign them first/);
   assert.equal(applyRoleEdit(roster, { role: "planner", delete: true }).roles.planner, undefined);
 });
 
@@ -46,7 +46,8 @@ test("settings: only whitelisted paths, typed", () => {
   assert.equal(applySettingsEdit(roster, { path: "limits.warn_at", value: 0.8 }).limits.warn_at, 0.8);
   assert.throws(() => applySettingsEdit(roster, { path: "clis.claude.cmd", value: ["sh"] }), /not editable/);
   assert.throws(() => applySettingsEdit(roster, { path: "accounts.nope.enabled", value: true }), /invalid/);
-  assert.throws(() => applySettingsEdit(roster, { path: "triage.roles", value: ["ghost"] }), /invalid/);
+  assert.throws(() => applySettingsEdit(roster, { path: "subscriptions", value: ["ghost"] }), /invalid/);
+  assert.throws(() => applySettingsEdit(roster, { path: "triage.enabled", value: true }), /not editable/);
   assert.throws(() => applySettingsEdit(roster, { path: "accounts.claude.remaining", value: 3 }), /invalid/);
 });
 
@@ -55,7 +56,6 @@ test("roles view carries pick, chain state and labels", () => {
   const planner = view.roles.find((r) => r.role === "planner");
   assert.equal(planner.chain[0].label, "claude-opus-5.5");
   assert.equal(planner.chain[0].state, "ok");
-  assert.equal(view.roles.find((r) => r.role === "implementer").in_triage, true);
 });
 
 test("prototype keys never resolve as roles or accounts", () => {

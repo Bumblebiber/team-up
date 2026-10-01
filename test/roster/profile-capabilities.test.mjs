@@ -12,28 +12,18 @@ const roster = {
     claude: { cmd: ["claude", "{prompt}"] },
   },
   models: {
-    "frontier-cursor": {
-      tier: "frontier",
-      cli: ["cursor"],
-      account: "cursor",
-      reasoning: { max: "xhigh" },
-      priority: 1,
-    },
-    "frontier-claude": {
-      tier: "frontier",
-      cli: ["claude"],
-      account: "anthropic",
-      reasoning: { max: "max" },
-      priority: 2,
-    },
+    "frontier-cursor": { cli: ["cursor"], account: "cursor" },
+    "frontier-claude": { cli: ["claude"], account: "anthropic" },
+    "other-claude": { cli: ["claude"], account: "anthropic" },
   },
+  specialists: { "testing.tessa": { chain: ["frontier-cursor", "frontier-claude"] } },
 };
 
 test("command specialist chain excludes unverified harnesses", () => {
   const result = resolveProfile({
     roster,
     usage: {},
-    profile: { tier: "frontier", reasoning: "max" },
+    specialistId: "testing.tessa",
     requirements: { command_broker: "team-up.command-broker/v1" },
     harnessCapabilities: (cli) =>
       cli === "claude"
@@ -44,11 +34,11 @@ test("command specialist chain excludes unverified harnesses", () => {
   assert.ok(result.skipped.some((x) => /command broker/.test(x.reason)));
 });
 
-test("capability filtering never admits another tier", () => {
+test("capability filtering never admits a model outside the chain", () => {
   const result = resolveProfile({
     roster,
     usage: {},
-    profile: { tier: "frontier", reasoning: "max" },
+    specialistId: "testing.tessa",
     requirements: { command_broker: "team-up.command-broker/v1" },
     harnessCapabilities: () => ({ command_broker: null }),
   });

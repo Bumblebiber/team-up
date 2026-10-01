@@ -72,7 +72,6 @@ test("runtime supervision fake-harness integration", async () => {
       },
       models: {
         "frontier-claude": {
-          tier: "frontier",
           cli: ["claude"],
           account: "claude",
           reasoning: { max: "max" },
@@ -80,20 +79,21 @@ test("runtime supervision fake-harness integration", async () => {
           limit_windows: ["claude:5h"],
         },
         "frontier-cursor": {
-          tier: "frontier",
           cli: ["cursor"],
           account: "cursor",
           reasoning: { max: "xhigh" },
           priority: 2,
         },
         "high-x": {
-          tier: "high",
           cli: ["claude"],
           account: "claude",
           reasoning: { max: "max" },
           priority: 1,
         },
       },
+      // high-x runs on claude too but is off Tessa's chain.
+      roles: { reviewer: { chain: ["claude:frontier-claude", "cursor:frontier-cursor"] } },
+      specialists: { "testing.tessa": { role: "reviewer" } },
     };
     fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify(roster));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
@@ -124,7 +124,7 @@ test("runtime supervision fake-harness integration", async () => {
     const resolved = resolveProfile({
       roster,
       usage: {},
-      profile: { tier: "frontier", reasoning: "max" },
+      specialistId: "testing.tessa",
       requirements: { command_broker: "team-up.command-broker/v1" },
       harnessCapabilities: (cli) =>
         cli === "claude"
@@ -133,6 +133,8 @@ test("runtime supervision fake-harness integration", async () => {
     });
     assert.deepEqual(resolved.chain.map((c) => c.cli), ["claude"]);
     assert.ok(!resolved.chain.some((c) => c.model === "high-x"));
+    assert.ok(resolved.skipped.some((sk) =>
+      sk.model === "cursor:frontier-cursor" && /command broker unavailable/.test(sk.reason)));
 
     const budget = normalizeBudget({
       timeout_seconds: 1800,

@@ -54,7 +54,6 @@ function chainView(roster, store, chain) {
 }
 
 export function buildRolesView(roster, usage, store, now = Date.now()) {
-  const triageRoles = new Set(roster?.triage?.roles || []);
   const roles = Object.entries(roster?.roles || {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([role, spec]) => {
@@ -63,7 +62,6 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
         role,
         pin_head: spec?.pin_head === true,
         effort: spec?.effort ?? null,
-        in_triage: triageRoles.has(role),
         chain: chainView(roster, store, spec?.chain || []),
         pick: result.model
           ? { cli: result.cli, model: result.model, effort: result.effort ?? null,
@@ -77,7 +75,6 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
       id,
       label: modelLabel(roster, store, id),
       clis: Array.isArray(spec?.cli) ? spec.cli : [],
-      tier: spec?.tier ?? null,
       account: spec?.account ?? null,
       // What the effort picker offers: the CLI values this model's reasoning
       // map uses, strongest first, and the default it runs at without one.
@@ -95,7 +92,7 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
 }
 
 /** Chain entries as the browser sends them → what roster.json stores. */
-function normalizeChain(roster, chain) {
+export function normalizeChain(roster, chain) {
   if (!Array.isArray(chain) || chain.length === 0) throw new Error("chain must name at least one model");
   return chain.map((entry, i) => {
     const { model, cli, effort, pinned } = entry || {};
@@ -112,7 +109,7 @@ function normalizeChain(roster, chain) {
  * One edit per call:
  * - `{ role, chain }` creates or replaces; pins the head unless `pin_head: false`
  * - `{ role, pin_head }` flips the pin alone
- * - `{ role, delete: true }` removes it, refused while triage routes to it
+ * - `{ role, delete: true }` removes it, refused while a specialist runs on it
  */
 export function applyRoleEdit(roster, { role, chain, pin_head, delete: remove } = {}) {
   if (!ROLE_NAME.test(String(role || ""))) {
@@ -122,9 +119,8 @@ export function applyRoleEdit(roster, { role, chain, pin_head, delete: remove } 
   next.roles ??= {};
   if (remove) {
     if (!own(next.roles, role)) throw new Error(`unknown role: ${role}`);
-    if (next.triage?.roles?.includes(role)) {
-      throw new Error(`${role} is listed in triage.roles — remove it there first`);
-    }
+    const users = Object.entries(next.specialists || {}).filter(([, s]) => s?.role === role).map(([id]) => id);
+    if (users.length) throw new Error(`${users.join(", ")} run on ${role} — reassign them first`);
     delete next.roles[role];
     return next;
   }
@@ -145,6 +141,27 @@ export function applyRoleEdit(roster, { role, chain, pin_head, delete: remove } 
   throw new Error("edit names no field (expected chain, pin_head or delete)");
 }
 
+/**
+ * A specialist runs on a role's chain (`{ id, role }`) or a chain of its own
+ * (`{ id, chain }`, browser shape as for roles). Neither clears the
+ * assignment, and an unassigned specialist does not launch.
+ */
+export function applySpecialistAssignment(roster, { id, role, chain } = {}) {
+  if (role != null && chain != null) throw new Error("a role or a chain, not both");
+  const next = structuredClone(roster);
+  next.specialists ??= {};
+  if (role != null) {
+    if (!own(next.roles, role)) throw new Error(`unknown role: ${role}`);
+    next.specialists[id] = { role };
+  } else if (chain != null) {
+    next.specialists[id] = { chain: normalizeChain(next, chain) };
+  } else {
+    delete next.specialists[id];
+  }
+  if (!Object.keys(next.specialists).length) delete next.specialists;
+  return next;
+}
+
 // ── Settings ───────────────────────────────────────────────────────────────
 // Whitelisted paths only. `clis[*].cmd` is deliberately absent: a command
 // template edited from a browser is an arbitrary-execution lever.
@@ -158,10 +175,6 @@ const SETTINGS = [
   [/^accounts\.([^.]+)\.enabled$/, isBool, (r, [, id]) => own(r.accounts, id)],
   [/^accounts\.([^.]+)\.remaining$/, isNum, (r, [, id]) => own(r.accounts, id) && r.accounts[id].kind === "credit"],
   [/^limits\.(warn_at|handoff_at)$/, (v) => isUnit(v) && v > 0],
-  [/^triage\.enabled$/, isBool],
-  [/^triage\.mode$/, (v) => v === "shadow" || v === "active"],
-  [/^triage\.(active_share|min_confidence)$/, isUnit],
-  [/^triage\.roles$/, isStrList, (r, _m, v) => v.every((role) => own(r.roles, role))],
   [/^subscriptions$/, isStrList, (r, _m, v) => v.every((cli) => own(r.clis, cli))],
   [/^usage_watcher\.tick_sec$/, isPosInt],
   [/^usage_watcher\.intervals\.(idle_min|active_min|busy_min|idle_heartbeat_hours)$/, isPosInt],
@@ -187,12 +200,9 @@ export function buildSettingsView(roster) {
   const accounts = Object.fromEntries(Object.entries(roster?.accounts || {}).map(([id, a]) =>
     [id, { kind: a.kind, enabled: a.enabled, ...(a.kind === "credit" ? { remaining: a.remaining ?? null } : {}),
       ...(a.$comment ? { comment: a.$comment } : {}) }]));
-  const t = roster?.triage || {};
   return {
     accounts,
     limits: { warn_at: roster?.limits?.warn_at ?? null, handoff_at: roster?.limits?.handoff_at ?? null },
-    triage: { enabled: t.enabled ?? false, mode: t.mode ?? "shadow", active_share: t.active_share ?? 0,
-      min_confidence: t.min_confidence ?? null, roles: t.roles || [] },
     subscriptions: roster?.subscriptions || [],
     usage_watcher: { tick_sec: roster?.usage_watcher?.tick_sec ?? null,
       intervals: roster?.usage_watcher?.intervals || {} },

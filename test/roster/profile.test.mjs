@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveProfile } from "../../src/roster/profile.mjs";
+import { resolveProfile, specialistAssignment } from "../../src/roster/profile.mjs";
 
 const roster = {
   accounts: {
@@ -12,59 +12,77 @@ const roster = {
     codex: { cmd: ["codex", "--model", "{model}", "-c", "model_reasoning_effort={effort}", "{prompt}"] }
   },
   models: {
-    frontier: { tier: "frontier", cli: ["codex"], account: "api", reasoning: { max: "xhigh" }, priority: 1 },
-    mediumA: { tier: "medium", cli: ["cursor"], account: "cursor", reasoning: { low: null }, priority: 1 },
-    mediumB: { tier: "medium", cli: ["codex"], account: "api", reasoning: { low: "low" }, priority: 2 },
-    low: { tier: "low", cli: ["cursor"], account: "cursor", reasoning: { low: null }, priority: 0 }
-  }
+    big: { cli: ["codex"], account: "api", effort: "high" },
+    mediumA: { cli: ["cursor"], account: "cursor" },
+    mediumB: { cli: ["codex", "cursor"], account: "api" },
+    small: { cli: ["cursor"], account: "cursor" }
+  },
+  roles: {
+    implementer: { chain: ["cursor:mediumA", { model: "big", cli: "codex", effort: "xhigh" }], effort: "medium" },
+  },
 };
 
-test("returns same-tier cells only", () => {
-  const result = resolveProfile({ roster, profile: { tier: "medium", reasoning: "low" }, usage: {} });
-  assert.deepEqual(result.chain.map(x => x.model), ["mediumA", "mediumB"]);
-  assert.ok(!result.chain.some(x => x.model === "frontier" || x.model === "low"));
+test("a specialist on a role runs that role's chain, in order, with its efforts", () => {
+  const r = { ...roster, specialists: { "coding.codey": { role: "implementer" } } };
+  const result = resolveProfile({ roster: r, specialistId: "coding.codey", usage: {} });
+  assert.equal(result.code, "OK");
+  assert.deepEqual(result.profile, { role: "implementer" });
+  assert.deepEqual(result.chain.map((x) => [x.cli, x.model, x.effort]),
+    [["cursor", "mediumA", "medium"], ["codex", "big", "xhigh"]]);
 });
 
-test("does not upgrade when exact tier is unavailable", () => {
-  const result = resolveProfile({ roster, profile: { tier: "high", reasoning: "max" }, usage: {} });
+test("a specialist with its own chain runs it; a bare model expands to its CLIs", () => {
+  const r = { ...roster, specialists: { "review.revan": { chain: ["mediumB", "codex:big"] } } };
+  const result = resolveProfile({ roster: r, specialistId: "review.revan", usage: {} });
+  assert.deepEqual(result.chain.map((x) => `${x.cli}:${x.model}@${x.effort}`),
+    ["codex:mediumB@null", "cursor:mediumB@null", "codex:big@high"]);
+});
+
+test("an unassigned specialist does not launch, and says why", () => {
+  const result = resolveProfile({ roster, specialistId: "coding.codey", usage: {} });
   assert.equal(result.code, "PROFILE_UNAVAILABLE");
-  assert.deepEqual(result.chain, []);
+  assert.match(result.skipped[0].reason, /no role or chain assigned to coding\.codey/);
+  assert.equal(specialistAssignment(roster, "coding.codey"), null);
 });
 
-test("imports mid as medium", () => {
-  const r = {
-    ...roster,
-    models: {
-      ...roster.models,
-      midA: { tier: "mid", cli: ["cursor"], account: "cursor", reasoning: { low: null }, priority: 1 },
-    },
-  };
-  const result = resolveProfile({ roster: r, profile: { tier: "medium", reasoning: "low" }, usage: {} });
-  assert.ok(result.chain.some(x => x.model === "midA"));
-});
-
-test("an override replaces the configured tier, the other gates stay", () => {
-  const r = {
-    ...roster,
-    specialists: { "coding.codey": { model_profile: { tier: "frontier", reasoning: "max" } } },
-  };
-  const configured = resolveProfile({ roster: r, specialistId: "coding.codey", usage: {} });
-  assert.deepEqual(configured.chain.map((x) => x.model), ["frontier"]);
-
-  const overridden = resolveProfile({
-    roster: r, specialistId: "coding.codey", usage: {}, override: { tier: "medium", reasoning: "low" },
+test("a run stored before roles replaced tiers re-resolves through the current assignment", () => {
+  const r = { ...roster, specialists: { "coding.codey": { role: "implementer" } } };
+  const result = resolveProfile({
+    roster: r, specialistId: "coding.codey", usage: {}, profile: { tier: "frontier", reasoning: "max" },
   });
-  assert.deepEqual(overridden.chain.map((x) => x.model), ["mediumA", "mediumB"]);
+  assert.deepEqual(result.chain.map((x) => x.model), ["mediumA", "big"]);
 });
 
-test("an override cannot reach a model whose account is blocked", () => {
+test("a model override replaces the chain with that one cell, the other gates stay", () => {
+  const r = { ...roster, specialists: { "coding.codey": { role: "implementer" } } };
+  const overridden = resolveProfile({
+    roster: r, specialistId: "coding.codey", usage: {}, override: { model: "small" },
+  });
+  assert.deepEqual(overridden.chain.map((x) => `${x.cli}:${x.model}`), ["cursor:small"]);
+
+  const wrongCli = resolveProfile({
+    roster: r, specialistId: "coding.codey", usage: {}, override: { model: "small", cli: "codex" },
+  });
+  assert.equal(wrongCli.code, "PROFILE_UNAVAILABLE");
+  assert.match(wrongCli.skipped[0].reason, /does not run on codex/);
+});
+
+test("a declared but disabled account bars its cells; an undeclared one does not", () => {
   const r = {
     ...roster,
     accounts: { ...roster.accounts, cursor: { kind: "subscription", enabled: false } },
+    models: { ...roster.models, loose: { cli: ["codex"], account: "nowhere" } },
+    specialists: { x: { chain: ["mediumA", "loose", "codex:mediumB"] } },
   };
-  const result = resolveProfile({
-    roster: r, profile: { tier: "frontier", reasoning: "max" }, usage: {},
-    override: { tier: "medium", reasoning: "low" },
-  });
-  assert.deepEqual(result.chain.map((x) => x.model), ["mediumB"]);
+  const result = resolveProfile({ roster: r, specialistId: "x", usage: {} });
+  assert.deepEqual(result.chain.map((x) => x.model), ["loose", "mediumB"]);
+  assert.ok(result.skipped.some((s) => s.model === "mediumA" && s.reason === "account unavailable"));
+});
+
+test("a marked-limited model lands in quota_blocked, not the chain", () => {
+  const r = { ...roster, specialists: { x: { chain: ["cursor:mediumA", "cursor:small"] } } };
+  const usage = { marked: { mediumA: { until: new Date(Date.now() + 3600_000).toISOString() } } };
+  const result = resolveProfile({ roster: r, specialistId: "x", usage });
+  assert.deepEqual(result.chain.map((x) => x.model), ["small"]);
+  assert.deepEqual(result.quota_blocked.map((x) => x.model), ["mediumA"]);
 });

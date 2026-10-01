@@ -63,12 +63,12 @@ export function lookupKey({
   return { key: null, source: null, filePath: null };
 }
 
-/** Key file list for OpenRouter: team-up secrets first, then roster triage key_file. */
+/** Key file list for OpenRouter: team-up secrets first, then roster openrouter.key_file. */
 export function openRouterKeyFiles(env = process.env, roster) {
   const files = [];
   const sp = secretsPath(env);
   if (sp) files.push(sp);
-  const keyFile = roster?.triage?.key_file;
+  const keyFile = roster?.openrouter?.key_file;
   if (keyFile) files.push(keyFile);
   return files;
 }

@@ -27,27 +27,31 @@ export TEAM_UP_BIN=/path/to/team-up/bin/team-up.mjs
 # or: export TEAM_UP_ROOT=/path/to/team-up
 ```
 
-## Model profiles
+## Specialists
 
-Specialists declare abstract `{ tier, reasoning }`. Resolution keeps **exact
-tier only** — never upgrades or downgrades. Legacy roster `tier: "mid"` imports
-as `medium`.
+Each specialist runs on a role's chain or on a chain of its own, set under
+`specialists` (or in the dashboard's Specialists widget):
 
-## Accounts and reasoning maps
+```json
+"specialists": {
+  "coding.codey": { "role": "implementer" },
+  "review.revan": { "chain": ["claude:claude-opus", { "model": "gpt-6-sol", "cli": "codex", "effort": "xhigh" }] }
+}
+```
 
-Specialist-eligible models (any model with a `tier`) must declare:
+Exactly one of `role` or `chain`. The chain is tried top to bottom with the same
+gates as role dispatch, plus the harness capabilities the specialist needs
+(context isolation, command broker). Effort comes from the chain entry, then the
+role's `effort`, then the model's default. An unassigned specialist does not
+launch. A manifest's `model_profile` is ignored; `migrateRoster()` drops legacy
+`tier` fields, specialist tier profiles and the old `triage` block (its
+`key_file` moves to `openrouter.key_file`).
 
-- `account` — key into top-level `accounts` (`subscription` or `credit`)
-- `reasoning` — map of abstract levels (`max|high|medium|low`) to CLI-native effort values
+## Accounts
 
-An **explicit** map entry whose value is `null` means: this CLI/model supports
-that abstract reasoning level as its default and needs **no** effort argument
-(the `{effort}` template slot is dropped). A **missing** key means that level
-is unsupported for the model (profile resolution skips it).
-
-Legacy `tier: "mid"` imports as `medium` via `migrateRoster()`. After copying
-an old `~/.o9k/roster.json`, run migration (or `team-up init` refresh) before
-resolving Tessa (`frontier:max`) / Reanna (`medium:low`).
+A model's `account` keys into top-level `accounts` (`subscription` or
+`credit`). A declared account that is disabled or out of credit bars the model;
+a model without one is not gated by account.
 
 ## CLI sandbox capabilities
 

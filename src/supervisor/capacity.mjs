@@ -34,7 +34,7 @@ function weakerConfidence(a, b) {
 }
 
 /**
- * Availability for one exact-tier candidate cell.
+ * Availability for one candidate cell.
  * Blocking windows' latest known reset becomes available_at.
  */
 export function candidateAvailability({ candidate, usage, roster, now = Date.now() }) {
@@ -90,7 +90,7 @@ export function candidateAvailability({ candidate, usage, roster, now = Date.now
 export function chainCapacityReport({ profileResult, usage, roster, now = Date.now() }) {
   const chain = profileResult?.chain || [];
   const quotaBlocked = profileResult?.quota_blocked || [];
-  // Include exact-tier capability-compatible quota-blocked cells so an
+  // Include capability-compatible quota-blocked cells so an
   // exhausted chain still reports reset information.
   const seen = new Set();
   const candidates = [];

@@ -196,16 +196,8 @@ export function validateRoster(roster) {
       if (model.effort !== undefined && typeof model.effort !== "string") {
         errors.push(`models.${id}.effort must be a string`);
       }
-      // Specialist-eligible (tiered) models require account + reasoning map
-      if (model.tier !== undefined) {
-        if (!model.account || typeof model.account !== "string") {
-          errors.push(`models.${id}.account required for tiered/specialist-eligible models`);
-        } else if (isPlainObject(roster.accounts) && !roster.accounts[model.account]) {
-          errors.push(`models.${id}.account "${model.account}" not in accounts`);
-        }
-        if (!isPlainObject(model.reasoning)) {
-          errors.push(`models.${id}.reasoning map required for tiered/specialist-eligible models`);
-        }
+      if (model.account !== undefined && isPlainObject(roster.accounts) && !roster.accounts[model.account]) {
+        errors.push(`models.${id}.account "${model.account}" not in accounts`);
       }
     }
   }
@@ -257,56 +249,37 @@ export function validateRoster(roster) {
     }
   }
 
-  if (roster.triage !== undefined) {
-    if (!isPlainObject(roster.triage)) {
-      errors.push("triage must be an object");
+  // A specialist runs on a role's chain or on a chain of its own — exactly one.
+  if (roster.specialists !== undefined) {
+    if (!isPlainObject(roster.specialists)) {
+      errors.push("specialists must be an object");
     } else {
-      if (roster.triage.api_key !== undefined) {
-        errors.push("triage.api_key must not be set — use triage.key_env and an environment variable");
-      }
-      if (roster.triage.enabled !== undefined && typeof roster.triage.enabled !== "boolean") {
-        errors.push("triage.enabled must be boolean");
-      }
-      if (roster.triage.mode !== undefined &&
-        roster.triage.mode !== "shadow" &&
-        roster.triage.mode !== "active") {
-        errors.push('triage.mode must be "shadow" or "active"');
-      }
-      if (roster.triage.active_share !== undefined) {
-        const share = roster.triage.active_share;
-        if (typeof share !== "number" || share < 0 || share > 1) {
-          errors.push("triage.active_share must be a number in [0, 1]");
+      for (const [id, spec] of Object.entries(roster.specialists)) {
+        const hasRole = isPlainObject(spec) && spec.role !== undefined;
+        const hasChain = isPlainObject(spec) && spec.chain !== undefined;
+        if (hasRole === hasChain) {
+          errors.push(`specialists.${id} needs exactly one of role or chain`);
+        } else if (hasRole && !(isPlainObject(roster.roles) && Object.hasOwn(roster.roles, spec.role))) {
+          errors.push(`specialists.${id}.role "${spec.role}" not in roles`);
+        } else if (hasChain) {
+          if (!Array.isArray(spec.chain) || !spec.chain.length) {
+            errors.push(`specialists.${id}.chain must be a non-empty array`);
+          } else {
+            for (const entry of spec.chain) {
+              try {
+                parseChainEntry(entry);
+              } catch (e) {
+                errors.push(`specialists.${id}: ${e.message}`);
+              }
+            }
+          }
         }
-      }
-      if (roster.triage.timeout_ms !== undefined &&
-        (typeof roster.triage.timeout_ms !== "number" || roster.triage.timeout_ms <= 0)) {
-        errors.push("triage.timeout_ms must be a positive number");
-      }
-      if (roster.triage.min_confidence !== undefined) {
-        const mc = roster.triage.min_confidence;
-        if (typeof mc !== "number" || mc < 0 || mc > 1) {
-          errors.push("triage.min_confidence must be a number in [0, 1]");
-        }
-      }
-      if (roster.triage.roles !== undefined) {
-        if (!Array.isArray(roster.triage.roles) ||
-          roster.triage.roles.some((r) => typeof r !== "string" || !r)) {
-          errors.push("triage.roles must be a non-empty array of strings");
-        }
-      }
-      if (roster.triage.endpoint !== undefined && typeof roster.triage.endpoint !== "string") {
-        errors.push("triage.endpoint must be a string");
-      }
-      if (roster.triage.key_env !== undefined && typeof roster.triage.key_env !== "string") {
-        errors.push("triage.key_env must be a string");
-      }
-      if (roster.triage.key_file !== undefined && typeof roster.triage.key_file !== "string") {
-        errors.push("triage.key_file must be a string");
-      }
-      if (roster.triage.model !== undefined && typeof roster.triage.model !== "string") {
-        errors.push("triage.model must be a string");
       }
     }
+  }
+
+  if (roster.openrouter?.key_file !== undefined && typeof roster.openrouter.key_file !== "string") {
+    errors.push("openrouter.key_file must be a string");
   }
 
   return { errors, warnings };
@@ -326,4 +299,15 @@ export function requireRoster() {
     process.exit(1);
   }
   return roster;
+}
+
+/** Validate, back up, write. A roster the validator rejects is never written. */
+export function saveRoster(next, { env = process.env, now = () => new Date() } = {}) {
+  const { errors } = validateRoster(next);
+  if (errors.length) throw new Error(`roster invalid: ${errors.join("; ")}`);
+  const dest = rosterWritePath(env);
+  const backup = `${dest}.bak-${now().toISOString().replace(/[:.]/g, "-")}`;
+  if (fs.existsSync(dest)) fs.copyFileSync(dest, backup);
+  fs.writeFileSync(dest, `${JSON.stringify(next, null, 2)}\n`);
+  return { path: dest, backup };
 }

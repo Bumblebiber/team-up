@@ -79,13 +79,12 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
     }
   }
 
-  // A specialist whose model profile no roster cell can satisfy installs,
-  // approves and pins without complaint, then fails at launch with
-  // PROFILE_UNAVAILABLE. Nothing between building it and running it says so.
-  // Asking the real resolver is the only honest check: the reason is rarely the
-  // tier itself — coding.codey asks for `high`, four cells offer it, and it
-  // still cannot launch because the only reachable one runs on an adapter with
-  // no verified context isolation on this host.
+  // A specialist with no role or chain, or whose chain no roster cell can
+  // satisfy, installs, approves and pins without complaint, then fails at
+  // launch with PROFILE_UNAVAILABLE. Nothing between building it and running
+  // it says so. Asking the real resolver is the only honest check: the reason
+  // is often not the chain itself but an adapter with no verified context
+  // isolation on this host.
   // The roster comes from the env we were handed, like everything else here.
   // Reading the caller's real environment instead mixed the specialists of one
   // home with the roster of another, and made the answer depend on the host.
@@ -115,16 +114,12 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
       } catch {
         continue;
       }
-      if (!manifest?.model_profile) continue;
-      const callType = (manifest.call_types ?? [])[0];
-      if (!callType) continue;
+      if (!manifest) continue;
       // The same requirements the launcher derives. Without them the resolver
       // is answering an easier question than the launch asks.
       const resolved = resolveProfile({
         roster,
-        profile: manifest.model_profile,
         specialistId: id,
-        callType,
         requirements: {
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
           ...((manifest.permissions?.commands ?? []).length
@@ -138,10 +133,11 @@ export function diagnose(env = process.env, { execFileSync } = {}) {
           kind: "no_model_for_profile",
           severity: "high",
           id,
-          profile: manifest.model_profile,
-          call_type: callType,
+          profile: resolved.profile,
           skipped: (resolved.skipped ?? []).slice(0, 6),
-          detail: "no roster model satisfies this profile; every launch fails with PROFILE_UNAVAILABLE",
+          detail: resolved.profile
+            ? "no cell of its chain is reachable; every launch fails with PROFILE_UNAVAILABLE"
+            : "no role or chain assigned; every launch fails with PROFILE_UNAVAILABLE",
         });
       }
     }

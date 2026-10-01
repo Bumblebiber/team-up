@@ -1,5 +1,5 @@
 {
-  "$comment": "team-up user config. Copied to ~/.team-up/roster.json by 'team-up init'. Curate models/roles/chains yourself — team-up ships no live model list. cmd templates are argv arrays; {model}, {prompt}, and {effort} are substituted literally per element. Chain entries may be bare model ids (uses models[m].cli[0]) or CLI×model pins ('cursor:grok-4.5-high' / {\"cli\":\"hermes\",\"model\":\"deepseek-v4-pro\"}). Specialist-eligible models (those with tier) must declare account + abstract reasoning maps. Command-broker / shell-denial support comes from installed team-up harness adapters plus ~/.team-up/harness-verification records — never from roster booleans.",
+  "$comment": "team-up user config. Copied to ~/.team-up/roster.json by 'team-up init'. Curate models/roles/chains yourself — team-up ships no live model list. cmd templates are argv arrays; {model}, {prompt}, and {effort} are substituted literally per element. Chain entries may be bare model ids (uses models[m].cli[0]) or CLI×model pins ('cursor:grok-4.5-high' / {\"cli\":\"hermes\",\"model\":\"deepseek-v4-pro\"}). Specialists run on a role's chain ({\"role\": \"implementer\"}) or a chain of their own ({\"chain\": [...]}) under specialists; an unassigned specialist does not launch. Command-broker / shell-denial support comes from installed team-up harness adapters plus ~/.team-up/harness-verification records — never from roster booleans.",
   "schema_version": 2,
   "accounts": {
     "claude": { "kind": "subscription", "enabled": true },
@@ -34,7 +34,6 @@
   "models": {
     "claude-opus": {
       "provider": "anthropic",
-      "tier": "high",
       "cli": ["claude"],
       "account": "claude",
       "reasoning": { "max": "max", "high": "high", "medium": "medium", "low": "low" },
@@ -43,7 +42,6 @@
     },
     "claude-sonnet-5": {
       "provider": "anthropic",
-      "tier": "medium",
       "cli": ["claude"],
       "account": "claude",
       "reasoning": { "max": "max", "high": "high", "medium": "medium", "low": "low" },
@@ -52,7 +50,6 @@
     },
     "claude-haiku": {
       "provider": "anthropic",
-      "tier": "low",
       "cli": ["claude"],
       "account": "claude",
       "reasoning": { "max": "max", "high": "high", "medium": "medium", "low": "low" },
@@ -61,7 +58,6 @@
     },
     "gpt-5.6-sol": {
       "provider": "openai",
-      "tier": "frontier",
       "cli": ["codex"],
       "account": "codex",
       "reasoning": { "max": "xhigh", "high": "high", "medium": "medium", "low": "low" },
@@ -70,7 +66,6 @@
     },
     "gpt-5.6-terra": {
       "provider": "openai",
-      "tier": "high",
       "cli": ["codex"],
       "account": "codex",
       "reasoning": { "max": "xhigh", "high": "high", "medium": "medium", "low": "low" },
@@ -79,7 +74,6 @@
     },
     "gpt-5.6-luna": {
       "provider": "openai",
-      "tier": "medium",
       "cli": ["codex"],
       "account": "codex",
       "reasoning": { "max": "xhigh", "high": "high", "medium": "medium", "low": "low" },
@@ -88,7 +82,6 @@
     },
     "gpt-5.4-mini": {
       "provider": "openai",
-      "tier": "low",
       "cli": ["codex"],
       "account": "codex",
       "reasoning": { "max": "xhigh", "high": "high", "medium": "medium", "low": "low" },
@@ -97,7 +90,6 @@
     },
     "composer-2.5": {
       "provider": "cursor",
-      "tier": "medium",
       "cli": ["cursor"],
       "account": "cursor",
       "reasoning": { "max": "high", "high": "high", "medium": null, "low": null },
@@ -106,7 +98,6 @@
     },
     "grok-4.5-high": {
       "provider": "xai",
-      "tier": "high",
       "cli": ["cursor", "opencode", "hermes"],
       "cli_model": { "cursor": "cursor-grok-4.5-high", "opencode": "openrouter/x-ai/grok-4.5" },
       "account": "cursor",
@@ -115,7 +106,6 @@
     },
     "deepseek-v4-pro": {
       "provider": "deepseek",
-      "tier": "medium",
       "cli": ["hermes"],
       "account": "api",
       "reasoning": { "max": "high", "high": "high", "medium": "medium", "low": "low" },
@@ -123,7 +113,6 @@
     },
     "deepseek-v4-flash": {
       "provider": "deepseek",
-      "tier": "low",
       "cli": ["hermes"],
       "account": "api",
       "reasoning": { "max": "high", "high": "high", "medium": "medium", "low": "low" },
@@ -207,17 +196,14 @@
     }
   },
   "limits": { "warn_at": 0.9, "handoff_at": 0.95, "handoff_at_burst": 0.8, "project_min": 30 },
-  "triage": {
-    "$comment": "JEV task-difficulty triage via OpenRouter. Key from triage.key_env (env) or triage.key_file (0600 KEY=VALUE file). enabled:false until shadow measurement completes.",
-    "enabled": false,
-    "mode": "shadow",
-    "endpoint": "https://openrouter.ai/api/alpha/decisions",
-    "key_env": "OPENROUTER_API_KEY",
-    "key_file": "~/.hermes/.env",
-    "model": "jev-latest",
-    "timeout_ms": 1500,
-    "min_confidence": 0.6,
-    "active_share": 0,
-    "roles": ["implementer", "researcher", "test-writer"]
+  "openrouter": {
+    "$comment": "OpenRouter key for model scans and benchmarks: env OPENROUTER_API_KEY, then ~/.team-up/secrets.env, then this 0600 KEY=VALUE file.",
+    "key_file": "~/.hermes/.env"
+  },
+  "specialists": {
+    "coding.codey": { "role": "implementer" },
+    "research.reanna": { "role": "researcher" },
+    "review.revan": { "role": "reviewer" },
+    "testing.tessa": { "role": "test-writer" }
   }
 }

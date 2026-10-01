@@ -48,9 +48,9 @@ separate step on purpose: approve the new version first, then pin it. Without
 and everywhere else keeps the old one. `run` has no `--version` flag; the pin
 is the single place a version gets chosen.
 
-`--cli` and `--model` override the cell for one run. The named model's own tier
-replaces the one the specialist's profile asks for — that demand is the standard
-being overridden — and the resolved chain is then narrowed to that cell.
+`--cli` and `--model` override the cell for one run. A named model replaces the
+specialist's chain with that one cell; `--cli` alone narrows the chain to that
+CLI.
 Everything else still gates it: account, harness capability (context isolation,
 command broker) and usage windows are unchanged, so an override can only pick a
 cell the gates already allowed. A named cell that no gate let through is refused
