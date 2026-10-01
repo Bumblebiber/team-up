@@ -194,6 +194,10 @@ export async function launch({
 
   let commandPolicyChecksum = null;
   let projectPolicy = null;
+  // A project with no command policy at all (docs, a static site, a repo
+  // without tests) still gets the specialist — without its command tools.
+  // That only ever removes power; an invalid or incomplete policy still fails.
+  let commandsUnavailable = false;
   try {
     ({ checksum: commandPolicyChecksum, policy: projectPolicy } = resolveCommandPolicyForApproval({
       project,
@@ -201,8 +205,12 @@ export async function launch({
       env,
     }));
   } catch (e) {
-    e.code = e.code || "COMMAND_POLICY_INVALID";
-    throw e;
+    if (e.code === "COMMAND_POLICY_MISSING") {
+      commandsUnavailable = true;
+    } else {
+      e.code = e.code || "COMMAND_POLICY_INVALID";
+      throw e;
+    }
   }
 
   if (!isApproved({
@@ -231,6 +239,8 @@ export async function launch({
     throw e;
   }
 
+  if (commandsUnavailable) effectivePerms = { ...effectivePerms, commands: [] };
+
   const allowedCommands = new Set(manifest.permissions?.commands || []);
   for (const c of effectivePerms.commands || []) {
     if (!allowedCommands.has(c)) {
@@ -245,7 +255,7 @@ export async function launch({
   const capabilityResolution = resolveEffectiveCapabilities();
   const requirements = {
     context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-    ...((manifest.permissions?.commands || []).length > 0
+    ...((effectivePerms.commands || []).length > 0
       ? { command_broker: "team-up.command-broker/v1" } : {}),
   };
   const runtimeOverride = resolveRuntimeOverride(roster, runtime);

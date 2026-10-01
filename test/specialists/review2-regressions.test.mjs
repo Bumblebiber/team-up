@@ -14,6 +14,7 @@ import { createRun, classifyMailbox, setStatus, runDir, wrapPromptWithMailboxPro
 import { atomicWriteText } from "../../src/json-store.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { buildCommand } from "../../src/roster/command.mjs";
+import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 
 function validManifest(overrides = {}) {
   return {
@@ -588,4 +589,69 @@ test("explicit null reasoning is supported; missing key is not", () => {
   const bad = resolveProfile({ roster: missing, profile: { tier: "medium", reasoning: "low" }, usage: {} });
   assert.equal(bad.code, "PROFILE_UNAVAILABLE");
   assert.ok(bad.skipped.some((s) => /no reasoning mapping for low/.test(s.reason)));
+});
+
+test("a project without a command policy launches the specialist without its commands", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-nopol-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-np-"));
+  const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-npk-"));
+  const env = {
+    ...process.env,
+    TEAM_UP_HOME: home,
+    TEAM_UP_RUNS: path.join(home, "runs"),
+    TEAM_UP_ROSTER: path.join(home, "roster.json"),
+    TEAM_UP_USAGE: path.join(home, "usage.json"),
+  };
+  const prev = { ...process.env };
+  Object.assign(process.env, env);
+  try {
+    // The same broker-less roster that refuses a launch needing commands.
+    fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify({
+      accounts: { cursor: { kind: "subscription", enabled: true } },
+      clis: { cursor: { cmd: ["true", "{prompt}"] } },
+      models: { m: { tier: "medium", cli: ["cursor"], account: "cursor", reasoning: { low: null }, priority: 1 } },
+    }));
+    fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
+    writePkg(pkg, validManifest({
+      id: "testing.nopol",
+      permissions: { filesystem: "project_readonly", writes: false, network: false, commands: ["project-test"] },
+    }));
+    assert.equal((await installPackage(pkg, env)).ok, true);
+    assert.equal((await approveSpecialist({ idAtVersion: "testing.nopol@0.1.0", global: true, env })).ok, true);
+    const args = {
+      specialistId: "testing.nopol",
+      callType: "consult",
+      objective: "read the docs",
+      project,
+      env,
+      dryRun: true,
+      sandbox: { available: true, probe: () => true },
+      // Isolation verified, no command broker.
+      dependencyOverrides: {
+        harnessCapabilities: () => ({
+          command_broker: null,
+          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          native_shell: "denied",
+          mcp: "stdio",
+        }),
+      },
+    };
+    // No commands.json: the policy gate and the broker requirement both let
+    // it through; it only stops at the later harness check this fixture
+    // cannot satisfy (before the fix: COMMAND_POLICY_MISSING, then
+    // PROFILE_UNAVAILABLE for want of a broker).
+    await assert.rejects(() => launch(args), (e) => e.code === "HARNESS_CONTEXT_ISOLATION_UNVERIFIED");
+
+    // A policy that was never trusted is still refused.
+    writeProjectCommands(project);
+    await assert.rejects(() => launch(args), (e) => e.code === "NOT_APPROVED");
+  } finally {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in prev)) delete process.env[k];
+    }
+    Object.assign(process.env, prev);
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+    fs.rmSync(pkg, { recursive: true, force: true });
+  }
 });

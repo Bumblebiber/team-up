@@ -218,7 +218,13 @@ function projectSpecialists(dir, ids, env) {
     const permissions = loaded.manifest?.permissions;
     const row = { id, version: loaded.version, needs_policy: (permissions?.commands || []).length > 0 };
     try {
-      const { checksum } = resolveCommandPolicyForApproval({ project: dir, permissions, env });
+      let checksum = null;
+      try {
+        ({ checksum } = resolveCommandPolicyForApproval({ project: dir, permissions, env }));
+      } catch (e) {
+        // No policy: the launcher starts it without command tools.
+        if (e.code !== "COMMAND_POLICY_MISSING") throw e;
+      }
       return {
         ...row,
         approved: isApproved({

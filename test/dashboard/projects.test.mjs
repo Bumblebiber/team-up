@@ -354,7 +354,8 @@ test("listProjects shows policy state and which specialists are approved", async
   assert.equal(byId["review.plain"].needs_policy, false);
   assert.equal(byId["testing.cmd"].approved, false);
   assert.equal(byId["testing.cmd"].needs_policy, true);
-  assert.equal(byId["testing.cmd"].reason, "COMMAND_POLICY_MISSING");
+  // No policy is no longer a blocker: the launcher starts it without command tools.
+  assert.equal(byId["testing.cmd"].reason, undefined);
 });
 
 test("approveProjectSpecialists approves what it can and reports the rest", async (t) => {
@@ -364,7 +365,8 @@ test("approveProjectSpecialists approves what it can and reports the rest", asyn
   assert.equal(first.ok, true);
   const byId = Object.fromEntries(first.results.map((r) => [r.id, r]));
   assert.equal(byId["review.plain"].ok, true);
-  assert.equal(byId["testing.cmd"].ok, false);
+  // Global grant: no policy yet means nothing to trust, not a refusal.
+  assert.equal(byId["testing.cmd"].ok, true);
 
   write(path.join(dir, "package.json"), { scripts: { test: "node --test" } });
   assert.equal(writeProjectPolicy({ dir, projectsDir: root }).ok, true);

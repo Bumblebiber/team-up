@@ -144,7 +144,11 @@ export async function approveSpecialist({ idAtVersion, project, cloneRoot = null
         env,
       }));
     } catch (e) {
-      return { ok: false, errors: [e.message], code: e.code || "COMMAND_POLICY_INVALID" };
+      // A global grant does not need this project's policy; there is just
+      // nothing to trust when the project has none.
+      if (!(global && e.code === "COMMAND_POLICY_MISSING")) {
+        return { ok: false, errors: [e.message], code: e.code || "COMMAND_POLICY_INVALID" };
+      }
     }
   } else if (!global) {
     return { ok: false, errors: ["expected a project (or a global grant)"] };
