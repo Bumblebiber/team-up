@@ -15,6 +15,7 @@ import {
   CLAUDE_HARNESS_BUILTIN_SKILLS,
   PLUGIN_CANARY_SKILL,
   parseClaudeStructuredCapabilityProofs,
+  extractStructuredInitInventory,
 } from "../../src/harness/isolation-canary.mjs";
 import { assertIsoFailure } from "../helpers/isolation-assert.mjs";
 
@@ -108,6 +109,40 @@ test("2.1.285 renamed built-in plugins grant, an unlisted cc-plugin still denies
     verifyInitSurfaceExclusion(init(["cc-plugin-mermaid"]), { expected }).violations,
     [{ kind: "plugin", name: "cc-plugin-mermaid" }]
   );
+});
+
+test("a plugin the binary reports as built-in grants by provenance, the same name from disk or sync denies", () => {
+  const expected = {
+    skills: ["capsule.selected-skill"],
+    plugins: ["capsule.selected-plugin"],
+    mcp_tools: ["mcp__selected__lookup"],
+  };
+  const stream = (extra, extraSkills = []) => JSON.stringify({
+    type: "system",
+    subtype: "init",
+    session_id: "s1",
+    tools: ["Read", "Skill", "mcp__selected__lookup"],
+    mcp_servers: [{ name: "selected", status: "connected" }],
+    skills: ["capsule.selected-skill", ...extraSkills],
+    plugins: [{ name: "capsule.selected-plugin", path: "/run/plugins/capsule.selected-plugin" }, extra],
+  });
+  const check = (extra, extraSkills) =>
+    verifyInitSurfaceExclusion(extractStructuredInitInventory(stream(extra, extraSkills)), { expected });
+  const name = "cc-plugin-plugin-authoring";
+
+  // 2.1.286, verbatim shape: path "builtin", source "<name>@builtin".
+  assert.equal(check({ name, path: "builtin", source: `${name}@builtin` }).ok, true);
+  assert.equal(
+    check({ name, path: "builtin", source: `${name}@builtin` }, [`${name}:write-plugin`]).ok,
+    true,
+  );
+  assert.deepEqual(check({ name, path: "/home/u/.claude/plugins/cache/x", source: `${name}@builtin` }).violations,
+    [{ kind: "plugin", name }]);
+  assert.deepEqual(check({ name, path: "builtin", source: `${name}@synced` }).violations,
+    [{ kind: "plugin", name }]);
+  // A skill riding on a plugin that is not built-in stays a leak.
+  assert.deepEqual(check({ name, path: "/x", source: `${name}@mk` }, [`${name}:write-plugin`]).violations,
+    [{ kind: "skill", name: `${name}:write-plugin` }, { kind: "plugin", name }]);
 });
 
 test("unknown built-in tool denies with named violation", () => {

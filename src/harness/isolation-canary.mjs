@@ -92,7 +92,10 @@ export const CLAUDE_HARNESS_BUILTIN_SKILLS = Object.freeze([
 ]);
 
 /**
- * Plugins Claude Code ships itself. Same rule as the skill list: an entry goes
+ * Plugins Claude Code ships itself, by name. Builds that report provenance in
+ * system/init (path "builtin") need no entry here — see builtin_plugins in
+ * extractStructuredInitInventory; 2.1.286 added plugin-authoring that way
+ * without a release-day fix. This list covers builds without it. Same rule as the skill list: an entry goes
  * in only after checking the name is on no path under the host's ~/.claude and
  * absent from installed_plugins.json — otherwise a real leak gets allowlisted.
  */
@@ -201,13 +204,14 @@ export function verifyInitSurfaceExclusion(init, { expected, prepared } = {}) {
   const allowed = buildAllowedInitSurface({ expected, prepared });
   const violations = [];
 
+  const builtinPlugins = new Set(init.builtin_plugins || []);
   for (const skill of init.skills || []) {
-    if (!allowed.allowedSkills.has(skill)) {
+    if (!allowed.allowedSkills.has(skill) && !builtinPlugins.has(skill.split(":")[0])) {
       violations.push({ kind: "skill", name: skill });
     }
   }
   for (const plugin of init.plugins || []) {
-    if (!allowed.allowedPlugins.has(plugin)) {
+    if (!allowed.allowedPlugins.has(plugin) && !builtinPlugins.has(plugin)) {
       violations.push({ kind: "plugin", name: plugin });
     }
   }
@@ -1073,6 +1077,16 @@ export function extractStructuredInitInventory(streamText) {
     const plugins = Array.isArray(evt.plugins)
       ? evt.plugins.map((p) => (typeof p === "string" ? p : String(p?.name || ""))).filter(Boolean)
       : [];
+    // What the binary ships itself, by its own provenance rather than a name
+    // list: claude reports a built-in as path "builtin", source "<name>@builtin".
+    // A plugin from disk always has an absolute path, so the host cannot pose
+    // as one; account-synced plugins ("@synced") are not built-ins either.
+    const builtin_plugins = Array.isArray(evt.plugins)
+      ? evt.plugins
+        .filter((p) => p && typeof p === "object" && p.path === "builtin"
+          && typeof p.name === "string" && p.name && p.source === `${p.name}@builtin`)
+        .map((p) => p.name)
+      : [];
     const mcp_servers = Array.isArray(evt.mcp_servers)
       ? evt.mcp_servers
         .map((s) => (typeof s === "string" ? s : String(s?.name || "")))
@@ -1083,6 +1097,7 @@ export function extractStructuredInitInventory(streamText) {
       tools,
       skills,
       plugins,
+      builtin_plugins,
       mcp_servers,
       claude_code_version: evt.claude_code_version || null,
     };
