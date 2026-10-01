@@ -177,7 +177,12 @@ export function harnessStatus(
   if (own) return { ...base, status: "failed", record_status: own.status };
   if (!records.length) return { ...base, status: "no_record" };
 
-  const newest = records[0];
+  // A failed newest verdict is a known no — unless launches quietly run a pin.
+  // Then nothing forces anyone to act, so a newer build must still be tried
+  // on its own, or specialists sit on the pin forever.
+  const newest = fallback
+    ? records.find((r) => r.version === fallback.version) ?? records[0]
+    : records[0];
   if (newest.status === "verified") {
     return {
       ...base,

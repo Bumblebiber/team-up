@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync as realExecFileSync } from "node:child_process";
-import { pinVerifiedBinary, pinnedBinaryPath } from "../../src/harness/binary.mjs";
+import { pinVerifiedBinary, pinnedBinaryPath, PINS_KEPT } from "../../src/harness/binary.mjs";
 import { effectiveHarnessBinary, harnessCapabilities, harnessStatus } from "../../src/harness/registry.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 
@@ -64,6 +64,12 @@ test("an unverified update falls back to the pinned verified build, and only to 
     assert.equal(status.status, "failed", "the installed build's verdict stays visible");
     assert.equal(status.fallback_version, "2.1.285");
 
+    // A newer build after the failed one is drift again, so it gets tried —
+    // the pin must not make a known no permanent.
+    const later = harnessStatus("claude", { env, execFileSync: execAs(fakeClaude(home, "2.1.287")) });
+    assert.equal(later.status, "drifted");
+    assert.equal(later.last_verified_version, "2.1.285");
+
     // A pin whose binary is not the build its name claims grants nothing.
     fs.rmSync(pinned);
     fs.copyFileSync(next, pinned);
@@ -75,6 +81,25 @@ test("an unverified update falls back to the pinned verified build, and only to 
     plant(home, "2.1.286", "verified");
     assert.deepEqual(effectiveHarnessBinary("claude", { env, execFileSync: exec }),
       { bin: "claude", version: "2.1.286" });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("only the newest pins are kept", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-pin-"));
+  try {
+    const env = { TEAM_UP_HOME: home };
+    const versions = ["2.1.9", "2.1.10", "2.1.11", "2.1.12"];
+    for (const v of versions) {
+      plant(home, v, "verified");
+      pinVerifiedBinary("claude", v, { env, execFileSync: execAs(fakeClaude(home, v)) });
+    }
+    assert.deepEqual(
+      fs.readdirSync(path.join(home, "harness-bin", "claude")).sort(),
+      versions.slice(-PINS_KEPT).sort(),
+      "ordered by version, not by name",
+    );
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

@@ -14,9 +14,13 @@ import { loadVerificationRecord } from "./verify.mjs";
  *
  * So every verify that passes pins the exact binary it measured, and a launch
  * whose installed build is not verified runs the newest pinned one instead.
- * Pins are hardlinks, not copies: no disk cost, and they outlive the CLI's own
- * updater pruning its versions directory.
+ * Pins are hardlinks, so they outlive the CLI's own updater pruning its
+ * versions directory — which also means each one keeps a full binary (~240 MB
+ * for claude) alive. Only the newest PINS_KEPT survive; more than one, because
+ * a supervisor resume needs the exact build its descriptor recorded.
  */
+
+export const PINS_KEPT = 3;
 
 export function pinnedBinaryPath(cli, version, env = process.env) {
   return path.join(teamUpHome(env), "harness-bin", cli, version);
@@ -45,6 +49,10 @@ export function pinVerifiedBinary(cli, version, {
     if (e.code !== "EXDEV") throw e;
     fs.copyFileSync(src, dest);
     fs.chmodSync(dest, 0o755);
+  }
+  const dir = path.dirname(dest);
+  for (const stale of fs.readdirSync(dir).sort(compareVersions).reverse().slice(PINS_KEPT)) {
+    fs.rmSync(path.join(dir, stale), { force: true });
   }
   return dest;
 }

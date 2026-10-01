@@ -12,8 +12,13 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CANARY = path.join(REPO, "src/harness/isolation-canary.mjs");
 const REGISTRY = path.join(REPO, "src/harness/registry.mjs");
 const VERIFY = path.join(REPO, "src/harness/verify.mjs");
+const BINARY = path.join(REPO, "src/harness/binary.mjs");
 
 const MUTANTS = [
+  ["M40 pinned binary: name trusted without --version match",
+    BINARY,
+    "    if (binaryVersion(bin, execFileSync) !== version) return null;",
+    "    void binaryVersion;"],
   ["M1 decide: always grant",
     CANARY,
     '  return isoFail("isolation_mismatch", result.errors?.[0] || "observation does not match expected");',
