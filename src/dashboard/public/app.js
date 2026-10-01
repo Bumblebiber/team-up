@@ -763,6 +763,23 @@ function selectCli(cli) {
   cliLogTimer = setInterval(() => refreshCliLog(cli), 2000);
 }
 
+let addCliOpen = false;
+
+function addCliList(addable) {
+  if (!addable?.length) return "";
+  const items = addable.map((c) => {
+    const action = c.present
+      ? '<span class="badge ok">installed</span> <span class="muted">not in the roster yet</span>'
+      : c.install_available
+        ? `<button type="button" class="cli-install" data-cli="${esc(c.cli)}">Install</button>`
+        : `<span class="muted">${esc(c.install_disabled_reason || "")}</span>`;
+    const job = c.install_state && c.install_state !== "idle" ? ` <span class="muted">job: ${esc(c.install_state)}</span>` : "";
+    return `<li data-cli="${esc(c.cli)}"${providerAttr(c.cli)}><strong>${esc(c.cli)}</strong>${
+      c.doc_url ? ` <a href="${esc(c.doc_url)}" target="_blank" rel="noopener" class="muted">docs</a>` : ""} ${action}${job}</li>`;
+  }).join("");
+  return `<details class="add-cli"${addCliOpen ? " open" : ""}><summary>+ Add CLI</summary><ul>${items}</ul></details>`;
+}
+
 async function refreshClis() {
   const data = await api("/api/clis");
   // Off by default: the token already proves who you are, and the code only
@@ -796,7 +813,14 @@ async function refreshClis() {
   }).join("");
   $("#clis-table").innerHTML = `<table>
     <thead><tr><th>CLI</th><th>Present</th><th>Version</th><th>Harness</th><th>Verify</th><th>Job</th><th>Actions</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="7">No CLIs</td></tr>'}</tbody></table>`;
+    <tbody>${rows || '<tr><td colspan="7">No CLIs</td></tr>'}</tbody></table>${addCliList(data.addable)}`;
+  $("#clis-table").querySelector(".add-cli")?.addEventListener("toggle", (e) => { addCliOpen = e.target.open; });
+  $("#clis-table").querySelectorAll(".add-cli li[data-cli]").forEach((li) => {
+    li.addEventListener("click", (e) => {
+      if (e.target.closest("button, a")) return;
+      selectCli(li.dataset.cli);
+    });
+  });
   $("#clis-table").querySelectorAll("tr[data-cli]").forEach((tr) => {
     tr.addEventListener("click", (e) => {
       if (e.target.closest("button")) return;
@@ -823,7 +847,7 @@ async function refreshClis() {
       e.stopPropagation();
       const cli = btn.dataset.cli;
       try {
-        const row = data.clis.find((c) => c.cli === cli);
+        const row = [...data.clis, ...(data.addable || [])].find((c) => c.cli === cli);
         if (row?.install_command && !confirm(`Run install?\n\n${row.install_command}`)) return;
         await api(`/api/clis/${encodeURIComponent(cli)}/install`, { method: "POST", body: JSON.stringify({}) });
         selectCli(cli);

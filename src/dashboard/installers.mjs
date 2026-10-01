@@ -73,6 +73,19 @@ export const INSTALLERS = {
     update: { shell: "hermes update --yes", confirmed: "2026-09-25" },
     login: null,
   },
+  // Not in the roster yet — the dashboard offers it under "Add CLI". Running
+  // it through team-up (clis.gemini.cmd, harness, usage, models scan) is a
+  // separate step; installing only puts the binary on PATH.
+  gemini: {
+    bootstrap: {
+      shell: "npm install -g @google/gemini-cli",
+      confirmed: "2026-10-01",
+      doc_url: "https://github.com/google-gemini/gemini-cli",
+    },
+    update: { shell: "npm install -g @google/gemini-cli@latest", confirmed: "2026-10-01" },
+    // First start asks how to sign in; finish it in the tmux session.
+    login: { shell: "gemini" },
+  },
 };
 
 const SECRET_PATTERNS = [
@@ -95,8 +108,10 @@ export function installExitPath(cli, env = process.env) {
   return `${installLogPath(cli, env)}.exit`;
 }
 
+/** A roster CLI, or one the hardcoded installer catalogue can add. */
 export function isValidCliId(cli, roster) {
-  return typeof cli === "string" && cli.length > 0 && Object.hasOwn(roster?.clis || {}, cli);
+  return typeof cli === "string" && cli.length > 0
+    && (Object.hasOwn(roster?.clis || {}, cli) || Object.hasOwn(INSTALLERS, cli));
 }
 
 export function hermesTargetDir(env = process.env) {
