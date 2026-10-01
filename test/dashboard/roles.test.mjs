@@ -12,7 +12,7 @@ const roster = {
   roles: { planner: { chain: ["claude:claude-opus"] }, implementer: { chain: ["codex:gpt-6-sol"] } },
   triage: { roles: ["implementer"] },
 };
-const store = { clis: { claude: { supported: true, models: [{ cli_id: "opus", version: "Opus 5.5" }] } } };
+const store = { clis: { claude: { supported: true, scanned_at: "2026-09-30T12:00:00Z", models: [{ cli_id: "opus", version: "Opus 5.5" }] } } };
 
 test("an alias shows the version its CLI resolves it to", () => {
   assert.equal(modelLabel(roster, store, "claude-opus"), "claude-opus-5.5");
@@ -56,4 +56,11 @@ test("roles view carries pick, chain state and labels", () => {
   assert.equal(planner.chain[0].label, "claude-opus-5.5");
   assert.equal(planner.chain[0].state, "ok");
   assert.equal(view.roles.find((r) => r.role === "implementer").in_triage, true);
+});
+
+test("prototype keys never resolve as roles or accounts", () => {
+  assert.throws(() => applySettingsEdit(roster, { path: "accounts.__proto__.enabled", value: true }), /invalid/);
+  assert.throws(() => applyRoleEdit(roster, { role: "constructor", delete: true }), /unknown role/);
+  assert.throws(() => applyRoleEdit(roster, { role: "x", chain: [{ cli: "codex", model: "constructor" }] }), /unknown model/);
+  assert.equal(({}).enabled, undefined);
 });

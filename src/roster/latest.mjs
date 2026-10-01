@@ -38,11 +38,51 @@ export function compareVersions(a, b) {
   return 0;
 }
 
+/** A scan older than this says nothing about today — models get added after it. */
+export const SCAN_MAX_AGE_MS = 48 * 3600 * 1000;
+
 /** CLI ids the last fresh scan listed, or null when the scan can't be trusted. */
-export function offeredIds(store, cli) {
+export function offeredIds(store, cli, now = Date.now()) {
   const entry = store?.clis?.[cli];
   if (!entry?.supported || entry.stale_since || !Array.isArray(entry.models)) return null;
+  const age = now - Date.parse(entry.scanned_at ?? store?.scanned_at);
+  if (!(age <= SCAN_MAX_AGE_MS)) return null;
   return new Set(entry.models.map((m) => m.cli_id));
+}
+
+/**
+ * A CLI that ships `gpt-7-sol` while the roster only knows `gpt-6-sol` has
+ * nothing to move a chain to — the model is not in `roster.models`. Add it as
+ * a copy of its newest sibling on that CLI (tier, reasoning, account, limit
+ * windows), minus anything that describes the old version (price, notes).
+ * Only families the roster already runs on that CLI; a new family is a
+ * judgement for `team-up propose`, not for a version bump.
+ * @returns {{ next: object, added: Array<{ id, cli, from }> }}
+ */
+export function addOfferedVersions(roster, store, now = Date.now()) {
+  const next = structuredClone(roster);
+  const added = [];
+  for (const cli of Object.keys(store?.clis || {})) {
+    const offered = offeredIds(store, cli, now);
+    if (!offered) continue;
+    for (const cliId of offered) {
+      if (Object.hasOwn(next.models || {}, cliId)) continue;
+      const { family, version } = splitVersion(cliId);
+      if (!version) continue;
+      let sibling = null;
+      for (const [id, spec] of Object.entries(next.models || {})) {
+        if (!spec?.cli?.includes(cli) || spec.cli_model) continue;
+        const other = splitVersion(id);
+        if (other.family !== family || !other.version) continue;
+        if (!sibling || compareVersions(other.version, sibling.version) > 0) sibling = { id, spec, version: other.version };
+      }
+      if (!sibling || compareVersions(version, sibling.version) <= 0) continue;
+      const { price, notes, $comment, strengths, weaknesses, ...spec } = sibling.spec;
+      next.models[cliId] = { ...structuredClone(spec), cli: [cli] };
+      added.push({ id: cliId, cli, from: sibling.id });
+    }
+  }
+  return { next, added };
 }
 
 /**
@@ -50,8 +90,8 @@ export function offeredIds(store, cli) {
  * @returns {{ state: "ok"|"gone"|"unknown", newest: string|null }}
  *   newest = the roster model this cell should name instead, if any.
  */
-export function cellStatus(roster, store, cli, model) {
-  const offered = offeredIds(store, cli);
+export function cellStatus(roster, store, cli, model, now = Date.now()) {
+  const offered = offeredIds(store, cli, now);
   if (!offered) return { state: "unknown", newest: null };
   const present = (id) => offered.has(cliModelFor(roster, id, cli));
   const state = present(model) ? "ok" : "gone";
@@ -74,7 +114,7 @@ export function cellStatus(roster, store, cli, model) {
  * Rewrite every chain entry that has a newer present sibling.
  * @returns {{ next: object, changes: Array<{ role, cli, from, to, reason }> }}
  */
-export function upgradeChains(roster, store) {
+export function upgradeChains(roster, store, now = Date.now()) {
   const next = structuredClone(roster);
   const changes = [];
   for (const [role, spec] of Object.entries(next.roles || {})) {
@@ -93,7 +133,7 @@ export function upgradeChains(roster, store) {
       const cli = parsed.cli ?? next.models?.[parsed.model]?.cli?.[0] ?? null;
       let entry = raw;
       if (cli && !pinned) {
-        const { state, newest } = cellStatus(next, store, cli, parsed.model);
+        const { state, newest } = cellStatus(next, store, cli, parsed.model, now);
         if (newest) {
           entry = typeof raw === "string"
             ? (parsed.cli ? `${parsed.cli}:${newest}` : newest)
@@ -110,4 +150,11 @@ export function upgradeChains(roster, store) {
     spec.chain = chain;
   }
   return { next, changes };
+}
+
+/** Add newly shipped versions, then move every chain onto them. */
+export function bringToLatest(roster, store, now = Date.now()) {
+  const { next: withNew, added } = addOfferedVersions(roster, store, now);
+  const { next, changes } = upgradeChains(withNew, store, now);
+  return { next, added, changes };
 }

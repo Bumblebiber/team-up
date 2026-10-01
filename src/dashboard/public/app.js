@@ -391,9 +391,13 @@ function chainChip(c, i) {
 async function refreshRoles() {
   rolesData = await api("/api/roles");
   const upgrades = rolesData.roles.flatMap((r) => r.chain.filter((c) => c.newest && !c.pinned));
+  const addable = rolesData.addable || [];
   const btn = $("#roles-upgrade");
-  btn.classList.toggle("hidden", !upgrades.length);
-  btn.textContent = `⬆ Move ${upgrades.length} entr${upgrades.length === 1 ? "y" : "ies"} to the newest version`;
+  btn.classList.toggle("hidden", !upgrades.length && !addable.length);
+  btn.textContent = `⬆ Bring to newest versions (${[
+    addable.length ? `${addable.length} new: ${addable.map((a) => a.id).join(", ")}` : "",
+    upgrades.length ? `${upgrades.length} chain entr${upgrades.length === 1 ? "y" : "ies"}` : "",
+  ].filter(Boolean).join(" · ")})`;
   const rows = rolesData.roles.map((r) => `
     <tr${providerAttr(r.pick?.cli, r.pick?.model)}>
       <td><strong>${esc(r.role)}</strong>${r.in_triage ? ' <span class="muted" title="routed by triage">⇄</span>' : ""}</td>
@@ -445,9 +449,9 @@ $("#roles-upgrade").addEventListener("click", async () => {
   const status = $("#roles-status");
   try {
     const res = await api("/api/roles-upgrade", { method: "POST", body: JSON.stringify({}) });
-    status.textContent = res.changes.length
-      ? `${res.changes.map((c) => `${c.role}: ${c.from} → ${c.to}`).join(", ")} · backup ${res.backup}`
-      : "already on the newest versions";
+    const done = [...res.added.map((a) => `added ${a.id}`), ...res.changes.map((c) => `${c.role}: ${c.from} → ${c.to}`)];
+    status.textContent = done.length ? `${done.join(", ")} · backup ${res.backup}` : "already on the newest versions";
+    refreshTiers().catch(() => {});
     await refreshRoles();
   } catch (err) {
     status.textContent = `refused: ${err.message}`;
@@ -548,7 +552,7 @@ function renderTiers(data) {
         data-level="${esc(level)}">${options}</select></td>`;
     }).join("");
     return `<tr${providerAttr(m.clis[0] || "", m.model)}>
-      <td>${esc(m.model)}</td>
+      <td>${esc(m.label || m.model)}</td>
       <td class="muted">${esc(m.provider || "—")}</td>
       <td><select data-kind="tier" data-model="${esc(m.model)}">${tierOptions}</select></td>
       <td class="tier-clis">${clis}</td>
@@ -682,7 +686,7 @@ async function refreshModels() {
   $("#apply-cli-hint").textContent = `To apply roster chain changes: ${data.apply_cli}`;
   const rows = data.models.map((m) => `
     <tr class="${m.in_roster && m.reachable === false ? "greyed" : ""}"${providerAttr(m.model, m.provider)}>
-      <td>${esc(m.model)}</td>
+      <td>${esc(m.label || m.model)}</td>
       <td>${esc(m.display_name || "—")}</td>
       <td>${m.in_roster ? "yes" : "no"}</td>
       <td>${esc(m.tier || "—")}</td>
@@ -1627,7 +1631,7 @@ function fillModels() {
     { value: "", label: "— CLI default —" },
     ...timModels
       .filter((m) => !cli || (m.clis || []).includes(cli))
-      .map((m) => ({ value: m.id, label: m.tier ? `${m.id} (${m.tier})` : m.id })),
+      .map((m) => ({ value: m.id, label: m.tier ? `${m.label || m.id} (${m.tier})` : m.label || m.id })),
   ]);
 }
 

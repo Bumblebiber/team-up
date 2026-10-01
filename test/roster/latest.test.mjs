@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { splitVersion, cellStatus, upgradeChains } from "../../src/roster/latest.mjs";
+import { splitVersion, cellStatus, upgradeChains, bringToLatest } from "../../src/roster/latest.mjs";
 
 const roster = {
   clis: { codex: { cmd: ["codex"] }, claude: { cmd: ["claude"] } },
@@ -18,7 +18,7 @@ const roster = {
   },
 };
 const store = (models, extra = {}) => ({
-  clis: { codex: { supported: true, models: models.map((cli_id) => ({ cli_id })), ...extra } },
+  clis: { codex: { supported: true, scanned_at: new Date().toISOString(), models: models.map((cli_id) => ({ cli_id })), ...extra } },
 });
 
 test("splitVersion separates family and version", () => {
@@ -45,4 +45,18 @@ test("upgrade rewrites, dedupes, and leaves pinned and alias entries alone", () 
 test("a failed or stale scan moves nothing", () => {
   assert.equal(upgradeChains(roster, store(["gpt-6-sol"], { stale_since: "x" })).changes.length, 0);
   assert.equal(upgradeChains(roster, { clis: { codex: { supported: false } } }).changes.length, 0);
+});
+
+test("a scan older than two days moves nothing", () => {
+  const old = store(["gpt-6-sol"], { scanned_at: "2020-01-01T00:00:00Z" });
+  assert.equal(upgradeChains(roster, old).changes.length, 0);
+});
+
+test("a newly shipped version joins the roster as a copy of its sibling, then the chains move", () => {
+  const withPrice = structuredClone(roster);
+  withPrice.models["gpt-7-sol"] = { cli: ["codex"], account: "codex", tier: "frontier", price: { in: 1 } };
+  const { next, added, changes } = bringToLatest(withPrice, store(["gpt-6-sol", "gpt-7-sol", "gpt-8-sol", "o9-mini"]));
+  assert.deepEqual(added.map((a) => a.id), ["gpt-8-sol"], "7 exists already; o9-mini has no roster family");
+  assert.deepEqual(next.models["gpt-8-sol"], { cli: ["codex"], account: "codex", tier: "frontier" });
+  assert.ok(changes.some((c) => c.from === "gpt-5.6-sol" && c.to === "gpt-8-sol"));
 });

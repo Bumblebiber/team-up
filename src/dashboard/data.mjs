@@ -1,6 +1,7 @@
 import { pick, limits } from "../roster/chain.mjs";
 import { unlistedHighScorers } from "../scores/propose.mjs";
 import { SESSION_PREFIX } from "./projects.mjs";
+import { modelLabel } from "./roles.mjs";
 
 /** Run ids from `createRun` — ISO timestamp + 4-char base36 suffix. */
 export const RUN_ID_PATTERN = /^\d{8}T\d{6}Z-[a-z0-9]{4}$/;
@@ -226,7 +227,7 @@ export function buildPickAllView(roster, usage, now = Date.now()) {
 
 const MODELS_PAGE_SIZE = 200;
 
-export function buildModelsView(scoresFile, roster, { q, in_roster, page = 0 } = {}) {
+export function buildModelsView(scoresFile, roster, { q, in_roster, page = 0, store = null } = {}) {
   if (!scoresFile?.models) {
     return { models: [], total: 0, page, pageSize: MODELS_PAGE_SIZE, apply_cli: "team-up apply-scores" };
   }
@@ -258,6 +259,7 @@ export function buildModelsView(scoresFile, roster, { q, in_roster, page = 0 } =
       null;
     rows.push({
       model: modelId,
+      label: inRoster ? modelLabel(roster, store, modelId) : modelId,
       display_name: display,
       provider: mod.provider ?? null,
       price: mod.price ?? null,

@@ -23,8 +23,8 @@ import {
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
 import { buildTierMatrixView, applyModelEdit, saveRoster } from "./tiers.mjs";
-import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView } from "./roles.mjs";
-import { upgradeChains } from "../roster/latest.mjs";
+import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView, modelLabel } from "./roles.mjs";
+import { bringToLatest } from "../roster/latest.mjs";
 import { loadModelsStore } from "../collectors/models-store.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
 import { pinSpecialist } from "../specialists/store.mjs";
@@ -1009,7 +1009,7 @@ export function createDashboardServer({
         jsonResponse(res, 200, {
           ok: true,
           backup: path.basename(written.backup),
-          ...sanitizeForDashboard(buildTierMatrixView(next), { stripAccounts: true }),
+          ...sanitizeForDashboard(buildTierMatrixView(next, loadModelsStore(env)), { stripAccounts: true }),
         });
       } catch (e) {
         appendAudit(
@@ -1035,17 +1035,18 @@ export function createDashboardServer({
         const roster = loadRoster(env);
         let next;
         let changes;
+        let added;
         if (roleMatch) next = applyRoleEdit(roster, { ...body, role: target });
         else if (isSettings) next = applySettingsEdit(roster, body);
-        else ({ next, changes } = upgradeChains(roster, loadModelsStore(env)));
-        const written = changes?.length === 0 ? null : saveRoster(next, { env });
+        else ({ next, changes, added } = bringToLatest(roster, loadModelsStore(env)));
+        const written = changes?.length === 0 && added?.length === 0 ? null : saveRoster(next, { env });
         appendAudit({ actor: "127.0.0.1", action, target: isSettings ? body.path : target, result: "ok" }, { env });
         memo.invalidate("pick");
         memo.invalidate("roles");
         jsonResponse(res, 200, {
           ok: true,
           backup: written ? path.basename(written.backup) : null,
-          ...(changes ? { changes } : {}),
+          ...(changes ? { changes, added } : {}),
         });
       } catch (e) {
         appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
@@ -1127,11 +1128,13 @@ export function createDashboardServer({
         // (migrations, FTS triggers) against TIM's own writer that often. The
         // backlog is not a live feed; running sessions stay on the 1s memo.
         const work = timMemo.get("open-work", () => readOpenWork({ exec }));
+        const roster = loadRoster(env);
+        const store = loadModelsStore(env);
         jsonResponse(res, 200, {
           ...buildTimView(dir, { exec, work }),
-          clis: promptClis(loadRoster(env)),
-          models: Object.entries(loadRoster(env).models || {})
-            .map(([id, spec]) => ({ id, tier: spec.tier ?? null, clis: spec.cli ?? [] }))
+          clis: promptClis(roster),
+          models: Object.entries(roster.models || {})
+            .map(([id, spec]) => ({ id, label: modelLabel(roster, store, id), tier: spec.tier ?? null, clis: spec.cli ?? [] }))
             .sort((a, b) => a.id.localeCompare(b.id)),
         });
       } catch (e) {
@@ -1378,7 +1381,7 @@ export function createDashboardServer({
     if (pathname === "/api/tiers") {
       // Straight off roster.json, and it changes only when this panel writes
       // it — but accounts never reach the browser, same as every other view.
-      const data = sanitizeForDashboard(buildTierMatrixView(loadRoster(env)), {
+      const data = sanitizeForDashboard(buildTierMatrixView(loadRoster(env), loadModelsStore(env)), {
         stripAccounts: true,
       });
       jsonResponse(res, 200, data);
@@ -1437,7 +1440,7 @@ export function createDashboardServer({
         const roster = loadRoster(env);
         const scores = loadScores(scoresPath(env)) || { models: {} };
         return sanitizeForDashboard(
-          buildModelsView(scores, roster, { q, in_roster: inRoster, page }),
+          buildModelsView(scores, roster, { q, in_roster: inRoster, page, store: loadModelsStore(env) }),
         );
       });
       jsonResponse(res, 200, data);

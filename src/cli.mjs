@@ -28,7 +28,7 @@ import { runModelsScan } from "./commands/models-scan.mjs";
 import { runModelsList } from "./commands/models-list.mjs";
 import { defaultRun } from "./collectors/cli-models.mjs";
 import { loadModelsStore } from "./collectors/models-store.mjs";
-import { upgradeChains } from "./roster/latest.mjs";
+import { bringToLatest } from "./roster/latest.mjs";
 import { saveRoster } from "./dashboard/tiers.mjs";
 
 function argValue(args, flag) {
@@ -176,10 +176,12 @@ async function cmdModels(args, io) {
   if (sub === "latest") {
     // Moves chain entries to the newest version the last fresh scan lists.
     // Dry run unless --apply; pinned entries (`"pinned": true`) never move.
-    const { next, changes } = upgradeChains(requireRoster(), loadModelsStore());
+    const { next, added, changes } = bringToLatest(requireRoster(), loadModelsStore());
+    for (const a of added) io.out(`new model ${a.id} on ${a.cli} (copied from ${a.from})`);
     for (const c of changes) io.out(`${c.role}: ${c.cli}:${c.from} → ${c.to} (${c.reason})`);
-    if (!changes.length) io.out("every chain is on the newest offered version");
+    if (!changes.length && !added.length) io.out("every chain is on the newest offered version");
     else if (rest.includes("--apply")) io.out(`applied · backup ${saveRoster(next).backup}`);
+    else io.out("dry run — add --apply to write roster.json");
     return 0;
   }
   io.err("usage: team-up models scan|list|latest [--cli <id>] [--json] [--apply]");

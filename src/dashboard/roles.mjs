@@ -1,6 +1,6 @@
 import { pick, parseChainEntry } from "../roster/chain.mjs";
 import { cliModelFor } from "../roster/config.mjs";
-import { cellStatus } from "../roster/latest.mjs";
+import { cellStatus, addOfferedVersions } from "../roster/latest.mjs";
 
 /**
  * Roles, their chains, and the roster settings around them — the one place
@@ -12,6 +12,9 @@ import { cellStatus } from "../roster/latest.mjs";
  */
 
 const ROLE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+// Own keys only: `constructor` is a valid role name and `__proto__` an object
+// key, and neither may resolve through the prototype chain.
+const own = (obj, key) => !!obj && Object.hasOwn(obj, key);
 
 /**
  * `claude-opus` + scan says `opus` is "Opus 5.5" → `claude-opus-5.5`. An id
@@ -78,7 +81,10 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
       account: spec?.account ?? null,
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
-  return { roles, models, clis: Object.keys(roster?.clis || {}).sort() };
+  // Versions a CLI ships that the roster does not know yet; the upgrade
+  // button adds them before it moves the chains.
+  const addable = addOfferedVersions(roster, store, now).added;
+  return { roles, models, addable, clis: Object.keys(roster?.clis || {}).sort() };
 }
 
 /** Chain entries as the browser sends them → what roster.json stores. */
@@ -86,7 +92,7 @@ function normalizeChain(roster, chain) {
   if (!Array.isArray(chain) || chain.length === 0) throw new Error("chain must name at least one model");
   return chain.map((entry, i) => {
     const { model, cli, effort, pinned } = entry || {};
-    const spec = roster.models?.[model];
+    const spec = own(roster.models, model) ? roster.models[model] : null;
     if (!spec) throw new Error(`chain[${i}]: unknown model ${model}`);
     if (!cli || !spec.cli?.includes(cli)) throw new Error(`chain[${i}]: ${model} does not run on ${cli}`);
     if (effort != null && typeof effort !== "string") throw new Error(`chain[${i}]: effort must be a string`);
@@ -108,7 +114,7 @@ export function applyRoleEdit(roster, { role, chain, pin_head, delete: remove } 
   const next = structuredClone(roster);
   next.roles ??= {};
   if (remove) {
-    if (!next.roles[role]) throw new Error(`unknown role: ${role}`);
+    if (!own(next.roles, role)) throw new Error(`unknown role: ${role}`);
     if (next.triage?.roles?.includes(role)) {
       throw new Error(`${role} is listed in triage.roles — remove it there first`);
     }
@@ -117,14 +123,14 @@ export function applyRoleEdit(roster, { role, chain, pin_head, delete: remove } 
   }
   if (chain !== undefined) {
     next.roles[role] = {
-      ...(next.roles[role] || {}),
+      ...(own(next.roles, role) ? next.roles[role] : {}),
       chain: normalizeChain(next, chain),
       pin_head: pin_head !== false,
     };
     return next;
   }
   if (pin_head !== undefined) {
-    if (!next.roles[role]) throw new Error(`unknown role: ${role}`);
+    if (!own(next.roles, role)) throw new Error(`unknown role: ${role}`);
     if (pin_head) next.roles[role].pin_head = true;
     else delete next.roles[role].pin_head;
     return next;
@@ -142,14 +148,14 @@ const isBool = (v) => typeof v === "boolean";
 const isStrList = (v) => Array.isArray(v) && v.every((s) => typeof s === "string" && s);
 
 const SETTINGS = [
-  [/^accounts\.([^.]+)\.enabled$/, isBool, (r, [, id]) => !!r.accounts?.[id]],
-  [/^accounts\.([^.]+)\.remaining$/, isNum, (r, [, id]) => r.accounts?.[id]?.kind === "credit"],
+  [/^accounts\.([^.]+)\.enabled$/, isBool, (r, [, id]) => own(r.accounts, id)],
+  [/^accounts\.([^.]+)\.remaining$/, isNum, (r, [, id]) => own(r.accounts, id) && r.accounts[id].kind === "credit"],
   [/^limits\.(warn_at|handoff_at)$/, (v) => isUnit(v) && v > 0],
   [/^triage\.enabled$/, isBool],
   [/^triage\.mode$/, (v) => v === "shadow" || v === "active"],
   [/^triage\.(active_share|min_confidence)$/, isUnit],
-  [/^triage\.roles$/, isStrList, (r, _m, v) => v.every((role) => r.roles?.[role])],
-  [/^subscriptions$/, isStrList, (r, _m, v) => v.every((cli) => r.clis?.[cli])],
+  [/^triage\.roles$/, isStrList, (r, _m, v) => v.every((role) => own(r.roles, role))],
+  [/^subscriptions$/, isStrList, (r, _m, v) => v.every((cli) => own(r.clis, cli))],
   [/^usage_watcher\.tick_sec$/, isPosInt],
   [/^usage_watcher\.intervals\.(idle_min|active_min|busy_min|idle_heartbeat_hours)$/, isPosInt],
 ];

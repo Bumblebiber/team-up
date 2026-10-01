@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { rosterWritePath } from "../paths.mjs";
 import { validateRoster } from "../roster/config.mjs";
 import { normalizeTier } from "../roster/profile.mjs";
+import { modelLabel } from "./roles.mjs";
 
 /**
  * The tier table, and the only place a human edits it by hand.
@@ -37,11 +38,12 @@ export function effortValues(roster) {
  * by tier is the panel's job — a model belongs to exactly one, and sending the
  * flat list keeps the tier picker honest about what it is changing.
  */
-export function buildTierMatrixView(roster) {
+export function buildTierMatrixView(roster, store = null) {
   const clis = Object.keys(roster?.clis ?? {}).filter((cli) => roster.clis[cli]?.cmd).sort();
   const models = Object.entries(roster?.models ?? {})
     .map(([model, spec]) => ({
       model,
+      label: modelLabel(roster, store, model),
       tier: spec?.tier ?? null,
       provider: spec?.provider ?? null,
       priority: spec?.priority ?? null,
