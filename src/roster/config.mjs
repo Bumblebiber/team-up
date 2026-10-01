@@ -266,10 +266,18 @@ export function validateRoster(roster) {
             errors.push(`specialists.${id}.chain must be a non-empty array`);
           } else {
             for (const entry of spec.chain) {
+              let parsed;
               try {
-                parseChainEntry(entry);
+                parsed = parseChainEntry(entry);
               } catch (e) {
                 errors.push(`specialists.${id}: ${e.message}`);
+                continue;
+              }
+              if (isPlainObject(roster.models) && !roster.models[parsed.model]) {
+                warnings.push(`specialists.${id}: chain entry "${parsed.model}" not in models (will be skipped)`);
+              }
+              if (parsed.cli && isPlainObject(roster.clis) && !roster.clis[parsed.cli]) {
+                warnings.push(`specialists.${id}: chain entry pins cli "${parsed.cli}" with no clis template (will be skipped)`);
               }
             }
           }

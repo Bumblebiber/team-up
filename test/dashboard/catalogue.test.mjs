@@ -22,13 +22,13 @@ const roster = {
     moonshot: { kind: "credit", enabled: false },
   },
   models: {
-    "claude-opus": { cli: ["claude"], cli_model: "opus", account: "claude", tier: "frontier" },
-    "gpt-6-sol": { cli: ["codex"], account: "codex", tier: "frontier", reasoning: { max: "max" } },
+    "claude-opus": { cli: ["claude"], cli_model: "opus", account: "claude" },
+    "gpt-6-sol": { cli: ["codex"], account: "codex", reasoning: { max: "max" } },
     "grok-4.5-high": { provider: "xai", cli: ["cursor", "opencode", "hermes"], account: "cursor",
       cli_model: { cursor: "cursor-grok-4.5-{effort}", opencode: "openrouter/x-ai/grok-4.5" }, effort: "high" },
     "deepseek-v4-pro": { provider: "deepseek", cli: ["hermes"], account: "api" },
     "kimi-k2": { provider: "moonshotai", cli: ["hermes"], account: "moonshot" },
-    "openrouter/z-ai/glm-5": { provider: "openrouter", cli: ["opencode"], account: "api", tier: "medium" },
+    "openrouter/z-ai/glm-5": { provider: "openrouter", cli: ["opencode"], account: "api" },
   },
   roles: {
     planner: { chain: ["claude:claude-opus", "codex:gpt-6-sol"] },
@@ -66,7 +66,7 @@ test("checking adds a model like its sibling; unchecking keeps that id out", () 
   const on = applyCatalogueToggle(roster, { cli: "codex", cli_id: "gpt-6-luna", on: true });
   assert.deepEqual(on.models["gpt-6-luna"], { provider: "codex", account: "codex", cli: ["codex"] });
   const sol = applyCatalogueToggle(roster, { cli: "codex", cli_id: "gpt-7-sol", on: true });
-  assert.deepEqual(sol.models["gpt-7-sol"], { tier: "frontier", reasoning: { max: "max" }, provider: "codex", account: "codex", cli: ["codex"] });
+  assert.deepEqual(sol.models["gpt-7-sol"], { reasoning: { max: "max" }, provider: "codex", account: "codex", cli: ["codex"] });
 
   const off = applyCatalogueToggle(on, { cli: "codex", cli_id: "gpt-6-luna", on: false });
   assert.equal(off.models["gpt-6-luna"], undefined);
@@ -106,4 +106,18 @@ test("unchecking a model in a chain asks first, then replaces or strikes it", ()
   assert.deepEqual(struck.roles.planner.chain, ["codex:gpt-6-sol"]);
   assert.throws(() => applyCatalogueToggle(roster, { cli: "codex", cli_id: "gpt-6-sol", on: false, resolve: "strike" }),
     /chain of solo would be empty/);
+});
+
+test("a specialist's own chain counts like a role's when its model is unchecked", () => {
+  const r = { ...roster, specialists: { "coding.codey": { chain: ["claude:claude-opus", "codex:gpt-6-sol"] },
+    "review.revan": { role: "planner" }, "solo.sam": { chain: ["claude:claude-opus"] } } };
+  assert.throws(() => applyCatalogueToggle(r, { cli: "claude", cli_id: "opus", on: false }),
+    (e) => assert.deepEqual(e.roles, ["planner", "specialist coding.codey", "specialist solo.sam"]) ?? true);
+  const replaced = applyCatalogueToggle(r, { cli: "claude", cli_id: "opus", on: false,
+    resolve: { model: "gpt-6-sol", cli: "codex" } });
+  assert.deepEqual(replaced.specialists["coding.codey"].chain, ["codex:gpt-6-sol"]);
+  assert.deepEqual(replaced.specialists["solo.sam"].chain, ["codex:gpt-6-sol"]);
+  assert.deepEqual(replaced.specialists["review.revan"], { role: "planner" });
+  assert.throws(() => applyCatalogueToggle(r, { cli: "claude", cli_id: "opus", on: false, resolve: "strike" }),
+    /chain of specialist solo\.sam would be empty/);
 });

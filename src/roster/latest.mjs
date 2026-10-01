@@ -17,7 +17,7 @@
 // Only fresh, supported scans count. A failed scan says nothing about what the
 // CLI offers, so it never removes or moves anything.
 
-import { parseChainEntry, accountBlockReason } from "./chain.mjs";
+import { parseChainEntry, accountBlockReason, chainHolders } from "./chain.mjs";
 import { cliModelFor, aliasFor, fillEffort, groupEfforts, effortSpec, EFFORT_IN_NAME } from "./config.mjs";
 
 const VERSION_TOKEN = /^[a-z]?\d+(?:\.\d+)*$/;
@@ -131,13 +131,14 @@ export function cellStatus(roster, store, cli, model, now = Date.now()) {
 }
 
 /**
- * Rewrite every chain entry that has a newer present sibling.
+ * Rewrite every chain entry (roles and specialists' own chains) that has a
+ * newer present sibling.
  * @returns {{ next: object, changes: Array<{ role, cli, from, to, reason }> }}
  */
 export function upgradeChains(roster, store, now = Date.now()) {
   const next = structuredClone(roster);
   const changes = [];
-  for (const [role, spec] of Object.entries(next.roles || {})) {
+  for (const [role, spec] of chainHolders(next)) {
     if (!Array.isArray(spec?.chain)) continue;
     const seen = new Set();
     const chain = [];
@@ -184,7 +185,7 @@ export function pruneGone(roster, store, now = Date.now()) {
   const next = structuredClone(roster);
   const removed = [];
   const named = new Set();
-  for (const spec of Object.values(next.roles || {})) {
+  for (const [, spec] of chainHolders(next)) {
     for (const raw of Array.isArray(spec?.chain) ? spec.chain : []) {
       try {
         named.add(parseChainEntry(raw).model);

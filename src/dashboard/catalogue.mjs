@@ -1,4 +1,4 @@
-import { parseChainEntry } from "../roster/chain.mjs";
+import { parseChainEntry, chainHolders } from "../roster/chain.mjs";
 import { aliasFor, fillEffort, groupEfforts, effortSpec, EFFORT_IN_NAME } from "../roster/config.mjs";
 import { splitVersion, compareVersions, excludedKey } from "../roster/latest.mjs";
 
@@ -102,13 +102,13 @@ function dangles(roster, e, cli, ids) {
   return ids.includes(e.model) && (e.cli === cli || (!e.cli && roster.models[e.model].cli.length === 1));
 }
 
-/** Roles with a chain entry that loses its model when `cli` leaves `ids`. */
+/** Chain holders (see `chainHolders`) with an entry that loses its model when `cli` leaves `ids`. */
 export function affectedRoles(roster, cli, ids) {
-  return Object.entries(roster.roles || {})
+  return chainHolders(roster)
     .filter(([, spec]) => (spec?.chain || []).some((raw) => {
       try { return dangles(roster, parseChainEntry(raw), cli, ids); } catch { return false; }
     }))
-    .map(([role]) => role);
+    .map(([label]) => label);
 }
 
 /**
@@ -169,9 +169,11 @@ export function applyCatalogueToggle(roster, { cli, cli_id: cliId, on, provider,
       || (ids.includes(repl.model) && repl.cli === cli))) {
       throw new Error("replacement must be another roster model on one of its CLIs");
     }
+    const holders = new Map(chainHolders(next));
     for (const role of roles) {
+      const holder = holders.get(role);
       const chain = [];
-      for (const raw of next.roles[role].chain) {
+      for (const raw of holder.chain) {
         let e;
         try { e = parseChainEntry(raw); } catch { chain.push(raw); continue; }
         if (!dangles(next, e, cli, ids)) chain.push(raw);
@@ -179,7 +181,7 @@ export function applyCatalogueToggle(roster, { cli, cli_id: cliId, on, provider,
       }
       const deduped = [...new Map(chain.map((c) => [JSON.stringify(c), c])).values()];
       if (!deduped.length) throw new Error(`the chain of ${role} would be empty — pick a replacement`);
-      next.roles[role].chain = deduped;
+      holder.chain = deduped;
     }
     for (const id of ids) {
       next.models[id].cli = next.models[id].cli.filter((c) => c !== cli);

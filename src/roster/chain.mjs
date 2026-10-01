@@ -57,6 +57,19 @@ export function parseChainEntry(entry) {
 
 
 /**
+ * Everything that holds a chain, as [label, holder]: each role, and each
+ * specialist running on a chain of its own ("specialist <id>").
+ */
+export function chainHolders(roster) {
+  return [
+    ...Object.entries(roster.roles || {}),
+    ...Object.entries(roster.specialists || {})
+      .filter(([, spec]) => Array.isArray(spec?.chain))
+      .map(([id, spec]) => [`specialist ${id}`, spec]),
+  ];
+}
+
+/**
  * Why the account behind a model bars it, or null.
  *
  * An unknown account id is *not* a block here: a chain entry is human intent,

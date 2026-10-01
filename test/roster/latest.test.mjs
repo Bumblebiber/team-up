@@ -54,10 +54,10 @@ test("a scan older than two days moves nothing", () => {
 
 test("a newly shipped version joins the roster as a copy of its sibling, then the chains move", () => {
   const withPrice = structuredClone(roster);
-  withPrice.models["gpt-7-sol"] = { cli: ["codex"], account: "codex", tier: "frontier", price: { in: 1 } };
+  withPrice.models["gpt-7-sol"] = { cli: ["codex"], account: "codex", price: { in: 1 } };
   const { next, added, changes } = bringToLatest(withPrice, store(["gpt-6-sol", "gpt-7-sol", "gpt-8-sol", "o9-mini"]));
   assert.deepEqual(added.map((a) => a.id), ["gpt-8-sol"], "7 exists already; o9-mini has no roster family");
-  assert.deepEqual(next.models["gpt-8-sol"], { cli: ["codex"], account: "codex", tier: "frontier" });
+  assert.deepEqual(next.models["gpt-8-sol"], { cli: ["codex"], account: "codex" });
   assert.ok(changes.some((c) => c.from === "gpt-5.6-sol" && c.to === "gpt-8-sol"));
 });
 
@@ -78,4 +78,16 @@ test("a pinned entry the CLI dropped moves to the newest sibling and keeps its p
   const { next, changes } = upgradeChains(roster, store(["gpt-6-sol"]));
   assert.deepEqual(next.roles.pinned.chain, [{ model: "gpt-6-sol", cli: "codex", pinned: true }]);
   assert.ok(changes.some((c) => c.role === "pinned" && c.reason === "gone"));
+});
+
+test("a specialist's own chain moves to the newest version, and keeps a gone model named", () => {
+  // No role names terra, so only the specialist's chain keeps it in the roster.
+  const r = { ...structuredClone(roster), roles: {}, specialists: {
+    "coding.codey": { chain: ["codex:gpt-5.6-sol", "codex:gpt-5.6-terra"] }, "review.revan": { role: "planner" } } };
+  const { next, changes, removed } = bringToLatest(r, store(["gpt-6-sol", "gpt-7-sol"]));
+  assert.deepEqual(next.specialists["coding.codey"].chain, ["codex:gpt-7-sol", "codex:gpt-5.6-terra"]);
+  assert.ok(changes.some((c) => c.role === "specialist coding.codey" && c.from === "gpt-5.6-sol" && c.to === "gpt-7-sol"));
+  assert.ok(next.models["gpt-5.6-terra"], "a specialist chain still names it");
+  assert.ok(!removed.some((x) => x.id === "gpt-5.6-terra"));
+  assert.deepEqual(next.specialists["review.revan"], { role: "planner" });
 });

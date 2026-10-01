@@ -461,6 +461,7 @@ $("#roles-upgrade").addEventListener("click", async () => {
     const res = await api("/api/roles-upgrade", { method: "POST", body: JSON.stringify({}) });
     const done = [...res.added.map((a) => `added ${a.id}`), ...(res.removed || []).map((r) => `removed ${r.id}`), ...res.changes.map((c) => `${c.role}: ${c.from} → ${c.to}`)];
     status.textContent = done.length ? `${done.join(", ")} · backup ${res.backup}` : "already on the newest versions";
+    refreshSpecialists().catch(() => {});
     await refreshRoles();
   } catch (err) {
     status.textContent = `refused: ${err.message}`;
@@ -697,7 +698,7 @@ $("#catalogue-list").addEventListener("change", async (e) => {
   } catch (err) {
     status.textContent = `refused: ${err.message}`;
   } finally {
-    await Promise.allSettled([refreshCatalogue(), refreshRoles()]);
+    await Promise.allSettled([refreshCatalogue(), refreshRoles(), refreshSpecialists()]);
   }
 });
 

@@ -47,6 +47,10 @@ test("the validator wants exactly one of role or chain, and a role that exists",
   assert.match(errs({ a: { role: "implementer", chain: ["luna"] } }).join(), /exactly one of role or chain/);
   assert.match(errs({ a: { role: "gone" } }).join(), /not in roles/);
   assert.match(errs({ a: { chain: [] } }).join(), /non-empty/);
+  const { errors, warnings } = validateRoster({ ...roster, specialists: { a: { chain: ["gone-model", "nocli:luna"] } } });
+  assert.deepEqual(errors, []);
+  assert.match(warnings.join("\n"), /specialists\.a: chain entry "gone-model" not in models/);
+  assert.match(warnings.join("\n"), /specialists\.a: chain entry pins cli "nocli"/);
 });
 
 test("a role a specialist runs on cannot be deleted", () => {
