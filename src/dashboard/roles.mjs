@@ -81,8 +81,10 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
       account: spec?.account ?? null,
       // What the effort picker offers: the CLI values this model's reasoning
       // map uses, strongest first, and the default it runs at without one.
-      efforts: [...new Set(["max", "high", "medium", "low"]
-        .map((level) => spec?.reasoning?.[level]).filter((v) => typeof v === "string" && v))],
+      // A cursor template also offers every step its scan listed.
+      efforts: [...new Set([...["max", "high", "medium", "low"]
+        .map((level) => spec?.reasoning?.[level]), ...(Array.isArray(spec?.efforts) ? spec.efforts : [])]
+        .filter((v) => typeof v === "string" && v))],
       default_effort: spec?.effort ?? null,
     }))
     .sort((a, b) => a.id.localeCompare(b.id));

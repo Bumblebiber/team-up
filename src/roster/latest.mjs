@@ -18,7 +18,7 @@
 // CLI offers, so it never removes or moves anything.
 
 import { parseChainEntry, accountBlockReason } from "./chain.mjs";
-import { cliModelFor } from "./config.mjs";
+import { cliModelFor, aliasFor, fillEffort, groupEfforts, effortSpec, EFFORT_IN_NAME } from "./config.mjs";
 
 const VERSION_TOKEN = /^[a-z]?\d+(?:\.\d+)*$/;
 
@@ -72,21 +72,34 @@ export function addOfferedVersions(roster, store, now = Date.now()) {
   for (const cli of Object.keys(store?.clis || {})) {
     const offered = offeredIds(store, cli, now);
     if (!offered) continue;
-    for (const cliId of offered) {
-      if (Object.hasOwn(next.models || {}, cliId) || isExcluded(next, cli, cliId)) continue;
-      const { family, version } = splitVersion(cliId);
+    // Cursor lists every effort as its own id; one template per model instead.
+    const entries = EFFORT_IN_NAME.has(cli) ? groupEfforts([...offered]) : [...offered].map((id) => ({ id, base: id }));
+    for (const g of entries) {
+      const cliId = g.id;
+      const templated = cliId.includes("{effort}");
+      if (Object.hasOwn(next.models || {}, g.base) || isExcluded(next, cli, cliId)) continue;
+      if (templated && Object.entries(next.models || {}).some(([id, spec]) =>
+        spec?.cli?.includes(cli) && aliasFor(spec, id, cli) === cliId)) continue;
+      const { family, version } = splitVersion(g.base);
       if (!version) continue;
       let sibling = null;
       for (const [id, spec] of Object.entries(next.models || {})) {
-        if (!spec?.cli?.includes(cli) || spec.cli_model) continue;
-        const other = splitVersion(id);
+        if (!spec?.cli?.includes(cli)) continue;
+        const alias = aliasFor(spec, id, cli);
+        const sibTemplated = alias.includes("{effort}");
+        if (spec.cli_model && !sibTemplated) continue;
+        const other = splitVersion(sibTemplated ? fillEffort(alias, null) : id);
         if (other.family !== family || !other.version) continue;
         if (!sibling || compareVersions(other.version, sibling.version) > 0) sibling = { id, spec, version: other.version };
       }
       if (!sibling || compareVersions(version, sibling.version) <= 0) continue;
-      const { price, notes, $comment, strengths, weaknesses, ...spec } = sibling.spec;
-      next.models[cliId] = { ...structuredClone(spec), cli: [cli] };
-      added.push({ id: cliId, cli, from: sibling.id });
+      const { price, notes, $comment, strengths, weaknesses, cli_model, reasoning, efforts, effort, ...spec } = sibling.spec;
+      next.models[g.base] = {
+        ...structuredClone(spec),
+        cli: [cli],
+        ...(templated ? { cli_model: cliId, ...effortSpec(g) } : { ...(reasoning ? { reasoning: structuredClone(reasoning) } : {}), ...(effort ? { effort } : {}) }),
+      };
+      added.push({ id: g.base, cli, from: sibling.id });
     }
   }
   return { next, added };

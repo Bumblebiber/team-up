@@ -41,8 +41,80 @@ function isPlainObject(v) {
  * sending a wrong id to the others. An unlisted CLI falls back to the roster's
  * own model id, which is the correct answer whenever the CLI needs no alias.
  */
-export function cliModelFor(roster, model, cli) {
-  return aliasFor(roster?.models?.[model], model, cli);
+export function cliModelFor(roster, model, cli, effort = null) {
+  const spec = roster?.models?.[model];
+  return fillEffort(aliasFor(spec, model, cli), effortFor(spec, effort));
+}
+
+/**
+ * Cursor spells the effort into the model id (`grok-4.7-high`). Such a model's
+ * alias is a template, `grok-4.7-{effort}`, filled at dispatch; the Models tab
+ * shows one row per template. Other CLIs stay literal — OpenRouter has real
+ * names ending in `-high`.
+ * ponytail: token heuristic over cursor's naming; a new effort word needs
+ * adding here.
+ */
+export const EFFORT_IN_NAME = new Set(["cursor"]);
+const EFFORT_TOKEN = /-(extra-high|xhigh|minimal|none|low|medium|high|max)(?=-|$)/;
+
+/** `grok-4.7-{effort}` + `high` → `grok-4.7-high`; no effort → the bare id. */
+export function fillEffort(alias, effort) {
+  if (!alias.includes("{effort}")) return alias;
+  return effort ? alias.replace("{effort}", effort) : alias.replace("-{effort}", "");
+}
+
+const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "extra-high", "max"];
+const byRank = (a, b) => EFFORT_ORDER.indexOf(a) - EFFORT_ORDER.indexOf(b);
+
+/**
+ * The effort a template gets: one of the model's own steps as given, a
+ * reasoning level (`max`) through the model's map, else the strongest step at
+ * or below the one asked for (a chain's `xhigh` moved onto a version without
+ * it), else the model's default. Never an id the CLI does not list.
+ */
+function effortFor(spec, effort) {
+  const steps = [...new Set([...(spec?.efforts || []), ...Object.values(spec?.reasoning || {}).filter(Boolean)])].sort(byRank);
+  if (effort && steps.includes(effort)) return effort;
+  if (effort && spec?.reasoning?.[effort]) return spec.reasoning[effort];
+  if (EFFORT_ORDER.includes(effort) && steps.length) {
+    return steps.filter((x) => byRank(x, effort) <= 0).pop() ?? steps[0];
+  }
+  return spec?.effort || null;
+}
+
+/**
+ * Cursor's ids folded per model: `[{ id: template-or-id, base, efforts }]`.
+ * A bare id (`gpt-5.2`) joins the template it is the default of.
+ */
+export function groupEfforts(ids) {
+  const groups = new Map();
+  for (const id of ids) {
+    const m = id.match(EFFORT_TOKEN);
+    const key = m ? id.replace(EFFORT_TOKEN, "-{effort}") : id;
+    if (!groups.has(key)) groups.set(key, { id: key, base: fillEffort(key, null), efforts: [] });
+    if (m) groups.get(key).efforts.push(m[1]);
+  }
+  for (const [key, g] of groups) {
+    if (key.includes("{effort}")) continue;
+    const tpl = [...groups.values()].find((o) => o.id.includes("{effort}") && o.base === key);
+    if (tpl) { tpl.bare = true; groups.delete(key); }
+  }
+  for (const g of groups.values()) g.efforts.sort(byRank);
+  return [...groups.values()];
+}
+
+/**
+ * Reasoning map and default for a template's efforts. The default is the one
+ * a fill with no effort sends, so it must exist: the bare id, else `medium`,
+ * else the first the CLI lists.
+ */
+export function effortSpec({ efforts, bare }) {
+  const has = (...xs) => xs.find((x) => efforts.includes(x)) ?? null;
+  return {
+    reasoning: { max: has("max", "xhigh", "extra-high", "high"), high: has("high"), medium: has("medium"), low: has("low", "minimal", "none") },
+    efforts: [...efforts],
+    ...(bare ? {} : { effort: has("medium") ?? efforts[0] }),
+  };
 }
 
 /** Same resolution against a model object the caller already holds. */

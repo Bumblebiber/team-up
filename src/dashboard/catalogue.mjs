@@ -1,5 +1,5 @@
 import { parseChainEntry } from "../roster/chain.mjs";
-import { cliModelFor } from "../roster/config.mjs";
+import { aliasFor, fillEffort, groupEfforts, effortSpec, EFFORT_IN_NAME } from "../roster/config.mjs";
 import { splitVersion, compareVersions, excludedKey } from "../roster/latest.mjs";
 
 /**
@@ -21,11 +21,17 @@ const API_ACCOUNT = "api";
 
 const own = (obj, key) => !!obj && Object.hasOwn(obj, key);
 
-/** Roster ids that run `cliId` on `cli`. */
+/** Roster ids that run `cliId` (for cursor: the effort template) on `cli`. */
 function rosterIdsFor(roster, cli, cliId) {
   return Object.entries(roster?.models || {})
-    .filter(([id, spec]) => spec?.cli?.includes(cli) && cliModelFor(roster, id, cli) === cliId)
+    .filter(([id, spec]) => spec?.cli?.includes(cli) && aliasFor(spec, id, cli) === cliId)
     .map(([id]) => id);
+}
+
+/** What a CLI's scan offers, one entry per model: cursor's efforts folded. */
+function offeredEntries(store, cli) {
+  const ids = (store?.clis?.[cli]?.models || []).map((m) => m.cli_id);
+  return EFFORT_IN_NAME.has(cli) ? groupEfforts(ids) : ids.map((id) => ({ id, base: id }));
 }
 
 export function buildCatalogueView(roster, store) {
@@ -46,8 +52,9 @@ export function buildCatalogueView(roster, store) {
   for (const [account, spec] of Object.entries(accounts)) {
     if (spec?.kind !== "subscription") continue;
     const g = group("subscription", account, SUBSCRIPTION_LABELS[account] || account);
-    for (const m of store?.clis?.[account]?.models || []) {
-      addRow(g, account, m.cli_id, { name: m.version || m.display_name || m.cli_id });
+    const names = new Map((store?.clis?.[account]?.models || []).map((m) => [m.cli_id, m.version || m.display_name]));
+    for (const e of offeredEntries(store, account)) {
+      addRow(g, account, e.id, { name: names.get(e.id) || e.base, ...(e.efforts?.length ? { efforts: e.efforts } : {}) });
     }
   }
   for (const m of store?.clis?.[API_CLI]?.models || []) {
@@ -68,7 +75,7 @@ export function buildCatalogueView(roster, store) {
       const gid = sub ? spec.account : spec.provider || spec.account || "other";
       const g = group(sub ? "subscription" : "api", gid,
         (sub ? SUBSCRIPTION_LABELS : API_LABELS)[gid] || gid);
-      g.models.push({ cli, cli_id: cliModelFor(roster, id, cli), roster_ids: [id], checked: true, unscanned: true });
+      g.models.push({ cli, cli_id: aliasFor(spec, id, cli), roster_ids: [id], checked: true, unscanned: true });
     }
   }
   const list = [...groups.values()];
@@ -83,7 +90,7 @@ function familySibling(roster, cli, cliId) {
   let best = null;
   for (const [other, spec] of Object.entries(roster.models || {})) {
     if (!spec?.cli?.includes(cli)) continue;
-    const s = splitVersion(cliModelFor(roster, other, cli));
+    const s = splitVersion(fillEffort(aliasFor(spec, other, cli), null));
     if (s.family !== family || !s.version) continue;
     if (!best || compareVersions(s.version, best.version) > 0) best = { spec, version: s.version };
   }
@@ -119,19 +126,26 @@ export function applyCatalogueToggle(roster, { cli, cli_id: cliId, on, provider,
   }
   // Only what the CLI's scan lists can be checked in; a CLI without a scan
   // (hermes) has nothing to check, only roster rows to uncheck.
-  if (on && store && !store.clis?.[cli]?.models?.some((m) => m.cli_id === cliId)) {
-    throw new Error(`${cli} does not offer ${cliId}`);
-  }
+  const entry = store ? offeredEntries(store, cli).find((e) => e.id === cliId) : null;
+  if (on && store && !entry) throw new Error(`${cli} does not offer ${cliId}`);
   const next = structuredClone(roster);
   next.models ??= {};
   const excluded = new Set(next.models_excluded || []);
   if (on) {
     excluded.delete(excludedKey(cli, cliId));
     if (!rosterIdsFor(next, cli, cliId).length) {
-      let id = cliId.replaceAll(":", "-");
+      const templated = cliId.includes("{effort}");
+      let id = fillEffort(cliId, null).replaceAll(":", "-");
       if (own(next.models, id)) id = `${cli}-${id}`;
-      const sib = familySibling(next, cli, cliId);
+      const sib = familySibling(next, cli, fillEffort(cliId, null));
       const { price, notes, $comment, strengths, weaknesses, cli_model, ...base } = sib ? structuredClone(sib) : {};
+      if (templated) {
+        // The effort steps are this model's, not its sibling's.
+        delete base.reasoning;
+        delete base.effort;
+        delete base.efforts;
+        if (!entry?.efforts?.length) throw new Error(`no effort steps known for ${cliId} — rescan`);
+      }
       const subscription = next.accounts?.[cli]?.kind === "subscription";
       next.models[id] = {
         ...base,
@@ -139,6 +153,7 @@ export function applyCatalogueToggle(roster, { cli, cli_id: cliId, on, provider,
         account: base.account || (subscription ? cli : API_ACCOUNT),
         cli: [cli],
         ...(id !== cliId ? { cli_model: cliId } : {}),
+        ...(templated ? effortSpec(entry) : {}),
       };
     }
   } else {

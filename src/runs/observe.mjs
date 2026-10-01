@@ -303,7 +303,7 @@ export function resolveObserverJudge(roster, usage, now = Date.now()) {
 }
 
 export function buildJudgeArgv({ roster, cli, model, prompt, effort = null }) {
-  const cliModel = cliModelFor(roster, model, cli);
+  const cliModel = cliModelFor(roster, model, cli, effort);
   if (cli === "cursor") {
     const argv = [
       "cursor-agent", "-p", "--output-format", "json",

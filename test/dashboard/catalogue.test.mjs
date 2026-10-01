@@ -8,7 +8,7 @@ const store = {
   clis: {
     claude: scan(["opus", "sonnet"]),
     codex: scan(["gpt-6-sol", "gpt-6-luna", "gpt-7-sol"]),
-    cursor: scan(["cursor-grok-4.5-high", "glm-5.2-high"]),
+    cursor: scan(["cursor-grok-4.5-low", "cursor-grok-4.5-high", "glm-5.2-high", "glm-5.2-max"]),
     opencode: scan(["opencode/big-pickle", "openrouter/x-ai/grok-4.5", "openrouter/z-ai/glm-5", "minimax/MiniMax-M3"]),
   },
 };
@@ -25,7 +25,7 @@ const roster = {
     "claude-opus": { cli: ["claude"], cli_model: "opus", account: "claude", tier: "frontier" },
     "gpt-6-sol": { cli: ["codex"], account: "codex", tier: "frontier", reasoning: { max: "max" } },
     "grok-4.5-high": { provider: "xai", cli: ["cursor", "opencode", "hermes"], account: "cursor",
-      cli_model: { cursor: "cursor-grok-4.5-high", opencode: "openrouter/x-ai/grok-4.5" } },
+      cli_model: { cursor: "cursor-grok-4.5-{effort}", opencode: "openrouter/x-ai/grok-4.5" }, effort: "high" },
     "deepseek-v4-pro": { provider: "deepseek", cli: ["hermes"], account: "api" },
     "kimi-k2": { provider: "moonshotai", cli: ["hermes"], account: "moonshot" },
     "openrouter/z-ai/glm-5": { provider: "openrouter", cli: ["opencode"], account: "api", tier: "medium" },
@@ -51,6 +51,15 @@ test("every roster (model, cli) shows up checked, grouped by who bills it", () =
     openrouter: "api", minimax: "api", deepseek: "api", moonshotai: "api" });
   assert.ok(!rows(view).some((r) => r.cli_id.startsWith("opencode/")), "opencode's own tier is not a provider");
   assert.equal(rows(view).find((r) => r.cli_id === "gpt-6-luna").checked, false);
+  // Cursor: one row per model, efforts folded, the template matched.
+  assert.deepEqual(view.providers.find((p) => p.id === "cursor").models.filter((m) => m.cli === "cursor").map((m) => [m.cli_id, m.checked, m.efforts]),
+    [["cursor-grok-4.5-{effort}", true, ["low", "high"]], ["glm-5.2-{effort}", false, ["high", "max"]]]);
+});
+
+test("checking a cursor model stores the template and its effort steps", () => {
+  const next = applyCatalogueToggle(roster, { cli: "cursor", cli_id: "glm-5.2-{effort}", on: true }, store);
+  assert.deepEqual(next.models["glm-5.2"], { provider: "cursor", account: "cursor", cli: ["cursor"], cli_model: "glm-5.2-{effort}",
+    reasoning: { max: "max", high: "high", medium: null, low: null }, efforts: ["high", "max"], effort: "high" });
 });
 
 test("checking adds a model like its sibling; unchecking keeps that id out", () => {

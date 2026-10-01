@@ -663,8 +663,9 @@ function renderCatalogue() {
     const rows = models.map((m) => `<tr>
       <td><input type="checkbox" class="catalogue-toggle" data-provider="${esc(p.id)}" data-cli="${esc(m.cli)}"
         data-cli-id="${esc(m.cli_id)}"${m.checked ? " checked" : ""}></td>
-      <td class="mono">${esc(m.cli_id)}</td>
-      <td>${m.name && m.name !== m.cli_id ? esc(m.name) : ""}</td>
+      <td class="mono">${esc(m.cli_id.replace("-{effort}", ""))}</td>
+      <td>${m.name && m.name !== m.cli_id && m.name !== m.cli_id.replace("-{effort}", "") ? esc(m.name) : ""}${
+        m.efforts ? `<span class="muted" title="Picked per role or specialist, not here">effort: ${esc(m.efforts.join(" · "))}</span>` : ""}</td>
       <td class="muted">${esc(m.cli)}${m.unscanned ? " · not in any scan" : ""}</td>
     </tr>`).join("");
     return `<details class="catalogue-provider" data-provider="${esc(p.tab)}:${esc(p.id)}"${catalogueOpen.has(`${p.tab}:${p.id}`) || q ? " open" : ""}>

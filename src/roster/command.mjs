@@ -1,4 +1,4 @@
-import { cliModelFor } from "./config.mjs";
+import { cliModelFor, aliasFor } from "./config.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -29,9 +29,11 @@ export function resolveEffort({ roster, role, model, entryEffort, cellEffort }) 
 export function buildCommand({ roster, model, cli, prompt, effort = null, dir = null }) {
   const template = roster.clis?.[cli]?.cmd;
   if (!template) throw new Error(`no cli template for "${cli}" in roster.json clis section`);
-  const cliModel = cliModelFor(roster, model, cli);
+  // Cursor carries the effort in the model id; the template takes it there.
+  const cliModel = cliModelFor(roster, model, cli, effort);
+  const inName = aliasFor(roster.models?.[model], model, cli).includes("{effort}");
   const hasSlot = template.some((p) => p.includes("{effort}"));
-  if (effort && !hasSlot) {
+  if (effort && !hasSlot && !inName) {
     console.error(`roster: effort "${effort}" set but clis.${cli}.cmd has no {effort} — ignored`);
   }
   const argv = [];
