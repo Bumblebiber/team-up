@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { validateRoster } from "../../src/roster/config.mjs";
 import { applyRoleEdit, applySettingsEdit, buildRolesView, modelLabel } from "../../src/dashboard/roles.mjs";
 
 const roster = {
@@ -49,6 +50,15 @@ test("settings: only whitelisted paths, typed", () => {
   assert.throws(() => applySettingsEdit(roster, { path: "subscriptions", value: ["ghost"] }), /invalid/);
   assert.throws(() => applySettingsEdit(roster, { path: "triage.enabled", value: true }), /not editable/);
   assert.throws(() => applySettingsEdit(roster, { path: "accounts.claude.remaining", value: 3 }), /invalid/);
+});
+
+test("settings: a subscription names its plan from its own list, a credit account none", () => {
+  const r = { ...roster, accounts: { ...roster.accounts, claude: { kind: "subscription", enabled: true }, api: { kind: "credit", enabled: true } } };
+  assert.equal(applySettingsEdit(r, { path: "accounts.claude.plan", value: "max20x" }).accounts.claude.plan, "max20x");
+  assert.throws(() => applySettingsEdit(r, { path: "accounts.claude.plan", value: "ultra" }), /invalid/);
+  assert.throws(() => applySettingsEdit(r, { path: "accounts.api.plan", value: "pro" }), /invalid/);
+  const v = validateRoster({ ...r, accounts: { ...r.accounts, claude: { ...r.accounts.claude, plan: "gold" } } });
+  assert.ok(v.errors.some((e) => /accounts\.claude\.plan/.test(e)));
 });
 
 test("roles view carries pick, chain state and labels", () => {

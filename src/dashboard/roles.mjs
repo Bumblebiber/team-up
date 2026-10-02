@@ -1,5 +1,5 @@
 import { pick, parseChainEntry } from "../roster/chain.mjs";
-import { cliModelFor } from "../roster/config.mjs";
+import { cliModelFor, PLAN_TIERS } from "../roster/config.mjs";
 import { cellStatus, addOfferedVersions } from "../roster/latest.mjs";
 
 /**
@@ -174,6 +174,8 @@ const isStrList = (v) => Array.isArray(v) && v.every((s) => typeof s === "string
 const SETTINGS = [
   [/^accounts\.([^.]+)\.enabled$/, isBool, (r, [, id]) => own(r.accounts, id)],
   [/^accounts\.([^.]+)\.remaining$/, isNum, (r, [, id]) => own(r.accounts, id) && r.accounts[id].kind === "credit"],
+  [/^accounts\.([^.]+)\.plan$/, (v) => typeof v === "string",
+    (r, [, id], v) => own(r.accounts, id) && r.accounts[id].kind === "subscription" && !!PLAN_TIERS[id]?.includes(v)],
   [/^limits\.(warn_at|handoff_at)$/, (v) => isUnit(v) && v > 0],
   [/^subscriptions$/, isStrList, (r, _m, v) => v.every((cli) => own(r.clis, cli))],
   [/^usage_watcher\.tick_sec$/, isPosInt],
@@ -199,6 +201,7 @@ export function applySettingsEdit(roster, { path: setting, value } = {}) {
 export function buildSettingsView(roster) {
   const accounts = Object.fromEntries(Object.entries(roster?.accounts || {}).map(([id, a]) =>
     [id, { kind: a.kind, enabled: a.enabled, ...(a.kind === "credit" ? { remaining: a.remaining ?? null } : {}),
+      ...(a.kind === "subscription" && PLAN_TIERS[id] ? { plan: a.plan ?? null, plans: PLAN_TIERS[id] } : {}),
       ...(a.$comment ? { comment: a.$comment } : {}) }]));
   return {
     accounts,
