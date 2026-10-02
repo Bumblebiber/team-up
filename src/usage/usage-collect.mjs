@@ -1,6 +1,6 @@
 // usage-collect.mjs — subscription usage collectors → ~/.team-up/usage.json
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -67,6 +67,31 @@ function collectClaudeFast() {
   return parseClaudeUsage(text);
 }
 
+const AUTH_STATUS = {
+  claude: ["claude", ["auth", "status"]],
+  codex: ["codex", ["login", "status"]],
+  cursor: ["cursor-agent", ["status"]],
+};
+
+/**
+ * A logged-out TUI never says so on the collector's path: it sits on a login
+ * screen the expect script does not know, and the collect ends as empty-parse
+ * or a timeout. Each CLI's own status command does say so — claude as JSON
+ * `"loggedIn": false` (exit 1), codex and cursor as a `Not logged in` line.
+ * Asked only after a failed collect, so a healthy collect never pays for it.
+ */
+export function loggedOut(cli, run = spawnSync) {
+  const [bin, args] = AUTH_STATUS[cli] || [];
+  if (!bin) return false;
+  const r = run(bin, args, {
+    encoding: "utf8",
+    timeout: 20_000,
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: process.platform === "win32",
+  });
+  return /"loggedIn":\s*false|^\s*not logged in\b/im.test(`${r?.stdout || ""}\n${r?.stderr || ""}`);
+}
+
 function collectCliTranscript(cli) {
   if (cli === "claude") {
     let windows = collectClaudeFast();
@@ -98,19 +123,25 @@ export async function collectUsageForCli(opts) {
   // `bun`). Those outlive an expect that exits on `/exit` or on a boot
   // timeout, and pile up in the watcher's cgroup. Sweep inside the lock, so a
   // concurrent collect's tree is never the one being killed.
-  const lock = await withPtyLock(async () => {
-    try {
-      return collectCliTranscript(cli);
-    } finally {
-      killCollectStrays();
-    }
-  });
+  let lock;
+  try {
+    lock = await withPtyLock(async () => {
+      try {
+        return collectCliTranscript(cli);
+      } finally {
+        killCollectStrays();
+      }
+    });
+  } catch (e) {
+    if (loggedOut(cli)) return { cli, ok: false, reason: "not logged in" };
+    throw e;
+  }
   if (!lock.ok) {
     return { cli, ok: false, reason: "pty-lock-contention" };
   }
   const parsed = lock.value;
   if (!parsed || !Object.keys(parsed).length) {
-    return { cli, ok: false, reason: "empty-parse" };
+    return { cli, ok: false, reason: loggedOut(cli) ? "not logged in" : "empty-parse" };
   }
   if (!dryRun) {
     const merged = mergeUsageWindows(loadJson(usagePath()), parsed);
