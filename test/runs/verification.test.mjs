@@ -18,6 +18,7 @@ import {
   parseNodeTestCounts,
   runParentVerification,
 } from "../../src/runs/runs.mjs";
+import { gcRuns } from "../../src/runs/gc.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
 
@@ -430,6 +431,29 @@ test("a done under an open gc stale claim is still verified", withTempRuns(async
   assert.equal(r.classified.status, "failed");
   assert.equal(count(), 1);
   assert.equal(loadState(runId).verification.verdict, "fail");
+}));
+
+// gc adopts a done when no watcher is attached, before anyone verified it.
+// The later runs wait then saw a decided run and recorded nothing, so a red
+// build reached intake as done with no evidence against it.
+test("a done gc adopted unverified is verified once for the record, and stays done", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "adopted", { runs: 1, failAt: 1 });
+  gcRuns({
+    states: [loadState(runId)],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: false, activityMs: null, sessionId: null }),
+    listSessions: () => [],
+  });
+  assert.equal(loadState(runId).status, "done");
+
+  waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => {} });
+  assert.equal(count(), 1);
+  assert.equal(JSON.parse(fs.readFileSync(verificationPath(runId), "utf8")).verdict, "fail");
+  assert.equal(loadState(runId).verification.verdict, "fail");
+  assert.equal(loadState(runId).status, "done");
+
+  waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => {} });
+  assert.equal(count(), 1, "verified again");
 }));
 
 test("a run decided before verification never gets a VERIFICATION.json", withTempRuns(async (runsRoot) => {

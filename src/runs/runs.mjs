@@ -1277,7 +1277,10 @@ function verifyDoneOnce(runId, classified) {
       if (!report) {
         // Decided means terminal and not gc's synthetic stale failure, which a
         // real outcome may still supersede. An open stale claim decides nothing.
-        if (TERMINAL_RUN_STATUSES.has(state?.status) && !isSyntheticStaleFailureState(state)) return classified;
+        // A done that gc adopted unverified is still verified once, for the
+        // record only: its STATE stays done, since terminal is final.
+        const decided = TERMINAL_RUN_STATUSES.has(state?.status) && !isSyntheticStaleFailureState(state);
+        if (decided && state.status !== "done") return classified;
         report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson, statusMtimeMs });
         // The verdict that counts goes where only the parent writes, before the
         // lock is released; mailbox/VERIFICATION.json is the evidence copy.
