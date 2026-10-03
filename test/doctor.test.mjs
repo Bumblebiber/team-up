@@ -344,6 +344,37 @@ test("a harness whose CLI updated past its verified version is reported", () => 
   }
 });
 
+// A pass proven against an older canary set is drift on the same build. It
+// has a record — saying it has none sent the reader looking for a missing file.
+test("a pass against an older canary set says so instead of claiming no record", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    const dir = path.join(home, "harness-verification", "claude");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "2.1.286.json"),
+      JSON.stringify({
+        adapter: "claude",
+        cli_version: "2.1.286",
+        status: "verified",
+        context_isolation: "team-up.context-isolation/v1",
+        context_isolation_absent: ISOLATION_FORBIDDEN_CANARIES.filter((n) => !n.startsWith("ancestor.")),
+        checked_at: "2026-10-03T11:00:44.015Z",
+      })
+    );
+    const report = diagnose(homeEnv(home), { execFileSync: () => "2.1.286 (Claude Code)\n" });
+    const finding = report.findings.find((f) => f.kind === "harness_version_drift");
+    assert.ok(finding, "a stale proof must be reported as drift");
+    assert.equal(finding.severity, "high");
+    assert.match(finding.fix, /harness reverify/);
+    assert.match(finding.detail, /claude 2\.1\.286 passed on 2026-10-03T11:00:44\.015Z against an older canary set/);
+    assert.match(finding.detail, /isolation grant is withheld until it is re-verified/);
+    assert.doesNotMatch(finding.detail, /has no verification record/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 /**
  * A finding whose fix cannot work is worse than none: this cron runs daily and
  * a permanently-red high teaches the reader to skip the report. Drift on a CLI

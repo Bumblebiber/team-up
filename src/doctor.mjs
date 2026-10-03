@@ -263,12 +263,14 @@ export function diagnose(env = process.env, {
         cli,
         installed: status.installed_version,
         last_verified: status.last_verified_version,
-        detail:
-          `${cli} ${status.installed_version} has no verification record ` +
-          `(${status.last_verified_version} passed on ${status.last_checked_at}); ` +
-          (status.fallback_version
-            ? `launches run the pinned ${status.fallback_version} until it is re-verified`
-            : "every capability it granted is revoked until it is re-verified"),
+        detail: status.stale_proof
+          ? `${cli} ${status.installed_version} passed on ${status.last_checked_at} against an older ` +
+            "canary set; its isolation grant is withheld until it is re-verified"
+          : `${cli} ${status.installed_version} has no verification record ` +
+            `(${status.last_verified_version} passed on ${status.last_checked_at}); ` +
+            (status.fallback_version
+              ? `launches run the pinned ${status.fallback_version} until it is re-verified`
+              : "every capability it granted is revoked until it is re-verified"),
         fix: cannotVerify
           ? unverifiableFix(cli, null)
           : "team-up harness reverify",
