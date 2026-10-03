@@ -479,6 +479,27 @@ test("a verify command that outlives verify.timeout_sec fails with 'verify timed
   assert.equal(report.runs.length, 1, "kept running after the budget was spent");
 }));
 
+// The command exits 0 but a background grandchild holds stdout open, so
+// spawnSync times out with status 0; that read as a pass from 1 of 3 runs.
+test("a verify run that times out after its command exited 0 still fails", withTempRuns(async (runsRoot) => {
+  const state = createRun({
+    cwd: runsRoot,
+    role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex" },
+    prompt: "x",
+    verify: { command: ["sh", "-c", "(sleep 4) & exit 0"], runs: 3 },
+  });
+  const report = runParentVerification(state.runId, { ...loadState(state.runId), verify: { ...state.verify, timeout_sec: 1 } }, {
+    mailboxDir: (id) => path.join(runDir(id), "mailbox"),
+    atomicWriteJson,
+  });
+  assert.equal(report.verdict, "fail");
+  assert.equal(report.reason, "verify timed out");
+  assert.equal(report.runs.length, 1);
+  assert.equal(report.runs[0].timedOut, true);
+}));
+
 test("a lock older than the verify timeout no longer holds, even with its pid alive", withTempRuns(async (runsRoot) => {
   const { runId, count } = verifiedRun(runsRoot, "hung-holder");
   const holder = spawn("sleep", ["30"], { stdio: "ignore" });

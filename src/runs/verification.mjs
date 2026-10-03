@@ -182,13 +182,16 @@ export function runParentVerification(runId, state, { mailboxDir, atomicWriteJso
     const counts = parseNodeTestCounts(combined);
     if (counts) Object.assign(entry, counts);
     runs.push(entry);
+    // Status can be 0 here: the command exited, but a background grandchild
+    // held stdout open until the deadline. A timeout is never a pass.
     if (r.error?.code === "ETIMEDOUT") {
+      entry.timedOut = true;
       reason = "verify timed out";
       break;
     }
   }
 
-  const verdict = runs.every((row) => row.exitCode === 0) ? "pass" : "fail";
+  const verdict = !reason && runs.every((row) => row.exitCode === 0) ? "pass" : "fail";
   const report = {
     schema: "verification/1",
     command,

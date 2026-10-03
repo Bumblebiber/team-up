@@ -39,7 +39,7 @@ mutate "$SRC" "$ORIG" 's/runs\.every\(\(row\) => row\.exitCode === 0\)/runs.some
   "M1 verdict uses some instead of every"
 mutate "$SRC" "$ORIG" 's/  atomicWriteJson\(path\.join\(mailboxDir\(runId\), "VERIFICATION\.json"\), report\);\n/  \/* skip write *\/\n/' \
   "M2 parent never writes VERIFICATION.json"
-mutate "$SRC" "$ORIG" 's/const verdict = runs\.every\(\(row\) => row\.exitCode === 0\) \? "pass" : "fail";/const verdict = "pass";/' \
+mutate "$SRC" "$ORIG" 's/const verdict = !reason && runs\.every\(\(row\) => row\.exitCode === 0\) \? "pass" : "fail";/const verdict = "pass";/' \
   "M3 verdict always pass"
 mutate "$RUNS_SRC" "$RUNS_ORIG" 's/  if \(report\.verdict !== "fail"\) return classified;\n/  return classified;\n/' \
   "M4 verifyDoneOnce ignores verification failure"
