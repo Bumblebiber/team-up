@@ -7,6 +7,7 @@ import {
   materializeCapabilityCapsule,
   buildStrictMcpConfig,
   collectCapsuleMcpTools,
+  capsuleContextDir,
 } from "../capabilities/capsule.mjs";
 import { randomContentNonce } from "../capabilities/mcp-schema.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "./capabilities.mjs";
@@ -28,6 +29,16 @@ const CANARY_TOOL_RESULT = "team-up-canary-ok";
 const FORMAT_PROBE_CLAUDE = "format-probe-claude";
 const FORMAT_PROBE_MCP = "format-probe-mcp";
 
+/**
+ * Planted in a directory above the probe's cwd. Claude reads `.claude/skills`
+ * and `CLAUDE.md` from every ancestor of its cwd as project config, and a
+ * production run's cwd sits under the user's home — so without these the
+ * host's own skills and instructions reached every capsule while the canary,
+ * probing a temp dir with nothing above it, kept passing.
+ */
+export const ANCESTOR_CANARY_SKILL = "ancestor.canary-skill";
+export const ANCESTOR_CANARY_INSTRUCTIONS = "ancestor.canary-instructions";
+
 export const ISOLATION_FORBIDDEN_CANARIES = Object.freeze([
   "global.canary-skill",
   "global.canary-plugin",
@@ -35,6 +46,8 @@ export const ISOLATION_FORBIDDEN_CANARIES = Object.freeze([
   "pool.unselected-skill",
   "mcp__excluded__lookup",
   "pool.unselected-framework",
+  ANCESTOR_CANARY_SKILL,
+  ANCESTOR_CANARY_INSTRUCTIONS,
 ]);
 
 /** Uniquely named skill shipped inside the selected plugin fixture for nonce proof. */
@@ -472,7 +485,8 @@ function flagValues(argv, flag) {
 
 
 /**
- * Build global + pool canaries and a capsule containing only the selected set.
+ * Build global, pool and ancestor canaries and a capsule containing only the
+ * selected set.
  */
 export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-canary-"))) {
   const globalHome = path.join(root, "global-home");
@@ -488,6 +502,15 @@ export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.t
     framework: randomContentNonce(),
     mcp: randomContentNonce(),
   };
+
+  // `root` is an ancestor of the probe cwd, as the user's home is of a
+  // production run's context dir.
+  const ancestorNonce = randomContentNonce();
+  writeFile(
+    path.join(root, ".claude", "skills", ANCESTOR_CANARY_SKILL, "SKILL.md"),
+    `---\nname: ${ANCESTOR_CANARY_SKILL}\ndescription: canary skill in an ancestor of the cwd\n---\n# ${ANCESTOR_CANARY_SKILL}\n`
+  );
+  writeFile(path.join(root, "CLAUDE.md"), contentNonceField("# ancestor canary instructions", ancestorNonce));
 
   writeFile(
     path.join(globalHome, ".claude", "skills", "global.canary-skill", "SKILL.md"),
@@ -581,7 +604,10 @@ export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.t
     exclusions: ["fixture.excluded-mcp"],
   });
   const mcpBits = collectCapsuleMcpTools(effective, runRoot);
+  const contextDir = capsuleContextDir(runRoot);
+  fs.mkdirSync(contextDir, { recursive: true });
   const capsule = {
+    contextDir,
     pluginDirs: effective.packages.flatMap((item) =>
       item.resolved.plugins.map((rel) => path.join(runRoot, rel))),
     mcpConfig: buildStrictMcpConfig(effective, runRoot),
@@ -599,6 +625,8 @@ export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.t
     mcp_tools: ["mcp__selected__lookup"],
     frameworks: ["capsule.selected-framework"],
     nonces: { ...nonces },
+    // Must never be seen; kept apart from `nonces`, which must all be seen.
+    ancestor_nonce: ancestorNonce,
   };
   const codexExpected = null;
 
@@ -898,14 +926,39 @@ function findSkillLaunchProof(pairs, syntheticTexts, skillName, nonce) {
 }
 
 /**
+ * Whether the ancestor CLAUDE.md was observed absent.
+ *
+ * CLAUDE.md never shows in system/init: it reaches the session transcript as
+ * an `instructions` attachment. So absence is judged there, with the selected
+ * skill's body as the positive control — a transcript that does not even hold
+ * that cannot show what else was loaded, and an unobserved canary is never
+ * reported absent.
+ */
+function ancestorInstructionsVerdict({ streamText, transcriptText, expected }) {
+  const nonce = expected?.ancestor_nonce;
+  if (!nonce) return "unobserved";
+  if (String(streamText ?? "").includes(nonce) || String(transcriptText ?? "").includes(nonce)) {
+    return isoFail("forbidden_canary_present", ANCESTOR_CANARY_INSTRUCTIONS);
+  }
+  const skillNonce = expected?.nonces?.skill;
+  if (typeof transcriptText !== "string" || !skillNonce || !transcriptText.includes(skillNonce)) {
+    return "unobserved";
+  }
+  return "absent";
+}
+
+/**
  * Derive selected capability + content_nonce proof from Claude 2.1.220
  * structured init + correlated Skill / plugin Skill / Read / MCP events.
  * Final model JSON is never authoritative for selected/nonce proof.
+ * `transcriptText` is the session transcript, the only place an ancestor
+ * CLAUDE.md shows up.
  */
 export function parseClaudeStructuredCapabilityProofs(streamText, {
   expected = null,
   capsule = null,
   prepared = null,
+  transcriptText = null,
 } = {}) {
   if (!expected?.nonces || !capsule) {
     return isoFail("expected_matrix_incomplete", "expected.nonces or capsule missing");
@@ -938,6 +991,8 @@ export function parseClaudeStructuredCapabilityProofs(streamText, {
     || (init.tools || []).includes("mcp__excluded__lookup")) {
     return isoFail("forbidden_mcp_present", "global or excluded mcp tool in init");
   }
+  const instructions = ancestorInstructionsVerdict({ streamText, transcriptText, expected });
+  if (isIsoFailure(instructions)) return instructions;
 
   const wantSkill = (expected.skills || [])[0];
   const wantPlugin = (expected.plugins || [])[0];
@@ -996,7 +1051,7 @@ export function parseClaudeStructuredCapabilityProofs(streamText, {
   // Prove no forbidden skill/plugin/MCP/framework result was produced.
   for (const pair of pairs) {
     const skillName = String(pair.input.skill || "");
-    if (skillName === "global.canary-skill" || skillName === "pool.unselected-skill") {
+    if (ISOLATION_FORBIDDEN_CANARIES.includes(skillName)) {
       return isoFail("forbidden_tool_invoked", skillName);
     }
     if (pair.name === "mcp__global__canary" || pair.name === "mcp__excluded__lookup") {
@@ -1022,6 +1077,7 @@ export function parseClaudeStructuredCapabilityProofs(streamText, {
     ...mcpTools,
   ]);
   const absent = ISOLATION_FORBIDDEN_CANARIES.filter((name) => {
+    if (name === ANCESTOR_CANARY_INSTRUCTIONS) return instructions === "absent";
     if (visible.has(name)) return false;
     if ((init.skills || []).includes(name)) return false;
     if ((init.plugins || []).includes(name)) return false;
@@ -1510,11 +1566,18 @@ export function collectLiveIsolationObservation({
   }
 
   const authHome = probeHome;
-  const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-neutral-"));
+  // The production cwd layout (capsuleContextDir), not a neutral temp dir: what
+  // Claude loads depends on the directories above its cwd, and the fixture
+  // plants its ancestor canaries there.
+  const cwd = capsule.contextDir;
+  if (!cwd || !fs.existsSync(cwd)) {
+    return isoFail("probe_cwd_missing", "capsule.contextDir missing or not on disk");
+  }
   try {
     const addDirs = [...flagValues(prepared.argv, "--add-dir")];
     const toolsFlag = flagValues(prepared.argv, "--tools")[0]
       || flagValues(prepared.argv, "--allowedTools")[0];
+    const settingSources = flagValues(prepared.argv, "--setting-sources").at(-1);
     // Inventory probe uses the same HOME + flags as production (minus prompt).
     const inventoryArgv = [
       "claude",
@@ -1523,6 +1586,7 @@ export function collectLiveIsolationObservation({
       ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
       ...addDirs.flatMap((dir) => ["--add-dir", dir]),
       ...(toolsFlag ? ["--tools", toolsFlag, "--allowedTools", toolsFlag] : []),
+      ...(settingSources ? ["--setting-sources", settingSources] : []),
       "--disallowedTools", "Bash",
       "--print",
       "--verbose",
@@ -1532,7 +1596,7 @@ export function collectLiveIsolationObservation({
     const inventoryRun = spawnSyncFn(inventoryArgv[0], inventoryArgv.slice(1), {
       encoding: "utf8",
       timeout: 180_000,
-      cwd: neutralDir,
+      cwd,
       env: buildIsolationProbeEnv(authHome),
     });
     if (inventoryRun.error) {
@@ -1553,7 +1617,7 @@ export function collectLiveIsolationObservation({
     if (!init) return isoFail("init_inventory_missing", "no system/init in inventory stream");
 
     // Structured negatives: forbidden canaries must not appear in init inventory.
-    for (const bad of ["global.canary-skill", "global.canary-plugin"]) {
+    for (const bad of ISOLATION_FORBIDDEN_CANARIES) {
       if ((init.skills || []).includes(bad) || (init.plugins || []).includes(bad)) {
         return isoFail("forbidden_canary_present", bad);
       }
@@ -1579,6 +1643,7 @@ export function collectLiveIsolationObservation({
       expected,
       capsule,
       prepared,
+      transcriptText: readSessionTranscript(authHome, init.session_id),
     });
     if (isIsoFailure(observed)) return observed;
     if (!observed) return isoFail("structured_proof_failed", "structured capability proof missing");
@@ -1592,9 +1657,27 @@ export function collectLiveIsolationObservation({
     return observed;
   } catch (e) {
     return isoFail("unexpected_error", truncateIsoDetail(e?.message || "live observation failed"));
-  } finally {
-    try { fs.rmSync(neutralDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
+}
+
+/**
+ * The session's transcript under the probe HOME, found by session id rather
+ * than by the CLI's cwd slug. `null` when there is none.
+ */
+function readSessionTranscript(home, sessionId) {
+  if (!/^[A-Za-z0-9_-]+$/.test(String(sessionId || ""))) return null;
+  const projects = path.join(home, ".claude", "projects");
+  let dirs;
+  try {
+    dirs = fs.readdirSync(projects);
+  } catch {
+    return null;
+  }
+  for (const dir of dirs) {
+    const file = path.join(projects, dir, `${sessionId}.jsonl`);
+    if (fs.existsSync(file)) return fs.readFileSync(file, "utf8");
+  }
+  return null;
 }
 
 export function parseCodexJsonlToolProof(streamText, { nonce } = {}) {
@@ -1790,6 +1873,7 @@ export function observeContextIsolation({
         expected,
         capsule: fixture.capsule,
         prepared,
+        transcriptText: live.transcript_text ?? null,
       });
       if (isIsoFailure(observed)) {
         return finish({
