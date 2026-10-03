@@ -528,6 +528,59 @@ test("getMailboxAge ignores observer-owned files and clamps negative", withTempR
   assert.equal(getMailboxAge(state.runId, { now: () => futureNow }), 0);
 }));
 
+// PROMPT.md and the dispatch-time STATUS made every fresh run look alive for
+// 900 s, so the judge's first "answer" was always downgraded to wait.
+test("getMailboxAge counts only what the worker writes", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const mb = runs.mailboxDir(state.runId);
+  for (const name of ["ANSWER.md", "VERIFICATION.json", "REATTACH_WATCHER", ".VERIFICATION.lock", "CONTROL.json"]) {
+    touchMailbox(state.runId, name, "parent\n");
+  }
+  escalateRun(state.runId, "observer question");
+  assert.equal(getMailboxAge(state.runId), Infinity, "PROMPT.md/STATUS/parent files are not worker activity");
+
+  const ageOf = (name, body) => {
+    touchMailbox(state.runId, name, body);
+    const later = fs.statSync(path.join(mb, name)).mtimeMs + 30_000;
+    const age = getMailboxAge(state.runId, { now: () => later });
+    fs.rmSync(path.join(mb, name));
+    return age;
+  };
+  assert.equal(ageOf("QUESTIONS.md", "Which DB?\n"), 30, "a worker's own question is activity");
+  for (const name of ["HEARTBEAT", "RESULT.md", "RESULT.json", "CHECKPOINT.json"]) {
+    assert.equal(ageOf(name), 30, name);
+  }
+}));
+
+test("a worker that never wrote is not vouched alive: the judge's answer goes through", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  const pane = "Allow this edit?\n❯ 1. Yes\n  2. No\n";
+  const sent = [];
+  let ticks = 0;
+  await runObserver(state.runId, {
+    pollSec: 0.001,
+    stallTicks: 2,
+    silenceSec: 900,
+    roster: INTEGRATION_ROSTER,
+    usage: {},
+    parentPid: process.pid,
+    isParentAlive: () => true,
+    acquireLock: () => ({ ok: true }),
+    keepLock: true,
+    capture: () => pane,
+    judge: () => ({ ok: true, stdout: JSON.stringify({ state: "waiting_input", reason: "prompt", action: "answer", keys: ["Enter"] }) }),
+    sendKeys: (keys) => sent.push(keys),
+    sleep: async () => { ticks += 1; },
+    shouldStop: () => ticks > 6,
+  });
+  assert.deepEqual(sent, [["Enter"]]);
+  // ...while silence still counts from the dispatch: no silence-stall judge
+  // call for a worker that has only just been handed its task.
+  const log = fs.readFileSync(observationLogPath(state.runId), "utf8");
+  assert.match(log, /"trigger":"pane"/);
+  assert.doesNotMatch(log, /"trigger":"(silence|both)"/);
+}));
+
 test("getMailboxAge reflects newest worker file mtime", withTempRuns(async () => {
   const state = createRunWithTmux();
   touchMailbox(state.runId, "HEARTBEAT", "fresh");

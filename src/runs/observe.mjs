@@ -28,11 +28,23 @@ export const OBSERVATION_LOG_FILE = "OBSERVATION.log";
 export const MAX_KEYS_PER_ANSWER = 8;
 export const MAX_STALL_EPISODES = 3;
 
-/** Mailbox files written by the observer — excluded from worker-silence age. */
-export const OBSERVER_OWNED_MAILBOX_FILES = new Set([
-  OBSERVER_PID_FILE,
-  OBSERVATION_LOG_FILE,
-]);
+/**
+ * Mailbox files only the worker writes: the evidence that it is alive.
+ * Everything else there is the parent's or the observer's — PROMPT.md,
+ * ANSWER.md, VERIFICATION.json, locks, the observer's own QUESTIONS.md — and
+ * counting it made every fresh run look alive for 900 s, so the judge's first
+ * "answer" was always downgraded to wait. STATUS is left out: the parent
+ * writes it at dispatch and on every answer, and a worker's own STATUS write
+ * comes with a HEARTBEAT.
+ */
+export const WORKER_ACTIVITY_FILES = ["HEARTBEAT", "RESULT.md", "RESULT.json", "CHECKPOINT.json", "QUESTIONS.md"];
+
+/**
+ * Silence restarts when the worker writes, and when the parent hands it
+ * something (STATUS at dispatch, on an answer): a worker that has not written
+ * yet is new, not silent.
+ */
+const SILENCE_FILES = [...WORKER_ACTIVITY_FILES, "STATUS"];
 
 export const ALLOWED_KEYS = new Set([
   "Enter", "Escape", "Up", "Down", "Left", "Right", "Tab", "Space",
@@ -388,18 +400,24 @@ export function isProcessAlive(pid) {
   }
 }
 
-/** Seconds since the newest worker-owned mtime in the mailbox directory. */
-export function getMailboxAge(runId, { now = () => Date.now(), stat = fs.statSync } = {}) {
+/** QUESTIONS.md whose last block the observer appended (escalateRun). */
+function questionsFromObserver(file) {
+  const sources = [...fs.readFileSync(file, "utf8").matchAll(/<!-- source: (\S+) -->/g)];
+  return sources.at(-1)?.[1] === "observer";
+}
+
+/** Seconds since the newest of `files` in the mailbox; Infinity when none exists. */
+export function getMailboxAge(runId, { now = () => Date.now(), stat = fs.statSync, files = WORKER_ACTIVITY_FILES } = {}) {
   const mb = mailboxDir(runId);
-  if (!fs.existsSync(mb)) return Infinity;
   let latest = 0;
-  for (const name of fs.readdirSync(mb)) {
-    if (OBSERVER_OWNED_MAILBOX_FILES.has(name)) continue;
+  for (const name of files) {
+    const file = path.join(mb, name);
     try {
-      const st = stat(path.join(mb, name));
+      if (name === "QUESTIONS.md" && questionsFromObserver(file)) continue;
+      const st = stat(file);
       if (st.mtimeMs > latest) latest = st.mtimeMs;
     } catch {
-      // skip unreadable entries
+      // not written (yet)
     }
   }
   if (latest === 0) return Infinity;
@@ -659,7 +677,9 @@ export function handleStall({
     sendKeys = (keys) => sendTmuxKeys(state.worker.tmux, keys, deps),
     dispatchStart = state.createdAt ? Date.parse(state.createdAt) : Date.now(),
     silenceSec = DEFAULT_SILENCE_SEC,
-    mailboxAgeSec = getMailboxAge(runId, { now }),
+    mailboxAgeSec = getMailboxAge(runId, { now, files: SILENCE_FILES }),
+    // Only the worker's own writes vouch that a frozen pane is still working.
+    workerAgeSec = deps.mailboxAgeSec ?? getMailboxAge(runId, { now }),
   } = deps;
 
   const elapsedSec = Math.round((now() - dispatchStart) / 1000);
@@ -740,7 +760,7 @@ export function handleStall({
   const verified = verifyVerdict(verdict, capture, {
     ...loop,
     silenceSec,
-    mailboxAgeSec,
+    mailboxAgeSec: workerAgeSec,
   });
   log({
     kind: "decision",
@@ -894,7 +914,8 @@ export async function runObserver(runId, deps = {}) {
       }
 
       const capture = captureFn(session);
-      const mailboxAgeSec = deps.mailboxAgeSec ?? getMailboxAge(runId, { now });
+      const mailboxAgeSec = deps.mailboxAgeSec ?? getMailboxAge(runId, { now, files: SILENCE_FILES });
+      const workerAgeSec = deps.mailboxAgeSec ?? getMailboxAge(runId, { now });
       const next = observerTick(loop, capture, { ...deps, silenceSec, mailboxAgeSec });
       Object.assign(loop, next);
 
@@ -904,7 +925,7 @@ export async function runObserver(runId, deps = {}) {
           state,
           loop,
           capture: next.capture,
-          deps: { ...deps, roster, usage, now, silenceSec, mailboxAgeSec, stallTrigger: next.trigger },
+          deps: { ...deps, roster, usage, now, silenceSec, mailboxAgeSec, workerAgeSec, stallTrigger: next.trigger },
         });
         Object.assign(loop, result.loop);
         if (result.stop) break;
