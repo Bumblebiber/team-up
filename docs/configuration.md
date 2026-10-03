@@ -84,6 +84,11 @@ isolation is applied. See `docs/command-broker.md`.
 | `limits.handoff_at_burst` | `0.8` | Burst-window handoff threshold (5h/session windows) |
 | `limits.handoff_retention_days` | `14` | Open and closed handoff files under `~/.team-up/handoffs/` older than this are deleted by `team-up runs gc` |
 
+The warning and handoff thresholds (the limit-watch hook and `team-up usage
+--check`) count only the windows of the CLI the calling session runs on; an
+exhausted codex window never ends a Claude Code session. When the host CLI
+cannot be detected, every window counts.
+
 Session handoff work orders live in `~/.team-up/handoffs/` (open) and
 `~/.team-up/handoffs/done/` (closed). They are not written into project repos.
 

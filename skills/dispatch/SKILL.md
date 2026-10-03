@@ -160,7 +160,10 @@ yourself (parent recovery, rare).
 
 `wait-mailbox.sh` ignores HEARTBEAT / non-terminal STATUS changes — it only
 wakes on `done|failed|cancelled|waiting_human`. A watcher that returns
-`watching` after a few seconds is a bug (or ceiling), not success.
+`watching` after a few seconds is a bug (or ceiling), not success. After
+`STATUS=done` with no RESULT file yet, `runs wait` keeps waiting up to 120 s
+for the RESULT before it fails the run; if its ceiling hits first it exits 2
+with `watching`.
 
 Watcher is disposable; mailbox on disk is continuity. Parent does not hot-loop
 poll. After host crash: `$RUNS resume` (agentless, or at boot via

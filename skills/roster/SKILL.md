@@ -171,6 +171,14 @@ and after each phase transition.
 
 `pick`/`dispatch` exit non-zero listing every skipped model and why. Report
 that to the user verbatim and stop — never substitute your own model choice.
+`dispatch` can also exit 2 after its usage refresh (`chain exhausted for role
+… after usage refresh`, or a pin that `cannot run after usage refresh`): fresh
+data blocked the choice the stale cache allowed. Same rule — report and stop.
+
+A dispatch and a started specialist launch record their routing decision in
+the run's `STATE.json` `picks` (last 10): `cli`, `model`, `effort`, `pinned`,
+`skipped` (with reasons) and `refresh` (`null` none, `ok`, or `failed` = went
+ahead on stale usage). Read it to see which limits a run was routed around.
 
 ## Cross-CLI runs (mailbox watcher)
 
