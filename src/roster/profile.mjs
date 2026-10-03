@@ -1,13 +1,9 @@
 import { modelUsageGate } from "../usage/usage-windows.mjs";
-import { limits, accountBlockReason, parseChainEntry, resolveEffort } from "./chain.mjs";
+import {
+  limits, accountBlockReason, parseChainEntry, resolveEffort, resolveLimitWindows, markedUntil,
+} from "./chain.mjs";
 import { defaultHarnessCapabilities } from "../harness/registry.mjs";
 import { COMMAND_BROKER_CAPABILITY } from "../harness/capabilities.mjs";
-
-function markedUntil(usage, key, now) {
-  const until = usage?.marked?.[key]?.until;
-  if (!until) return false;
-  return Date.parse(until) > now;
-}
 
 /**
  * A specialist's assignment from the roster: `{ role }` runs it on that role's
@@ -136,10 +132,10 @@ export function resolveProfile({
         effort: resolveEffort({ roster, role, model, entryEffort: entry.effort }),
         priority: index,
       };
-      const limitWindows = Array.isArray(spec.limit_windows) ? spec.limit_windows : [];
       const gate = modelUsageGate({
         usage,
-        limitWindows,
+        // Same windows pick() gates on: undeclared ones derive from the CLIs.
+        limitWindows: resolveLimitWindows(roster, model, spec),
         provider: spec.provider,
         cli,
         limits: roleLimits,

@@ -25,7 +25,7 @@ export function limits(roster) {
   };
 }
 
-function markedUntil(usage, key, now) {
+export function markedUntil(usage, key, now) {
   const until = usage?.marked?.[key]?.until;
   if (!until) return false;
   return Date.parse(until) > now;
