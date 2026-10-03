@@ -35,6 +35,9 @@ function plant(home, runId, status) {
 test("a mailbox that fails persists its reason and end time", async () => {
   await withHome(({ home, runs }) => {
     plant(home, "20260101T000000Z-r001", "done"); // done without RESULT.md
+    // ...and long enough ago that the RESULT is no longer due.
+    const old = (Date.now() - runs.RESULT_GRACE_MS - 1000) / 1000;
+    fs.utimesSync(path.join(home, "runs", "20260101T000000Z-r001", "mailbox", "STATUS"), old, old);
     runs.waitMailbox("20260101T000000Z-r001", { observe: false, stopTmux: () => {} });
     const state = runs.loadState("20260101T000000Z-r001");
     assert.equal(state.status, "failed");

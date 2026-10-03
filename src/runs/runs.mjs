@@ -384,9 +384,30 @@ export function readMaybe(filePath) {
   }
 }
 
-/** Inspect mailbox once; return { status, question?, resultPath?, error? }.
+/**
+ * How long a STATUS=done may wait for its RESULT, counted from the STATUS
+ * write. Workers write STATUS before RESULT often enough: 12 cursor runs were
+ * failed 12-205 ms after STATUS=done, and 5 more got their RESULT 2-54 s later
+ * but stayed failed, because a terminal state is irreversible.
+ */
+export const RESULT_GRACE_MS = 120_000;
+
+/** STATUS=done whose RESULT may still land: not failed yet, not terminal. */
+function resultStillDue(mb) {
+  try {
+    return Date.now() - fs.statSync(path.join(mb, "STATUS")).mtimeMs < RESULT_GRACE_MS;
+  } catch {
+    return false;
+  }
+}
+
+const RESULT_PENDING = Object.freeze({ status: "watching", pending: "result" });
+
+/** Inspect mailbox once; return { status, question?, resultPath?, error?, pending? }.
  * Only runs whose STATE declares result_protocol: "RESULT.json" require typed JSON.
  * Generic/legacy Path-B runs succeed with RESULT.md.
+ * `pending` marks a non-terminal "watching" that is waiting for something
+ * specific (the RESULT after STATUS=done) — `runs wait` keeps waiting on it.
  */
 export function classifyMailbox(runId) {
   const mb = mailboxDir(runId);
@@ -412,6 +433,9 @@ export function classifyMailbox(runId) {
   }
 
   if (statusLine === "done") {
+    // No RESULT of either kind yet: the worker may still be writing it. A
+    // typed run that left only RESULT.md closed out with the wrong file.
+    if (!resultMd && !resultJsonRaw && resultStillDue(mb)) return { ...RESULT_PENDING };
     if (!typed) {
       if (!resultMd && !resultJsonRaw) {
         return {
@@ -1301,10 +1325,25 @@ export function waitMailbox(runId, {
     }
 
     const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
-    const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
-    resolved = reconcileMailbox(runId);
+    // Same grace as classifyMailbox: the script sleeps through a done whose
+    // RESULT is still due instead of waking at once, over and over.
+    const resultArgs = ["--result-grace-sec", String(RESULT_GRACE_MS / 1000)];
+    const deadline = Date.now() + ceilingSec * 1000;
+    let waitExit;
+    for (;;) {
+      const left = Math.max(1, Math.ceil((deadline - Date.now()) / 1000));
+      const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(left), ...resultArgs], { encoding: "utf8" });
+      waitExit = r.status ?? 1;
+      resolved = reconcileMailbox(runId);
+      if (waitExit !== 0 || !resolved.classified?.pending || Date.now() >= deadline) break;
+      // Woke while the result is still pending (the script rounds the grace
+      // to whole seconds): a short pause, not a hot loop.
+      sleepMs(1000);
+    }
+    // Still pending at the ceiling: the parent waits again, nothing is decided.
+    if (resolved.classified?.pending && waitExit === 0) waitExit = 2;
     cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
-    return { waitExit: r.status ?? 1, classified: resolved.classified };
+    return { waitExit, classified: resolved.classified };
   } finally {
     if (observerChild && observerChild.exitCode === null) {
       observerChild.kill("SIGTERM");
