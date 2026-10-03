@@ -17,6 +17,16 @@ const DESTINATIONS = {
   mcps: ["harness", "mcp"],
 };
 
+/**
+ * A run's worker cwd. The launcher and the isolation canary both take it from
+ * here: Claude reads project config from every directory above its cwd, so
+ * whether a capsule leaks depends on where the cwd sits, and a canary probing
+ * any other layout verifies something production never runs.
+ */
+export function capsuleContextDir(runRoot) {
+  return path.join(runRoot, "context");
+}
+
 /** Prompt-facing types: skill / framework / plugin prose+metadata. */
 const PROMPT_TYPES = new Set(["skills", "frameworks", "plugins"]);
 

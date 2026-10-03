@@ -10,6 +10,8 @@ import { approveSpecialist } from "../../src/specialists/approvals.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { createRun } from "../../src/runs/runs.mjs";
+import { capsuleContextDir } from "../../src/capabilities/capsule.mjs";
+import { loadAuthoritativeLaunchDescriptor } from "../../src/supervisor/start.mjs";
 
 test("launcher refuses required sandbox when probe fails; missing specialist still errors", async () => {
   await assert.rejects(
@@ -238,6 +240,32 @@ test("a one-off model override replaces the specialist's chain with that one cel
     assert.equal(overridden.runtime.cli, "claude");
     // A capacity wait re-resolves the cell the caller asked for, not the chain.
     assert.deepEqual(storedProfile(overridden), { chain: [{ model: "big", cli: "claude" }] });
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});
+
+test("the worker cwd is capsuleContextDir, the function the isolation canary probes from", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  let seen = null;
+  try {
+    const result = await launch({
+      ...fixture.args,
+      dependencyOverrides: {
+        ...ISOLATED,
+        prepareHarnessLaunch: ({ argv, runDir, capsule }) => {
+          seen = { runDir, capsule };
+          return { argv, env: {}, files: [] };
+        },
+      },
+    });
+    // Claude reads project config from every directory above its cwd, so a
+    // leak depends on where the cwd sits. The canary only measures production
+    // if both derive the cwd the same way.
+    const cwd = capsuleContextDir(seen.runDir);
+    assert.equal(seen.capsule.contextDir, cwd);
+    assert.equal(loadAuthoritativeLaunchDescriptor(result.runId).context_dir, cwd);
   } finally {
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }
