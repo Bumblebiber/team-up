@@ -5,6 +5,8 @@ import {
   chainCapacityReport,
 } from "../../src/supervisor/capacity.mjs";
 import { resolveLimitWindowsForCell } from "../../src/supervisor/start.mjs";
+import { usedFraction } from "../../src/supervisor/production.mjs";
+import { decideTransition } from "../../src/supervisor/controller.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 
 const roster = {
@@ -133,7 +135,39 @@ test("the capacity report blocks a cell on the windows its CLI implies, as the p
   assert.equal(report.next_reset_at, "2026-10-04T12:00:00.000Z");
 });
 
-test("a started cell's runtime watches the windows its CLI implies", () => {
-  assert.deepEqual(resolveLimitWindowsForCell({ cli: "cursor", model: "grok" }, gated), ["cursor:included"]);
+// The runtime keeps the declared windows only. In-run supervision hands off
+// at prepare_at 0.9 while the start gate blocks at 0.95, and the successor
+// shares the derived window, so supervising it looped between cursor cells.
+test("a started cell's runtime watches only the windows its model declares", () => {
+  assert.deepEqual(resolveLimitWindowsForCell({ cli: "cursor", model: "grok" }, gated), []);
   assert.deepEqual(resolveLimitWindowsForCell({ cli: "codex", model: "sol" }, gated), ["codex:weekly"]);
+});
+
+test("cursor cells between prepare_at and the start gate hand off to no one", () => {
+  const designer = {
+    accounts: gated.accounts,
+    clis: gated.clis,
+    models: {
+      "composer-2.5": { cli: ["cursor"], account: "cursor" },
+      "grok-4.7": { cli: ["cursor"], account: "cursor" },
+      "gpt-6-luna": { cli: ["codex"], account: "codex", limit_windows: ["codex:weekly"] },
+    },
+    roles: { designer: { chain: ["cursor:composer-2.5", "cursor:grok-4.7", "codex:gpt-6-luna"] } },
+    specialists: { "frontend.designer": { role: "designer" } },
+  };
+  const now = Date.parse("2026-10-03T12:00:00Z");
+  const updated_at = "2026-10-03T11:55:00Z";
+  const usage = {
+    windows: {
+      "cursor:included": { used: 0.92, resets_at: "2026-10-27T00:00:00.000Z", updated_at },
+      "codex:weekly": { used: 0.1, resets_at: "2026-10-04T12:00:00.000Z", updated_at },
+    },
+  };
+  const profile = resolveProfile({ roster: designer, specialistId: "frontend.designer", usage, now });
+  assert.deepEqual(profile.chain.map((c) => c.model), ["composer-2.5", "grok-4.7", "gpt-6-luna"]);
+  for (const cell of profile.chain.filter((c) => c.cli === "cursor")) {
+    const runtime = { ...cell, limit_windows: resolveLimitWindowsForCell(cell, designer) };
+    const used = usedFraction({ runtime }, usage);
+    assert.equal(decideTransition({ state: "running", used }).action, "noop", cell.model);
+  }
 });
