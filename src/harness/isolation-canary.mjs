@@ -1089,7 +1089,10 @@ export function parseClaudeStructuredCapabilityProofs(streamText, {
     }
     return true;
   });
-  if (!absentListComplete(absent)) return isoFail("absent_list_incomplete");
+  if (!absentListComplete(absent)) {
+    const missing = ISOLATION_FORBIDDEN_CANARIES.filter((name) => !absent.includes(name));
+    return isoFail("absent_list_incomplete", `not observed: ${missing.join(", ")}`);
+  }
 
   return {
     skills: [wantSkill],

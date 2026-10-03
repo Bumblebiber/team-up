@@ -200,7 +200,11 @@ test("no transcript proves nothing about CLAUDE.md, so isolation is not granted"
       fs.rmSync(path.join(opts.env.HOME, ".claude", "projects"), { recursive: true, force: true });
       return out;
     };
-    assertIsoFailure(observe(fixture, prepare(fixture), noTranscript), "absent_list_incomplete");
+    const observed = observe(fixture, prepare(fixture), noTranscript);
+    assertIsoFailure(observed, "absent_list_incomplete");
+    // A CLI that stops keeping -p transcripts fails every reverify here; the
+    // record has to say which canary went unobserved.
+    assert.equal(observed.detail, `not observed: ${ANCESTOR_CANARY_INSTRUCTIONS}`);
   } finally {
     fixture.cleanup();
   }

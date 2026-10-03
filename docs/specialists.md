@@ -171,8 +171,10 @@ a skill installed only there is already invisible to every specialist. That
 rests on two things: the worker's `HOME` is the run's auth-only home, and it
 launches with `--setting-sources user`. The second matters because a run's cwd
 sits under the real home, and Claude otherwise reads `.claude/skills` and
-`CLAUDE.md` from every directory above its cwd — from 2026-09-01 until this
-was fixed, every capsule loaded the host's skills and `CLAUDE.md` that way.
+`CLAUDE.md` from every directory above its cwd. From 2026-09-01 until this
+was fixed every capsule listed the host's skills that way, and every
+transcript that records instructions (2.1.284 on) shows the host's
+`CLAUDE.md` files loaded too.
 The isolation canary plants an ancestor skill and `CLAUDE.md` to keep it from
 coming back.
 

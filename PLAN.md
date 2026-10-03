@@ -21,8 +21,9 @@ skills visible on this host, 2 in the capsule; no `installed_plugins.json` in
 the capsule at all (only a marketplace catalogue); three named MCP servers
 instead of the host's full set; MCP tools narrowed to the twelve declared
 browser tools plus context7's two. The switch to a `HOME` redirect shipped
-without `--setting-sources user`, so from 2026-09-01 every capsule loaded the
-host's skills and `CLAUDE.md` from the directories above its cwd, and the
+without `--setting-sources user`, so from 2026-09-01 every capsule listed the
+host's skills from the directories above its cwd — and, in every transcript
+that records instructions (2.1.284 on), the host's `CLAUDE.md` files — and the
 canary — probing a temp dir with nothing above it — could not see it. Now the
 flag is on every capsule launch, and the canary probes from the production
 cwd layout under a planted ancestor skill and `CLAUDE.md` (2.1.286: 21 skills
