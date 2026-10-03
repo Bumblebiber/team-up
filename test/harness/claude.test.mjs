@@ -170,6 +170,28 @@ test("a capsule launch loads user settings only, so ancestor project config stay
   }
 });
 
+// Everything after `--` is a positional to Claude, so a roster template that
+// ends in `--`, `{prompt}` would launch the capsule without any of its flags.
+test("a capsule launch puts every capsule flag before a roster `--`", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-dashdash-"));
+  try {
+    const argv = claudeAdapter.prepareLaunch({
+      argv: ["claude", "--model", "opus", "--", "work"],
+      runDir,
+      capsule: { pluginDirs: [`${runDir}/plugins/x`], skillDirs: [], mcpConfig: { mcpServers: {} }, mcpToolNames: [] },
+      writeFileSync: () => {},
+      mkdirSync: (d, o) => fs.mkdirSync(d, o),
+      chmodSync: () => {},
+    }).argv;
+    assert.deepEqual(argv.slice(argv.indexOf("--")), ["--", "work"]);
+    for (const flag of ["--setting-sources", "--plugin-dir", "--strict-mcp-config", "--mcp-config", "--tools", "--allowedTools", "--disallowedTools"]) {
+      assert.ok(argv.indexOf(flag) > 0 && argv.indexOf(flag) < argv.indexOf("--"), flag);
+    }
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("capsule launch materializes skills into HOME and frameworks via --add-dir", () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-add-dir-"));
   try {

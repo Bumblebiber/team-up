@@ -305,6 +305,10 @@ export const claudeAdapter = {
     const tools = [...allowedBuiltins, ...brokerTools, ...mcpTools].join(",");
 
     const next = [...argv];
+    // Everything after `--` is a positional, so every flag below goes in front
+    // of it; the `--` and what follows it are put back at the end.
+    const dashdash = next.indexOf("--");
+    const positionals = dashdash < 0 ? [] : next.splice(dashdash);
     // Do not inject --bare: on Claude 2.1.220 it breaks authentication.
     // Capsule isolation uses a run-specific auth-only HOME instead.
     while (next.includes("--bare")) {
@@ -337,6 +341,7 @@ export const claudeAdapter = {
     // closes the config surface; this closes the file read, and it applies to
     // `Grep` too because the rule is enforced where the file is opened.
     next.push("--disallowedTools", ["Bash", ...credentialDenyRules()].join(","));
+    next.push(...positionals);
 
     const env = {};
     const files = [mcpPath];
