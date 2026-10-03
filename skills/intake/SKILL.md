@@ -42,9 +42,12 @@ For each run, read `~/.team-up/runs/<id>/mailbox/RESULT.json`
 
 - A delegate run's diff: `git -C <cwd> diff <base_commit>`, both values from
   the run's `STATE.json`.
-- Tests the result says pass: if the run has a `verify` command, read the
-  parent-owned `mailbox/VERIFICATION.json`; otherwise run the project's own
-  check yourself. A worker's own "tests pass" is not evidence.
+- Tests the result says pass: if the run has a `verify` command, read
+  `verification.verdict` in the run's `STATE.json` (valid when its
+  `status_mtime_ms` matches the mailbox `STATUS` mtime); `mailbox/VERIFICATION.json`
+  holds the per-run detail but the worker can overwrite it. Without a `verify`
+  command, run the project's own check yourself. A worker's own "tests pass" is
+  not evidence.
 - Files named in `deliverables`: confirm they exist and say what is claimed.
 
 What you could not check, say you could not check.

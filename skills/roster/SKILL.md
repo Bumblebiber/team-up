@@ -179,6 +179,8 @@ A dispatch and a started specialist launch record their routing decision in
 the run's `STATE.json` `picks` (last 10): `cli`, `model`, `effort`, `pinned`,
 `skipped` (with reasons) and `refresh` (`null` none, `ok`, or `failed` = went
 ahead on stale usage). Read it to see which limits a run was routed around.
+A start that a resume, successor or parked launch makes later records
+`skipped: null` (not known there) and `pinned: false`.
 
 ## Cross-CLI runs (mailbox watcher)
 

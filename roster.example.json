@@ -9,7 +9,7 @@
   },
   "clis": {
     "claude": {
-      "$comment": "--dangerously-skip-permissions is required: a dispatched worker runs in detached tmux with nobody to answer a permission prompt, so without it the run never reaches done. Specialist launches strip the flag themselves and pin a tool allowlist plus the command broker instead.",
+      "$comment": "--dangerously-skip-permissions is required: a dispatched worker runs in detached tmux with nobody to answer a permission prompt, so without it the run never reaches done. Specialist launches strip the flag themselves and pin a tool allowlist plus the command broker instead. Claude shows a one-time 'Bypass Permissions mode' acceptance screen per machine user: run `claude --dangerously-skip-permissions` once interactively, or set skipDangerousModePermissionPrompt: true in ~/.claude/settings.json.",
       "cmd": ["claude", "--dangerously-skip-permissions", "--model", "{model}", "--effort", "{effort}", "{prompt}"]
     },
     "codex": {

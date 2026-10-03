@@ -122,7 +122,9 @@ export function deriveLimits({ footprint, cli = null, memTotalKb = null, config 
       ...base,
       max_workers: config.fallback_max_workers,
       source: "fallback",
-      reason: `no idle baseline in telemetry; fallback limit ${config.fallback_max_workers} — ${FALLBACK_REMEDY}`,
+      // Telemetry already runs here, so install-timer is no remedy: only a
+      // configured max_workers lifts the cap while workers never go idle.
+      reason: `no idle baseline in telemetry; fallback limit ${config.fallback_max_workers} — set admission.max_workers in roster.json`,
     };
   } else {
     const room = memTotalKb * PLANNABLE_SHARE - footprint.baseline_used_kb;

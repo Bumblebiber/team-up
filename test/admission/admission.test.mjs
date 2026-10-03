@@ -106,12 +106,18 @@ test("deriveLimits: telemetry per cli, fallbacks with reasons, config and the re
 // `admission check` and every ADMISSION_REFUSED line, so it names the way out.
 test("a fallback limit names how to lift it, and so does the refusal it causes", () => {
   const thin = { all: { samples: 3, p95_rss_kb: GB }, by_cli: {} };
-  for (const footprint of [thin, { ...FOOTPRINT, baseline_used_kb: null }]) {
+  // Too few samples: telemetry can still fix it. No idle baseline: telemetry
+  // already runs, so only max_workers can.
+  for (const [footprint, remedy] of [
+    [thin, /admission\.max_workers.*team-up telemetry install-timer/],
+    [{ ...FOOTPRINT, baseline_used_kb: null }, /admission\.max_workers in roster\.json$/],
+  ]) {
     const limits = deriveLimits({ footprint, cli: "codex", memTotalKb: 16 * GB });
     assert.equal(limits.source, "fallback");
-    assert.match(limits.reason, /fallback limit 2 — .*admission\.max_workers.*team-up telemetry install-timer/);
+    assert.match(limits.reason, /fallback limit 2 — /);
+    assert.match(limits.reason, remedy);
     const refused = admit({ sample: sample(), limits, running: { workers: 2 }, recent: [sample(), sample()] });
-    assert.match(refused.reason, /^2 workers running, limit 2 \(.*fallback limit 2 — .*install-timer/);
+    assert.match(refused.reason, /^2 workers running, limit 2 \(.*fallback limit 2 — .*admission\.max_workers/);
   }
   assert.doesNotMatch(deriveLimits({ footprint: FOOTPRINT, cli: "codex", memTotalKb: 16 * GB }).reason, /install-timer/);
 });
