@@ -756,10 +756,14 @@ export function writeAnswer(runId, body, { source = "parent" } = {}) {
   return setStatus(runId, "watching");
 }
 
-export const INJECT = {
-  worker:
-    "Host crash recovery. Read mailbox/STATUS and mailbox/PROMPT.md; continue the task. Do not re-init from scratch.",
-};
+/**
+ * What a recovered worker is told. Absolute paths: its cwd is the task dir,
+ * where a relative "mailbox/STATUS" names nothing.
+ */
+export function workerRecoveryPrompt(runId) {
+  const mb = mailboxDir(runId);
+  return `Host crash recovery. Read ${mb}/STATUS and ${mb}/PROMPT.md; continue the task. Do not re-init from scratch.`;
+}
 
 function defaultTmuxExists(name) {
   try {
@@ -797,7 +801,6 @@ export function buildResumePlan(state, {
     };
   }
   const actions = [];
-  const injectWorker = INJECT.worker;
 
   const crashSpawnDisabled =
     state.recovery?.crash_spawn === false ||
@@ -814,8 +817,7 @@ export function buildResumePlan(state, {
       cwd: state.cwd,
       cli: state.worker.cli,
       sessionId: state.worker.sessionId,
-      inject: injectWorker,
-      promptPath: path.join(runDir(state.runId), "mailbox", "PROMPT.md"),
+      inject: workerRecoveryPrompt(state.runId),
     });
   }
   // Parents are not restarted per run: resumeAll groups runs by parent and
@@ -824,16 +826,28 @@ export function buildResumePlan(state, {
   return { actions };
 }
 
-export function buildCliArgv({ cli, sessionId, coldStart }) {
-  if (cli === "claude") {
-    if (sessionId && !coldStart) return ["claude", "--resume", sessionId];
-    return ["claude"];
+/** Resume a recorded session; null when there is none to resume (cold start). */
+export function buildCliArgv({ cli, sessionId }) {
+  if (!sessionId) return null;
+  if (cli === "claude") return ["claude", "--resume", sessionId];
+  if (cli === "codex") return ["codex", "resume", sessionId];
+  return null;
+}
+
+/**
+ * A cold start runs the command the dispatch ran: the roster's clis.<cli>.cmd
+ * with the run's model and effort, the recovery text as its prompt. It used
+ * to start a bare `claude`/`codex` (no --model, no permission flags) and
+ * `exec cursor` for the rest, which the cursor shim refuses unless its first
+ * argument is "agent"; both cold starts on record failed.
+ */
+export function coldStartArgv(state, roster, prompt, dir) {
+  const { cli, model, effort = null } = state.worker || {};
+  if (!roster?.clis?.[cli]?.cmd) {
+    throw new Error(`cold start of ${state.runId}: no clis.${cli}.cmd in the roster`);
   }
-  if (cli === "codex") {
-    if (sessionId && !coldStart) return ["codex", "resume", sessionId];
-    return ["codex"];
-  }
-  return null; // unknown → cold_start signal
+  if (!model) throw new Error(`cold start of ${state.runId}: no worker.model recorded`);
+  return buildCommand({ roster, model, cli, prompt, effort, dir });
 }
 
 export function resumeLockPath() {
@@ -867,12 +881,6 @@ export function listActiveStates(options = {}) {
 
 export function shellQuote(s) {
   return /^[A-Za-z0-9_\-./=]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
-}
-
-/** Unknown-CLI cold start: echo hint then exec. No nested-quote traps. */
-export function buildColdStartArgv({ runId, promptPath, cli }) {
-  const msg = `cold_start run ${runId}; read mailbox/PROMPT.md at ${promptPath || "(none)"}`;
-  return ["bash", "-lc", `echo ${shellQuote(msg)}; exec ${shellQuote(cli || "bash")}`];
 }
 
 export function isPidAlive(pid) {
@@ -970,7 +978,7 @@ export function pasteInject(session, text, {
 
 /**
  * tmux argv for a resume spawn. Only a worker gets the TEAMUP_WORKER marker —
- * a parent is the interface agent (INJECT.parent tells it to keep orchestrating
+ * a parent is the interface agent (its wake-up tells it to keep orchestrating
  * and to re-surface the human question), and marking it would silence that.
  * ponytail: resume cannot tell a nested-worker parent from a top-level one, so
  * such a parent comes back unmarked — the safe direction (an over-reporting
@@ -996,24 +1004,22 @@ export function executeResumeAction(action, state, {
   if (action.kind === "parent_awaiting_attach" || action.kind === "flag_reattach_watcher") {
     return;
   }
-  if (action.kind !== "spawn_worker" && action.kind !== "spawn_parent") return;
+  // Parents come back through deliverParentWakeup, never through here.
+  if (action.kind !== "spawn_worker") return;
 
-  let argv = buildCliArgv({
-    cli: action.cli,
-    sessionId: action.sessionId,
-    coldStart: !action.sessionId,
-  });
-  if (!argv) {
-    argv = buildColdStartArgv({
-      runId: state.runId,
-      promptPath: action.promptPath,
-      cli: action.cli,
-    });
+  const resumed = buildCliArgv({ cli: action.cli, sessionId: action.sessionId });
+  // Not requireRoster: its process.exit would end the whole resume queue.
+  // The prompt is rebuilt, not taken from the action: an action parked for
+  // capacity by an older version still carries the relative-path text.
+  const argv = resumed ?? coldStartArgv(state, loadJson(configPath()), workerRecoveryPrompt(state.runId), action.cwd);
+  if (!resumed) {
     state.recovery = "cold_start";
     saveState(state);
   }
   execFileSync("tmux", resumeTmuxArgs(action, state, argv), { stdio: "ignore" });
-  pasteInject(action.tmux, action.inject || "", { waitReady, readyTimeoutMs });
+  // A cold start carries the recovery text as its prompt; pasting it too
+  // would send it twice.
+  if (resumed) pasteInject(action.tmux, action.inject || "", { waitReady, readyTimeoutMs });
 }
 
 /**
@@ -1924,6 +1930,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 
 import { writeTypedResult as writeTypedResultImpl, validateResult } from "../specialists/request.mjs";
+import { buildCommand } from "../roster/command.mjs";
+import { configPath, loadJson } from "../roster/config.mjs";
 import { detectParent, pruneSessionRecords } from "./parent.mjs";
 import { writePendingWakeup } from "./pending.mjs";
 import { orderQueue, runQueue, writeQueueStatus } from "../admission/scheduler.mjs";

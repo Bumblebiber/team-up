@@ -7,9 +7,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   runsRoot, runDir, atomicWriteJson, atomicWriteText, createRun, loadState, saveState, updateState,
-  classifyMailbox, writeAnswer, buildResumePlan, INJECT, buildCliArgv,
+  classifyMailbox, writeAnswer, buildResumePlan, coldStartArgv, buildCliArgv,
   setStatus, resumeAll, linkDispatchToRun, recordRunEscalation, listActiveStates,
-  buildColdStartArgv, acquireResumeLock, resumeLockPath, waitTmuxReady,
+  acquireResumeLock, resumeLockPath, waitTmuxReady,
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
   resolveGitBase, isValidRunId, listAllStates,
 } from "../../src/runs/runs.mjs";
@@ -304,31 +304,69 @@ test("buildResumePlan leaves the parent to the grouped wake-up", () => {
   assert.deepEqual(kinds, ["spawn_worker", "flag_reattach_watcher"]);
 });
 
-test("buildCliArgv claude resume", () => {
-  assert.deepEqual(buildCliArgv({ cli: "claude", sessionId: "abc", coldStart: false }), ["claude", "--resume", "abc"]);
-  assert.equal(buildCliArgv({ cli: "cursor", sessionId: null, coldStart: true }), null);
+test("buildCliArgv resumes a recorded session and has nothing for a cold start", () => {
+  assert.deepEqual(buildCliArgv({ cli: "claude", sessionId: "abc" }), ["claude", "--resume", "abc"]);
+  assert.deepEqual(buildCliArgv({ cli: "codex", sessionId: "abc" }), ["codex", "resume", "abc"]);
+  assert.equal(buildCliArgv({ cli: "claude", sessionId: null }), null);
+  assert.equal(buildCliArgv({ cli: "cursor", sessionId: "abc" }), null);
 });
 
-test("buildColdStartArgv has no stray quote after exec", () => {
-  const argv = buildColdStartArgv({
-    runId: "20260101T000000Z-r001",
-    promptPath: "/tmp/run/mailbox/PROMPT.md",
-    cli: "cursor-agent",
+// The recovered worker's cwd is the task dir, not the run dir: a relative
+// "mailbox/STATUS" points at nothing.
+test("the recovery prompt names the mailbox by absolute path", withTempRuns(async () => {
+  const s = createRun({
+    cwd: "/tmp/p", role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "cursor", tmux: "w1" },
+    prompt: "x",
   });
-  assert.equal(argv[0], "bash");
-  assert.equal(argv[1], "-lc");
-  assert.match(argv[2], /exec cursor-agent$/);
-  assert.doesNotMatch(argv[2], /exec cursor-agent'/);
-  assert.match(argv[2], /PROMPT\.md/);
+  setStatus(s.runId, "watching");
+  const [spawnAction] = buildResumePlan(loadState(s.runId), { tmuxExists: () => false }).actions;
+  const mb = path.join(runDir(s.runId), "mailbox");
+  assert.match(spawnAction.inject, /Host crash recovery/);
+  assert.ok(spawnAction.inject.includes(`${mb}/STATUS`), spawnAction.inject);
+  assert.ok(spawnAction.inject.includes(`${mb}/PROMPT.md`), spawnAction.inject);
+  assert.doesNotMatch(spawnAction.inject, /(^|\s)mailbox\//);
+}));
+
+const DISPATCH_ROSTER = {
+  clis: {
+    claude: { cmd: ["claude", "--dangerously-skip-permissions", "--model", "{model}", "--effort", "{effort}", "{prompt}"] },
+    codex: { cmd: ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "{model}", "{prompt}"] },
+    cursor: { cmd: ["cursor-agent", "--yolo", "--trust", "--model", "{model}", "{prompt}"] },
+  },
+  models: {
+    "claude-opus": { cli: ["claude"] },
+    "gpt-x": { cli: ["codex"] },
+    "grok-4.5": { cli: ["cursor"] },
+  },
+};
+
+// Cold starts launched a bare `claude`/`codex` without --model or the
+// permission flags, and `exec cursor` for the rest — the cursor shim exits 1
+// unless its first argument is "agent". Both cold starts on record failed.
+test("a cold start runs the command the dispatch used, with the recovery prompt", () => {
+  const worker = (cli, model, effort = null) => ({ runId: "20260101T000000Z-r001", worker: { cli, model, effort } });
+  assert.deepEqual(
+    coldStartArgv(worker("claude", "claude-opus", "high"), DISPATCH_ROSTER, "RECOVER", "/tmp/task"),
+    ["claude", "--dangerously-skip-permissions", "--model", "claude-opus", "--effort", "high", "RECOVER"],
+  );
+  assert.deepEqual(
+    coldStartArgv(worker("cursor", "grok-4.5"), DISPATCH_ROSTER, "RECOVER", "/tmp/task"),
+    ["cursor-agent", "--yolo", "--trust", "--model", "grok-4.5", "RECOVER"],
+  );
+  const codex = coldStartArgv(worker("codex", "gpt-x"), DISPATCH_ROSTER, "RECOVER", "/tmp/task");
+  assert.equal(codex[0], "codex");
+  assert.ok(codex.includes("--dangerously-bypass-approvals-and-sandbox"));
+  assert.ok(codex.some((a) => a.includes("trust_level")), "codex trusts the task dir as at dispatch");
+  assert.equal(codex.at(-1), "RECOVER");
 });
 
-test("buildColdStartArgv quotes cli with spaces", () => {
-  const argv = buildColdStartArgv({ runId: "r1", promptPath: "/p", cli: "my cli" });
-  assert.match(argv[2], /exec 'my cli'$/);
-});
-
-test("INJECT.worker mentions PROMPT.md", () => {
-  assert.match(INJECT.worker, /PROMPT\.md/);
+test("a cold start the roster cannot rebuild says why instead of launching something else", () => {
+  const run = (cli, model) => ({ runId: "20260101T000000Z-r001", worker: { cli, model } });
+  assert.throws(() => coldStartArgv(run("hermes", "m"), DISPATCH_ROSTER, "x", "/tmp"), /clis\.hermes\.cmd/);
+  assert.throws(() => coldStartArgv(run("claude", null), DISPATCH_ROSTER, "x", "/tmp"), /worker\.model/);
+  assert.throws(() => coldStartArgv(run("claude", "m"), null, "x", "/tmp"), /roster/);
 });
 
 test("waitTmuxReady returns true when pane non-empty", () => {
