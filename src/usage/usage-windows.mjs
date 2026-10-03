@@ -31,14 +31,37 @@ function localTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-/** Codex renders "HH:MM on D Mon" in the machine's local wall time (not UTC). */
+// The clock forms the CLIs print: "19:41", "8:10pm", "10am", "8:51 PM".
+// Three groups: hour, minutes (optional), am/pm (optional).
+const CLOCK = String.raw`(\d{1,2})(?::(\d{2}))?\s*([ap]m)?`;
+
+/** 24h {hour, minute} from a CLOCK match, or null. A bare number is no time. */
+function clockTime(h, m, ampm) {
+  if (m === undefined && !ampm) return null;
+  let hour = Number(h);
+  const minute = m === undefined ? 0 : Number(m);
+  if (ampm) {
+    if (hour < 1 || hour > 12) return null;
+    hour = (hour % 12) + (ampm.toLowerCase() === "pm" ? 12 : 0);
+  }
+  if (hour > 23 || minute > 59) return null;
+  return { hour, minute };
+}
+
+const CODEX_RESET_RE = new RegExp(String.raw`^${CLOCK}\s+on\s+(\d{1,2})\s+([A-Za-z]+)`, "i");
+
+/**
+ * Codex renders "HH:MM on D Mon" in the machine's local wall time (not UTC);
+ * its hit-limit banner uses a 12-hour clock, "3pm on 5 Aug".
+ */
 function parseCodexResetLocal(str, now, timeZone = localTimeZone()) {
-  const m = /^(\d{1,2}):(\d{2})\s+on\s+(\d{1,2})\s+([A-Za-z]+)/i.exec(str.trim());
+  const m = CODEX_RESET_RE.exec(str.trim());
   if (!m) return null;
-  const hour = Number(m[1]);
-  const minute = Number(m[2]);
-  const day = Number(m[3]);
-  const month = MONTH[m[4].toLowerCase().slice(0, 3)];
+  const clock = clockTime(m[1], m[2], m[3]);
+  if (!clock) return null;
+  const { hour, minute } = clock;
+  const day = Number(m[4]);
+  const month = MONTH[m[5].toLowerCase().slice(0, 3)];
   if (month === undefined) return null;
   const baseYear = new Date(now).getUTCFullYear();
   for (const year of [baseYear, baseYear + 1, baseYear - 1]) {
@@ -89,18 +112,23 @@ function zonedWallTimeToUtc({ year, month, day, hour, minute }, timeZone) {
   return guess;
 }
 
-/** Claude-style: "Jul 25, 8:10pm (Europe/Berlin)" → epoch ms. */
+const CLAUDE_RESET_RE = new RegExp(
+  String.raw`^([A-Za-z]+)\s+(\d{1,2}),\s+${CLOCK}\s*(?:\(([^)]+)\))?$`,
+  "i"
+);
+
+/**
+ * Claude-style: "Jul 25, 8:10pm (Europe/Berlin)" → epoch ms. On the hour it
+ * drops the minutes: "Oct 5, 10am (Europe/Berlin)".
+ */
 function parseClaudeResetLocal(str, now) {
-  const m =
-    /^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{1,2}):(\d{2})\s*(am|pm)\s*(?:\(([^)]+)\))?$/i.exec(
-      str.trim()
-    );
+  const m = CLAUDE_RESET_RE.exec(str.trim());
   if (!m) return null;
   const month = MONTH[m[1].toLowerCase().slice(0, 3)];
   if (month === undefined) return null;
-  let hour = Number(m[3]) % 12;
-  if (m[5].toLowerCase() === "pm") hour += 12;
-  const minute = Number(m[4]);
+  const clock = clockTime(m[3], m[4], m[5]);
+  if (!clock) return null;
+  const { hour, minute } = clock;
   const day = Number(m[2]);
   const timeZone = (m[6] || "UTC").trim();
   const baseYear = new Date(now).getUTCFullYear();
@@ -149,13 +177,18 @@ function parseMonthDayLocal(str, now, timeZone = localTimeZone()) {
   return null;
 }
 
-/** Codex renders its 5h reset as a bare wall clock, "19:41" — today or tomorrow. */
+const BARE_CLOCK_RE = new RegExp(String.raw`^${CLOCK}$`, "i");
+
+/**
+ * Codex renders its 5h reset as a bare wall clock, "19:41", and its hit-limit
+ * banner as "try again at 8:51 PM" — today or tomorrow.
+ */
 function parseBareTimeLocal(str, now, timeZone = localTimeZone()) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(str.trim());
+  const m = BARE_CLOCK_RE.exec(str.trim());
   if (!m) return null;
-  const hour = Number(m[1]);
-  const minute = Number(m[2]);
-  if (hour > 23 || minute > 59) return null;
+  const clock = clockTime(m[1], m[2], m[3]);
+  if (!clock) return null;
+  const { hour, minute } = clock;
   const today = zonedDateParts(now, timeZone);
   // Tomorrow by calendar arithmetic rather than +24h: a DST day is 23 or 25
   // hours long, and adding a fixed day across one lands on the wrong date.
