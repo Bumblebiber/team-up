@@ -335,9 +335,11 @@ function usageMaxAgeMs(thresholds) {
  * @param {object|null} opts.usage
  * @param {number} [opts.now]
  * @param {(cli: string) => Promise<object>|object} [opts.collectCli] injectable collect (tests)
+ * @param {string|null} [opts.hostCli] the CLI this session runs on: only its
+ *   windows can end the session. Null when unknown — every window counts.
  * @returns {{ message: string, needsRefresh: string[] }}
  */
-export function checkThresholds({ roster, usage, now = Date.now(), collectCli }) {
+export function checkThresholds({ roster, usage, now = Date.now(), collectCli, hostCli = null }) {
   const thresholds = limits(roster);
   const { warn_at, handoff_at } = thresholds;
   const maxAgeMs = usageMaxAgeMs(thresholds);
@@ -348,10 +350,11 @@ export function checkThresholds({ roster, usage, now = Date.now(), collectCli })
   if (hasWindowsData(usage)) {
     for (const [wkey, info] of Object.entries(usage.windows)) {
       if (typeof info?.used !== "number") continue;
+      const cli = cliFromWindowKey(wkey);
+      if (hostCli && cli !== hostCli) continue;
       const resetAt = effectiveResetAt(info, wkey, thresholds, now);
       if (resetAt !== null && now >= resetAt) continue;
       const pct = Math.round(info.used * 100);
-      const cli = cliFromWindowKey(wkey);
       const wouldBlock = windowIsBlocking(wkey, usage, thresholds, now);
       if (wouldBlock) {
         const stale = !isWindowUsageFresh(info, maxAgeMs, now);
