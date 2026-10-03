@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { runCli } from "../src/cli.mjs";
 import { debugLog } from "../src/debug.mjs";
 
@@ -60,4 +62,32 @@ test("the legacy O9K_DEBUG=1 still turns hook error logging on", () => {
 
 test("hook error logging stays off without a debug flag", () => {
   assert.equal(debugLogged({}), null);
+});
+
+// The packed install crashed at `team-up init` (ENOENT roster.example.json):
+// `files` left out what the runtime reads from beside src/.
+test("the npm package ships every file the runtime reads outside src", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const cache = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-pack-"));
+  try {
+    const out = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, npm_config_cache: cache, npm_config_logs_max: "0" },
+    });
+    const shipped = new Set(JSON.parse(out)[0].files.map((f) => f.path));
+    for (const file of [
+      "roster.example.json", // roster.mjs init
+      "templates/worker-prompt.md", // runs.mjs wrapPromptWithMailboxProtocol
+      "templates/worker-prompt-legacy.md",
+      "scripts/wait-mailbox.sh", // runs wait
+      "test/fixtures/harness-project/.team-up/commands.json", // harness verify / reverify
+      "hooks/hooks.json",
+      "bin/team-up-command-broker.mjs",
+    ]) {
+      assert.ok(shipped.has(file), `${file} missing from the package`);
+    }
+  } finally {
+    fs.rmSync(cache, { recursive: true, force: true });
+  }
 });

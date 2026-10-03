@@ -22,6 +22,10 @@
     "src",
     "skills",
     "hooks",
+    "templates",
+    "roster.example.json",
+    "scripts/wait-mailbox.sh",
+    "test/fixtures/harness-project",
     "README.md",
     "LICENSE"
   ]
