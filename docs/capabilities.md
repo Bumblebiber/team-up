@@ -199,8 +199,13 @@ CLI's built-ins. Each selected capability is a **positive control**, proven by
 a correlated tool call whose result carries its nonce; without them a clean
 canary sheet proves only that the launch failed. `CLAUDE.md` never appears in
 `system/init`, so the ancestor `CLAUDE.md` is judged from the session
-transcript under the probe `HOME`: its nonce must be absent, and the selected
-skill's nonce must be present there, or the canary counts as not observed. Any
+transcript under the probe `HOME`: its nonce must be absent. Its positive
+control is a user-level `CLAUDE.md` with its own nonce, which the probe writes
+into its own `HOME/.claude/` after the closed-world check — the user source
+stays on under `--setting-sources user`, and no production capsule home gets
+one. That nonce must be present in the transcript, which proves the build
+records instructions there at all (builds before 2.1.284 loaded `CLAUDE.md`
+without recording it); otherwise the canary counts as not observed. Any
 failed proof leaves the record without a grant, and `context_isolation_reason`
 names the first one that failed.
 

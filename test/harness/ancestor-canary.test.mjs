@@ -56,11 +56,11 @@ function childDirs(dir) {
 
 /**
  * Stand-in for the claude binary, discovering config the way 2.1.286 was
- * measured to: user skills from $HOME/.claude/skills, and — unless
- * --setting-sources leaves `project` out — `.claude/skills` and `CLAUDE.md`
- * from the cwd and every directory above it. CLAUDE.md lands only in the
- * session transcript, never in system/init. `instructionsAlways` models a
- * build that stops gating CLAUDE.md on the flag.
+ * measured to: user skills and $HOME/.claude/CLAUDE.md from the user source,
+ * and — unless --setting-sources leaves `project` out — `.claude/skills` and
+ * `CLAUDE.md` from the cwd and every directory above it. CLAUDE.md lands only
+ * in the session transcript, never in system/init. `instructionsAlways`
+ * models a build that stops gating CLAUDE.md on the flag.
  */
 function fakeClaude(fixture, { instructionsAlways = false } = {}) {
   const calls = [];
@@ -70,6 +70,10 @@ function fakeClaude(fixture, { instructionsAlways = false } = {}) {
     const home = opts.env.HOME;
     const skills = sources.includes("user") ? childDirs(path.join(home, ".claude", "skills")) : [];
     const instructions = [];
+    const userMd = path.join(home, ".claude", "CLAUDE.md");
+    if (sources.includes("user") && fs.existsSync(userMd)) {
+      instructions.push({ path: userMd, type: "User", content: fs.readFileSync(userMd, "utf8") });
+    }
     for (let dir = opts.cwd; ; dir = path.dirname(dir)) {
       if (sources.includes("project")) skills.push(...childDirs(path.join(dir, ".claude", "skills")));
       const md = path.join(dir, "CLAUDE.md");
@@ -211,7 +215,25 @@ test("no transcript proves nothing about CLAUDE.md, so isolation is not granted"
   }
 });
 
-test("a transcript without the selected skill body is no positive control", () => {
+// The CLAUDE.md check needs proof that this build records instructions in the
+// transcript at all: builds before 2.1.284 loaded CLAUDE.md without recording
+// it. A user-level CLAUDE.md the user source still loads is that proof.
+test("the CLAUDE.md control is a user CLAUDE.md planted in the probe's home, never a production one", () => {
+  const fixture = buildIsolationCanaryFixture();
+  try {
+    const prepared = prepare(fixture);
+    const userMd = path.join(prepared.env.HOME, ".claude", "CLAUDE.md");
+    // prepareLaunch builds the production capsule home; it holds none.
+    assert.equal(fs.existsSync(userMd), false);
+    const observed = observe(fixture, prepared, fakeClaude(fixture));
+    assert.ok(observed.absent?.includes(ANCESTOR_CANARY_INSTRUCTIONS), JSON.stringify(observed));
+    assert.match(fs.readFileSync(userMd, "utf8"), new RegExp(`nonce:${fixture.expected.user_instructions_nonce}`));
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("a transcript with tool results but no recorded user CLAUDE.md is no positive control", () => {
   const fixture = buildIsolationCanaryFixture();
   try {
     const prepared = prepare(fixture);
@@ -223,7 +245,9 @@ test("a transcript without the selected skill body is no positive control", () =
       expected: fixture.expected, capsule: fixture.capsule, prepared, transcriptText,
     });
     assertIsoFailure(parse('{"type":"user"}'), "absent_list_incomplete");
-    assert.ok(parse(`{"text":"nonce:${fixture.expected.nonces.skill}"}`).absent.includes(ANCESTOR_CANARY_INSTRUCTIONS));
+    // The selected skill's body shows a transcript exists, not that it records instructions.
+    assertIsoFailure(parse(`{"text":"nonce:${fixture.expected.nonces.skill}"}`), "absent_list_incomplete");
+    assert.ok(parse(`{"text":"nonce:${fixture.expected.user_instructions_nonce}"}`).absent.includes(ANCESTOR_CANARY_INSTRUCTIONS));
   } finally {
     fixture.cleanup();
   }

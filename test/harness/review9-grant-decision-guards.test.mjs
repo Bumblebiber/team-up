@@ -185,13 +185,16 @@ function buildHappySpawnSync(fixture, { streamLines } = {}) {
     }),
   ];
   return (cmd, args, opts) => {
-    // The transcript claude keeps for the session: the selected skill body, no CLAUDE.md.
+    // The transcript claude keeps for the session: the user CLAUDE.md the
+    // probe planted and the selected skill body.
     if (opts?.env?.HOME) {
       const dir = path.join(opts.env.HOME, ".claude", "projects", "probe-cwd");
       fs.mkdirSync(dir, { recursive: true });
+      const userMd = fs.readFileSync(path.join(opts.env.HOME, ".claude", "CLAUDE.md"), "utf8");
       fs.writeFileSync(
         path.join(dir, `${SESSION}.jsonl`),
-        `${JSON.stringify({ type: "user", isMeta: true, message: { content: [{ type: "text", text: `nonce:${nonces.skill}` }] } })}\n`
+        `${JSON.stringify({ type: "attachment", attachment: { type: "instructions", files: [{ type: "User", content: userMd }] } })}\n`
+          + `${JSON.stringify({ type: "user", isMeta: true, message: { content: [{ type: "text", text: `nonce:${nonces.skill}` }] } })}\n`
       );
     }
     return { status: 0, stdout: `${lines.join("\n")}\n`, stderr: "" };

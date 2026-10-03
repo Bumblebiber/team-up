@@ -628,6 +628,8 @@ export function buildIsolationCanaryFixture(root = fs.mkdtempSync(path.join(os.t
     nonces: { ...nonces },
     // Must never be seen; kept apart from `nonces`, which must all be seen.
     ancestor_nonce: ancestorNonce,
+    // Must be seen in the transcript: the CLAUDE.md check's positive control.
+    user_instructions_nonce: randomContentNonce(),
   };
   const codexExpected = null;
 
@@ -930,10 +932,11 @@ function findSkillLaunchProof(pairs, syntheticTexts, skillName, nonce) {
  * Whether the ancestor CLAUDE.md was observed absent.
  *
  * CLAUDE.md never shows in system/init: it reaches the session transcript as
- * an `instructions` attachment. So absence is judged there, with the selected
- * skill's body as the positive control — a transcript that does not even hold
- * that cannot show what else was loaded, and an unobserved canary is never
- * reported absent.
+ * an `instructions` attachment. So absence is judged there, with the user
+ * CLAUDE.md the probe plants in its own HOME as the positive control. A
+ * transcript that does not hold that one cannot show what else was loaded —
+ * builds before 2.1.284 loaded CLAUDE.md without recording it — and an
+ * unobserved canary is never reported absent.
  */
 function ancestorInstructionsVerdict({ streamText, transcriptText, expected }) {
   const nonce = expected?.ancestor_nonce;
@@ -941,8 +944,8 @@ function ancestorInstructionsVerdict({ streamText, transcriptText, expected }) {
   if (String(streamText ?? "").includes(nonce) || String(transcriptText ?? "").includes(nonce)) {
     return isoFail("forbidden_canary_present", ANCESTOR_CANARY_INSTRUCTIONS);
   }
-  const skillNonce = expected?.nonces?.skill;
-  if (typeof transcriptText !== "string" || !skillNonce || !transcriptText.includes(skillNonce)) {
+  const control = expected?.user_instructions_nonce;
+  if (typeof transcriptText !== "string" || !control || !transcriptText.includes(control)) {
     return "unobserved";
   }
   return "absent";
@@ -1566,6 +1569,16 @@ export function collectLiveIsolationObservation({
     return isoFail(
       "closed_world_failed",
       v ? `${v.kind}:${v.name}` : "probe HOME not closed-world"
+    );
+  }
+
+  // The CLAUDE.md check's positive control: a user-level CLAUDE.md, which
+  // --setting-sources user keeps loading. Planted after the closed-world check
+  // and into this probe's HOME only — no production capsule home gets one.
+  if (expected?.user_instructions_nonce) {
+    fs.writeFileSync(
+      path.join(probeHome, ".claude", "CLAUDE.md"),
+      contentNonceField("# isolation canary: user instructions", expected.user_instructions_nonce)
     );
   }
 

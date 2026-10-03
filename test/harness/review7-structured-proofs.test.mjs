@@ -66,9 +66,12 @@ function prepareClaudeLaunch(fixture) {
   });
 }
 
-/** The transcript claude keeps for the session: the selected skill body, no CLAUDE.md. */
+/** The transcript claude keeps for the session: the user CLAUDE.md and the selected skill body. */
 function sessionTranscript(fixture) {
   return `${line({
+    type: "attachment",
+    attachment: { type: "instructions", files: [{ type: "User", content: `nonce:${fixture.expected.user_instructions_nonce}` }] },
+  })}\n${line({
     type: "user",
     isMeta: true,
     message: { content: [{ type: "text", text: `nonce:${fixture.expected.nonces.skill}` }] },
