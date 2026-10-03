@@ -19,6 +19,7 @@ import {
   runParentVerification,
 } from "../../src/runs/runs.mjs";
 import { gcRuns } from "../../src/runs/gc.mjs";
+import { acquireVerificationLock } from "../../src/runs/verification.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
 
@@ -414,6 +415,46 @@ test("a lock left behind by a dead verifier is taken over", withTempRuns(async (
   assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "done");
   assert.equal(count(), 2);
   assert.equal(fs.existsSync(path.join(runDir(runId), "mailbox", ".VERIFICATION.lock")), false);
+}));
+
+// The lock named its holder by pid alone, and was created empty and written
+// after: a second watcher could read "" (no holder) and take a live lock, or
+// trust a pid the dead verifier's successor process now carries.
+test("a lock whose pid now belongs to another process is taken over", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "reused-pid");
+  const other = spawn("sleep", ["30"], { stdio: "ignore" });
+  try {
+    fs.writeFileSync(path.join(runDir(runId), "mailbox", ".VERIFICATION.lock"), `${other.pid} 1\n`);
+    assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "done");
+    assert.equal(count(), 2);
+  } finally {
+    other.kill();
+  }
+}));
+
+test("a lock still being written counts as held; an old empty one does not", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "empty-lock");
+  const lock = path.join(runDir(runId), "mailbox", ".VERIFICATION.lock");
+  fs.writeFileSync(lock, "");
+  const r = waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => assert.fail("killed the worker") });
+  assert.equal(r.waitExit, 2);
+  assert.equal(count(), 0);
+
+  const old = (Date.now() - 60_000) / 1000;
+  fs.utimesSync(lock, old, old);
+  assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "done");
+  assert.equal(count(), 2);
+}));
+
+test("an acquired lock names its holder by pid and start time", withTempRuns(async (runsRoot) => {
+  const mb = fs.mkdtempSync(path.join(runsRoot, "mb-"));
+  const release = acquireVerificationLock(mb);
+  const [pid, start] = fs.readFileSync(path.join(mb, ".VERIFICATION.lock"), "utf8").trim().split(" ");
+  assert.equal(Number(pid), process.pid);
+  assert.match(start, /^\d+$/);
+  assert.equal(acquireVerificationLock(mb), null, "a live holder's lock was taken");
+  release();
+  assert.deepEqual(fs.readdirSync(mb), []);
 }));
 
 // An unresolved gc stale claim keeps STATE non-terminal without deciding the

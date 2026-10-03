@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { parseStat } from "../telemetry/proc.mjs";
 
 /** Parse a single --verify-command string into argv (minimal quote awareness). */
 export function parseVerifyCommand(str) {
@@ -53,44 +54,72 @@ function pidAlive(pid) {
   }
 }
 
-/** Pid of the live process verifying in this mailbox, or null. */
-export function verifierPid(mb) {
-  let pid;
+/** Start time in ticks since boot: with the pid, it names one process even after the pid is reused. */
+function startTicks(pid) {
   try {
-    pid = Number.parseInt(fs.readFileSync(path.join(mb, VERIFICATION_LOCK), "utf8"), 10);
+    return parseStat(fs.readFileSync(`/proc/${pid}/stat`, "utf8"))?.start_ticks ?? null;
   } catch {
     return null;
   }
-  return Number.isInteger(pid) && pid > 0 && pidAlive(pid) ? pid : null;
+}
+
+/** How long a lock with no readable holder may still be mid-write (an older O_EXCL writer). */
+const LOCK_WRITE_MS = 5000;
+
+/** Whether a live process is verifying in this mailbox. */
+export function verifierAlive(mb) {
+  const lockPath = path.join(mb, VERIFICATION_LOCK);
+  let raw;
+  let mtimeMs;
+  try {
+    raw = fs.readFileSync(lockPath, "utf8");
+    mtimeMs = fs.statSync(lockPath).mtimeMs;
+  } catch {
+    return false;
+  }
+  // "<pid> <start ticks>"; older versions wrote "<pid>" alone.
+  const [pidText, start] = raw.trim().split(/\s+/);
+  const pid = Number(pidText);
+  if (!Number.isInteger(pid) || pid <= 0) return Date.now() - mtimeMs < LOCK_WRITE_MS;
+  if (!pidAlive(pid)) return false;
+  const ticks = start ? startTicks(pid) : null;
+  return ticks == null || String(ticks) === start;
 }
 
 /**
- * O_EXCL lock in the mailbox. Returns a release function, or null while a
- * live verifier holds it. A lock whose holder died (a killed watcher) is
- * taken over.
+ * Lock file in the mailbox, written whole and then linked into place, so no
+ * other verifier ever reads it empty. Returns a release function, or null
+ * while a live verifier holds it. A lock whose holder died (a killed
+ * watcher), or whose pid now names another process, is taken over.
  * ponytail: two takers of one dead lock can both win; add a rename-based
  * steal if concurrent watchers on a crashed verifier ever show up.
  */
 export function acquireVerificationLock(mb) {
   const lockPath = path.join(mb, VERIFICATION_LOCK);
-  const mine = `${process.pid}\n`;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(lockPath, mine, { flag: "wx" });
-      return () => {
-        try {
-          if (fs.readFileSync(lockPath, "utf8") === mine) fs.unlinkSync(lockPath);
-        } catch {
-          // already gone
-        }
-      };
-    } catch (e) {
-      if (e.code !== "EEXIST") throw e;
+  const mine = `${process.pid} ${startTicks(process.pid) ?? ""}\n`;
+  const tmp = `${lockPath}.${process.pid}`;
+  fs.writeFileSync(tmp, mine);
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        fs.linkSync(tmp, lockPath);
+        return () => {
+          try {
+            if (fs.readFileSync(lockPath, "utf8") === mine) fs.unlinkSync(lockPath);
+          } catch {
+            // already gone
+          }
+        };
+      } catch (e) {
+        if (e.code !== "EEXIST") throw e;
+      }
+      if (verifierAlive(mb)) return null;
+      fs.rmSync(lockPath, { force: true });
     }
-    if (verifierPid(mb)) return null;
-    fs.rmSync(lockPath, { force: true });
+    return null;
+  } finally {
+    fs.rmSync(tmp, { force: true });
   }
-  return null;
 }
 
 /**
