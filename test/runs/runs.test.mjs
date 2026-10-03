@@ -373,6 +373,21 @@ test("buildResumePlan leaves the parent to the grouped wake-up", () => {
   assert.deepEqual(kinds, ["spawn_worker", "flag_reattach_watcher"]);
 });
 
+// executeResumeAction refuses these, so a spawn_worker parked for resources
+// was replayed and refused every retry, stuck in waiting_capacity, where the
+// supervisor's recover_crash never looks.
+test("buildResumePlan leaves a run launched from a descriptor to the supervisor", () => {
+  const plan = buildResumePlan({
+    status: "watching",
+    runId: "20260101T000000Z-r001",
+    cwd: "/tmp/p",
+    parent: { attach: "manual", cli: "claude" },
+    worker: { cli: "claude", sessionId: "abc", tmux: "w1" },
+    launch_descriptor: { path: "/x/launch.json" },
+  }, { tmuxExists: () => false });
+  assert.deepEqual(plan.actions.map((a) => a.kind), ["flag_reattach_watcher"]);
+});
+
 test("buildCliArgv resumes a recorded session and has nothing for a cold start", () => {
   assert.deepEqual(buildCliArgv({ cli: "claude", sessionId: "abc" }), ["claude", "--resume", "abc"]);
   assert.deepEqual(buildCliArgv({ cli: "codex", sessionId: "abc" }), ["codex", "resume", "abc"]);

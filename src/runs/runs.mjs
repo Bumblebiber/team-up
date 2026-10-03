@@ -804,9 +804,13 @@ export function buildResumePlan(state, {
   }
   const actions = [];
 
+  // A run launched from a descriptor is the supervisor's to restore
+  // (recover_crash): executeResumeAction refuses it, and an action parked for
+  // resources would be replayed and refused forever in waiting_capacity.
   const crashSpawnDisabled =
     state.recovery?.crash_spawn === false ||
-    state.capacity?.wait_cancelled === true;
+    state.capacity?.wait_cancelled === true ||
+    Boolean(state.launch_descriptor);
 
   if (
     !crashSpawnDisabled &&
