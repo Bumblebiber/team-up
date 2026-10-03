@@ -143,6 +143,9 @@ test("detectHostCli names claude from an ancestor CLAUDE_PID when no record exis
   assert.equal(host({ CLAUDE_PID: "99" }), null);
   // The Cursor CLI runs Claude Code hooks too: never scope that to claude.
   assert.equal(host({ CLAUDE_PID: "20", CURSOR_VERSION: "1.0" }), null);
+  // cursor-agent's comm is node; its launcher exports CURSOR_INVOKED_AS to
+  // every descendant, its shell tool included.
+  assert.equal(host({ CLAUDE_PID: "20", CURSOR_INVOKED_AS: "cursor-agent" }), null);
   // A record still wins.
   writeSessionRecord({ cli: "cursor", sessionId: "c", pid: 20, procRoot, dir });
   assert.equal(host({ CLAUDE_PID: "20" }), "cursor");
