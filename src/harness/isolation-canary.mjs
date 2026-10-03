@@ -76,8 +76,9 @@ export const CLAUDE_HARNESS_BUILTIN_MCP_SERVERS = Object.freeze([
  * Claude Code built-in skills visible in system/init of a clean harness (2.1.220+).
  * Deliberate allowlist — add entries only when a CLI version introduces new built-ins.
  * ponytail: flat name list — no provenance; user skill with same name as built-in is
- * indistinguishable at init. Not exploitable today (probe runs in fresh temp cwd;
- * verifyProbeHomeClosedWorld rejects unexpected skill dirs). Upgrade path: tag entries
+ * indistinguishable at init (the host has its own `code-review`). Not exploitable
+ * today: verifyProbeHomeClosedWorld rejects unexpected skill dirs, and the ancestor
+ * canary proves ancestor skill dirs stay closed. Upgrade path: tag entries
  * with {name, source: "builtin"|"user"} when init exposes provenance.
  */
 export const CLAUDE_HARNESS_BUILTIN_SKILLS = Object.freeze([
