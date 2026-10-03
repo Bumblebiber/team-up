@@ -9,8 +9,8 @@
   },
   "clis": {
     "claude": {
-      "$comment": "Do not use --dangerously-skip-permissions — the Claude harness adapter refuses it and denies Bash while exposing only the team-up command broker MCP tools.",
-      "cmd": ["claude", "--model", "{model}", "--effort", "{effort}", "{prompt}"]
+      "$comment": "--dangerously-skip-permissions is required: a dispatched worker runs in detached tmux with nobody to answer a permission prompt, so without it the run never reaches done. Specialist launches strip the flag themselves and pin a tool allowlist plus the command broker instead.",
+      "cmd": ["claude", "--dangerously-skip-permissions", "--model", "{model}", "--effort", "{effort}", "{prompt}"]
     },
     "codex": {
       "cmd": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "{model}", "-c", "model_reasoning_effort={effort}", "{prompt}"]

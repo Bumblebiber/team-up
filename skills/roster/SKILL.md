@@ -56,7 +56,9 @@ Workers spawned by `team-up dispatch` run in detached tmux — no human on the
 tty. **`clis.claude.cmd` must include `--dangerously-skip-permissions`** (before
 `--model`). This is a **config requirement** for tmux workers, not a soft
 optional: without it Claude blocks on permission prompts and the mailbox never
-reaches `done`.
+reaches `done`. Specialist launches (`team-up specialist run`) strip the flag
+themselves and pin a tool allowlist plus the command broker instead, so the
+same `cmd` serves both.
 
 ```json
 "claude": { "cmd": ["claude", "--dangerously-skip-permissions", "--model", "{model}", "{prompt}"] }
@@ -206,4 +208,6 @@ Always invoke via the `team-up` CLI on PATH.
 Never use `claude --resume` as a live worker→parent callback.
 Never LLM-poll every few seconds.
 Never treat "tmux session created" as "delegation complete."
-See `docs/MULTI-AGENT.md` and spec `docs/superpowers/specs/2026-07-17-cross-cli-run-resume-design.md`.
+Design: `docs/specs/2026-07-25-runtime-supervision-design.md` (mailbox runs,
+supervision) and `docs/specs/2026-10-01-parent-session-recovery.md` (resume
+after a reboot) in the team-up repo.
