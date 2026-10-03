@@ -367,7 +367,7 @@ function adoptTerminalMailbox(runId) {
   if (isUnresolvedStalePublicationClaim(before)) return false;
   // A watcher is verifying this done right now; adopting it first would leave
   // a failing verdict nowhere to land, since terminal is final.
-  if (classified.status === "done" && verifierAlive(mailboxDir(runId))) return false;
+  if (classified.status === "done" && verifierAlive(mailboxDir(runId), before.verify)) return false;
   const after = updateState(runId, (latest) =>
     reconcileTerminalMailboxState(latest, classified)
   );
@@ -837,6 +837,14 @@ function executeFailStale({
   if (decision.kind !== "fail_stale") {
     reportEntry.staleFailureAborted = true;
     reportEntry.staleFailureReason = decision.kind;
+    return;
+  }
+  // An idle worker whose done a watcher is verifying is not stale: adopting
+  // it here would leave a failing verdict nowhere to land. Bounded by the
+  // verify timeout, past which the lock no longer counts.
+  if (verifierAlive(mailboxDir(state.runId), latest.verify)) {
+    reportEntry.staleFailureAborted = true;
+    reportEntry.staleFailureReason = "verifying";
     return;
   }
 

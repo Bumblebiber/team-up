@@ -1265,9 +1265,10 @@ export async function resumeAll({
 function verifyDoneOnce(runId, classified) {
   const mb = mailboxDir(runId);
   const statusMtimeMs = readMailboxStatusIdentity(runId).mtimeMs;
-  let report = recordedVerdict(loadState(runId), statusMtimeMs);
+  const seen = loadState(runId);
+  let report = recordedVerdict(seen, statusMtimeMs);
   if (!report) {
-    const release = acquireVerificationLock(mb);
+    const release = acquireVerificationLock(mb, seen?.verify);
     if (!release) return { status: "watching", pending: "verification" };
     try {
       // Under the lock: another verifier may just have finished, or the run

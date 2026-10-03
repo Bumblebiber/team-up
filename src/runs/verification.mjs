@@ -66,8 +66,21 @@ function startTicks(pid) {
 /** How long a lock with no readable holder may still be mid-write (an older O_EXCL writer). */
 const LOCK_WRITE_MS = 5000;
 
-/** Whether a live process is verifying in this mailbox. */
-export function verifierAlive(mb) {
+/**
+ * Budget for one whole verification, all `runs` together, so the lock's age
+ * bounds it. A hung `node --test` held a watcher, and with it the lock, for
+ * three days.
+ */
+function verifyTimeoutMs(verify) {
+  const sec = Number(verify?.timeout_sec);
+  return (sec > 0 ? sec : 1800) * 1000;
+}
+
+/** Time a verifier gets after its timeout to write its verdict and let go. */
+const LOCK_MARGIN_MS = 5 * 60_000;
+
+/** Whether a live process is verifying in this mailbox, within its timeout. */
+export function verifierAlive(mb, verify) {
   const lockPath = path.join(mb, VERIFICATION_LOCK);
   let raw;
   let mtimeMs;
@@ -77,6 +90,7 @@ export function verifierAlive(mb) {
   } catch {
     return false;
   }
+  if (Date.now() - mtimeMs > verifyTimeoutMs(verify) + LOCK_MARGIN_MS) return false;
   // "<pid> <start ticks>"; older versions wrote "<pid>" alone.
   const [pidText, start] = raw.trim().split(/\s+/);
   const pid = Number(pidText);
@@ -94,7 +108,7 @@ export function verifierAlive(mb) {
  * ponytail: two takers of one dead lock can both win; add a rename-based
  * steal if concurrent watchers on a crashed verifier ever show up.
  */
-export function acquireVerificationLock(mb) {
+export function acquireVerificationLock(mb, verify) {
   const lockPath = path.join(mb, VERIFICATION_LOCK);
   const mine = `${process.pid} ${startTicks(process.pid) ?? ""}\n`;
   const tmp = `${lockPath}.${process.pid}`;
@@ -113,7 +127,7 @@ export function acquireVerificationLock(mb) {
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
       }
-      if (verifierAlive(mb)) return null;
+      if (verifierAlive(mb, verify)) return null;
       fs.rmSync(lockPath, { force: true });
     }
     return null;
@@ -147,14 +161,20 @@ export function runParentVerification(runId, state, { mailboxDir, atomicWriteJso
   const cwd = state.cwd;
   const runCount = verify.runs ?? 5;
   const startedAt = new Date().toISOString();
+  const deadline = Date.now() + verifyTimeoutMs(verify);
   const runs = [];
+  let reason = null;
 
   for (let n = 1; n <= runCount; n++) {
     const t0 = Date.now();
+    // SIGKILL: a child that ignores SIGTERM would keep spawnSync blocked.
+    // ponytail: grandchildren (npm → node --test) outlive the kill as orphans.
     const r = spawnSync(command[0], command.slice(1), {
       cwd,
       encoding: "utf8",
       env: process.env,
+      timeout: Math.max(1, deadline - t0),
+      killSignal: "SIGKILL",
     });
     const durationMs = Date.now() - t0;
     const entry = { n, exitCode: r.status ?? 1, durationMs };
@@ -162,6 +182,10 @@ export function runParentVerification(runId, state, { mailboxDir, atomicWriteJso
     const counts = parseNodeTestCounts(combined);
     if (counts) Object.assign(entry, counts);
     runs.push(entry);
+    if (r.error?.code === "ETIMEDOUT") {
+      reason = "verify timed out";
+      break;
+    }
   }
 
   const verdict = runs.every((row) => row.exitCode === 0) ? "pass" : "fail";
@@ -174,6 +198,7 @@ export function runParentVerification(runId, state, { mailboxDir, atomicWriteJso
     finishedAt: new Date().toISOString(),
     runs,
     verdict,
+    ...(reason ? { reason } : {}),
     ...(statusMtimeMs != null ? { status_mtime_ms: statusMtimeMs } : {}),
   };
   atomicWriteJson(path.join(mailboxDir(runId), "VERIFICATION.json"), report);

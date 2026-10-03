@@ -457,6 +457,43 @@ test("an acquired lock names its holder by pid and start time", withTempRuns(asy
   assert.deepEqual(fs.readdirSync(mb), []);
 }));
 
+// A verify command with no timeout hung one watcher for three days inside
+// `node --test`; its live pid kept the lock, so gc never adopted the done.
+test("a verify command that outlives verify.timeout_sec fails with 'verify timed out'", withTempRuns(async (runsRoot) => {
+  const state = createRun({
+    cwd: runsRoot,
+    role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex" },
+    prompt: "x",
+    verify: { command: ["bash", "-c", "sleep 5 & exec sleep 30"], runs: 3 },
+  });
+  const t0 = Date.now();
+  const report = runParentVerification(state.runId, { ...loadState(state.runId), verify: { ...state.verify, timeout_sec: 1 } }, {
+    mailboxDir: (id) => path.join(runDir(id), "mailbox"),
+    atomicWriteJson,
+  });
+  assert.ok(Date.now() - t0 < 4000, `took ${Date.now() - t0} ms`);
+  assert.equal(report.verdict, "fail");
+  assert.equal(report.reason, "verify timed out");
+  assert.equal(report.runs.length, 1, "kept running after the budget was spent");
+}));
+
+test("a lock older than the verify timeout no longer holds, even with its pid alive", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "hung-holder");
+  const holder = spawn("sleep", ["30"], { stdio: "ignore" });
+  try {
+    const lock = path.join(runDir(runId), "mailbox", ".VERIFICATION.lock");
+    fs.writeFileSync(lock, `${holder.pid}\n`);
+    const old = (Date.now() - 2 * 3600_000) / 1000;
+    fs.utimesSync(lock, old, old);
+    assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "done");
+    assert.equal(count(), 2);
+  } finally {
+    holder.kill();
+  }
+}));
+
 // An unresolved gc stale claim keeps STATE non-terminal without deciding the
 // run; resolveRunState reports no change there, which read as "decided" and
 // handed the parent the done unverified.
