@@ -283,6 +283,61 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
   return { action: "answer", reason: "verified answer", verdict, keys: verdict.keys };
 }
 
+/**
+ * Claude Code's workspace-trust dialog, exactly as 20 claude workers sat on it
+ * for 15-20 min each until the judge pressed [Down, Enter] past the 900 s
+ * stall threshold (OBSERVATION.log, 2026-09; fixture in test/runs/fixtures).
+ * Only that screen matches: "No, exit" selected, and the workspace named is
+ * the run's own cwd. Returns the keys, or null.
+ */
+export function claudeTrustPromptKeys(pane, cwd) {
+  const lines = normalizePaneText(pane).split("\n").map((l) => l.trim());
+  const at = lines.indexOf("Accessing workspace:");
+  const no = lines.indexOf("❯ No, exit");
+  if (at === -1 || no === -1) return null;
+  if (lines[no + 1] !== "Yes, I trust this folder") return null;
+  if (!lines.includes("Enter to confirm · Esc to cancel")) return null;
+  const shown = lines.slice(at + 1).find(Boolean);
+  let real = null;
+  try {
+    real = fs.realpathSync(cwd);
+  } catch {
+    // a cwd that is gone cannot be the one on screen under another name
+  }
+  return shown === cwd || shown === real ? ["Down", "Enter"] : null;
+}
+
+/**
+ * Answer that dialog at once: no judge call, no stall wait. Same bookkeeping
+ * as a judged answer (cap, repeat-pane guard, post-answer stall escalation),
+ * and the deny patterns still apply. Never writes ~/.claude.json.
+ */
+export function answerClaudeTrustPrompt({ runId, state, loop, capture, deps = {} }) {
+  if (state.worker?.cli !== "claude") return false;
+  const keys = claudeTrustPromptKeys(capture, state.cwd);
+  const fp = paneFingerprint(capture);
+  if (!keys || loop.answeredPanes.has(fp) || matchesDenyPattern(capture)) return false;
+  if (loop.autoAnswerCount >= MAX_AUTO_ANSWERS) return false;
+  const {
+    log = (entry) => appendObservationLog(runId, entry, deps),
+    sendKeys = (k) => sendTmuxKeys(state.worker.tmux, k, deps),
+  } = deps;
+  sendKeys(keys);
+  loop.answeredPanes.add(fp);
+  loop.autoAnswerCount += 1;
+  loop.awaitingPostAnswer = true;
+  loop.postAnswerTicks = 0;
+  log({
+    kind: "action",
+    action: "answer",
+    reason: "claude workspace trust prompt for the run's cwd",
+    keys,
+    auto_answer_count: loop.autoAnswerCount,
+    pane_fp: fp,
+  });
+  return true;
+}
+
 export function buildJudgePrompt({
   pane,
   cli,
@@ -918,6 +973,11 @@ export async function runObserver(runId, deps = {}) {
       const workerAgeSec = deps.mailboxAgeSec ?? getMailboxAge(runId, { now });
       const next = observerTick(loop, capture, { ...deps, silenceSec, mailboxAgeSec });
       Object.assign(loop, next);
+
+      if (answerClaudeTrustPrompt({ runId, state, loop, capture, deps })) {
+        await sleep(pollSec);
+        continue;
+      }
 
       if (next.event === "stall_detected") {
         const result = handleStall({

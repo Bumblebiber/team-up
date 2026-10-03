@@ -30,6 +30,7 @@ import {
   buildJudgePrompt,
   tailPane,
   validateVerdictShape,
+  claudeTrustPromptKeys,
   sendTmuxKeys,
   defaultCapture,
   runObserver,
@@ -1100,4 +1101,82 @@ test("working escalate with fresh mailbox is deferred then honoured on repeat", 
 
   assert.ok(judgeCalls >= 2);
   assert.equal(runs.loadState(runId).status, "waiting_human");
+}));
+
+// 20 claude workers sat 15-20 min on Claude Code's workspace-trust dialog
+// until the judge pressed [Down, Enter] past the 900 s stall threshold. The
+// fixture is a real pane from one of those runs (OBSERVATION.log pane_fp).
+const TRUST_PANE = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/claude-workspace-trust.txt"),
+  "utf8",
+);
+const TRUST_CWD = "/home/bbbee/projects/tasks/team-up-canary-review";
+
+test("claudeTrustPromptKeys matches only the observed dialog for the run's own cwd", () => {
+  assert.deepEqual(claudeTrustPromptKeys(TRUST_PANE, TRUST_CWD), ["Down", "Enter"]);
+  assert.equal(claudeTrustPromptKeys(TRUST_PANE, "/home/bbbee/projects/tasks/other"), null);
+  // Cursor already on "Yes": never observed, and a mid-transition repaint.
+  const moved = TRUST_PANE.replace("❯ No, exit", "  No, exit").replace("   Yes, I trust", " ❯ Yes, I trust");
+  assert.equal(claudeTrustPromptKeys(moved, TRUST_CWD), null);
+  for (const fixture of ["claude/startup-idle-3s.txt", "claude/trust-prompt-6s.txt", "claude/permission-prompt-20s.txt"]) {
+    assert.equal(claudeTrustPromptKeys(readFixture(fixture), TRUST_CWD), null, fixture);
+  }
+});
+
+function trustRun({ cli = "claude", cwd = TRUST_CWD } = {}) {
+  const state = runs.createRun({
+    cwd,
+    role: "reviewer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli, tmux: "test-claude-worker" },
+    prompt: "review",
+  });
+  runs.setStatus(state.runId, "watching");
+  return state.runId;
+}
+
+async function observeTrust(runId, { ticks = 2 } = {}) {
+  const sent = [];
+  let judgeCalls = 0;
+  let n = 0;
+  await runObserver(runId, {
+    pollSec: 0.001,
+    silenceSec: 900,
+    roster: INTEGRATION_ROSTER,
+    usage: {},
+    parentPid: process.pid,
+    isParentAlive: () => true,
+    acquireLock: () => ({ ok: true }),
+    keepLock: true,
+    capture: () => TRUST_PANE,
+    judge: () => {
+      judgeCalls += 1;
+      return { ok: true, stdout: JSON.stringify({ state: "working", reason: "x", action: "wait" }) };
+    },
+    sendKeys: (keys) => sent.push(keys),
+    sleep: async () => { n += 1; },
+    shouldStop: () => n >= ticks,
+  });
+  return { sent, judgeCalls };
+}
+
+test("a claude worker on the trust dialog for its cwd is answered on the first tick, without the judge", withTempRuns(async () => {
+  const runId = trustRun();
+  const { sent, judgeCalls } = await observeTrust(runId);
+  assert.deepEqual(sent, [["Down", "Enter"]], "answered once, not again on the unchanged pane");
+  assert.equal(judgeCalls, 0);
+  const entries = fs.readFileSync(observationLogPath(runId), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const action = entries.find((e) => e.kind === "action");
+  assert.equal(action.action, "answer");
+  assert.deepEqual(action.keys, ["Down", "Enter"]);
+  assert.match(action.reason, /trust/);
+  assert.ok(action.pane_fp, "counted by hydrateLoopFromLog for the cap and the repeat guard");
+}));
+
+test("no trust fast path for another cwd, another cli, or a pane already answered", withTempRuns(async () => {
+  assert.deepEqual((await observeTrust(trustRun({ cwd: "/home/bbbee/projects/tasks/other" }))).sent, []);
+  assert.deepEqual((await observeTrust(trustRun({ cli: "cursor" }))).sent, []);
+  const answered = trustRun();
+  appendObservationLog(answered, { kind: "action", action: "answer", keys: ["Down", "Enter"], pane_fp: paneFingerprint(TRUST_PANE) });
+  assert.deepEqual((await observeTrust(answered)).sent, []);
 }));
