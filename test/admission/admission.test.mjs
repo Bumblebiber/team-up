@@ -101,6 +101,29 @@ test("deriveLimits: telemetry per cli, fallbacks with reasons, config and the re
   assert.equal(footprintFor(FOOTPRINT, "gemini").source, "all workers");
 });
 
+// With no admission block and no telemetry every dispatch ran on the fallback
+// of 2 workers, and the refusal never said how to lift it. The reason reaches
+// `admission check` and every ADMISSION_REFUSED line, so it names the way out.
+test("a fallback limit names how to lift it, and so does the refusal it causes", () => {
+  const thin = { all: { samples: 3, p95_rss_kb: GB }, by_cli: {} };
+  for (const footprint of [thin, { ...FOOTPRINT, baseline_used_kb: null }]) {
+    const limits = deriveLimits({ footprint, cli: "codex", memTotalKb: 16 * GB });
+    assert.equal(limits.source, "fallback");
+    assert.match(limits.reason, /fallback limit 2 — .*admission\.max_workers.*team-up telemetry install-timer/);
+    const refused = admit({ sample: sample(), limits, running: { workers: 2 }, recent: [sample(), sample()] });
+    assert.match(refused.reason, /^2 workers running, limit 2 \(.*fallback limit 2 — .*install-timer/);
+  }
+  assert.doesNotMatch(deriveLimits({ footprint: FOOTPRINT, cli: "codex", memTotalKb: 16 * GB }).reason, /install-timer/);
+});
+
+test("roster.example.json documents an admission block that loads, $comment and all", () => {
+  const example = JSON.parse(fs.readFileSync(new URL("../../roster.example.json", import.meta.url), "utf8"));
+  assert.ok(example.admission, "the example names the admission block");
+  assert.ok(example.admission.$comment, "and says what it is for");
+  assert.equal(admissionConfig({}, { roster: example }).max_workers, example.admission.max_workers);
+  assert.equal(admissionConfig({}, { roster: { admission: { $comment: "why", max_workers: 4 } } }).max_workers, 4);
+});
+
 test("admissionConfig validates every key", () => {
   assert.deepEqual(admissionConfig({}, { roster: {} }), { ...DEFAULT_ADMISSION, memory_ceiling: { ...DEFAULT_ADMISSION.memory_ceiling } });
   const custom = admissionConfig({}, { roster: { admission: { reserve_mb: 2048, max_workers: 3, memory_ceiling: { enabled: true } } } });

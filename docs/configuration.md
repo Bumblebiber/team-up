@@ -121,6 +121,12 @@ runs started by `runs gc`). Every key is optional; a wrong value is an error.
 | `admission.memory_ceiling.high_factor` | `1.5` | `MemoryHigh` = p95 × this |
 | `admission.memory_ceiling.max_factor` | `2` | `MemoryMax` = p95 × this; the kernel kills that worker alone above it |
 
+Without `max_workers` and without enough telemetry (no `team-up telemetry
+install-timer`, or fewer than `min_samples` worker samples), every start is
+capped at `fallback_max_workers`. `doctor` reports that as
+`admission_fallback_limit`, and a refusal it causes names both ways out: run
+the telemetry timer, or set `max_workers`.
+
 A start is also refused while swap use grew across the last three samples.
 After a `team_up_suspected` restart, `runs resume` caps the limit at half the
 workers that ran before it; the cap holds until `team-up admission reset` or

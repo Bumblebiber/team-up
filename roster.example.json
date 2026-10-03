@@ -196,6 +196,11 @@
     }
   },
   "limits": { "warn_at": 0.9, "handoff_at": 0.95, "handoff_at_burst": 0.8, "project_min": 30 },
+  "admission": {
+    "$comment": "Gate on every worker start (dispatch, specialist run, runs resume). max_workers null derives the limit from telemetry (team-up telemetry install-timer); until telemetry has enough samples every start is capped at fallback_max_workers. Set max_workers to a number to fix the limit yourself. All keys: docs/configuration.md#admission.",
+    "max_workers": null,
+    "fallback_max_workers": 2
+  },
   "openrouter": {
     "$comment": "OpenRouter key for model scans and benchmarks: env OPENROUTER_API_KEY, then ~/.team-up/secrets.env, then this 0600 KEY=VALUE file.",
     "key_file": "~/.hermes/.env"

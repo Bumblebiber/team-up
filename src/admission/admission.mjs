@@ -29,6 +29,14 @@ export const DEFAULT_ADMISSION = Object.freeze({
   memory_ceiling: Object.freeze({ enabled: false, high_factor: 1.5, max_factor: 2 }),
 });
 
+/**
+ * How to leave the fallback limit. It rides along in every fallback reason, so
+ * `admission check`, each ADMISSION_REFUSED line and `doctor` all say it: the
+ * fallback used to cap every dispatch at 2 with nothing naming the cause.
+ */
+export const FALLBACK_REMEDY =
+  "set admission.max_workers in roster.json, or let telemetry derive it (team-up telemetry install-timer)";
+
 const CAP_TTL_MS = 24 * 60 * 60 * 1000;
 const SWAP_NOISE_KB = 1024;
 const RECENT_WINDOW_MS = 5 * 60 * 1000;
@@ -49,6 +57,8 @@ export function admissionConfig(env = process.env, { roster } = {}) {
   if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("ADMISSION_CONFIG: admission must be an object");
   const out = { ...DEFAULT_ADMISSION, memory_ceiling: { ...DEFAULT_ADMISSION.memory_ceiling } };
   for (const [key, value] of Object.entries(raw)) {
+    // The roster's comment convention, as in clis.* and openrouter.
+    if (key === "$comment") continue;
     if (!(key in DEFAULT_ADMISSION)) throw new Error(`ADMISSION_CONFIG: unknown admission.${key}`);
     if (key === "memory_ceiling") {
       if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -105,14 +115,14 @@ export function deriveLimits({ footprint, cli = null, memTotalKb = null, config 
       ...base,
       max_workers: config.fallback_max_workers,
       source: "fallback",
-      reason: `fewer than ${config.min_samples} worker samples; fallback limit ${config.fallback_max_workers}`,
+      reason: `fewer than ${config.min_samples} worker samples; fallback limit ${config.fallback_max_workers} — ${FALLBACK_REMEDY}`,
     };
   } else if (footprint?.baseline_used_kb == null || !memTotalKb) {
     limits = {
       ...base,
       max_workers: config.fallback_max_workers,
       source: "fallback",
-      reason: `no idle baseline in telemetry; fallback limit ${config.fallback_max_workers}`,
+      reason: `no idle baseline in telemetry; fallback limit ${config.fallback_max_workers} — ${FALLBACK_REMEDY}`,
     };
   } else {
     const room = memTotalKb * PLANNABLE_SHARE - footprint.baseline_used_kb;
