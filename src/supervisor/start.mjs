@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { loadState, saveState, setStatus } from "../runs/runs.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
+import { resolveLimitWindows } from "../roster/chain.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { prepareHarnessLaunch, getAdapter } from "../harness/registry.mjs";
 import { pinnedVerifiedBinary } from "../harness/binary.mjs";
@@ -958,8 +959,7 @@ export function resolveLimitWindowsForCell(cell, roster = null) {
   if (Array.isArray(cell?.limit_windows) && cell.limit_windows.length) {
     return cell.limit_windows;
   }
-  if (Array.isArray(model?.limit_windows)) return model.limit_windows;
-  return [];
+  return model ? resolveLimitWindows(r, cell.model, model) : [];
 }
 
 export function loadUsageDoc() {

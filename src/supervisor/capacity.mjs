@@ -1,4 +1,5 @@
 import { modelUsageGate, windowIsBlocking, windowResetAt } from "../usage/usage-windows.mjs";
+import { resolveLimitWindows } from "../roster/chain.mjs";
 
 const CONFIDENCE_RANK = {
   provider: 4,
@@ -31,7 +32,7 @@ function weakerConfidence(a, b) {
 export function candidateAvailability({ candidate, usage, roster, now = Date.now() }) {
   const nowMs = toMs(now);
   const model = roster?.models?.[candidate.model] || {};
-  const limitWindows = Array.isArray(model.limit_windows) ? model.limit_windows : [];
+  const limitWindows = resolveLimitWindows(roster, candidate.model, model);
   const limits = roster?.limits || {};
   const gate = modelUsageGate({
     usage,
