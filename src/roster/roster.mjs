@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { detectParent } from "../runs/parent.mjs";
+import { atomicWriteJson } from "../json-store.mjs";
 import {
   linkDispatchToRun,
   runDir,
@@ -92,9 +93,8 @@ function cmdMarkLimited(args) {
     ttlMs: parseTtl(ttl),
     reason: argValue(args, "--reason"),
   });
-  const usageOut = usageWritePath();
-  fs.mkdirSync(path.dirname(usageOut), { recursive: true });
-  fs.writeFileSync(usageOut, `${JSON.stringify(usage, null, 2)}\n`);
+  // Atomic: the watcher, hooks and every dispatch read usage.json meanwhile.
+  atomicWriteJson(usageWritePath(), usage);
   console.log(`marked ${target} limited until ${usage.marked[target].until}`);
 }
 
@@ -522,7 +522,7 @@ async function cmdRefresh(args) {
   if (doApply && proposals.applied.length) {
     backupRoster(rosterWritePath());
     const next = applyProposals({ roster: rosterCfg, scoresFile: collected, proposals });
-    fs.writeFileSync(rosterWritePath(), `${JSON.stringify(next, null, 2)}\n`);
+    atomicWriteJson(rosterWritePath(), next);
     console.log(`roster updated: ${rosterWritePath()}`);
   } else if (doApply) {
     console.log("nothing to auto-apply");
@@ -564,7 +564,7 @@ async function cmdApplyScores() {
   }
   backupRoster(rosterWritePath());
   const next = applyProposals({ roster: rosterCfg, scoresFile, proposals });
-  fs.writeFileSync(rosterWritePath(), `${JSON.stringify(next, null, 2)}\n`);
+  atomicWriteJson(rosterWritePath(), next);
   console.log(`roster updated: ${rosterWritePath()}`);
 }
 
