@@ -1478,6 +1478,14 @@ function cmdSetStatus(args) {
     console.error("usage: runs.mjs set-status <runId> <status> [--reason <text>]");
     process.exit(1);
   }
+  // A worker closing its own run writes the mailbox only, like the STATUS
+  // write its prompt names: STATE is the reconciler's, which applies the
+  // RESULT grace window and parent verification first. Parents and humans
+  // (no marker, or another run's id) still decide STATE directly.
+  if (process.env.TEAMUP_WORKER && process.env.TEAMUP_RUN_ID === runId) {
+    atomicWriteText(path.join(mailboxDir(runId), "STATUS"), status);
+    return;
+  }
   setStatus(runId, status, { reason: argValue(args, "--reason") });
 }
 

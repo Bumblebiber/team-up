@@ -67,6 +67,39 @@ test("CLI answer with a bad run id fails and creates nothing", withTempRuns(asyn
   assert.deepEqual(fs.readdirSync(dir), []);
 }));
 
+// The worker prompt offers `runs set-status <own id> done`. Writing STATE
+// there decided the run before reconcile could apply the RESULT grace window
+// or parent verification. A worker closing its own run now goes through the
+// mailbox like the STATUS write the prompt names first; anyone else is
+// unchanged, including a worker setting a child's status.
+test("CLI set-status from a worker on its own run writes only the mailbox", withTempRuns(async (dir) => {
+  const env = { ...process.env, O9K_RUNS: dir };
+  delete env.TEAMUP_WORKER;
+  delete env.TEAMUP_RUN_ID;
+  const mk = () => createRun({
+    cwd: "/tmp/proj", role: "implementer", parent: { cli: "manual", attach: "manual" },
+    worker: { cli: "codex", model: "m" }, prompt: "x",
+  });
+  const setDone = (runId, as) =>
+    spawnSync("node", [RUNS_BIN, "set-status", runId, "done"], { env: { ...env, ...as }, encoding: "utf8" });
+  const seen = (runId) => [
+    loadState(runId).status,
+    fs.readFileSync(path.join(runDir(runId), "mailbox", "STATUS"), "utf8").trim(),
+  ];
+
+  const own = mk();
+  assert.equal(setDone(own.runId, { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: own.runId }).status, 0);
+  assert.deepEqual(seen(own.runId), ["starting", "done"]);
+
+  const child = mk();
+  assert.equal(setDone(child.runId, { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: own.runId }).status, 0);
+  assert.deepEqual(seen(child.runId), ["done", "done"]);
+
+  const human = mk();
+  assert.equal(setDone(human.runId, {}).status, 0);
+  assert.deepEqual(seen(human.runId), ["done", "done"]);
+}));
+
 test("listAllStates passes over directories that are not runs", withTempRuns(async (dir) => {
   fs.mkdirSync(path.join(dir, "mailbox: "), { recursive: true });
   const corrupt = [];
