@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { rosterPath as configPathFromPaths, usagePath as usagePathFromPaths, rosterWritePath, usageWritePath } from "../paths.mjs";
 import { parseChainEntry } from "./chain.mjs";
+import { atomicWriteJson } from "../json-store.mjs";
 
 export function configPath(env = process.env) {
   return configPathFromPaths(env);
@@ -332,6 +333,7 @@ export function saveRoster(next, { env = process.env, now = () => new Date() } =
   const dest = rosterWritePath(env);
   const backup = `${dest}.bak-${now().toISOString().replace(/[:.]/g, "-")}`;
   if (fs.existsSync(dest)) fs.copyFileSync(dest, backup);
-  fs.writeFileSync(dest, `${JSON.stringify(next, null, 2)}\n`);
+  // Atomic: every dispatch, hook and the watcher read roster.json meanwhile.
+  atomicWriteJson(dest, next);
   return { path: dest, backup };
 }

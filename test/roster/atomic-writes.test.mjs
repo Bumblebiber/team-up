@@ -71,3 +71,15 @@ test("apply-scores replaces roster.json whole instead of rewriting it in place",
   const roster = JSON.parse(fs.readFileSync(fx.rosterPath, "utf8"));
   assert.equal(roster.roles.implementer.chain[0], "codex:b");
 });
+
+test("saveRoster (dashboard edits) replaces roster.json whole instead of rewriting it in place", async () => {
+  const { saveRoster } = await import("../../src/roster/config.mjs");
+  const fx = fixture();
+  const before = fs.statSync(fx.rosterPath).ino;
+  const next = JSON.parse(fs.readFileSync(fx.rosterPath, "utf8"));
+  next.roles.implementer.chain = ["codex:b"];
+  const { backup } = saveRoster(next, { env: { TEAM_UP_ROSTER: fx.rosterPath } });
+  assert.notEqual(fs.statSync(fx.rosterPath).ino, before);
+  assert.deepEqual(JSON.parse(fs.readFileSync(fx.rosterPath, "utf8")).roles.implementer.chain, ["codex:b"]);
+  assert.ok(fs.existsSync(backup));
+});
