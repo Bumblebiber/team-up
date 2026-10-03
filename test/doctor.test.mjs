@@ -287,6 +287,23 @@ test("a specialist on a reachable role is not reported", () => {
   }
 });
 
+// No admission block and no telemetry capped every dispatch at 2 workers,
+// silently: nothing reported it until a dispatch was refused.
+test("a roster on the admission fallback limit is a medium finding naming both remedies", () => {
+  const report = withHome({ "roster.json": { clis: {}, models: {}, roles: {} } }, diagnose);
+  const finding = report.findings.find((f) => f.kind === "admission_fallback_limit");
+  assert.ok(finding, "the fallback limit must be reported");
+  assert.equal(finding.severity, "medium");
+  assert.match(finding.detail, /capped at 2 /);
+  assert.match(finding.fix, /team-up telemetry install-timer/);
+  assert.match(finding.fix, /admission\.max_workers/);
+});
+
+test("a fixed admission.max_workers is no fallback finding", () => {
+  const report = withHome({ "roster.json": { admission: { max_workers: 6 } } }, diagnose);
+  assert.equal(report.findings.some((f) => f.kind === "admission_fallback_limit"), false);
+});
+
 test("a clean install reports ok", () => {
   const report = withHome({ "specialists-index.json": INDEX }, diagnose);
   assert.equal(report.ok, true);

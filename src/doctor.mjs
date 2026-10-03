@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { teamUpHome, specialistApprovalsPath } from "./paths.mjs";
 import { listInstalled } from "./specialists/store.mjs";
@@ -20,7 +21,8 @@ import { HARNESS_VERIFY_CLIS, UNVERIFIABLE_ISOLATION_REASONS } from "./harness/c
 import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
 import { debugLogDir, handoffsDir, telemetryDir } from "./paths.mjs";
 import { journalPersistence, listRestartReports } from "./telemetry/restart.mjs";
-import { admissionConfig, memoryDelegation } from "./admission/admission.mjs";
+import { FALLBACK_REMEDY, admissionConfig, deriveLimits, memoryDelegation } from "./admission/admission.mjs";
+import { workerFootprint } from "./telemetry/stats.mjs";
 import { listActiveStates } from "./runs/runs.mjs";
 
 function readJson(file) {
@@ -406,14 +408,36 @@ export function diagnose(env = process.env, {
     }
   }
 
-  // Per-worker memory ceilings (plan 3) only exist where the memory
-  // controller is delegated, and only for workers that run under systemd-run.
-  let ceiling = null;
+  let admission = null;
   try {
-    ceiling = admissionConfig(env).memory_ceiling;
+    admission = admissionConfig(env);
   } catch (e) {
     findings.push({ kind: "admission_config_invalid", severity: "high", path: "roster.json", detail: e.message });
   }
+
+  // Without admission.max_workers the worker limit comes from telemetry, and
+  // with too little of it every dispatch is capped at fallback_max_workers —
+  // which nothing said until a dispatch was refused. Only a roster dispatches.
+  if (admission && rosterCfg) {
+    const limits = deriveLimits({
+      footprint: workerFootprint({ dir: telemetryDir(env) }),
+      memTotalKb: os.totalmem() / 1024,
+      config: admission,
+    });
+    if (limits.source === "fallback") {
+      findings.push({
+        kind: "admission_fallback_limit",
+        severity: "medium",
+        path: "roster.json",
+        detail: `every dispatch is capped at ${limits.max_workers} concurrent workers: no admission.max_workers, and too little telemetry to derive a limit`,
+        fix: FALLBACK_REMEDY,
+      });
+    }
+  }
+
+  // Per-worker memory ceilings (plan 3) only exist where the memory
+  // controller is delegated, and only for workers that run under systemd-run.
+  const ceiling = admission?.memory_ceiling;
   const memoryDelegated = delegation();
   if (ceiling?.enabled) {
     if (memoryDelegated.delegated !== true) {

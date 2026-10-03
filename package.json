@@ -7,7 +7,7 @@
     "team-up": "bin/team-up.mjs"
   },
   "scripts": {
-    "test": "node --test \"test/**/*.test.mjs\" && bash test/runs/wait-mailbox.test.sh"
+    "test": "node --import ./test/helpers/hermetic-home.mjs --test \"test/**/*.test.mjs\" && bash test/runs/wait-mailbox.test.sh"
   },
   "engines": {
     "node": ">=18"
@@ -22,6 +22,10 @@
     "src",
     "skills",
     "hooks",
+    "templates",
+    "roster.example.json",
+    "scripts/wait-mailbox.sh",
+    "test/fixtures/harness-project",
     "README.md",
     "LICENSE"
   ]

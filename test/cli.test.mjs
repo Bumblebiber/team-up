@@ -1,9 +1,13 @@
+import "./helpers/hermetic-home.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { runCli } from "../src/cli.mjs";
+import { debugLog } from "../src/debug.mjs";
 
 test("version prints package version", async () => {
   const lines = [];
@@ -29,5 +33,61 @@ test("runs gc --dry-run reports without mutating temp runs", async () => {
     if (previous === undefined) delete process.env.TEAM_UP_RUNS;
     else process.env.TEAM_UP_RUNS = previous;
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// debugLog runs inside the limit-watch hook of every Claude session. The flag
+// was inverted (TEAM_UP_DEBUG silenced it) and the log ignored TEAM_UP_HOME.
+function debugLogged(env) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-debug-"));
+  const write = process.stderr.write;
+  process.stderr.write = () => true;
+  try {
+    debugLog("scope-x", new Error("boom"), { ...env, TEAM_UP_HOME: home });
+    const file = path.join(home, "logs", "hook-errors.log");
+    return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  } finally {
+    process.stderr.write = write;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test("TEAM_UP_DEBUG=1 logs hook errors under TEAM_UP_HOME", () => {
+  assert.match(debugLogged({ TEAM_UP_DEBUG: "1" }) ?? "", /\[scope-x\] Error: boom/);
+});
+
+test("the legacy O9K_DEBUG=1 still turns hook error logging on", () => {
+  assert.match(debugLogged({ O9K_DEBUG: "1" }) ?? "", /\[scope-x\]/);
+});
+
+test("hook error logging stays off without a debug flag", () => {
+  assert.equal(debugLogged({}), null);
+});
+
+// The packed install crashed at `team-up init` (ENOENT roster.example.json):
+// `files` left out what the runtime reads from beside src/.
+test("the npm package ships every file the runtime reads outside src", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const cache = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-pack-"));
+  try {
+    const out = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, npm_config_cache: cache, npm_config_logs_max: "0" },
+    });
+    const shipped = new Set(JSON.parse(out)[0].files.map((f) => f.path));
+    for (const file of [
+      "roster.example.json", // roster.mjs init
+      "templates/worker-prompt.md", // runs.mjs wrapPromptWithMailboxProtocol
+      "templates/worker-prompt-legacy.md",
+      "scripts/wait-mailbox.sh", // runs wait
+      "test/fixtures/harness-project/.team-up/commands.json", // harness verify / reverify
+      "hooks/hooks.json",
+      "bin/team-up-command-broker.mjs",
+    ]) {
+      assert.ok(shipped.has(file), `${file} missing from the package`);
+    }
+  } finally {
+    fs.rmSync(cache, { recursive: true, force: true });
   }
 });

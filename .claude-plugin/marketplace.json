@@ -8,7 +8,7 @@
     {
       "name": "team-up",
       "source": "./",
-      "description": "The pipeline, dispatch, intake, roster, pass-to, roster-refresh and team-up-manage skills (all main-only). Needs the `team-up` CLI on PATH (npm i -g team-up)."
+      "description": "The pipeline, dispatch, intake, roster, pass-to, roster-refresh and team-up-manage skills (all main-only). Needs the `team-up` CLI on PATH: clone the repo, npm ci, npm link (the npm package named team-up is unrelated)."
     }
   ]
 }
