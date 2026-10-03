@@ -93,15 +93,15 @@ export function acquireVerificationLock(mb) {
   return null;
 }
 
-/** The verdict already recorded for this exact STATUS=done write, or null. */
-export function recordedVerdict(mb, statusMtimeMs) {
-  try {
-    const report = JSON.parse(fs.readFileSync(path.join(mb, "VERIFICATION.json"), "utf8"));
-    if (statusMtimeMs == null || report?.status_mtime_ms !== statusMtimeMs) return null;
-    return report.verdict === "pass" || report.verdict === "fail" ? report : null;
-  } catch {
-    return null;
-  }
+/**
+ * The verdict already recorded for this exact STATUS=done write, or null.
+ * Read from STATE, never from mailbox/VERIFICATION.json: the worker writes
+ * its mailbox, and a stamped pass it planted there skipped the verify command.
+ */
+export function recordedVerdict(state, statusMtimeMs) {
+  const record = state?.verification;
+  if (statusMtimeMs == null || record?.status_mtime_ms !== statusMtimeMs) return null;
+  return record.verdict === "pass" || record.verdict === "fail" ? record : null;
 }
 
 /**

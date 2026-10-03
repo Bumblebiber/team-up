@@ -1265,18 +1265,24 @@ export async function resumeAll({
 function verifyDoneOnce(runId, classified) {
   const mb = mailboxDir(runId);
   const statusMtimeMs = readMailboxStatusIdentity(runId).mtimeMs;
-  let report = recordedVerdict(mb, statusMtimeMs);
+  let report = recordedVerdict(loadState(runId), statusMtimeMs);
   if (!report) {
     const release = acquireVerificationLock(mb);
     if (!release) return { status: "watching", pending: "verification" };
     try {
       // Under the lock: another verifier may just have finished, or the run
       // been decided. A decided run's evidence is never rewritten.
-      report = recordedVerdict(mb, statusMtimeMs);
       const state = loadState(runId);
+      report = recordedVerdict(state, statusMtimeMs);
       if (!report) {
         if (!resolveRunState(state, classified).changed) return classified;
         report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson, statusMtimeMs });
+        // The verdict that counts goes where only the parent writes, before the
+        // lock is released; mailbox/VERIFICATION.json is the evidence copy.
+        updateState(runId, (s) => {
+          s.verification = { verdict: report.verdict, status_mtime_ms: statusMtimeMs, at: report.finishedAt };
+          return s;
+        });
       }
     } finally {
       release();

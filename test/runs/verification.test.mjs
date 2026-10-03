@@ -13,6 +13,7 @@ import {
   atomicWriteText,
   atomicWriteJson,
   setStatus,
+  updateState,
   parseVerifyCommand,
   parseNodeTestCounts,
   runParentVerification,
@@ -351,13 +352,17 @@ test("a done is verified once: a second runs wait neither re-runs nor rewrites i
   assert.equal(fs.readFileSync(verificationPath(runId), "utf8"), first);
 }));
 
+function recordVerdict(runId, verdict, stamp) {
+  updateState(runId, (s) => {
+    s.verification = { verdict, status_mtime_ms: stamp, at: new Date().toISOString() };
+    return s;
+  });
+}
+
 test("an existing verdict for the same done is reused, not re-run", withTempRuns(async (runsRoot) => {
   const { runId, count } = verifiedRun(runsRoot, "reuse");
-  // A verifier that wrote its verdict and died before STATE was persisted.
-  atomicWriteJson(verificationPath(runId), {
-    schema: "verification/1", verdict: "fail", runs: [{ n: 1, exitCode: 1 }],
-    status_mtime_ms: statusMtimeMs(runId),
-  });
+  // A verifier that recorded its verdict and died before the status was persisted.
+  recordVerdict(runId, "fail", statusMtimeMs(runId));
   const r = waitMailbox(runId, { ceilingSec: 1, observe: false });
   assert.equal(r.classified.status, "failed");
   assert.equal(count(), 0);
@@ -366,12 +371,25 @@ test("an existing verdict for the same done is reused, not re-run", withTempRuns
 
 test("a verdict stamped for another STATUS write is not reused", withTempRuns(async (runsRoot) => {
   const { runId, count } = verifiedRun(runsRoot, "stale-verdict");
-  atomicWriteJson(verificationPath(runId), {
-    schema: "verification/1", verdict: "fail", runs: [], status_mtime_ms: statusMtimeMs(runId) - 5000,
-  });
+  recordVerdict(runId, "fail", statusMtimeMs(runId) - 5000);
   assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "done");
   assert.equal(count(), 2);
   assert.equal(JSON.parse(fs.readFileSync(verificationPath(runId), "utf8")).status_mtime_ms, statusMtimeMs(runId));
+  assert.equal(loadState(runId).verification.status_mtime_ms, statusMtimeMs(runId));
+}));
+
+// The worker can write its mailbox and stat its own STATUS: a stamped pass it
+// planted there let the run be adopted done without the parent's command ever
+// running. The verdict that counts is the one in STATE.
+test("a worker-forged stamped verdict in the mailbox does not skip verification", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "forged", { runs: 1, failAt: 1 });
+  atomicWriteJson(verificationPath(runId), {
+    schema: "verification/1", verdict: "pass", runs: [], status_mtime_ms: statusMtimeMs(runId),
+  });
+  assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "failed");
+  assert.equal(count(), 1);
+  assert.equal(loadState(runId).status, "failed");
+  assert.equal(loadState(runId).verification.verdict, "fail");
 }));
 
 test("while another live verifier holds the lock, runs wait does not verify or decide", withTempRuns(async (runsRoot) => {
