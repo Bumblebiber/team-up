@@ -1,12 +1,7 @@
 import { pick, limits } from "../roster/chain.mjs";
 import { SESSION_PREFIX } from "./projects.mjs";
 
-/** Run ids from `createRun` — ISO timestamp + 4-char base36 suffix. */
-export const RUN_ID_PATTERN = /^\d{8}T\d{6}Z-[a-z0-9]{4}$/;
-
-export function isValidRunId(id) {
-  return typeof id === "string" && RUN_ID_PATTERN.test(id);
-}
+export { RUN_ID_PATTERN, isValidRunId } from "../runs/runs.mjs";
 
 const SECRET_KEY = /key|token|secret|password/i;
 

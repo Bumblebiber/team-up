@@ -34,9 +34,9 @@ function plant(home, runId, status) {
 
 test("a mailbox that fails persists its reason and end time", async () => {
   await withHome(({ home, runs }) => {
-    plant(home, "r-1", "done"); // done without RESULT.md
-    runs.waitMailbox("r-1", { observe: false, stopTmux: () => {} });
-    const state = runs.loadState("r-1");
+    plant(home, "20260101T000000Z-r001", "done"); // done without RESULT.md
+    runs.waitMailbox("20260101T000000Z-r001", { observe: false, stopTmux: () => {} });
+    const state = runs.loadState("20260101T000000Z-r001");
     assert.equal(state.status, "failed");
     assert.equal(state.failure.error, "STATUS=done but RESULT.md missing");
     assert.match(state.finishedAt, /^\d{4}-\d{2}-\d{2}T/);
@@ -45,26 +45,26 @@ test("a mailbox that fails persists its reason and end time", async () => {
 
 test("setStatus records a reason only for failures, and never overwrites the first", async () => {
   await withHome(({ home, runs }) => {
-    plant(home, "r-1", "");
-    runs.setStatus("r-1", "watching", { reason: "ignored" });
-    assert.equal(runs.loadState("r-1").failure, undefined);
-    assert.equal(runs.loadState("r-1").finishedAt, undefined);
-    runs.setStatus("r-1", "failed", { reason: "capsule setup: boom" });
-    runs.setStatus("r-1", "failed", { reason: "later" });
-    assert.equal(runs.loadState("r-1").failure.error, "capsule setup: boom");
+    plant(home, "20260101T000000Z-r001", "");
+    runs.setStatus("20260101T000000Z-r001", "watching", { reason: "ignored" });
+    assert.equal(runs.loadState("20260101T000000Z-r001").failure, undefined);
+    assert.equal(runs.loadState("20260101T000000Z-r001").finishedAt, undefined);
+    runs.setStatus("20260101T000000Z-r001", "failed", { reason: "capsule setup: boom" });
+    runs.setStatus("20260101T000000Z-r001", "failed", { reason: "later" });
+    assert.equal(runs.loadState("20260101T000000Z-r001").failure.error, "capsule setup: boom");
   });
 });
 
 test("a run that leaves failed for done drops the failure and re-stamps its end", async () => {
   await withHome(({ home, runs }) => {
-    plant(home, "r-1", "");
-    runs.setStatus("r-1", "failed", { reason: "worker_stale_timeout" });
-    const staleEnd = runs.loadState("r-1").finishedAt;
-    runs.updateState("r-1", (s) => ({ ...s, status: "watching" }));
-    assert.equal(runs.loadState("r-1").finishedAt, undefined);
-    assert.equal(runs.loadState("r-1").failure, undefined);
-    runs.setStatus("r-1", "done");
-    const state = runs.loadState("r-1");
+    plant(home, "20260101T000000Z-r001", "");
+    runs.setStatus("20260101T000000Z-r001", "failed", { reason: "worker_stale_timeout" });
+    const staleEnd = runs.loadState("20260101T000000Z-r001").finishedAt;
+    runs.updateState("20260101T000000Z-r001", (s) => ({ ...s, status: "watching" }));
+    assert.equal(runs.loadState("20260101T000000Z-r001").finishedAt, undefined);
+    assert.equal(runs.loadState("20260101T000000Z-r001").failure, undefined);
+    runs.setStatus("20260101T000000Z-r001", "done");
+    const state = runs.loadState("20260101T000000Z-r001");
     assert.equal(state.failure, undefined);
     assert.ok(state.finishedAt >= staleEnd);
   });
@@ -72,25 +72,25 @@ test("a run that leaves failed for done drops the failure and re-stamps its end"
 
 test("a retryable failure from a handoff does not shadow the terminal reason", async () => {
   await withHome(({ home, runs }) => {
-    plant(home, "r-1", "");
-    runs.updateState("r-1", (s) => ({ ...s, status: "handing_off", failure: { type: "usage_refresh_failed", retryable: true, error: "USAGE_REFRESH_FAILED" } }));
-    runs.setStatus("r-1", "failed", { reason: "capsule setup: boom" });
-    assert.equal(runs.loadState("r-1").failure.error, "capsule setup: boom");
+    plant(home, "20260101T000000Z-r001", "");
+    runs.updateState("20260101T000000Z-r001", (s) => ({ ...s, status: "handing_off", failure: { type: "usage_refresh_failed", retryable: true, error: "USAGE_REFRESH_FAILED" } }));
+    runs.setStatus("20260101T000000Z-r001", "failed", { reason: "capsule setup: boom" });
+    assert.equal(runs.loadState("20260101T000000Z-r001").failure.error, "capsule setup: boom");
   });
 });
 
 test("a done run in a git cwd records the commit it ended on", async () => {
   await withHome(({ home, runs }) => {
-    plant(home, "r-1", "");
+    plant(home, "20260101T000000Z-r001", "");
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "tu-head-"));
     try {
       const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
       execFileSync("git", ["-C", repo, "init", "-q"], { env });
       execFileSync("git", ["-C", repo, "commit", "-q", "--allow-empty", "-m", "x"], { env });
       const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-      runs.updateState("r-1", (s) => ({ ...s, cwd: repo, base_commit: "0000" }));
-      runs.setStatus("r-1", "done");
-      assert.equal(runs.loadState("r-1").head_commit, head);
+      runs.updateState("20260101T000000Z-r001", (s) => ({ ...s, cwd: repo, base_commit: "0000" }));
+      runs.setStatus("20260101T000000Z-r001", "done");
+      assert.equal(runs.loadState("20260101T000000Z-r001").head_commit, head);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

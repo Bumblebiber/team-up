@@ -38,13 +38,13 @@ test("collect marks a finished run and refuses a running one", async () => {
   try {
     const runs = await import("../../src/runs/runs.mjs");
     const root = path.join(home, "runs");
-    plant(root, "r-done", { status: "done", finishedAt: new Date().toISOString() });
-    plant(root, "r-live", { status: "watching" });
+    plant(root, "20260101T000000Z-done", { status: "done", finishedAt: new Date().toISOString() });
+    plant(root, "20260101T000000Z-live", { status: "watching" });
     assert.equal(findUncollectedRuns({ root }).length, 1);
-    const state = runs.markCollected("r-done", { note: "merged", now: () => "2026-10-01T00:00:00Z" });
+    const state = runs.markCollected("20260101T000000Z-done", { note: "merged", now: () => "2026-10-01T00:00:00Z" });
     assert.deepEqual(state.collected, { at: "2026-10-01T00:00:00Z", note: "merged" });
     assert.equal(findUncollectedRuns({ root }).length, 0);
-    assert.throws(() => runs.markCollected("r-live"), /only a finished run/);
+    assert.throws(() => runs.markCollected("20260101T000000Z-live"), /only a finished run/);
   } finally {
     if (prior === undefined) delete process.env.TEAM_UP_HOME;
     else process.env.TEAM_UP_HOME = prior;

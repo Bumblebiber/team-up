@@ -11,7 +11,7 @@ import {
   setStatus, resumeAll, linkDispatchToRun, recordRunEscalation, listActiveStates,
   buildColdStartArgv, acquireResumeLock, resumeLockPath, waitTmuxReady,
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
-  resolveGitBase,
+  resolveGitBase, isValidRunId, listAllStates,
 } from "../../src/runs/runs.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
@@ -33,6 +33,44 @@ function withTempRuns(fn) {
 
 test("runsRoot respects O9K_RUNS", withTempRuns(async (dir) => {
   assert.equal(runsRoot(), dir);
+}));
+
+// An agent once passed the `mailbox: <path>` output line as a run id and got
+// ~/.team-up/runs/'mailbox: '/home/... created by `runs answer`.
+test("runDir refuses anything that is not a run id", withTempRuns(async () => {
+  assert.equal(isValidRunId("20260922T100319Z-ri6m"), true);
+  for (const bad of ["mailbox: /home/x/.team-up/runs/20260922T100319Z-ri6m/mailbox", "../evil", "r1", "", null]) {
+    assert.equal(isValidRunId(bad), false, String(bad));
+    assert.throws(() => runDir(bad), /invalid run id/);
+  }
+}));
+
+test("createRun mints ids runDir accepts", withTempRuns(async () => {
+  for (let i = 0; i < 20; i++) {
+    const s = createRun({
+      cwd: "/tmp/p", role: "implementer",
+      parent: { cli: "claude", attach: "manual" },
+      worker: { cli: "codex" },
+      prompt: "x",
+    });
+    assert.equal(isValidRunId(s.runId), true, s.runId);
+  }
+}));
+
+test("CLI answer with a bad run id fails and creates nothing", withTempRuns(async (dir) => {
+  const r = spawnSync("node", [RUNS_BIN, "answer", "mailbox: /tmp/x/mailbox", "--text", "A"], {
+    env: { ...process.env, O9K_RUNS: dir }, encoding: "utf8",
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /invalid run id/);
+  assert.deepEqual(fs.readdirSync(dir), []);
+}));
+
+test("listAllStates passes over directories that are not runs", withTempRuns(async (dir) => {
+  fs.mkdirSync(path.join(dir, "mailbox: "), { recursive: true });
+  const corrupt = [];
+  assert.deepEqual(listAllStates({ onCorrupt: (id) => corrupt.push(id) }), []);
+  assert.deepEqual(corrupt, []);
 }));
 
 test("atomicWriteJson never leaves partial JSON", withTempRuns(async (dir) => {
@@ -221,7 +259,7 @@ test("CLI answer then classify watching", withTempRuns(async (dir) => {
 test("buildResumePlan skips terminal runs", () => {
   const plan = buildResumePlan({
     status: "done",
-    runId: "r1",
+    runId: "20260101T000000Z-r001",
     cwd: "/tmp/p",
     parent: { attach: "manual" },
     worker: { cli: "codex", tmux: "w1" },
@@ -232,7 +270,7 @@ test("buildResumePlan skips terminal runs", () => {
 test("buildResumePlan restores worker tmux when missing", () => {
   const plan = buildResumePlan({
     status: "watching",
-    runId: "r1",
+    runId: "20260101T000000Z-r001",
     cwd: "/tmp/p",
     parent: { attach: "manual", cli: "claude" },
     worker: { cli: "claude", sessionId: "abc", tmux: "w1" },
@@ -245,7 +283,7 @@ test("buildResumePlan restores worker tmux when missing", () => {
 test("buildResumePlan noops worker when tmux exists", () => {
   const plan = buildResumePlan({
     status: "watching",
-    runId: "r1",
+    runId: "20260101T000000Z-r001",
     cwd: "/tmp/p",
     parent: { attach: "manual", cli: "claude" },
     worker: { cli: "codex", tmux: "w1" },
@@ -257,7 +295,7 @@ test("buildResumePlan noops worker when tmux exists", () => {
 test("buildResumePlan leaves the parent to the grouped wake-up", () => {
   const plan = buildResumePlan({
     status: "waiting_human",
-    runId: "r1",
+    runId: "20260101T000000Z-r001",
     cwd: "/tmp/p",
     parent: { attach: "tmux", cli: "claude", sessionId: "p1", tmux: "parent-1" },
     worker: { cli: "codex", tmux: "w1" },
@@ -273,7 +311,7 @@ test("buildCliArgv claude resume", () => {
 
 test("buildColdStartArgv has no stray quote after exec", () => {
   const argv = buildColdStartArgv({
-    runId: "r1",
+    runId: "20260101T000000Z-r001",
     promptPath: "/tmp/run/mailbox/PROMPT.md",
     cli: "cursor-agent",
   });
@@ -326,13 +364,13 @@ test("listActiveStates skips corrupt STATE.json", withTempRuns(async (dir) => {
     prompt: "x",
   });
   setStatus(s.runId, "watching");
-  const bad = path.join(dir, "corrupt-run");
+  const bad = path.join(dir, "20260101T000000Z-bad0");
   fs.mkdirSync(bad, { recursive: true });
   fs.writeFileSync(path.join(bad, "STATE.json"), "{not-json");
   const skipped = [];
   const active = listActiveStates({ onCorrupt: (id, e) => skipped.push(id) });
   assert.ok(active.some((r) => r.runId === s.runId));
-  assert.ok(skipped.includes("corrupt-run"));
+  assert.ok(skipped.includes("20260101T000000Z-bad0"));
   // resumeAll must not throw
   const report = await resumeAll({ dryRun: true, tmuxExists: () => true, logDir: dir });
   assert.ok(report.runs.some((r) => r.runId === s.runId));

@@ -31,7 +31,22 @@ export function runsRoot() {
   return runsPath(process.env);
 }
 
+/** Run ids from `createRun` — ISO timestamp + 4-char base36 suffix. */
+export const RUN_ID_PATTERN = /^\d{8}T\d{6}Z-[a-z0-9]{4}$/;
+
+export function isValidRunId(id) {
+  return typeof id === "string" && RUN_ID_PATTERN.test(id);
+}
+
+/**
+ * Every run path goes through here, so this is where a wrong id stops. An
+ * agent once passed the `mailbox: <path>` line from `runs create` as the id,
+ * and `runs answer` created ~/.team-up/runs/'mailbox: '/home/... for it.
+ */
 export function runDir(runId) {
+  if (!isValidRunId(runId)) {
+    throw new Error(`invalid run id ${JSON.stringify(runId)} (expected e.g. 20260922T100319Z-ri6m)`);
+  }
   return path.join(runsRoot(), runId);
 }
 
@@ -74,7 +89,9 @@ export function publishFileNoReplace(destPath, content) {
 
 function newRunId(now = new Date()) {
   const iso = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-  const short = Math.random().toString(36).slice(2, 6);
+  // padEnd: a random number with a short base36 form must not mint an id
+  // that runDir rejects.
+  const short = Math.random().toString(36).slice(2, 6).padEnd(4, "0");
   return `${iso}-${short}`;
 }
 
@@ -802,7 +819,9 @@ export function listAllStates({ onCorrupt } = {}) {
   if (!fs.existsSync(root)) return [];
   const out = [];
   for (const name of fs.readdirSync(root)) {
-    if (name.startsWith(".")) continue;
+    // Not a run (dotfiles, a stray 'mailbox: ' dir): nothing to report, and
+    // gc would otherwise log it as corrupt every five minutes.
+    if (!isValidRunId(name)) continue;
     try {
       const state = loadState(name);
       if (state) out.push(state);
