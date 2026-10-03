@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { diagnose } from "../src/doctor.mjs";
+import { appendSample } from "../src/telemetry/store.mjs";
 import { ISOLATION_FORBIDDEN_CANARIES } from "../src/harness/isolation-canary.mjs";
 
 // The whole world a diagnosis may see. O9K_HOME is named too because the read
@@ -296,6 +297,24 @@ test("a roster on the admission fallback limit is a medium finding naming both r
   assert.equal(finding.severity, "medium");
   assert.match(finding.detail, /capped at 2 /);
   assert.match(finding.fix, /team-up telemetry install-timer/);
+  assert.match(finding.fix, /admission\.max_workers/);
+});
+
+// A busy host: telemetry runs and has worker samples, but a worker ran in
+// every one of them, so there is no idle baseline. The timer is already
+// installed; telling the user to install it fixes nothing.
+test("a fallback limit for want of an idle baseline names the baseline, not the timer", () => {
+  const report = withHome({ "roster.json": { admission: { min_samples: 1 } } }, (env) => {
+    appendSample(
+      { at: new Date().toISOString(), workers: [{ runId: "r1", cli: "claude", role: "code", rss_kb: 500_000 }] },
+      { dir: path.join(env.TEAM_UP_HOME, "telemetry") }
+    );
+    return diagnose(env);
+  });
+  const finding = report.findings.find((f) => f.kind === "admission_fallback_limit");
+  assert.ok(finding, "the fallback limit must be reported");
+  assert.match(finding.detail, /idle baseline/);
+  assert.doesNotMatch(finding.fix, /install-timer/);
   assert.match(finding.fix, /admission\.max_workers/);
 });
 

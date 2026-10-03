@@ -427,12 +427,19 @@ export function diagnose(env = process.env, {
       config: admission,
     });
     if (limits.source === "fallback") {
+      // A worker size without a limit means the samples are there but none
+      // was idle: more telemetry will not help while workers never stop.
+      const noBaseline = Boolean(limits.p95_rss_kb);
       findings.push({
         kind: "admission_fallback_limit",
         severity: "medium",
         path: "roster.json",
-        detail: `every dispatch is capped at ${limits.max_workers} concurrent workers: no admission.max_workers, and too little telemetry to derive a limit`,
-        fix: FALLBACK_REMEDY,
+        detail: `every dispatch is capped at ${limits.max_workers} concurrent workers: no admission.max_workers, and ${noBaseline
+          ? "telemetry has no idle baseline (a worker ran in every sample)"
+          : "too little telemetry to derive a limit"}`,
+        fix: noBaseline
+          ? "set admission.max_workers in roster.json; telemetry cannot derive a limit while a worker runs in every sample"
+          : FALLBACK_REMEDY,
       });
     }
   }
