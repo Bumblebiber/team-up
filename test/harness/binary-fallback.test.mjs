@@ -7,6 +7,7 @@ import { execFileSync as realExecFileSync } from "node:child_process";
 import { pinVerifiedBinary, pinnedBinaryPath, PINS_KEPT } from "../../src/harness/binary.mjs";
 import { effectiveHarnessBinary, harnessCapabilities, harnessStatus } from "../../src/harness/registry.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
+import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
 
 /**
  * A claude update the canary cannot clear yet must leave specialists on the
@@ -29,6 +30,7 @@ function plant(home, version, status) {
     checked_at: `2026-10-0${status === "verified" ? 1 : 2}T00:00:00.000Z`,
     command_broker: status === "verified" ? "team-up.command-broker/v1" : null,
     context_isolation: status === "verified" ? CONTEXT_ISOLATION_CAPABILITY : null,
+    ...(status === "verified" ? { context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES] } : {}),
   }));
 }
 
@@ -100,6 +102,31 @@ test("only the newest pins are kept", () => {
       versions.slice(-PINS_KEPT).sort(),
       "ordered by version, not by name",
     );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a verified record grants isolation only with the canaries its run observed absent", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-proof-"));
+  try {
+    const env = { TEAM_UP_HOME: home };
+    const exec = execAs(fakeClaude(home, "2.1.300"));
+    const grant = (extra) => {
+      const file = path.join(home, "harness-verification", "claude", "2.1.300.json");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({
+        adapter: "claude", cli_version: "2.1.300", status: "verified",
+        command_broker: "team-up.command-broker/v1", context_isolation: CONTEXT_ISOLATION_CAPABILITY, ...extra,
+      }));
+      return harnessCapabilities("claude", { env, execFileSync: exec });
+    };
+    // The 281-byte records on the host: a token, no proof.
+    assert.equal(grant({}).context_isolation, null);
+    assert.equal(grant({}).command_broker, "team-up.command-broker/v1", "only isolation is withheld");
+    assert.equal(grant({ context_isolation_absent: ISOLATION_FORBIDDEN_CANARIES.slice(1) }).context_isolation, null);
+    assert.equal(grant({ context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES] }).context_isolation,
+      CONTEXT_ISOLATION_CAPABILITY);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

@@ -9,6 +9,7 @@ import {
   normalizePaneText,
   paneFingerprint,
   matchesDenyPattern,
+  denyFinding,
   verifyVerdict,
   parseJudgeJson,
   observerTick,
@@ -471,6 +472,30 @@ test("hydrateLoopFromLog restores caps across re-wait", withTempRuns(async () =>
   const loop = hydrateLoopFromLog(state.runId);
   assert.equal(loop.autoAnswerCount, 1);
   assert.ok(loop.answeredPanes.has(fp));
+}));
+
+test("a human answer approves the same deny finding, not a new one", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  // A static security review prints credential words; that is the finding.
+  const pane = "Reviewing src/auth/token.mjs\n  reads the API key from config, never logs the password\n> ";
+  const answer = { state: "waiting_input", reason: "stalled", action: "answer", keys: ["Enter"], evidence: "x" };
+  const first = verifyVerdict(answer, pane, createObserverLoop());
+  assert.equal(first.action, "escalate");
+  assert.equal(first.finding, denyFinding(pane));
+  appendObservationLog(state.runId, { kind: "decision", action: "escalate", reason: first.reason, finding: first.finding });
+
+  // No answer yet: a new observer still pauses on it.
+  assert.equal(verifyVerdict(answer, pane, hydrateLoopFromLog(state.runId)).action, "escalate");
+
+  const answerPath = path.join(runs.mailboxDir(state.runId), "ANSWER.md");
+  fs.writeFileSync(answerPath, "<!-- source: parent -->\nApproved: static review only.\n");
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(answerPath, later, later);
+  const loop = hydrateLoopFromLog(state.runId);
+  // Same finding, a spinner changed elsewhere: wait, never auto-answer it.
+  assert.equal(verifyVerdict(answer, `${pane}\n⠋ 12s`, loop).action, "wait");
+  // A materially different sensitive line pauses again.
+  assert.equal(verifyVerdict(answer, `${pane}\nEnter your API key:`, loop).action, "escalate");
 }));
 
 test("escalateRun appends QUESTIONS.md instead of clobbering", withTempRuns(async () => {

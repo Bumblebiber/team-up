@@ -477,6 +477,7 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
       argv_sample: shellPrepared.argv.slice(0, 12),
       isolation_status: isolation.isolation_status,
       context_isolation: isolation.context_isolation ?? null,
+      context_isolation_absent: isolation.observed?.absent ?? null,
       ...(isolation.isolation_reason
         ? { context_isolation_reason: isolation.isolation_reason }
         : {}),
@@ -551,6 +552,7 @@ export async function liveCodexVerifyRunner({ adapter, fixtureProject, cliVersio
     broker_tool: "unverified",
     isolation_status: isolation.isolation_status,
     context_isolation: isolation.context_isolation ?? null,
+    context_isolation_absent: isolation.observed?.absent ?? null,
     cli_version: cliVersion || String(versionOut).trim(),
     ...(isolation.isolation_reason
       ? { context_isolation_reason: isolation.isolation_reason }

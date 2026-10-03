@@ -11,6 +11,7 @@ import {
   UNVERIFIED_CAPABILITIES,
 } from "./capabilities.mjs";
 import { loadVerificationRecord, listVerificationRecords } from "./verify.mjs";
+import { absentListComplete } from "./isolation-canary.mjs";
 import { verifiedFallbackBinary } from "./binary.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
 
@@ -53,6 +54,13 @@ export function harnessCapabilities(
       record = loadVerificationRecord(adapter.id, version, env);
     } catch {
       record = null;
+    }
+    // A record on disk that says "isolated" without the canaries its run
+    // observed absent proves nothing — any writer could have set the token.
+    // No proof, no grant. (A caller-passed `verification` is built from caps
+    // that already came through here.)
+    if (record?.context_isolation && !absentListComplete(record.context_isolation_absent)) {
+      record = { ...record, context_isolation: null };
     }
   }
   if (record?.status !== "verified") {

@@ -75,6 +75,14 @@ directory cannot follow either pointer, so git stops working inside it.
 A full clone is self-contained and disposable. That is what makes it safe to
 let a writer use git freely inside one.
 
+The orchestrator makes the clone runnable before it dispatches: install the
+dependencies once inside it (`npm ci --prefer-offline` for a Node repo). A
+fresh clone has no `node_modules`, and the writer cannot fix that — it has no
+network and its only action is `project-test`, so every test run fails on
+`ERR_MODULE_NOT_FOUND` and the best it can report is `partial`. Not a symlink
+to the source repo's `node_modules`: the clone would share state with the
+original, which is what it exists to avoid.
+
 ### A ticket carries its contract, not its coordinates
 
 A file path and a line range written into a ticket describe the tree as it

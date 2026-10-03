@@ -13,6 +13,18 @@ export function usagePath() {
 
 export { rosterWritePath, usageWritePath };
 
+/**
+ * The plans a subscription account may name, keyed by account id. Information
+ * only: the CLIs report usage as a share of their own plan, and admission
+ * sizes by host memory, so no threshold reads the plan.
+ */
+export const PLAN_TIERS = {
+  claude: ["pro", "max5x", "max20x"],
+  codex: ["plus", "pro", "business", "enterprise"],
+  cursor: ["hobby", "pro", "pro_plus", "ultra", "teams"],
+  gemini: ["free", "plus", "pro", "ultra"],
+};
+
 /** JSON.parse a file; ENOENT -> null; malformed JSON rethrows. */
 export function loadJson(filePath) {
   try {
@@ -166,6 +178,10 @@ export function validateRoster(roster) {
       if (account.kind === "credit" && account.remaining !== undefined &&
         typeof account.remaining !== "number") {
         errors.push(`accounts.${id}.remaining must be a number`);
+      }
+      if (account.plan !== undefined &&
+        !(account.kind === "subscription" && PLAN_TIERS[id]?.includes(account.plan))) {
+        errors.push(`accounts.${id}.plan must be one of ${(PLAN_TIERS[id] || []).join("|") || "(none for this account)"}`);
       }
     }
   }

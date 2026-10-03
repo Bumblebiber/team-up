@@ -1896,7 +1896,10 @@ async function refreshSettings() {
     <tr data-row="account:${esc(id)}">
       <td>${check(`accounts.${id}.enabled`, a.enabled, id, a.comment || "")}</td>
       <td class="muted">${esc(a.kind)}</td>
-      <td>${a.kind === "credit" ? num(`accounts.${id}.remaining`, a.remaining, "any", "Credit left; 0 blocks the account") : ""}</td>
+      <td>${a.kind === "credit" ? num(`accounts.${id}.remaining`, a.remaining, "any", "Credit left; 0 blocks the account")
+        : a.plans ? `<select data-path="accounts.${esc(id)}.plan" title="Plan of this subscription (information only)">${
+          a.plan ? "" : `<option value="" selected>— plan —</option>`}${a.plans.map((p) =>
+          `<option value="${esc(p)}"${p === a.plan ? " selected" : ""}>${esc(p)}</option>`).join("")}</select>` : ""}</td>
     </tr>`).join("");
   const iv = d.usage_watcher.intervals || {};
   $("#settings-body").innerHTML = `

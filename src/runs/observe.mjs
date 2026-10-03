@@ -82,6 +82,16 @@ export function matchesDenyPattern(pane) {
   return DENY_PATTERNS.some((re) => re.test(text));
 }
 
+/**
+ * The pane lines a deny pattern matched, trimmed, deduped and sorted — the
+ * identity of a finding. A spinner or clock elsewhere on screen leaves it
+ * unchanged; a new credential line changes it. "" when nothing matches.
+ */
+export function denyFinding(pane) {
+  const lines = String(pane || "").split("\n").map((l) => l.trim()).filter((l) => l && matchesDenyPattern(l));
+  return [...new Set(lines)].sort().join("\n");
+}
+
 export function parseJudgeJson(text) {
   const raw = String(text || "").trim();
   if (!raw) return { ok: false, error: "empty judge output" };
@@ -193,11 +203,18 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
   }
 
   // action === "answer" — deny patterns block auto-answer only, not wait/escalate.
-  if (matchesDenyPattern(pane)) {
+  const finding = denyFinding(pane);
+  if (finding) {
+    // A human already answered this exact finding. Re-escalating it is the
+    // loop that ate a reviewer's whole budget; answering it is still not ours.
+    if (ctx.approvedFindings?.has(finding)) {
+      return { action: "wait", reason: "deny finding already answered by a human", verdict };
+    }
     return {
       action: "escalate",
       reason: "deny pattern matched in pane",
       question: verdict.question || "Pane contains credential or billing wording; human required.",
+      finding,
       verdict,
     };
   }
@@ -426,6 +443,7 @@ export function releaseObserverLock(runId) {
 export function hydrateLoopFromLog(runId, loop = createObserverLoop()) {
   const logPath = observationLogPath(runId);
   if (!fs.existsSync(logPath)) return loop;
+  const findings = [];
   for (const line of fs.readFileSync(logPath, "utf8").split("\n")) {
     if (!line.trim()) continue;
     let entry;
@@ -440,6 +458,21 @@ export function hydrateLoopFromLog(runId, loop = createObserverLoop()) {
       loop.autoAnswerCount += 1;
       if (entry.pane_fp) loop.answeredPanes.add(entry.pane_fp);
     }
+    if (entry.kind === "decision" && entry.action === "escalate" && entry.finding) {
+      findings.push({ finding: entry.finding, at: Date.parse(entry.ts) });
+    }
+  }
+  // `runs answer` writes ANSWER.md; one newer than the escalation is the
+  // human's reply to that finding. Every observer is new per `runs wait`, so
+  // the log is the only memory of what was already approved.
+  let answeredAt = null;
+  try {
+    answeredAt = fs.statSync(path.join(mailboxDir(runId), "ANSWER.md")).mtimeMs;
+  } catch {
+    /* no answer yet */
+  }
+  for (const { finding, at } of findings) {
+    if (answeredAt != null && answeredAt > at) loop.approvedFindings.add(finding);
   }
   return loop;
 }
@@ -597,6 +630,7 @@ export function createObserverLoop() {
     deferredEscalateVerdict: false,
     autoAnswerCount: 0,
     answeredPanes: new Set(),
+    approvedFindings: new Set(),
     judgeFailedEscalated: false,
     escalated: false,
     postAnswerTicks: 0,
@@ -714,6 +748,7 @@ export function handleStall({
     action: verified.action,
     reason: verified.reason,
     keys: verified.keys || null,
+    finding: verified.finding ?? null,
   });
 
   if (verified.action === "wait") {

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { diagnose } from "../src/doctor.mjs";
+import { ISOLATION_FORBIDDEN_CANARIES } from "../src/harness/isolation-canary.mjs";
 
 // The whole world a diagnosis may see. O9K_HOME is named too because the read
 // paths fall back to the legacy home for migration, and an unnamed one is the
@@ -274,6 +275,7 @@ test("a specialist on a reachable role is not reported", () => {
         cli_version: "9.9.9",
         status: "verified",
         context_isolation: "team-up.context-isolation/v1",
+        context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
         checked_at: "2026-09-01T09:57:52.333Z",
       })
     );

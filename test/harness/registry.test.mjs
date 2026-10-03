@@ -10,6 +10,7 @@ import {
   prepareHarnessLaunch,
 } from "../../src/harness/registry.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
+import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
 
 /**
  * A TEAM_UP_HOME with no verification records. Without it these assertions read
@@ -63,6 +64,7 @@ test("verified Claude advertises the versioned contract", () => {
       adapter: "claude",
       cli_version: "2.1.220",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     },
   }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });
@@ -78,6 +80,7 @@ test("Codex declared context_isolation stays null without full native matrix", (
       adapter: "codex",
       cli_version: "0.145.0",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     },
   }).context_isolation, null);
 });
@@ -89,6 +92,7 @@ test("Claude verification record cannot be reused under Codex runtime", () => {
       adapter: "claude",
       cli_version: "2.1.220",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
       command_broker: "team-up.command-broker/v1",
     },
   }).context_isolation, null);
@@ -107,6 +111,7 @@ test("Claude verification record cannot be reused under Codex runtime", () => {
       adapter: "claude",
       cli_version: "2.1.220",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     },
   }), /HARNESS_CONTEXT_ISOLATION_UNVERIFIED|HARNESS_VERIFICATION_ADAPTER/);
 });
@@ -118,6 +123,7 @@ test("verification adapter/version mismatch fails closed", () => {
       adapter: "claude",
       cli_version: "2.1.219",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     },
     requireExactVersion: "2.1.220",
   }).context_isolation, null);
@@ -127,6 +133,7 @@ test("verification adapter/version mismatch fails closed", () => {
       adapter: "claude",
       cli_version: "2.1.220",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     },
     requireExactVersion: "2.1.220",
   }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
@@ -139,6 +146,7 @@ test("exact adapter and version match preserves verified Claude isolation", () =
       adapter: "claude",
       cli_version: "2.1.220",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
       command_broker: "team-up.command-broker/v1",
     },
     requireExactVersion: "2.1.220",
@@ -170,6 +178,7 @@ test("verified broker-only record does not grant context isolation", () => {
       cli_version: "2.1.220",
       command_broker: "team-up.command-broker/v1",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     },
   }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });

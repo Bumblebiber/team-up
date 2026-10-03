@@ -1,5 +1,5 @@
 import { pick, parseChainEntry } from "../roster/chain.mjs";
-import { cliModelFor } from "../roster/config.mjs";
+import { cliModelFor, PLAN_TIERS } from "../roster/config.mjs";
 import { cellStatus, addOfferedVersions } from "../roster/latest.mjs";
 
 /**
@@ -28,7 +28,7 @@ export function modelLabel(roster, store, id, cli = roster?.models?.[id]?.cli?.[
   return number ? `${id}-${number}` : id;
 }
 
-function chainView(roster, store, chain) {
+function chainView(roster, store, chain, now) {
   return chain.map((raw) => {
     let parsed;
     try {
@@ -39,7 +39,7 @@ function chainView(roster, store, chain) {
     const cli = parsed.cli ?? roster.models?.[parsed.model]?.cli?.[0] ?? null;
     const known = !!roster.models?.[parsed.model];
     const { state, newest } = cli && known
-      ? cellStatus(roster, store, cli, parsed.model)
+      ? cellStatus(roster, store, cli, parsed.model, now)
       : { state: known ? "unknown" : "missing", newest: null };
     return {
       cli,
@@ -62,7 +62,7 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
         role,
         pin_head: spec?.pin_head === true,
         effort: spec?.effort ?? null,
-        chain: chainView(roster, store, spec?.chain || []),
+        chain: chainView(roster, store, spec?.chain || [], now),
         pick: result.model
           ? { cli: result.cli, model: result.model, effort: result.effort ?? null,
               label: modelLabel(roster, store, result.model, result.cli) }
@@ -174,6 +174,8 @@ const isStrList = (v) => Array.isArray(v) && v.every((s) => typeof s === "string
 const SETTINGS = [
   [/^accounts\.([^.]+)\.enabled$/, isBool, (r, [, id]) => own(r.accounts, id)],
   [/^accounts\.([^.]+)\.remaining$/, isNum, (r, [, id]) => own(r.accounts, id) && r.accounts[id].kind === "credit"],
+  [/^accounts\.([^.]+)\.plan$/, (v) => typeof v === "string",
+    (r, [, id], v) => own(r.accounts, id) && r.accounts[id].kind === "subscription" && !!PLAN_TIERS[id]?.includes(v)],
   [/^limits\.(warn_at|handoff_at)$/, (v) => isUnit(v) && v > 0],
   [/^subscriptions$/, isStrList, (r, _m, v) => v.every((cli) => own(r.clis, cli))],
   [/^usage_watcher\.tick_sec$/, isPosInt],
@@ -199,6 +201,7 @@ export function applySettingsEdit(roster, { path: setting, value } = {}) {
 export function buildSettingsView(roster) {
   const accounts = Object.fromEntries(Object.entries(roster?.accounts || {}).map(([id, a]) =>
     [id, { kind: a.kind, enabled: a.enabled, ...(a.kind === "credit" ? { remaining: a.remaining ?? null } : {}),
+      ...(a.kind === "subscription" && PLAN_TIERS[id] ? { plan: a.plan ?? null, plans: PLAN_TIERS[id] } : {}),
       ...(a.$comment ? { comment: a.$comment } : {}) }]));
   return {
     accounts,

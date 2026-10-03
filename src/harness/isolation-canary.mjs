@@ -1399,7 +1399,7 @@ function contentNoncesMatch(expectedNonces, observedNonces) {
   return true;
 }
 
-function absentListComplete(absent) {
+export function absentListComplete(absent) {
   if (!Array.isArray(absent)) return false;
   return ISOLATION_FORBIDDEN_CANARIES.every((name) => absent.includes(name));
 }
