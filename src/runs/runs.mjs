@@ -429,7 +429,8 @@ export function classifyMailbox(runId) {
   if (statusLine === "failed") {
     return {
       status: "failed",
-      error: "STATUS=failed",
+      // A worker's `set-status <own id> failed --reason` leaves its words here.
+      error: readMaybe(path.join(mb, "FAILURE.md"))?.trim() || "STATUS=failed",
       resultPath: resultJsonRaw ? resultJsonPath : (resultMd ? resultMdPath : null),
     };
   }
@@ -1495,6 +1496,9 @@ function cmdSetStatus(args) {
   // RESULT grace window and parent verification first. Parents and humans
   // (no marker, or another run's id) still decide STATE directly.
   if (process.env.TEAMUP_WORKER && process.env.TEAMUP_RUN_ID === runId) {
+    const reason = argValue(args, "--reason");
+    // Before STATUS, so whoever wakes on STATUS=failed reads it as the error.
+    if (status === "failed" && reason) atomicWriteText(path.join(mailboxDir(runId), "FAILURE.md"), reason);
     atomicWriteText(path.join(mailboxDir(runId), "STATUS"), status);
     return;
   }

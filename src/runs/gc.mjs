@@ -266,6 +266,10 @@ function reconcileTerminalMailboxState(state, classified) {
   }
   const resolution = resolveRunState(state, classified);
   state.status = resolution.state.status;
+  // As persistResolvedRunStatus does: a run that only just failed says why.
+  if (resolution.changed && state.status === "failed" && classified?.error) {
+    state.failure = { error: classified.error, at: new Date().toISOString() };
+  }
   if (state.cleanup?.stale_detected_at) delete state.cleanup.stale_detected_at;
   if (wasSyntheticStaleFailure && TERMINAL_MAILBOX.has(classified?.status)) {
     delete state.cleanup.stale_reason;

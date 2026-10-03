@@ -14,6 +14,7 @@ import {
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
   resolveGitBase, isValidRunId, listAllStates,
 } from "../../src/runs/runs.mjs";
+import { gcRuns } from "../../src/runs/gc.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
 
@@ -98,6 +99,40 @@ test("CLI set-status from a worker on its own run writes only the mailbox", with
   const human = mk();
   assert.equal(setDone(human.runId, {}).status, 0);
   assert.deepEqual(seen(human.runId), ["done", "done"]);
+}));
+
+// On the mailbox-only path a worker's --reason went nowhere: STATE.failure
+// said "STATUS=failed" where it used to carry the worker's own words, and
+// said nothing at all when gc adopted the failure.
+test("a worker failing its own run keeps its --reason, whoever reconciles it", withTempRuns(async (dir) => {
+  const fail = (runId) => spawnSync(
+    "node",
+    [RUNS_BIN, "set-status", runId, "failed", "--reason", "tests need DB creds"],
+    { env: { ...process.env, O9K_RUNS: dir, TEAMUP_WORKER: "1", TEAMUP_RUN_ID: runId }, encoding: "utf8" },
+  );
+  const mk = () => {
+    const { runId } = createRun({
+      cwd: "/tmp/proj", role: "implementer", parent: { cli: "manual", attach: "manual" },
+      worker: { cli: "codex", model: "m" }, prompt: "x",
+    });
+    setStatus(runId, "watching");
+    assert.equal(fail(runId).status, 0);
+    return runId;
+  };
+
+  const watched = mk();
+  waitMailbox(watched, { ceilingSec: 1, observe: false, stopTmux: () => {} });
+  assert.equal(loadState(watched).failure.error, "tests need DB creds");
+
+  const unwatched = mk();
+  gcRuns({
+    states: [loadState(unwatched)],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: false, activityMs: null, sessionId: null }),
+    listSessions: () => [],
+  });
+  assert.equal(loadState(unwatched).status, "failed");
+  assert.equal(loadState(unwatched).failure.error, "tests need DB creds");
 }));
 
 test("listAllStates passes over directories that are not runs", withTempRuns(async (dir) => {
