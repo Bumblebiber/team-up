@@ -23,7 +23,7 @@ Then curate `~/.team-up/roster.json` down to the CLIs you have and are logged
 in to; `team-up doctor` reports what does not add up.
 
 The example's Claude command carries `--dangerously-skip-permissions`, and
-Claude Code asks once per account to accept that mode ("Bypass Permissions
+Claude Code asks once per machine user to accept that mode ("Bypass Permissions
 mode … Yes, I accept"). A dispatched worker would sit on that screen in its
 detached tmux pane, so accept it before the first dispatch: run
 `claude --dangerously-skip-permissions` once in a terminal and choose
