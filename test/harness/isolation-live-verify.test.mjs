@@ -1,3 +1,4 @@
+import "../helpers/hermetic-home.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -229,13 +230,15 @@ function buildHappySpawnSync(fixture, { inventory, streamLines, mcpNonce } = {})
   };
 }
 
-/** The transcript claude keeps for the session: the selected skill body, no CLAUDE.md. */
+/** The transcript claude keeps for the session: the user CLAUDE.md the probe planted and the selected skill body. */
 function writeSessionTranscript(home, sessionId, skillNonce) {
   const dir = path.join(home, ".claude", "projects", "probe-cwd");
   fs.mkdirSync(dir, { recursive: true });
+  const userMd = fs.readFileSync(path.join(home, ".claude", "CLAUDE.md"), "utf8");
   fs.writeFileSync(
     path.join(dir, `${sessionId}.jsonl`),
-    `${JSON.stringify({ type: "user", isMeta: true, message: { content: [{ type: "text", text: `nonce:${skillNonce}` }] } })}\n`
+    `${JSON.stringify({ type: "attachment", attachment: { type: "instructions", files: [{ type: "User", content: userMd }] } })}\n`
+      + `${JSON.stringify({ type: "user", isMeta: true, message: { content: [{ type: "text", text: `nonce:${skillNonce}` }] } })}\n`
   );
 }
 
