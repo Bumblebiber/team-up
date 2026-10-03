@@ -83,3 +83,12 @@ test("saveRoster (dashboard edits) replaces roster.json whole instead of rewriti
   assert.deepEqual(JSON.parse(fs.readFileSync(fx.rosterPath, "utf8")).roles.implementer.chain, ["codex:b"]);
   assert.ok(fs.existsSync(backup));
 });
+
+test("atomicWriteJson leaves no temp file behind when the rename fails", async () => {
+  const { atomicWriteJson } = await import("../../src/json-store.mjs");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-atomic-"));
+  // A directory at the target: the temp file is written, the rename throws.
+  fs.mkdirSync(path.join(home, "usage.json"));
+  assert.throws(() => atomicWriteJson(path.join(home, "usage.json"), { a: 1 }));
+  assert.deepEqual(fs.readdirSync(home).filter((f) => f.endsWith(".tmp")), []);
+});

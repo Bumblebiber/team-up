@@ -14,8 +14,20 @@ export function loadJson(filePath) {
 export function atomicWriteJson(filePath, obj) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(obj, null, 2)}\n`);
-  fs.renameSync(tmp, filePath);
+  let renamed = false;
+  try {
+    fs.writeFileSync(tmp, `${JSON.stringify(obj, null, 2)}\n`);
+    fs.renameSync(tmp, filePath);
+    renamed = true;
+  } finally {
+    if (!renamed) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch (e) {
+        if (e.code !== "ENOENT") throw e;
+      }
+    }
+  }
 }
 
 export function atomicWriteText(filePath, text, { mode } = {}) {
