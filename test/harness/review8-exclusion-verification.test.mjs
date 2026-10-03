@@ -140,6 +140,10 @@ test("a plugin the binary reports as built-in grants by provenance, the same nam
     [{ kind: "plugin", name }]);
   assert.deepEqual(check({ name, path: "builtin", source: `${name}@synced` }).violations,
     [{ kind: "plugin", name }]);
+  // 2.1.286 on the host (captured 2026-10-03): the plugin's skill comes bare.
+  assert.equal(check({ name, path: "builtin", source: `${name}@builtin` }, ["plugin-authoring"]).ok, true);
+  assert.deepEqual(check({ name, path: "/x", source: `${name}@mk` }, ["plugin-authoring"]).violations,
+    [{ kind: "skill", name: "plugin-authoring" }, { kind: "plugin", name }]);
   // A skill riding on a plugin that is not built-in stays a leak.
   assert.deepEqual(check({ name, path: "/x", source: `${name}@mk` }, [`${name}:write-plugin`]).violations,
     [{ kind: "skill", name: `${name}:write-plugin` }, { kind: "plugin", name }]);
