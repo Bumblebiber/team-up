@@ -136,8 +136,8 @@ test("re-dispatching a run appends to its pick history and keeps the last 10", a
 test("a record that cannot be written warns and still dispatches", async () => {
   const { spawned, lines } = await dispatch({
     usageSnapshot: windows(Date.now()),
-    createRun: () => ({ runId: "no-such-run" }),
+    createRun: () => ({ runId: "20991231T235959Z-none" }),
   });
   assert.equal(spawned.length, 1);
-  assert.ok(lines.some((l) => /routing decision not recorded on run no-such-run/.test(l)), lines.join("\n"));
+  assert.ok(lines.some((l) => /routing decision not recorded on run 20991231T235959Z-none/.test(l)), lines.join("\n"));
 });
