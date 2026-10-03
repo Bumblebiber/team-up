@@ -113,30 +113,44 @@ generated strict MCP configuration; preserve authentication without importing
 global capability configuration; and report its exact effective capability
 list.
 
-**Claude** launches with a run-specific `CLAUDE_CONFIG_DIR`, explicit
-`--plugin-dir` entries, `--strict-mcp-config`, `--setting-sources user`, and a
-`--tools` allowlist built only from selected tools. Only credential files are
-bridged into that config dir — never settings, skills, or plugins.
+**Claude** launches with `HOME` set to a run-specific, auth-only home
+(`<run>/claude-home`), explicit `--plugin-dir` entries, framework directories
+on `--add-dir`, `--strict-mcp-config --mcp-config <run>/harness/claude-mcp.json`,
+`--setting-sources user`, a `--tools`/`--allowedTools` allowlist built only
+from the permitted built-ins and selected MCP tools, and `--disallowedTools`
+for `Bash` plus the credential-file read rules. The home is rebuilt from empty
+staging for every attempt and holds only `.claude/.credentials.json`, the
+selected skills under `.claude/skills/`, and a `.claude.json` carrying the
+first-run markers and workspace trust for the context dir and project — never
+the user's settings, plugins, MCP servers or other skills. The worker's cwd is
+`<run>/context` (`capsuleContextDir`).
 
 Three details are load-bearing and were each confirmed against the CLI:
 
-- Skills resolve **only** from `$CLAUDE_CONFIG_DIR/skills`, so every selected
-  skill is linked there. Materializing into `context/skills` alone loads
+- Skills resolve from `$HOME/.claude/skills`, so every selected skill is
+  copied into the run home. Materializing into `context/skills` alone loads
   nothing.
-- Without `--setting-sources user` the **project's** own `.claude/` skills,
-  plugins and hooks load on top of the capsule. Redirecting the config dir
-  hides user-global capabilities only.
+- Claude reads `.claude/skills` and `CLAUDE.md` from the cwd **and every
+  directory above it** as project config. A run's cwd sits under the user's
+  real home, so without `--setting-sources user` the host's own skills and
+  `CLAUDE.md` files load into every capsule as "Project" config. Redirecting
+  `HOME` hides only the user-level ones. Measured on 2.1.286 in the
+  production layout: 88 skills (68 of them the host's) and both host
+  `CLAUDE.md` files without the flag; 21 skills (the selected ones and the
+  CLI's built-ins) and no instructions file with it. Moving the cwd out of the
+  home is not a substitute: a `/tmp` cwd loaded a `CLAUDE.md` planted in its
+  own parent just the same.
 - A `--tools` allowlist that omits `Skill` silently disables every skill, so
-  the tool is added whenever a capsule selected skills or skill-bearing
-  plugins. Plugin skills appear as `<plugin>:<skill>`.
+  `Skill` is on every capsule's allowlist. Plugin skills appear as
+  `<plugin>:<skill>`.
 
-The CLI's own bundled skills remain visible. They ship with the harness
-executable rather than with a user or project configuration, and they are the
-floor no capsule can go below.
+The CLI's own bundled skills and plugins remain visible. They ship with the
+harness executable rather than with a user or project configuration, and they
+are the floor no capsule can go below.
 
-`--bare` is **opt-in** (`capsule.bare`), not unconditional: it never reads
-OAuth or keychain credentials, so forcing it would break every
-subscription-authenticated launch. Use it for API-key launches.
+`--bare` is never passed — an argv that carries it has it removed. It skips
+OAuth and keychain credentials, so it would break every
+subscription-authenticated launch; the auth-only `HOME` does its job instead.
 
 Verification is version-keyed to the harness executable, and a verified record
 grants only what it actually proved: a proven command broker never implies
@@ -145,20 +159,47 @@ profile resolution, before any worker process exists.
 
 ### Live conformance
 
-`team-up harness verify claude` proves isolation on its own launch. It plants
-a user-global canary skill, a project-local canary skill, an unselected pool
-skill, and a global MCP server around a capsule that selects exactly one skill
-and one plugin, then asks the harness to report its effective capabilities.
+`team-up harness verify claude` proves isolation on its own launch
+(`src/harness/isolation-canary.mjs`). The fixture builds a capsule that
+selects one skill, one plugin, one framework and one MCP server, each carrying
+a random nonce, through the same `prepareLaunch` a specialist uses, and plants
+around it:
 
-The selected skill and plugin are **positive controls**. If they are missing,
-the launch mechanism itself failed and the run's clean canary sheet proves
-nothing, so the result is `failed` — never `passed`. An unparseable report is
-`unverified`. The record stores `context_isolation_absent`, the forbidden
-canaries the run observed absent, and a launch grants isolation only from a
-record whose list is complete — a token without that proof grants nothing.
+- user-global canaries — a skill, an installed plugin and an MCP server in
+  `.claude.json` — in a separate global home. The probe's `HOME` is the
+  capsule's auth-only home, which is checked closed-world before the run, so
+  these show only that nothing from another home was copied in;
+- an unselected pool skill and framework, and an excluded MCP package;
+- an **ancestor** skill (`.claude/skills/ancestor.canary-skill`) and a
+  `CLAUDE.md` with its own nonce in the fixture root, above the run directory —
+  where the user's home sits above a production run.
 
-Cursor, Codex, Hermes, and OpenCode have no isolation adapter yet and are
-therefore ineligible for specialist runs.
+The probe runs `claude --print --output-format stream-json` from
+`capsuleContextDir(<fixture run>)`, the function the launcher takes a run's cwd
+from, with the prepared `HOME` and the prepared argv's plugin, MCP, tool and
+`--setting-sources` flags. A layout or flag regression in production therefore
+shows up in the canary.
+
+Proof comes from the CLI's own structured output, never from the model's
+answer. The `system/init` inventory may list only the selected set plus the
+CLI's built-ins. Each selected capability is a **positive control**, proven by
+a correlated tool call whose result carries its nonce; without them a clean
+canary sheet proves only that the launch failed. `CLAUDE.md` never appears in
+`system/init`, so the ancestor `CLAUDE.md` is judged from the session
+transcript under the probe `HOME`: its nonce must be absent, and the selected
+skill's nonce must be present there, or the canary counts as not observed. Any
+failed proof leaves the record without a grant, and `context_isolation_reason`
+names the first one that failed.
+
+The record stores `context_isolation_absent`, the forbidden canaries the run
+observed absent, and a launch grants isolation only from a record whose list
+is complete against the current canary set — a token without that proof
+grants nothing.
+
+Only Claude can earn the grant today. Codex declares no context isolation (it
+has no live collector), OpenCode has an adapter but no `harness verify`
+runner, and Cursor and Hermes have no adapter, so all four are ineligible for
+specialist runs.
 
 ### Drift
 
@@ -167,7 +208,10 @@ every grant it proved until the new build is measured. `team-up harness
 reverify` re-runs verification for any adapter whose installed build drifted
 away from a passing record; the health cron calls it before `doctor`, and a
 specialist launch calls it once for the CLI a capability skip named, rather
-than refusing a launch whose only problem is an update.
+than refusing a launch whose only problem is an update. A passing record whose
+absent list predates the current canary set counts as drifted too
+(`stale_proof`), so adding a canary re-measures the installed build instead of
+leaving every specialist unlaunchable.
 
 One attempt is made per build: a sidecar `<version>.attempt` marker is both
 the lock a parallel fan-out needs and the cooldown that keeps a logged-out

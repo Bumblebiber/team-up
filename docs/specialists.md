@@ -129,9 +129,10 @@ verified:
   tools → `ALLOWLIST_UNENFORCEABLE` (pre-broker gate)
 
 Starter manifests declare the approved design capabilities (including Tessa
-`command.test` / `project-test` and advisory token targets). Claude and Codex
-have context-isolation adapters; Cursor / Hermes / OpenCode remain unsupported
-until each has a live verified implementation.
+`command.test` / `project-test` and advisory token targets). Only Claude can
+earn the context-isolation grant today (see `docs/capabilities.md`, "Harness
+contract"); Codex declares none, OpenCode has no `harness verify` runner, and
+Cursor / Hermes have no adapter, so specialists run on Claude only.
 
 ### Capability recommendations and pool
 
@@ -166,7 +167,14 @@ since install.
 
 The host session (the main agent the human talks to) and the specialists see
 different skills on purpose. A capsule never reads the host's `~/.claude`, so
-a skill installed only there is already invisible to every specialist.
+a skill installed only there is already invisible to every specialist. That
+rests on two things: the worker's `HOME` is the run's auth-only home, and it
+launches with `--setting-sources user`. The second matters because a run's cwd
+sits under the real home, and Claude otherwise reads `.claude/skills` and
+`CLAUDE.md` from every directory above its cwd — from 2026-09-01 until this
+was fixed, every capsule loaded the host's skills and `CLAUDE.md` that way.
+The isolation canary plants an ancestor skill and `CLAUDE.md` to keep it from
+coming back.
 
 | Layer | Who sees it | How it gets there | Examples |
 |---|---|---|---|
