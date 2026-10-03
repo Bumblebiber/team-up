@@ -34,37 +34,37 @@ function plant(home, runId, role, status = "done") {
 
 test("an outcome is recorded beside the status, without touching it", async () => {
   await withHome(({ home, runs }) => {
-    plant(home, "r-1", "implementer");
-    const state = runs.setOutcome("r-1", "merged", { note: "landed as abc1234" });
+    plant(home, "20260101T000000Z-r001", "implementer");
+    const state = runs.setOutcome("20260101T000000Z-r001", "merged", { note: "landed as abc1234" });
     assert.equal(state.outcome.value, "merged");
     assert.equal(state.outcome.note, "landed as abc1234");
     assert.match(state.outcome.at, /^\d{4}-\d{2}-\d{2}T/);
     assert.equal(state.status, "done", "status is how it ended, outcome is what it was worth");
     // It survives a reload, which is the whole point of writing it down.
-    assert.equal(runs.loadState("r-1").outcome.value, "merged");
+    assert.equal(runs.loadState("20260101T000000Z-r001").outcome.value, "merged");
     // And it can be corrected later.
-    assert.equal(runs.setOutcome("r-1", "discarded").outcome.value, "discarded");
+    assert.equal(runs.setOutcome("20260101T000000Z-r001", "discarded").outcome.value, "discarded");
   });
 });
 
 test("only the two known values are accepted", async () => {
   await withHome(({ home, runs }) => {
-    plant(home, "r-1", "implementer");
-    assert.throws(() => runs.setOutcome("r-1", "kinda"), /unknown outcome kinda/);
-    assert.throws(() => runs.setOutcome("r-1", "success"), /merged\|discarded/);
-    assert.equal(runs.loadState("r-1").outcome, undefined);
-    assert.throws(() => runs.setOutcome("missing", "merged"), /unknown run missing/);
+    plant(home, "20260101T000000Z-r001", "implementer");
+    assert.throws(() => runs.setOutcome("20260101T000000Z-r001", "kinda"), /unknown outcome kinda/);
+    assert.throws(() => runs.setOutcome("20260101T000000Z-r001", "success"), /merged\|discarded/);
+    assert.equal(runs.loadState("20260101T000000Z-r001").outcome, undefined);
+    assert.throws(() => runs.setOutcome("20260101T000000Z-miss", "merged"), /unknown run 20260101T000000Z-miss/);
   });
 });
 
 test("the summary counts per role and names what is not recorded yet", async () => {
   await withHome(({ home, runs }) => {
-    plant(home, "r-1", "implementer");
-    plant(home, "r-2", "implementer");
-    plant(home, "r-3", "implementer");
-    plant(home, "r-4", "reviewer");
-    runs.setOutcome("r-1", "merged");
-    runs.setOutcome("r-2", "discarded");
+    plant(home, "20260101T000000Z-r001", "implementer");
+    plant(home, "20260101T000000Z-r002", "implementer");
+    plant(home, "20260101T000000Z-r003", "implementer");
+    plant(home, "20260101T000000Z-r004", "reviewer");
+    runs.setOutcome("20260101T000000Z-r001", "merged");
+    runs.setOutcome("20260101T000000Z-r002", "discarded");
     const [first, second] = runs.outcomeSummary();
     assert.deepEqual(first, {
       role: "implementer", merged: 1, discarded: 1, unrecorded: 1, total: 3,

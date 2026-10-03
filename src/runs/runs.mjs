@@ -14,7 +14,9 @@ import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stopTmuxSession } from "./tmux.mjs";
-import { parseVerifyCommand, runParentVerification } from "./verification.mjs";
+import {
+  acquireVerificationLock, parseVerifyCommand, recordedVerdict, runParentVerification,
+} from "./verification.mjs";
 
 export { parseVerifyCommand, parseNodeTestCounts, runParentVerification } from "./verification.mjs";
 
@@ -31,7 +33,22 @@ export function runsRoot() {
   return runsPath(process.env);
 }
 
+/** Run ids from `createRun` — ISO timestamp + 4-char base36 suffix. */
+export const RUN_ID_PATTERN = /^\d{8}T\d{6}Z-[a-z0-9]{4}$/;
+
+export function isValidRunId(id) {
+  return typeof id === "string" && RUN_ID_PATTERN.test(id);
+}
+
+/**
+ * Every run path goes through here, so this is where a wrong id stops. An
+ * agent once passed the `mailbox: <path>` line from `runs create` as the id,
+ * and `runs answer` created ~/.team-up/runs/'mailbox: '/home/... for it.
+ */
 export function runDir(runId) {
+  if (!isValidRunId(runId)) {
+    throw new Error(`invalid run id ${JSON.stringify(runId)} (expected e.g. 20260922T100319Z-ri6m)`);
+  }
   return path.join(runsRoot(), runId);
 }
 
@@ -74,7 +91,9 @@ export function publishFileNoReplace(destPath, content) {
 
 function newRunId(now = new Date()) {
   const iso = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-  const short = Math.random().toString(36).slice(2, 6);
+  // padEnd: a random number with a short base36 form must not mint an id
+  // that runDir rejects.
+  const short = Math.random().toString(36).slice(2, 6).padEnd(4, "0");
   return `${iso}-${short}`;
 }
 
@@ -367,9 +386,30 @@ export function readMaybe(filePath) {
   }
 }
 
-/** Inspect mailbox once; return { status, question?, resultPath?, error? }.
+/**
+ * How long a STATUS=done may wait for its RESULT, counted from the STATUS
+ * write. Workers write STATUS before RESULT often enough: 12 cursor runs were
+ * failed 12-205 ms after STATUS=done, and 5 more got their RESULT 2-54 s later
+ * but stayed failed, because a terminal state is irreversible.
+ */
+export const RESULT_GRACE_MS = 120_000;
+
+/** STATUS=done whose RESULT may still land: not failed yet, not terminal. */
+function resultStillDue(mb) {
+  try {
+    return Date.now() - fs.statSync(path.join(mb, "STATUS")).mtimeMs < RESULT_GRACE_MS;
+  } catch {
+    return false;
+  }
+}
+
+const RESULT_PENDING = Object.freeze({ status: "watching", pending: "result" });
+
+/** Inspect mailbox once; return { status, question?, resultPath?, error?, pending? }.
  * Only runs whose STATE declares result_protocol: "RESULT.json" require typed JSON.
  * Generic/legacy Path-B runs succeed with RESULT.md.
+ * `pending` marks a non-terminal "watching" that is waiting for something
+ * specific (the RESULT after STATUS=done) — `runs wait` keeps waiting on it.
  */
 export function classifyMailbox(runId) {
   const mb = mailboxDir(runId);
@@ -395,6 +435,9 @@ export function classifyMailbox(runId) {
   }
 
   if (statusLine === "done") {
+    // No RESULT of either kind yet: the worker may still be writing it. A
+    // typed run that left only RESULT.md closed out with the wrong file.
+    if (!resultMd && !resultJsonRaw && resultStillDue(mb)) return { ...RESULT_PENDING };
     if (!typed) {
       if (!resultMd && !resultJsonRaw) {
         return {
@@ -713,10 +756,14 @@ export function writeAnswer(runId, body, { source = "parent" } = {}) {
   return setStatus(runId, "watching");
 }
 
-export const INJECT = {
-  worker:
-    "Host crash recovery. Read mailbox/STATUS and mailbox/PROMPT.md; continue the task. Do not re-init from scratch.",
-};
+/**
+ * What a recovered worker is told. Absolute paths: its cwd is the task dir,
+ * where a relative "mailbox/STATUS" names nothing.
+ */
+export function workerRecoveryPrompt(runId) {
+  const mb = mailboxDir(runId);
+  return `Host crash recovery. Read ${mb}/STATUS and ${mb}/PROMPT.md; continue the task. Do not re-init from scratch.`;
+}
 
 function defaultTmuxExists(name) {
   try {
@@ -754,7 +801,6 @@ export function buildResumePlan(state, {
     };
   }
   const actions = [];
-  const injectWorker = INJECT.worker;
 
   const crashSpawnDisabled =
     state.recovery?.crash_spawn === false ||
@@ -771,8 +817,7 @@ export function buildResumePlan(state, {
       cwd: state.cwd,
       cli: state.worker.cli,
       sessionId: state.worker.sessionId,
-      inject: injectWorker,
-      promptPath: path.join(runDir(state.runId), "mailbox", "PROMPT.md"),
+      inject: workerRecoveryPrompt(state.runId),
     });
   }
   // Parents are not restarted per run: resumeAll groups runs by parent and
@@ -781,16 +826,33 @@ export function buildResumePlan(state, {
   return { actions };
 }
 
-export function buildCliArgv({ cli, sessionId, coldStart }) {
-  if (cli === "claude") {
-    if (sessionId && !coldStart) return ["claude", "--resume", sessionId];
-    return ["claude"];
+/** Resume a recorded session; null when there is none to resume (cold start). */
+export function buildCliArgv({ cli, sessionId }) {
+  if (!sessionId) return null;
+  if (cli === "claude") return ["claude", "--resume", sessionId];
+  if (cli === "codex") return ["codex", "resume", sessionId];
+  return null;
+}
+
+/**
+ * A cold start runs the command the dispatch ran: the roster's clis.<cli>.cmd
+ * with the run's model and effort, the recovery text as its prompt. It used
+ * to start a bare `claude`/`codex` (no --model, no permission flags) and
+ * `exec cursor` for the rest, which the cursor shim refuses unless its first
+ * argument is "agent"; both cold starts on record failed.
+ */
+export function coldStartArgv(state, roster, prompt, dir) {
+  // A specialist's capsule comes from its launch descriptor; the roster
+  // command would bring it back outside it, with the roster's permissions.
+  if (state.launch_descriptor) {
+    throw new Error(`cold start of ${state.runId}: launched from a launch descriptor; the supervisor restores it (recover_crash)`);
   }
-  if (cli === "codex") {
-    if (sessionId && !coldStart) return ["codex", "resume", sessionId];
-    return ["codex"];
+  const { cli, model, effort = null } = state.worker || {};
+  if (!roster?.clis?.[cli]?.cmd) {
+    throw new Error(`cold start of ${state.runId}: no clis.${cli}.cmd in the roster`);
   }
-  return null; // unknown → cold_start signal
+  if (!model) throw new Error(`cold start of ${state.runId}: no worker.model recorded`);
+  return buildCommand({ roster, model, cli, prompt, effort, dir });
 }
 
 export function resumeLockPath() {
@@ -802,7 +864,9 @@ export function listAllStates({ onCorrupt } = {}) {
   if (!fs.existsSync(root)) return [];
   const out = [];
   for (const name of fs.readdirSync(root)) {
-    if (name.startsWith(".")) continue;
+    // Not a run (dotfiles, a stray 'mailbox: ' dir): nothing to report, and
+    // gc would otherwise log it as corrupt every five minutes.
+    if (!isValidRunId(name)) continue;
     try {
       const state = loadState(name);
       if (state) out.push(state);
@@ -822,12 +886,6 @@ export function listActiveStates(options = {}) {
 
 export function shellQuote(s) {
   return /^[A-Za-z0-9_\-./=]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
-}
-
-/** Unknown-CLI cold start: echo hint then exec. No nested-quote traps. */
-export function buildColdStartArgv({ runId, promptPath, cli }) {
-  const msg = `cold_start run ${runId}; read mailbox/PROMPT.md at ${promptPath || "(none)"}`;
-  return ["bash", "-lc", `echo ${shellQuote(msg)}; exec ${shellQuote(cli || "bash")}`];
 }
 
 export function isPidAlive(pid) {
@@ -925,7 +983,7 @@ export function pasteInject(session, text, {
 
 /**
  * tmux argv for a resume spawn. Only a worker gets the TEAMUP_WORKER marker —
- * a parent is the interface agent (INJECT.parent tells it to keep orchestrating
+ * a parent is the interface agent (its wake-up tells it to keep orchestrating
  * and to re-surface the human question), and marking it would silence that.
  * ponytail: resume cannot tell a nested-worker parent from a top-level one, so
  * such a parent comes back unmarked — the safe direction (an over-reporting
@@ -951,24 +1009,22 @@ export function executeResumeAction(action, state, {
   if (action.kind === "parent_awaiting_attach" || action.kind === "flag_reattach_watcher") {
     return;
   }
-  if (action.kind !== "spawn_worker" && action.kind !== "spawn_parent") return;
+  // Parents come back through deliverParentWakeup, never through here.
+  if (action.kind !== "spawn_worker") return;
 
-  let argv = buildCliArgv({
-    cli: action.cli,
-    sessionId: action.sessionId,
-    coldStart: !action.sessionId,
-  });
-  if (!argv) {
-    argv = buildColdStartArgv({
-      runId: state.runId,
-      promptPath: action.promptPath,
-      cli: action.cli,
-    });
+  const resumed = buildCliArgv({ cli: action.cli, sessionId: action.sessionId });
+  // Not requireRoster: its process.exit would end the whole resume queue.
+  // The prompt is rebuilt, not taken from the action: an action parked for
+  // capacity by an older version still carries the relative-path text.
+  const argv = resumed ?? coldStartArgv(state, loadJson(configPath()), workerRecoveryPrompt(state.runId), action.cwd);
+  if (!resumed) {
     state.recovery = "cold_start";
     saveState(state);
   }
   execFileSync("tmux", resumeTmuxArgs(action, state, argv), { stdio: "ignore" });
-  pasteInject(action.tmux, action.inject || "", { waitReady, readyTimeoutMs });
+  // A cold start carries the recovery text as its prompt; pasting it too
+  // would send it twice.
+  if (resumed) pasteInject(action.tmux, action.inject || "", { waitReady, readyTimeoutMs });
 }
 
 /**
@@ -1200,19 +1256,42 @@ export async function resumeAll({
   return report;
 }
 
+/**
+ * Parent verification, at most once per done. It ran on every reconcile,
+ * unlocked: on runs s4ji and 0pwq a second verifier overlapped the first, so
+ * VERIFICATION.json said pass on runs STATE had failed, and side-effecting
+ * commands (npm ci) ran again.
+ */
+function verifyDoneOnce(runId, classified) {
+  const mb = mailboxDir(runId);
+  const statusMtimeMs = readMailboxStatusIdentity(runId).mtimeMs;
+  let report = recordedVerdict(mb, statusMtimeMs);
+  if (!report) {
+    const release = acquireVerificationLock(mb);
+    if (!release) return { status: "watching", pending: "verification" };
+    try {
+      // Under the lock: another verifier may just have finished, or the run
+      // been decided. A decided run's evidence is never rewritten.
+      report = recordedVerdict(mb, statusMtimeMs);
+      const state = loadState(runId);
+      if (!report) {
+        if (!resolveRunState(state, classified).changed) return classified;
+        report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson, statusMtimeMs });
+      }
+    } finally {
+      release();
+    }
+  }
+  if (report.verdict !== "fail") return classified;
+  return { status: "failed", error: "parent verification failed", resultPath: classified.resultPath };
+}
+
 function reconcileMailbox(runId) {
   const state = loadState(runId);
   let classified = classifyMailbox(runId);
 
   if (classified.status === "done" && state?.verify?.command?.length) {
-    const report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson });
-    if (report.verdict === "fail") {
-      classified = {
-        status: "failed",
-        error: "parent verification failed",
-        resultPath: classified.resultPath,
-      };
-    }
+    classified = verifyDoneOnce(runId, classified);
   }
 
   let resolved = resolveRunState(state, classified);
@@ -1282,10 +1361,26 @@ export function waitMailbox(runId, {
     }
 
     const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/wait-mailbox.sh");
-    const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(ceilingSec)], { encoding: "utf8" });
-    resolved = reconcileMailbox(runId);
+    // Same grace as classifyMailbox: the script sleeps through a done whose
+    // RESULT is still due instead of waking at once, over and over.
+    const resultArgs = ["--result-grace-sec", String(RESULT_GRACE_MS / 1000)];
+    const deadline = Date.now() + ceilingSec * 1000;
+    let waitExit;
+    for (;;) {
+      const left = Math.max(1, Math.ceil((deadline - Date.now()) / 1000));
+      const r = spawnSync(script, [mailboxDir(runId), "--ceiling-sec", String(left), ...resultArgs], { encoding: "utf8" });
+      waitExit = r.status ?? 1;
+      resolved = reconcileMailbox(runId);
+      if (waitExit !== 0 || !resolved.classified?.pending || Date.now() >= deadline) break;
+      // Woke while still pending — the script rounds the grace to whole
+      // seconds, or another watcher is verifying this done: a short pause,
+      // not a hot loop.
+      sleepMs(1000);
+    }
+    // Still pending at the ceiling: the parent waits again, nothing is decided.
+    if (resolved.classified?.pending && waitExit === 0) waitExit = 2;
     cleanupTerminalWorker(resolved.state, resolved.classified, stopTmux);
-    return { waitExit: r.status ?? 1, classified: resolved.classified };
+    return { waitExit, classified: resolved.classified };
   } finally {
     if (observerChild && observerChild.exitCode === null) {
       observerChild.kill("SIGTERM");
@@ -1840,6 +1935,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 
 import { writeTypedResult as writeTypedResultImpl, validateResult } from "../specialists/request.mjs";
+import { buildCommand } from "../roster/command.mjs";
+import { configPath, loadJson } from "../roster/config.mjs";
 import { detectParent, pruneSessionRecords } from "./parent.mjs";
 import { writePendingWakeup } from "./pending.mjs";
 import { orderQueue, runQueue, writeQueueStatus } from "../admission/scheduler.mjs";

@@ -162,6 +162,11 @@ test("typed result matrix reconciles without weakening RESULT.json semantics", w
   for (const entry of cases) {
     const state = createFixture({ stateStatus: "watching", mailboxStatus: "done", typed: true });
     if (entry.result !== undefined) writeTyped(state.runId, entry.result);
+    else {
+      // A missing RESULT fails only once it is no longer due.
+      const old = (Date.now() - runs.RESULT_GRACE_MS - 1000) / 1000;
+      fs.utimesSync(path.join(runs.mailboxDir(state.runId), "STATUS"), old, old);
+    }
     const classified = runs.classifyMailbox(state.runId);
     const resolved = runs.resolveRunState(state, classified);
     assert.equal(classified.status, entry.classified, entry.name);

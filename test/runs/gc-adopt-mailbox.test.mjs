@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 
 /**
  * A worker that finishes writes its RESULT and sets its mailbox STATUS.
@@ -44,17 +45,17 @@ function statusOf(home, runId) {
 
 test("a run that finished while waiting for a human adopts its mailbox", async () => {
   await withHome(async ({ home, gc }) => {
-    plant(home, "r-waited", { status: "waiting_human", mailboxStatus: "done" });
+    plant(home, "20260101T000000Z-wait", { status: "waiting_human", mailboxStatus: "done" });
     await gc.gcRuns({ now: new Date(), listSessions: () => [] });
-    assert.equal(statusOf(home, "r-waited"), "done");
+    assert.equal(statusOf(home, "20260101T000000Z-wait"), "done");
   });
 });
 
 test("a run that finished mid-handoff adopts it too", async () => {
   await withHome(async ({ home, gc }) => {
-    plant(home, "r-handoff", { status: "handing_off", mailboxStatus: "done" });
+    plant(home, "20260101T000000Z-hand", { status: "handing_off", mailboxStatus: "done" });
     await gc.gcRuns({ now: new Date(), listSessions: () => [] });
-    assert.equal(statusOf(home, "r-handoff"), "done");
+    assert.equal(statusOf(home, "20260101T000000Z-hand"), "done");
   });
 });
 
@@ -62,29 +63,47 @@ test("a run still genuinely waiting is left alone", async () => {
   await withHome(async ({ home, gc }) => {
     // The mailbox agrees it is waiting. Nothing here may touch it — that is the
     // case the protected statuses exist for.
-    plant(home, "r-asking", {
+    plant(home, "20260101T000000Z-askn", {
       status: "waiting_human",
       mailboxStatus: "waiting_human",
       result: null,
     });
     await gc.gcRuns({ now: new Date(), listSessions: () => [] });
-    assert.equal(statusOf(home, "r-asking"), "waiting_human");
+    assert.equal(statusOf(home, "20260101T000000Z-askn"), "waiting_human");
   });
 });
 
 test("a dry run changes nothing", async () => {
   await withHome(async ({ home, gc }) => {
-    plant(home, "r-dry", { status: "waiting_human", mailboxStatus: "done" });
+    plant(home, "20260101T000000Z-dry0", { status: "waiting_human", mailboxStatus: "done" });
     await gc.gcRuns({ now: new Date(), listSessions: () => [], dryRun: true });
-    assert.equal(statusOf(home, "r-dry"), "waiting_human");
+    assert.equal(statusOf(home, "20260101T000000Z-dry0"), "waiting_human");
   });
 });
 
 test("adoption is reported so the change is visible in the log", async () => {
   await withHome(async ({ home, gc }) => {
-    plant(home, "r-seen", { status: "waiting_human", mailboxStatus: "done" });
+    plant(home, "20260101T000000Z-seen", { status: "waiting_human", mailboxStatus: "done" });
     const report = await gc.gcRuns({ now: new Date(), listSessions: () => [] });
-    const entry = report.runs.find((r) => r.runId === "r-seen");
+    const entry = report.runs.find((r) => r.runId === "20260101T000000Z-seen");
     assert.equal(entry.adopted_from_mailbox, "done");
+  });
+});
+
+// A watcher verifying this done decides it; gc adopting the unverified done
+// first would make a failing verdict unable to land (terminal is final).
+test("a done whose verification is running is left to its verifier", async () => {
+  await withHome(async ({ home, gc }) => {
+    const dir = plant(home, "20260101T000000Z-vrfy", { status: "watching", mailboxStatus: "done" });
+    const state = JSON.parse(fs.readFileSync(path.join(dir, "STATE.json"), "utf8"));
+    fs.writeFileSync(path.join(dir, "STATE.json"), JSON.stringify({ ...state, verify: { command: ["true"], runs: 1 } }));
+    const holder = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      fs.writeFileSync(path.join(dir, "mailbox", ".VERIFICATION.lock"), `${holder.pid}\n`);
+      await gc.gcRuns({ now: new Date(), listSessions: () => [] });
+      assert.equal(statusOf(home, "20260101T000000Z-vrfy"), "watching");
+    } finally {
+      holder.kill();
+    }
   });
 });

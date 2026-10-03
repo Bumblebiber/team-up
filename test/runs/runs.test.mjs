@@ -7,11 +7,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   runsRoot, runDir, atomicWriteJson, atomicWriteText, createRun, loadState, saveState, updateState,
-  classifyMailbox, writeAnswer, buildResumePlan, INJECT, buildCliArgv,
+  classifyMailbox, writeAnswer, buildResumePlan, coldStartArgv, buildCliArgv,
   setStatus, resumeAll, linkDispatchToRun, recordRunEscalation, listActiveStates,
-  buildColdStartArgv, acquireResumeLock, resumeLockPath, waitTmuxReady,
+  acquireResumeLock, resumeLockPath, waitTmuxReady,
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
-  resolveGitBase,
+  resolveGitBase, isValidRunId, listAllStates,
 } from "../../src/runs/runs.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
@@ -33,6 +33,44 @@ function withTempRuns(fn) {
 
 test("runsRoot respects O9K_RUNS", withTempRuns(async (dir) => {
   assert.equal(runsRoot(), dir);
+}));
+
+// An agent once passed the `mailbox: <path>` output line as a run id and got
+// ~/.team-up/runs/'mailbox: '/home/... created by `runs answer`.
+test("runDir refuses anything that is not a run id", withTempRuns(async () => {
+  assert.equal(isValidRunId("20260922T100319Z-ri6m"), true);
+  for (const bad of ["mailbox: /home/x/.team-up/runs/20260922T100319Z-ri6m/mailbox", "../evil", "r1", "", null]) {
+    assert.equal(isValidRunId(bad), false, String(bad));
+    assert.throws(() => runDir(bad), /invalid run id/);
+  }
+}));
+
+test("createRun mints ids runDir accepts", withTempRuns(async () => {
+  for (let i = 0; i < 20; i++) {
+    const s = createRun({
+      cwd: "/tmp/p", role: "implementer",
+      parent: { cli: "claude", attach: "manual" },
+      worker: { cli: "codex" },
+      prompt: "x",
+    });
+    assert.equal(isValidRunId(s.runId), true, s.runId);
+  }
+}));
+
+test("CLI answer with a bad run id fails and creates nothing", withTempRuns(async (dir) => {
+  const r = spawnSync("node", [RUNS_BIN, "answer", "mailbox: /tmp/x/mailbox", "--text", "A"], {
+    env: { ...process.env, O9K_RUNS: dir }, encoding: "utf8",
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /invalid run id/);
+  assert.deepEqual(fs.readdirSync(dir), []);
+}));
+
+test("listAllStates passes over directories that are not runs", withTempRuns(async (dir) => {
+  fs.mkdirSync(path.join(dir, "mailbox: "), { recursive: true });
+  const corrupt = [];
+  assert.deepEqual(listAllStates({ onCorrupt: (id) => corrupt.push(id) }), []);
+  assert.deepEqual(corrupt, []);
 }));
 
 test("atomicWriteJson never leaves partial JSON", withTempRuns(async (dir) => {
@@ -221,7 +259,7 @@ test("CLI answer then classify watching", withTempRuns(async (dir) => {
 test("buildResumePlan skips terminal runs", () => {
   const plan = buildResumePlan({
     status: "done",
-    runId: "r1",
+    runId: "20260101T000000Z-r001",
     cwd: "/tmp/p",
     parent: { attach: "manual" },
     worker: { cli: "codex", tmux: "w1" },
@@ -232,7 +270,7 @@ test("buildResumePlan skips terminal runs", () => {
 test("buildResumePlan restores worker tmux when missing", () => {
   const plan = buildResumePlan({
     status: "watching",
-    runId: "r1",
+    runId: "20260101T000000Z-r001",
     cwd: "/tmp/p",
     parent: { attach: "manual", cli: "claude" },
     worker: { cli: "claude", sessionId: "abc", tmux: "w1" },
@@ -245,7 +283,7 @@ test("buildResumePlan restores worker tmux when missing", () => {
 test("buildResumePlan noops worker when tmux exists", () => {
   const plan = buildResumePlan({
     status: "watching",
-    runId: "r1",
+    runId: "20260101T000000Z-r001",
     cwd: "/tmp/p",
     parent: { attach: "manual", cli: "claude" },
     worker: { cli: "codex", tmux: "w1" },
@@ -257,7 +295,7 @@ test("buildResumePlan noops worker when tmux exists", () => {
 test("buildResumePlan leaves the parent to the grouped wake-up", () => {
   const plan = buildResumePlan({
     status: "waiting_human",
-    runId: "r1",
+    runId: "20260101T000000Z-r001",
     cwd: "/tmp/p",
     parent: { attach: "tmux", cli: "claude", sessionId: "p1", tmux: "parent-1" },
     worker: { cli: "codex", tmux: "w1" },
@@ -266,31 +304,81 @@ test("buildResumePlan leaves the parent to the grouped wake-up", () => {
   assert.deepEqual(kinds, ["spawn_worker", "flag_reattach_watcher"]);
 });
 
-test("buildCliArgv claude resume", () => {
-  assert.deepEqual(buildCliArgv({ cli: "claude", sessionId: "abc", coldStart: false }), ["claude", "--resume", "abc"]);
-  assert.equal(buildCliArgv({ cli: "cursor", sessionId: null, coldStart: true }), null);
+test("buildCliArgv resumes a recorded session and has nothing for a cold start", () => {
+  assert.deepEqual(buildCliArgv({ cli: "claude", sessionId: "abc" }), ["claude", "--resume", "abc"]);
+  assert.deepEqual(buildCliArgv({ cli: "codex", sessionId: "abc" }), ["codex", "resume", "abc"]);
+  assert.equal(buildCliArgv({ cli: "claude", sessionId: null }), null);
+  assert.equal(buildCliArgv({ cli: "cursor", sessionId: "abc" }), null);
 });
 
-test("buildColdStartArgv has no stray quote after exec", () => {
-  const argv = buildColdStartArgv({
-    runId: "r1",
-    promptPath: "/tmp/run/mailbox/PROMPT.md",
-    cli: "cursor-agent",
+// The recovered worker's cwd is the task dir, not the run dir: a relative
+// "mailbox/STATUS" points at nothing.
+test("the recovery prompt names the mailbox by absolute path", withTempRuns(async () => {
+  const s = createRun({
+    cwd: "/tmp/p", role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "cursor", tmux: "w1" },
+    prompt: "x",
   });
-  assert.equal(argv[0], "bash");
-  assert.equal(argv[1], "-lc");
-  assert.match(argv[2], /exec cursor-agent$/);
-  assert.doesNotMatch(argv[2], /exec cursor-agent'/);
-  assert.match(argv[2], /PROMPT\.md/);
+  setStatus(s.runId, "watching");
+  const [spawnAction] = buildResumePlan(loadState(s.runId), { tmuxExists: () => false }).actions;
+  const mb = path.join(runDir(s.runId), "mailbox");
+  assert.match(spawnAction.inject, /Host crash recovery/);
+  assert.ok(spawnAction.inject.includes(`${mb}/STATUS`), spawnAction.inject);
+  assert.ok(spawnAction.inject.includes(`${mb}/PROMPT.md`), spawnAction.inject);
+  assert.doesNotMatch(spawnAction.inject, /(^|\s)mailbox\//);
+}));
+
+const DISPATCH_ROSTER = {
+  clis: {
+    claude: { cmd: ["claude", "--dangerously-skip-permissions", "--model", "{model}", "--effort", "{effort}", "{prompt}"] },
+    codex: { cmd: ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "{model}", "{prompt}"] },
+    cursor: { cmd: ["cursor-agent", "--yolo", "--trust", "--model", "{model}", "{prompt}"] },
+  },
+  models: {
+    "claude-opus": { cli: ["claude"] },
+    "gpt-x": { cli: ["codex"] },
+    "grok-4.5": { cli: ["cursor"] },
+  },
+};
+
+// Cold starts launched a bare `claude`/`codex` without --model or the
+// permission flags, and `exec cursor` for the rest — the cursor shim exits 1
+// unless its first argument is "agent". Both cold starts on record failed.
+test("a cold start runs the command the dispatch used, with the recovery prompt", () => {
+  const worker = (cli, model, effort = null) => ({ runId: "20260101T000000Z-r001", worker: { cli, model, effort } });
+  assert.deepEqual(
+    coldStartArgv(worker("claude", "claude-opus", "high"), DISPATCH_ROSTER, "RECOVER", "/tmp/task"),
+    ["claude", "--dangerously-skip-permissions", "--model", "claude-opus", "--effort", "high", "RECOVER"],
+  );
+  assert.deepEqual(
+    coldStartArgv(worker("cursor", "grok-4.5"), DISPATCH_ROSTER, "RECOVER", "/tmp/task"),
+    ["cursor-agent", "--yolo", "--trust", "--model", "grok-4.5", "RECOVER"],
+  );
+  const codex = coldStartArgv(worker("codex", "gpt-x"), DISPATCH_ROSTER, "RECOVER", "/tmp/task");
+  assert.equal(codex[0], "codex");
+  assert.ok(codex.includes("--dangerously-bypass-approvals-and-sandbox"));
+  assert.ok(codex.some((a) => a.includes("trust_level")), "codex trusts the task dir as at dispatch");
+  assert.equal(codex.at(-1), "RECOVER");
 });
 
-test("buildColdStartArgv quotes cli with spaces", () => {
-  const argv = buildColdStartArgv({ runId: "r1", promptPath: "/p", cli: "my cli" });
-  assert.match(argv[2], /exec 'my cli'$/);
+test("a cold start the roster cannot rebuild says why instead of launching something else", () => {
+  const run = (cli, model) => ({ runId: "20260101T000000Z-r001", worker: { cli, model } });
+  assert.throws(() => coldStartArgv(run("hermes", "m"), DISPATCH_ROSTER, "x", "/tmp"), /clis\.hermes\.cmd/);
+  assert.throws(() => coldStartArgv(run("claude", null), DISPATCH_ROSTER, "x", "/tmp"), /worker\.model/);
+  assert.throws(() => coldStartArgv(run("claude", "m"), null, "x", "/tmp"), /roster/);
 });
 
-test("INJECT.worker mentions PROMPT.md", () => {
-  assert.match(INJECT.worker, /PROMPT\.md/);
+// A specialist runs inside a capsule its launch descriptor sets up; the
+// roster's clis.claude.cmd (--dangerously-skip-permissions) would bring it
+// back outside it. The supervisor's recover_crash restores those.
+test("a cold start refuses a run launched from a descriptor", () => {
+  const specialist = {
+    runId: "20260101T000000Z-r001",
+    worker: { cli: "claude", model: "claude-opus" },
+    launch_descriptor: { path: "/x/launch.json" },
+  };
+  assert.throws(() => coldStartArgv(specialist, DISPATCH_ROSTER, "x", "/tmp"), /launch descriptor/);
 });
 
 test("waitTmuxReady returns true when pane non-empty", () => {
@@ -326,13 +414,13 @@ test("listActiveStates skips corrupt STATE.json", withTempRuns(async (dir) => {
     prompt: "x",
   });
   setStatus(s.runId, "watching");
-  const bad = path.join(dir, "corrupt-run");
+  const bad = path.join(dir, "20260101T000000Z-bad0");
   fs.mkdirSync(bad, { recursive: true });
   fs.writeFileSync(path.join(bad, "STATE.json"), "{not-json");
   const skipped = [];
   const active = listActiveStates({ onCorrupt: (id, e) => skipped.push(id) });
   assert.ok(active.some((r) => r.runId === s.runId));
-  assert.ok(skipped.includes("corrupt-run"));
+  assert.ok(skipped.includes("20260101T000000Z-bad0"));
   // resumeAll must not throw
   const report = await resumeAll({ dryRun: true, tmuxExists: () => true, logDir: dir });
   assert.ok(report.runs.some((r) => r.runId === s.runId));

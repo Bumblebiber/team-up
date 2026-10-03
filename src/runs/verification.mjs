@@ -39,10 +39,77 @@ function gitHead(cwd) {
 }
 
 /**
+ * Held while verify.command runs. A file of its own, not the STATE flock:
+ * verifying takes minutes, and STATE writers wait two seconds at most.
+ */
+export const VERIFICATION_LOCK = ".VERIFICATION.lock";
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+
+/** Pid of the live process verifying in this mailbox, or null. */
+export function verifierPid(mb) {
+  let pid;
+  try {
+    pid = Number.parseInt(fs.readFileSync(path.join(mb, VERIFICATION_LOCK), "utf8"), 10);
+  } catch {
+    return null;
+  }
+  return Number.isInteger(pid) && pid > 0 && pidAlive(pid) ? pid : null;
+}
+
+/**
+ * O_EXCL lock in the mailbox. Returns a release function, or null while a
+ * live verifier holds it. A lock whose holder died (a killed watcher) is
+ * taken over.
+ * ponytail: two takers of one dead lock can both win; add a rename-based
+ * steal if concurrent watchers on a crashed verifier ever show up.
+ */
+export function acquireVerificationLock(mb) {
+  const lockPath = path.join(mb, VERIFICATION_LOCK);
+  const mine = `${process.pid}\n`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.writeFileSync(lockPath, mine, { flag: "wx" });
+      return () => {
+        try {
+          if (fs.readFileSync(lockPath, "utf8") === mine) fs.unlinkSync(lockPath);
+        } catch {
+          // already gone
+        }
+      };
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+    }
+    if (verifierPid(mb)) return null;
+    fs.rmSync(lockPath, { force: true });
+  }
+  return null;
+}
+
+/** The verdict already recorded for this exact STATUS=done write, or null. */
+export function recordedVerdict(mb, statusMtimeMs) {
+  try {
+    const report = JSON.parse(fs.readFileSync(path.join(mb, "VERIFICATION.json"), "utf8"));
+    if (statusMtimeMs == null || report?.status_mtime_ms !== statusMtimeMs) return null;
+    return report.verdict === "pass" || report.verdict === "fail" ? report : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Run verify.command `runs` times in state.cwd; write VERIFICATION.json to mailboxDir.
+ * `statusMtimeMs` stamps which STATUS=done write the verdict belongs to.
  * @returns {object} verification report
  */
-export function runParentVerification(runId, state, { mailboxDir, atomicWriteJson }) {
+export function runParentVerification(runId, state, { mailboxDir, atomicWriteJson, statusMtimeMs = null }) {
   const verify = state.verify;
   const command = verify?.command;
   if (!Array.isArray(command) || command.length === 0) {
@@ -78,6 +145,7 @@ export function runParentVerification(runId, state, { mailboxDir, atomicWriteJso
     finishedAt: new Date().toISOString(),
     runs,
     verdict,
+    ...(statusMtimeMs != null ? { status_mtime_ms: statusMtimeMs } : {}),
   };
   atomicWriteJson(path.join(mailboxDir(runId), "VERIFICATION.json"), report);
   return report;

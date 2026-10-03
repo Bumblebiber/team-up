@@ -38,4 +38,27 @@ ec=$?
 set -e
 [[ "$ec" -eq 0 ]] || { echo "expected immediate 0 got $ec"; exit 1; }
 
+# grace: done without RESULT keeps waiting, then wakes when RESULT lands
+mkdir -p "$TMP/late"
+echo done > "$TMP/late/STATUS"
+( sleep 1; echo result > "$TMP/late/RESULT.md" ) &
+set +e
+start=$SECONDS
+"$ROOT/wait-mailbox.sh" "$TMP/late" --ceiling-sec 10 --result-grace-sec 60
+ec=$?
+set -e
+[[ "$ec" -eq 0 ]] || { echo "late RESULT: expected 0 got $ec"; exit 1; }
+(( SECONDS - start >= 1 )) || { echo "late RESULT: woke before the RESULT"; exit 1; }
+
+# grace: a RESULT that never comes wakes the waiter when the grace runs out
+mkdir -p "$TMP/never"
+echo done > "$TMP/never/STATUS"
+set +e
+start=$SECONDS
+"$ROOT/wait-mailbox.sh" "$TMP/never" --ceiling-sec 10 --result-grace-sec 2
+ec=$?
+set -e
+[[ "$ec" -eq 0 ]] || { echo "grace expiry: expected 0 got $ec"; exit 1; }
+(( SECONDS - start < 8 )) || { echo "grace expiry: waited for the ceiling"; exit 1; }
+
 echo "wait-mailbox.test.sh OK"

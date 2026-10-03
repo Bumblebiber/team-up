@@ -20,6 +20,7 @@ import {
   stopTmuxSession,
   tmuxSessionExists,
 } from "./tmux.mjs";
+import { verifierPid } from "./verification.mjs";
 import { readLease, releaseAttemptLease } from "../supervisor/attempts.mjs";
 import { gcHandoffs, readHandoffRetentionDays } from "../handoff/store.mjs";
 import { loadJson, configPath, usagePath, usageWritePath } from "../roster/config.mjs";
@@ -364,6 +365,9 @@ function adoptTerminalMailbox(runId) {
   const classified = classifyMailbox(runId);
   if (!hasLegitimateTerminalMailbox(classified, before, runId)) return false;
   if (isUnresolvedStalePublicationClaim(before)) return false;
+  // A watcher is verifying this done right now; adopting it first would leave
+  // a failing verdict nowhere to land, since terminal is final.
+  if (classified.status === "done" && verifierPid(mailboxDir(runId))) return false;
   const after = updateState(runId, (latest) =>
     reconcileTerminalMailboxState(latest, classified)
   );
