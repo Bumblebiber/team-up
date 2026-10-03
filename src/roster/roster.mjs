@@ -317,11 +317,11 @@ export async function spawnInTmux({
 const PICKS_KEPT = 10;
 
 /**
- * Append this dispatch's routing decision to the run's STATE.picks, so a run
- * can show which limits it was routed around. Best effort: an audit record
- * must never stop a dispatch.
+ * Append this dispatch's (or specialist launch's) routing decision to the
+ * run's STATE.picks, so a run can show which limits it was routed around.
+ * Best effort: an audit record must never stop a dispatch.
  */
-function recordPick(runId, pick) {
+export function recordPick(runId, pick) {
   try {
     updateState(runId, (state) => {
       state.picks = [...(state.picks || []), { at: new Date().toISOString(), ...pick }].slice(-PICKS_KEPT);

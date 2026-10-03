@@ -9,7 +9,7 @@ import { installPackage } from "../../src/specialists/store.mjs";
 import { approveSpecialist } from "../../src/specialists/approvals.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
-import { createRun } from "../../src/runs/runs.mjs";
+import { createRun, loadState } from "../../src/runs/runs.mjs";
 import { capsuleContextDir } from "../../src/capabilities/capsule.mjs";
 import { loadAuthoritativeLaunchDescriptor } from "../../src/supervisor/start.mjs";
 
@@ -266,6 +266,39 @@ test("the worker cwd is capsuleContextDir, the function the isolation canary pro
     const cwd = capsuleContextDir(seen.runDir);
     assert.equal(seen.capsule.contextDir, cwd);
     assert.equal(loadAuthoritativeLaunchDescriptor(result.runId).context_dir, cwd);
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});
+
+// A dispatch records its routing decision on the run (STATE.picks); a
+// specialist launch picks its cell through the same gates and recorded none.
+test("a launch records its routing decision in STATE.picks before the worker starts", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  const picksAtStart = [];
+  const deps = {
+    ...ISOLATED,
+    prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
+    memoryCeiling: () => null,
+    checkAdmission: async () => ({ ok: true }),
+    startFromLaunchDescriptor: ({ runId }) => picksAtStart.push(loadState(runId).picks),
+  };
+  try {
+    const plain = await launch({ ...fixture.args, dryRun: false, dependencyOverrides: deps });
+    const pinned = await launch({
+      ...fixture.args, dryRun: false, runtime: { model: "big" }, dependencyOverrides: deps,
+    });
+    assert.equal(picksAtStart.length, 2);
+    const [[first], [second]] = picksAtStart;
+    assert.deepEqual(
+      { ...first, at: undefined },
+      { at: undefined, cli: "claude", model: "m", effort: plain.runtime.effort ?? null, pinned: false, skipped: [], refresh: null },
+    );
+    assert.ok(Date.parse(first.at) > 0);
+    assert.equal(second.model, "big");
+    assert.equal(second.pinned, true);
+    assert.deepEqual(loadState(pinned.runId).picks, [second]);
   } finally {
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }

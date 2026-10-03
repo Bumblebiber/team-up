@@ -12,6 +12,7 @@ import {
 import { resolveProfile } from "../roster/profile.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
+import { recordPick } from "../roster/roster.mjs";
 import {
   createRun,
   runDir,
@@ -713,6 +714,15 @@ export async function launch({
           stdio: "inherit",
         });
       });
+    // Before the start, as dispatch does: a start that fails still leaves the decision behind.
+    recordPick(state.runId, {
+      cli: cell.cli,
+      model: cell.model,
+      effort: cell.effort ?? null,
+      pinned: Boolean(runtimeOverride),
+      skipped: profileResult.skipped,
+      refresh: null,
+    });
     try {
       startFromLaunchDescriptorFn({
         runId: state.runId,
