@@ -429,7 +429,8 @@ export function classifyMailbox(runId) {
   if (statusLine === "failed") {
     return {
       status: "failed",
-      error: "STATUS=failed",
+      // A worker's `set-status <own id> failed --reason` leaves its words here.
+      error: readMaybe(path.join(mb, "FAILURE.md"))?.trim() || "STATUS=failed",
       resultPath: resultJsonRaw ? resultJsonPath : (resultMd ? resultMdPath : null),
     };
   }
@@ -842,11 +843,6 @@ export function buildCliArgv({ cli, sessionId }) {
  * argument is "agent"; both cold starts on record failed.
  */
 export function coldStartArgv(state, roster, prompt, dir) {
-  // A specialist's capsule comes from its launch descriptor; the roster
-  // command would bring it back outside it, with the roster's permissions.
-  if (state.launch_descriptor) {
-    throw new Error(`cold start of ${state.runId}: launched from a launch descriptor; the supervisor restores it (recover_crash)`);
-  }
   const { cli, model, effort = null } = state.worker || {};
   if (!roster?.clis?.[cli]?.cmd) {
     throw new Error(`cold start of ${state.runId}: no clis.${cli}.cmd in the roster`);
@@ -1011,6 +1007,12 @@ export function executeResumeAction(action, state, {
   }
   // Parents come back through deliverParentWakeup, never through here.
   if (action.kind !== "spawn_worker") return;
+  // A specialist's capsule comes from its launch descriptor; a cold start
+  // (the roster command) or a bare session resume would bring it back outside
+  // it, with the roster's permissions.
+  if (state.launch_descriptor) {
+    throw new Error(`resume of ${state.runId}: launched from a launch descriptor; the supervisor restores it (recover_crash)`);
+  }
 
   const resumed = buildCliArgv({ cli: action.cli, sessionId: action.sessionId });
   // Not requireRoster: its process.exit would end the whole resume queue.
@@ -1265,18 +1267,30 @@ export async function resumeAll({
 function verifyDoneOnce(runId, classified) {
   const mb = mailboxDir(runId);
   const statusMtimeMs = readMailboxStatusIdentity(runId).mtimeMs;
-  let report = recordedVerdict(mb, statusMtimeMs);
+  const seen = loadState(runId);
+  let report = recordedVerdict(seen, statusMtimeMs);
   if (!report) {
-    const release = acquireVerificationLock(mb);
+    const release = acquireVerificationLock(mb, seen?.verify);
     if (!release) return { status: "watching", pending: "verification" };
     try {
       // Under the lock: another verifier may just have finished, or the run
       // been decided. A decided run's evidence is never rewritten.
-      report = recordedVerdict(mb, statusMtimeMs);
       const state = loadState(runId);
+      report = recordedVerdict(state, statusMtimeMs);
       if (!report) {
-        if (!resolveRunState(state, classified).changed) return classified;
+        // Decided means terminal and not gc's synthetic stale failure, which a
+        // real outcome may still supersede. An open stale claim decides nothing.
+        // A done that gc adopted unverified is still verified once, for the
+        // record only: its STATE stays done, since terminal is final.
+        const decided = TERMINAL_RUN_STATUSES.has(state?.status) && !isSyntheticStaleFailureState(state);
+        if (decided && state.status !== "done") return classified;
         report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson, statusMtimeMs });
+        // The verdict that counts goes where only the parent writes, before the
+        // lock is released; mailbox/VERIFICATION.json is the evidence copy.
+        updateState(runId, (s) => {
+          s.verification = { verdict: report.verdict, status_mtime_ms: statusMtimeMs, at: report.finishedAt };
+          return s;
+        });
       }
     } finally {
       release();
@@ -1483,6 +1497,9 @@ function cmdSetStatus(args) {
   // RESULT grace window and parent verification first. Parents and humans
   // (no marker, or another run's id) still decide STATE directly.
   if (process.env.TEAMUP_WORKER && process.env.TEAMUP_RUN_ID === runId) {
+    const reason = argValue(args, "--reason");
+    // Before STATUS, so whoever wakes on STATUS=failed reads it as the error.
+    if (status === "failed" && reason) atomicWriteText(path.join(mailboxDir(runId), "FAILURE.md"), reason);
     atomicWriteText(path.join(mailboxDir(runId), "STATUS"), status);
     return;
   }

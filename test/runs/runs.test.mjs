@@ -12,8 +12,9 @@ import {
   setStatus, resumeAll, linkDispatchToRun, recordRunEscalation, listActiveStates,
   acquireResumeLock, resumeLockPath, waitTmuxReady,
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
-  resolveGitBase, isValidRunId, listAllStates,
+  resolveGitBase, isValidRunId, listAllStates, executeResumeAction,
 } from "../../src/runs/runs.mjs";
+import { gcRuns } from "../../src/runs/gc.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
 
@@ -98,6 +99,40 @@ test("CLI set-status from a worker on its own run writes only the mailbox", with
   const human = mk();
   assert.equal(setDone(human.runId, {}).status, 0);
   assert.deepEqual(seen(human.runId), ["done", "done"]);
+}));
+
+// On the mailbox-only path a worker's --reason went nowhere: STATE.failure
+// said "STATUS=failed" where it used to carry the worker's own words, and
+// said nothing at all when gc adopted the failure.
+test("a worker failing its own run keeps its --reason, whoever reconciles it", withTempRuns(async (dir) => {
+  const fail = (runId) => spawnSync(
+    "node",
+    [RUNS_BIN, "set-status", runId, "failed", "--reason", "tests need DB creds"],
+    { env: { ...process.env, O9K_RUNS: dir, TEAMUP_WORKER: "1", TEAMUP_RUN_ID: runId }, encoding: "utf8" },
+  );
+  const mk = () => {
+    const { runId } = createRun({
+      cwd: "/tmp/proj", role: "implementer", parent: { cli: "manual", attach: "manual" },
+      worker: { cli: "codex", model: "m" }, prompt: "x",
+    });
+    setStatus(runId, "watching");
+    assert.equal(fail(runId).status, 0);
+    return runId;
+  };
+
+  const watched = mk();
+  waitMailbox(watched, { ceilingSec: 1, observe: false, stopTmux: () => {} });
+  assert.equal(loadState(watched).failure.error, "tests need DB creds");
+
+  const unwatched = mk();
+  gcRuns({
+    states: [loadState(unwatched)],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: false, activityMs: null, sessionId: null }),
+    listSessions: () => [],
+  });
+  assert.equal(loadState(unwatched).status, "failed");
+  assert.equal(loadState(unwatched).failure.error, "tests need DB creds");
 }));
 
 test("listAllStates passes over directories that are not runs", withTempRuns(async (dir) => {
@@ -405,14 +440,23 @@ test("a cold start the roster cannot rebuild says why instead of launching somet
 
 // A specialist runs inside a capsule its launch descriptor sets up; the
 // roster's clis.claude.cmd (--dangerously-skip-permissions) would bring it
-// back outside it. The supervisor's recover_crash restores those.
-test("a cold start refuses a run launched from a descriptor", () => {
+// back outside it, and so would a bare `claude --resume <id>`. The
+// supervisor's recover_crash restores those.
+test("resume refuses to respawn a run launched from a descriptor, cold or by session", () => {
   const specialist = {
     runId: "20260101T000000Z-r001",
     worker: { cli: "claude", model: "claude-opus" },
     launch_descriptor: { path: "/x/launch.json" },
   };
-  assert.throws(() => coldStartArgv(specialist, DISPATCH_ROSTER, "x", "/tmp"), /launch descriptor/);
+  const action = (sessionId) => ({
+    kind: "spawn_worker", tmux: "tu-test-refused-r001", cwd: "/tmp", cli: "claude", sessionId, inject: "x",
+  });
+  for (const sessionId of [null, "abc-session"]) {
+    assert.throws(
+      () => executeResumeAction(action(sessionId), specialist, { waitReady: () => true, readyTimeoutMs: 0 }),
+      /launch descriptor/,
+    );
+  }
 });
 
 test("waitTmuxReady returns true when pane non-empty", () => {

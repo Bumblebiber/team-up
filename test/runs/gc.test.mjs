@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import {
   evaluateGcAction,
   evaluateIdleSessionAction,
@@ -395,6 +396,33 @@ test("gc reconciles legitimate mailbox closeout during stale confirmation", with
   assert.equal(latest.cleanup?.stale_detected_at, undefined);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(mb, "RESULT.json"), "utf8")), legitimate);
   assert.equal(fs.readFileSync(path.join(mb, "STATUS"), "utf8").trim(), "done");
+}));
+
+// The stale path adopted a done while a watcher was still verifying it, so a
+// failing verdict landed on a run already decided done.
+test("gc does not stale-fail or adopt a done while its verifier is running", withTempRuns(async () => {
+  const state = staleCandidateFixture();
+  const mb = path.join(runDir(state.runId), "mailbox");
+  const verifying = loadState(state.runId);
+  verifying.verify = { command: ["true"], runs: 1 };
+  saveState(verifying);
+  atomicWriteText(path.join(mb, "RESULT.md"), "done\n");
+  atomicWriteText(path.join(mb, "STATUS"), "done\n");
+  const holder = spawn("sleep", ["30"], { stdio: "ignore" });
+  try {
+    fs.writeFileSync(path.join(mb, ".VERIFICATION.lock"), `${holder.pid}\n`);
+    const report = gcRuns({
+      listSessions: () => [],
+      ...staleDeps,
+      states: [loadState(state.runId)],
+      releaseLease: () => assert.fail("must not release while verifying"),
+      stopTmux: () => assert.fail("must not stop while verifying"),
+    });
+    assert.equal(loadState(state.runId).status, "watching");
+    assert.equal(report.runs[0].staleFailureReason, "verifying");
+  } finally {
+    holder.kill();
+  }
 }));
 
 test("gc stale failure persists claim before release attempt", withTempRuns(async () => {
