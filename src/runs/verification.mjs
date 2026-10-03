@@ -203,7 +203,10 @@ export function runParentVerification(runId, state, { mailboxDir, atomicWriteJso
     }
   }
 
-  const verdict = !reason && runs.every((row) => row.exitCode === 0) ? "pass" : "fail";
+  // A pass needs evidence: at least one run, all of them executed and green.
+  const verdict = !reason && runs.length > 0 && runs.length === runCount && runs.every((row) => row.exitCode === 0)
+    ? "pass"
+    : "fail";
   const report = {
     schema: "verification/1",
     command,

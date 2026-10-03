@@ -379,6 +379,8 @@ test("a verdict stamped for another STATUS write is not reused", withTempRuns(as
   assert.equal(count(), 2);
   assert.equal(JSON.parse(fs.readFileSync(verificationPath(runId), "utf8")).status_mtime_ms, statusMtimeMs(runId));
   assert.equal(loadState(runId).verification.status_mtime_ms, statusMtimeMs(runId));
+  const { started_at: startedAt, at } = loadState(runId).verification;
+  assert.ok(startedAt && Date.parse(startedAt) <= Date.parse(at), "records when verification began, for intake's ordering check");
 }));
 
 // The worker can write its mailbox and stat its own STATUS: a stamped pass it
@@ -499,6 +501,26 @@ test("a verify run that times out after its command exited 0 still fails", withT
   assert.equal(report.reason, "verify timed out");
   assert.equal(report.runs.length, 1);
   assert.equal(report.runs[0].timedOut, true);
+}));
+
+// No run executed is no evidence: runs 0 must not read as a pass.
+test("a verify that executes no run is a fail, not a pass", withTempRuns(async (runsRoot) => {
+  for (const runs of [0, -1]) {
+    const state = createRun({
+      cwd: runsRoot,
+      role: "implementer",
+      parent: { cli: "claude", attach: "manual" },
+      worker: { cli: "codex" },
+      prompt: "x",
+      verify: { command: ["false"], runs },
+    });
+    const report = runParentVerification(state.runId, loadState(state.runId), {
+      mailboxDir: (id) => path.join(runDir(id), "mailbox"),
+      atomicWriteJson,
+    });
+    assert.equal(report.runs.length, 0);
+    assert.equal(report.verdict, "fail", `runs ${runs}`);
+  }
 }));
 
 test("a lock older than the verify timeout no longer holds, even with its pid alive", withTempRuns(async (runsRoot) => {

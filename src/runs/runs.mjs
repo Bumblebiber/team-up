@@ -1296,7 +1296,9 @@ function verifyDoneOnce(runId, classified) {
         // The verdict that counts goes where only the parent writes, before the
         // lock is released; mailbox/VERIFICATION.json is the evidence copy.
         updateState(runId, (s) => {
-          s.verification = { verdict: report.verdict, status_mtime_ms: statusMtimeMs, at: report.finishedAt };
+          // started_at, not at, is what a later STATUS write is ordered against:
+          // a STATUS rewritten while the command ran is not what it judged.
+          s.verification = { verdict: report.verdict, status_mtime_ms: statusMtimeMs, started_at: report.startedAt, at: report.finishedAt };
           return s;
         });
       }
@@ -1444,7 +1446,12 @@ function cmdCreate(args) {
   let verify;
   if (verifyCommandRaw) {
     verify = { command: parseVerifyCommand(verifyCommandRaw) };
-    if (verifyRunsRaw) verify.runs = Number(verifyRunsRaw);
+    if (verifyRunsRaw) {
+      verify.runs = Number(verifyRunsRaw);
+      if (!Number.isInteger(verify.runs) || verify.runs < 1) {
+        throw new Error(`--verify-runs must be a whole number of at least 1, got ${verifyRunsRaw}`);
+      }
+    }
   }
   const state = createRun({
     cwd,

@@ -49,8 +49,8 @@ For each run, read `~/.team-up/runs/<id>/mailbox/RESULT.json`
   No `verification`, or `pending: true`, means unverified: run
   `team-up runs wait <id>` once (it verifies a pending done for the record),
   then read it again. Still no `verdict` → report the run as unverified. A
-  mailbox `STATUS` newer than `verification.at` was rewritten after the
-  verdict, which then no longer counts, and `runs wait` does not re-verify a
+  mailbox `STATUS` newer than `verification.started_at` was rewritten after
+  the verification began, so the verdict no longer counts, and `runs wait` does not re-verify a
   decided done: report it as unverified too. Never treat an unverified run as
   passing. `mailbox/VERIFICATION.json` holds the per-run detail but
   the worker can overwrite it. Without a `verify` command, run the project's
