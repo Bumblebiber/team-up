@@ -205,8 +205,12 @@ export function verifyInitSurfaceExclusion(init, { expected, prepared } = {}) {
   const violations = [];
 
   const builtinPlugins = new Set(init.builtin_plugins || []);
+  // A built-in plugin's skill comes as "<plugin>:<skill>", or bare: 2.1.286's
+  // cc-plugin-plugin-authoring reports its skill as plain "plugin-authoring".
+  const fromBuiltinPlugin = (skill) =>
+    builtinPlugins.has(skill.split(":")[0]) || builtinPlugins.has(`cc-plugin-${skill}`);
   for (const skill of init.skills || []) {
-    if (!allowed.allowedSkills.has(skill) && !builtinPlugins.has(skill.split(":")[0])) {
+    if (!allowed.allowedSkills.has(skill) && !fromBuiltinPlugin(skill)) {
       violations.push({ kind: "skill", name: skill });
     }
   }
