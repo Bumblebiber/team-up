@@ -212,3 +212,66 @@ test("parseResetAt refuses a date that is nowhere near now", () => {
   // start accepting a genuinely absurd one either.
   assert.equal(parseResetAt("2001-09-27T00:00:00Z", now), null);
 });
+
+/**
+ * The clock in a reset string comes in more shapes than H:MM. Claude prints an
+ * hour alone on the hour ("10am"), and codex's hit-limit banner says "try
+ * again at 8:51 PM" (run 20260925T170605Z-s8un). Each parsed to null, so the
+ * live claude:week window carried resets_at: null and a blocked week fell back
+ * to updated + 7 days.
+ */
+test("claude /usage fixture: an hour-only reset parses, not just the used share", async () => {
+  const fs = await import("node:fs");
+  const { parseClaudeUsage } = await import("../../src/collectors/parse-claude-usage.mjs");
+  const text = fs.readFileSync(new URL("./fixtures/usage/claude-usage.txt", import.meta.url), "utf8");
+  const w = parseClaudeUsage(text, { now: "2026-07-17T12:00:00Z" });
+  // "Jul 20, 10am (Europe/Berlin)" — CEST is UTC+2.
+  assert.equal(w["claude:week"].resets_at, "2026-07-20T08:00:00.000Z");
+  assert.equal(w["claude:fable-week"].resets_at, "2026-07-20T08:00:00.000Z");
+  assert.equal(w["claude:week"].reset_confidence, "provider");
+  // The H:MM forms keep working.
+  assert.equal(w["claude:session"].resets_at, "2026-07-17T18:10:00.000Z");
+  assert.equal(w["claude:5h"].resets_at, "2026-07-17T19:00:00.000Z");
+});
+
+test("parseResetAt reads claude's hour-only reset with its zone suffix", () => {
+  const now = Date.parse("2026-10-03T13:29:18Z");
+  assert.equal(
+    parseResetAt("Oct 5, 10am (Europe/Berlin)", now),
+    Date.parse("2026-10-05T08:00:00Z")
+  );
+});
+
+test("parseResetAt reads codex's hit-limit '<h>pm on <d> <Mon>' in local time", () => {
+  const berlin = "Europe/Berlin";
+  const now = Date.parse("2026-08-01T12:00:00Z");
+  assert.equal(
+    parseResetAt("3pm on 5 Aug", now, { timeZone: berlin }),
+    Date.parse("2026-08-05T13:00:00Z")
+  );
+});
+
+test("parseResetAt reads codex's hit-limit '8:51 PM' as a bare 12-hour clock", () => {
+  const berlin = "Europe/Berlin";
+  const now = Date.parse("2026-09-25T17:40:26Z"); // 19:40 Berlin, when s8un hit it
+  assert.equal(
+    parseResetAt("8:51 PM", now, { timeZone: berlin }),
+    Date.parse("2026-09-25T18:51:00Z")
+  );
+});
+
+test("parseCodexStatus hit-limit banner carries a parsed reset", async () => {
+  const { parseCodexStatus } = await import("../../src/collectors/parse-codex-status.mjs");
+  const w = parseCodexStatus(
+    "You’ve hit your usage limit. Upgrade to Pro or try again at 8:51 PM.",
+    { now: "2026-09-25T17:40:26Z" }
+  );
+  assert.equal(w["codex:weekly"].resets_at_raw, "8:51 PM");
+  assert.match(w["codex:weekly"].resets_at, /^2026-09-2[56]T/);
+});
+
+test("parseResetAt does not read a bare number as a clock", () => {
+  const now = Date.parse("2026-09-02T15:00:00Z");
+  assert.equal(parseResetAt("10", now, { timeZone: "Europe/Berlin" }), null);
+  assert.equal(parseResetAt("13pm", now, { timeZone: "Europe/Berlin" }), null);
+});

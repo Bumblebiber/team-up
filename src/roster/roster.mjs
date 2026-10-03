@@ -4,10 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { detectParent } from "../runs/parent.mjs";
+import { atomicWriteJson } from "../json-store.mjs";
 import {
   linkDispatchToRun,
   runDir,
   loadState,
+  updateState,
   recordRunEscalation,
   wrapPromptWithMailboxProtocol,
   promptHasMailboxProtocol,
@@ -92,9 +94,8 @@ function cmdMarkLimited(args) {
     ttlMs: parseTtl(ttl),
     reason: argValue(args, "--reason"),
   });
-  const usageOut = usageWritePath();
-  fs.mkdirSync(path.dirname(usageOut), { recursive: true });
-  fs.writeFileSync(usageOut, `${JSON.stringify(usage, null, 2)}\n`);
+  // Atomic: the watcher, hooks and every dispatch read usage.json meanwhile.
+  atomicWriteJson(usageWritePath(), usage);
   console.log(`marked ${target} limited until ${usage.marked[target].until}`);
 }
 
@@ -211,7 +212,9 @@ export async function spawnInTmux({
     }
   }
 
-  const priorPick = { model: r.model, cli: r.cli, skipped: r.skipped, effort: r.effort };
+  // null: the reading was fresh enough; "ok": re-picked on a fresh one;
+  // "failed": dispatched on the stale reading because the refresh failed.
+  let refresh = null;
   try {
     const { isSubscriptionCli, collectUsageForCli } = await import("../usage/usage-collect.mjs");
     const { isCliUsageFresh } = await import("../usage/usage-windows.mjs");
@@ -219,9 +222,9 @@ export async function spawnInTmux({
       isSubscriptionCli(r.cli, rosterCfg) &&
       !isCliUsageFresh(r.cli, usage, dispatchFreshnessMs(rosterCfg) * 1000, now)
     ) {
+      refresh = "failed";
       const refreshed = await (refreshUsage ?? collectUsageForCli)({ cli: r.cli, roster: rosterCfg });
       if (refreshed.ok) {
-        const preUsage = usage;
         usage = readUsage();
         if (modelPin && pinResolved) {
           const entryEffort = chainEntryEffortForPin(
@@ -240,14 +243,7 @@ export async function spawnInTmux({
             now,
           });
         } else {
-          r = resolvePickAfterRefresh({
-            roster: rosterCfg,
-            preUsage,
-            postUsage: usage,
-            priorPick,
-            role,
-            now,
-          });
+          r = resolvePickAfterRefresh({ roster: rosterCfg, postUsage: usage, role, now });
         }
         for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
         if (!r.model) {
@@ -258,6 +254,7 @@ export async function spawnInTmux({
           );
           process.exit(2);
         }
+        refresh = "ok";
       }
     }
   } catch {
@@ -287,6 +284,14 @@ export async function spawnInTmux({
     });
     effectiveRunId = state.runId;
   }
+  recordPick(effectiveRunId, {
+    cli: r.cli,
+    model: r.model,
+    effort: r.effort ?? null,
+    pinned: Boolean(modelPin),
+    skipped: r.skipped,
+    refresh,
+  });
   return spawn({
     roster: rosterCfg,
     model: r.model,
@@ -297,6 +302,24 @@ export async function spawnInTmux({
     effort: r.effort,
     sessionPrefix: `team-up-${role}`,
   });
+}
+
+const PICKS_KEPT = 10;
+
+/**
+ * Append this dispatch's routing decision to the run's STATE.picks, so a run
+ * can show which limits it was routed around. Best effort: an audit record
+ * must never stop a dispatch.
+ */
+function recordPick(runId, pick) {
+  try {
+    updateState(runId, (state) => {
+      state.picks = [...(state.picks || []), { at: new Date().toISOString(), ...pick }].slice(-PICKS_KEPT);
+      return state;
+    });
+  } catch (e) {
+    console.error(`warning: routing decision not recorded on run ${runId}: ${e.message}`);
+  }
 }
 
 async function cmdDispatch(args) {
@@ -522,7 +545,7 @@ async function cmdRefresh(args) {
   if (doApply && proposals.applied.length) {
     backupRoster(rosterWritePath());
     const next = applyProposals({ roster: rosterCfg, scoresFile: collected, proposals });
-    fs.writeFileSync(rosterWritePath(), `${JSON.stringify(next, null, 2)}\n`);
+    atomicWriteJson(rosterWritePath(), next);
     console.log(`roster updated: ${rosterWritePath()}`);
   } else if (doApply) {
     console.log("nothing to auto-apply");
@@ -564,7 +587,7 @@ async function cmdApplyScores() {
   }
   backupRoster(rosterWritePath());
   const next = applyProposals({ roster: rosterCfg, scoresFile, proposals });
-  fs.writeFileSync(rosterWritePath(), `${JSON.stringify(next, null, 2)}\n`);
+  atomicWriteJson(rosterWritePath(), next);
   console.log(`roster updated: ${rosterWritePath()}`);
 }
 
