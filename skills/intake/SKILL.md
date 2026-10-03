@@ -44,12 +44,15 @@ For each run, read `~/.team-up/runs/<id>/mailbox/RESULT.json`
   the run's `STATE.json`.
 - Tests the result says pass: if the run has a `verify` command, read
   `verification` in the run's `STATE.json`. `verdict: pass|fail` is the answer.
-  The tool already matched its `status_mtime_ms` to the mailbox `STATUS` write
-  it verified, so read `verdict` / `pending` and do not compare mtimes by hand.
+  The tool stamps each verdict with the `STATUS` write it verified, so read
+  `verdict` / `pending`; do not compare `status_mtime_ms` by hand.
   No `verification`, or `pending: true`, means unverified: run
   `team-up runs wait <id>` once (it verifies a pending done for the record),
-  then read it again. Still no `verdict` → report the run as unverified. Never
-  treat it as passing. `mailbox/VERIFICATION.json` holds the per-run detail but
+  then read it again. Still no `verdict` → report the run as unverified. A
+  mailbox `STATUS` newer than `verification.at` was rewritten after the
+  verdict, which then no longer counts, and `runs wait` does not re-verify a
+  decided done: report it as unverified too. Never treat an unverified run as
+  passing. `mailbox/VERIFICATION.json` holds the per-run detail but
   the worker can overwrite it. Without a `verify` command, run the project's
   own check yourself. A worker's own "tests pass" is not evidence.
 - Files named in `deliverables`: confirm they exist and say what is claimed.
