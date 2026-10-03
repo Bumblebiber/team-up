@@ -842,6 +842,11 @@ export function buildCliArgv({ cli, sessionId }) {
  * argument is "agent"; both cold starts on record failed.
  */
 export function coldStartArgv(state, roster, prompt, dir) {
+  // A specialist's capsule comes from its launch descriptor; the roster
+  // command would bring it back outside it, with the roster's permissions.
+  if (state.launch_descriptor) {
+    throw new Error(`cold start of ${state.runId}: launched from a launch descriptor; the supervisor restores it (recover_crash)`);
+  }
   const { cli, model, effort = null } = state.worker || {};
   if (!roster?.clis?.[cli]?.cmd) {
     throw new Error(`cold start of ${state.runId}: no clis.${cli}.cmd in the roster`);

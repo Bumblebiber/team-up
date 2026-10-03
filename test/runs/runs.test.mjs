@@ -369,6 +369,18 @@ test("a cold start the roster cannot rebuild says why instead of launching somet
   assert.throws(() => coldStartArgv(run("claude", "m"), null, "x", "/tmp"), /roster/);
 });
 
+// A specialist runs inside a capsule its launch descriptor sets up; the
+// roster's clis.claude.cmd (--dangerously-skip-permissions) would bring it
+// back outside it. The supervisor's recover_crash restores those.
+test("a cold start refuses a run launched from a descriptor", () => {
+  const specialist = {
+    runId: "20260101T000000Z-r001",
+    worker: { cli: "claude", model: "claude-opus" },
+    launch_descriptor: { path: "/x/launch.json" },
+  };
+  assert.throws(() => coldStartArgv(specialist, DISPATCH_ROSTER, "x", "/tmp"), /launch descriptor/);
+});
+
 test("waitTmuxReady returns true when pane non-empty", () => {
   let calls = 0;
   const ok = waitTmuxReady("sess", {
