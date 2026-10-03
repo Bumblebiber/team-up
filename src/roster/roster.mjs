@@ -211,7 +211,6 @@ export async function spawnInTmux({
     }
   }
 
-  const priorPick = { model: r.model, cli: r.cli, skipped: r.skipped, effort: r.effort };
   try {
     const { isSubscriptionCli, collectUsageForCli } = await import("../usage/usage-collect.mjs");
     const { isCliUsageFresh } = await import("../usage/usage-windows.mjs");
@@ -221,7 +220,6 @@ export async function spawnInTmux({
     ) {
       const refreshed = await (refreshUsage ?? collectUsageForCli)({ cli: r.cli, roster: rosterCfg });
       if (refreshed.ok) {
-        const preUsage = usage;
         usage = readUsage();
         if (modelPin && pinResolved) {
           const entryEffort = chainEntryEffortForPin(
@@ -240,14 +238,7 @@ export async function spawnInTmux({
             now,
           });
         } else {
-          r = resolvePickAfterRefresh({
-            roster: rosterCfg,
-            preUsage,
-            postUsage: usage,
-            priorPick,
-            role,
-            now,
-          });
+          r = resolvePickAfterRefresh({ roster: rosterCfg, postUsage: usage, role, now });
         }
         for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
         if (!r.model) {

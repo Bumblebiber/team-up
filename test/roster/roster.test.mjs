@@ -520,19 +520,16 @@ test("resolvePickAfterRefresh re-picks with fresh usage", () => {
       "codex:weekly": { used: 0.5 },
     },
   };
-  const priorPick = pick({ roster, usage: preUsage, role: "planner", now: NOW });
-  const resolved = resolvePickAfterRefresh({
-    roster,
-    preUsage,
-    postUsage,
-    priorPick,
-    role: "planner",
-    now: NOW,
-  });
+  assert.equal(pick({ roster, usage: preUsage, role: "planner", now: NOW }).model, "model-a");
+  const resolved = resolvePickAfterRefresh({ roster, postUsage, role: "planner", now: NOW });
   assert.equal(resolved.model, "model-b");
 });
 
-test("resolvePickAfterRefresh pins when collect probe alone blocks prior pick", () => {
+// It used to keep the stale pick here ("probe-inflation pin": the probe's own
+// consumption was assumed to have pushed the reading over). Probes do not move
+// the reading measurably, and the pin had no bound: codex:weekly 0.3 -> 1.0
+// dispatched onto the exhausted model with an empty skipped list.
+test("resolvePickAfterRefresh refuses the stale pick once fresh usage blocks it", () => {
   const roster = {
     ...ROSTER,
     models: { "model-a": { provider: "anthropic", cli: ["claude"] } },
@@ -542,16 +539,10 @@ test("resolvePickAfterRefresh pins when collect probe alone blocks prior pick", 
   // post at/over that threshold.
   const preUsage = { windows: { "claude:5h": { used: 0.74 } } };
   const postUsage = { windows: { "claude:5h": { used: 0.85 } } };
-  const priorPick = pick({ roster, usage: preUsage, role: "planner", now: NOW });
-  const resolved = resolvePickAfterRefresh({
-    roster,
-    preUsage,
-    postUsage,
-    priorPick,
-    role: "planner",
-    now: NOW,
-  });
-  assert.equal(resolved.model, "model-a");
+  assert.equal(pick({ roster, usage: preUsage, role: "planner", now: NOW }).model, "model-a");
+  const resolved = resolvePickAfterRefresh({ roster, postUsage, role: "planner", now: NOW });
+  assert.equal(resolved.model, null);
+  assert.deepEqual(resolved.skipped, [{ model: "model-a", reason: "window claude:5h at 85%" }]);
 });
 
 test("validateRoster accepts a minimal limits-only roster", () => {

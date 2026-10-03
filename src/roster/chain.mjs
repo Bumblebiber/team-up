@@ -421,52 +421,20 @@ export async function checkThresholdsWithRefresh({
   return result;
 }
 
-function modelUsageBlocked({ roster, usage, modelName, cli, limits: limitsArg, now }) {
-  const model = roster.models?.[modelName];
-  if (!model) return false;
-  return modelUsageGate({
-    usage,
-    limitWindows: resolveLimitWindows(roster, modelName, model),
-    provider: model.provider,
-    cli,
-    limits: limitsArg,
-    now,
-  }).blocked;
-}
-
-export function resolvePickAfterRefresh({
-  roster,
-  preUsage,
-  postUsage,
-  priorPick,
-  role,
-  now = Date.now(),
-}) {
-  const roleLimits = limits(roster);
-  const r2 = pick({ roster, usage: postUsage, role, now });
-  if (r2.model) return r2;
-  if (
-    priorPick.model &&
-    !modelUsageBlocked({
-      roster,
-      usage: preUsage,
-      modelName: priorPick.model,
-      cli: priorPick.cli,
-      limits: roleLimits,
-      now,
-    }) &&
-    modelUsageBlocked({
-      roster,
-      usage: postUsage,
-      modelName: priorPick.model,
-      cli: priorPick.cli,
-      limits: roleLimits,
-      now,
-    })
-  ) {
-    return priorPick;
-  }
-  return { model: null, cli: null, effort: null, skipped: r2.skipped };
+/**
+ * Re-walk the chain on the usage a dispatch-time refresh just collected. The
+ * fresh reading wins outright: no chain cell viable means no pick, exactly as
+ * for a pinned cell (resolvePinnedAfterRefresh).
+ *
+ * It used to fall back to the stale pick when only the fresh reading blocked
+ * it ("probe-inflation pin": the probe's own consumption was assumed to have
+ * pushed the window over). Probes do not move the reading — on 2026-10-03 the
+ * live codex and cursor windows stayed flat across 12 consecutive collects —
+ * and the fallback had no bound: codex:weekly 0.3 -> 1.0 still dispatched onto
+ * the exhausted model, the failure class of the 2026-08-21 runs.
+ */
+export function resolvePickAfterRefresh({ roster, postUsage, role, now = Date.now() }) {
+  return pick({ roster, usage: postUsage, role, now });
 }
 
 /** Re-check a pinned cell after usage refresh — no chain walk. */
