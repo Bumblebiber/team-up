@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { detectParent } from "../runs/parent.mjs";
+import { detectHostCli, detectParent } from "../runs/parent.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import {
   linkDispatchToRun,
@@ -112,8 +112,7 @@ async function cmdUsage(args) {
     // hook: an exhausted codex window says nothing about a claude session.
     let hostCli = null;
     try {
-      const { cli } = detectParent();
-      hostCli = cli && cli !== "manual" ? cli : null;
+      hostCli = detectHostCli();
     } catch {
       // Unknown host: every window counts, as before.
     }

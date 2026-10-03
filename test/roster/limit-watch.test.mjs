@@ -8,7 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkThresholds } from "../../src/roster/chain.mjs";
-import { writeSessionRecord } from "../../src/runs/parent.mjs";
+import { detectHostCli, writeSessionRecord } from "../../src/runs/parent.mjs";
+import { fakeProc, rmrf } from "../telemetry/fake-proc.mjs";
 
 const SCRIPT = fileURLToPath(new URL("../../src/roster/limit-watch.mjs", import.meta.url));
 const ROSTER_BIN = fileURLToPath(new URL("../../src/roster/roster.mjs", import.meta.url));
@@ -89,7 +90,8 @@ test("the hook scopes to the CLI its session registry names", () => {
   // The SessionStart hook records the host CLI under its pid; the hook finds
   // it by walking up its own ancestry, which passes through this process.
   writeSessionRecord({ cli: "claude", sessionId: "s", cwd: dir, pid: process.pid, dir: path.join(dir, "sessions") });
-  const out = run({ TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath });
+  // No CLAUDE_PID: the registry alone must name the host.
+  const out = run({ TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath, CLAUDE_PID: "" });
   // The host's own window still reports — proof the hook ran to the end
   // rather than swallowing an error into silence.
   assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
@@ -111,7 +113,65 @@ test("usage --check scopes to the CLI its session registry names", () => {
   writeSessionRecord({ cli: "claude", sessionId: "s", cwd: dir, pid: process.pid, dir: path.join(dir, "sessions") });
   const out = execFileSync(process.execPath, [ROSTER_BIN, "usage", "--check"], {
     encoding: "utf8",
-    env: { ...process.env, TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath },
+    env: { ...process.env, TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath, CLAUDE_PID: "" },
+  });
+  assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
+  assert.doesNotMatch(out, /⛔|stop working|codex/);
+});
+
+// Without a session record detectParent says "manual": at SessionStart the
+// hook that writes the record runs in parallel with this one, and a desktop
+// Claude build's comm is its version ("2.1.286"), so no process name helps.
+// Claude Code's CLAUDE_PID still names the host when it is our ancestor.
+// tmux (10) → claude desktop build (20) → bash (30) → node hook (40)
+const DESKTOP = [
+  { pid: 10, ppid: 1, comm: "tmux: server", start: 100 },
+  { pid: 20, ppid: 10, comm: "2.1.286", start: 200 },
+  { pid: 30, ppid: 20, comm: "bash", start: 300 },
+  { pid: 40, ppid: 30, comm: "node", start: 400 },
+];
+
+test("detectHostCli names claude from an ancestor CLAUDE_PID when no record exists", (t) => {
+  const procRoot = fakeProc({ processes: DESKTOP });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "lw-host-"));
+  t.after(() => rmrf(procRoot, home));
+  const dir = path.join(home, "sessions");
+  const host = (env) => detectHostCli({ env: { TEAM_UP_HOME: home, ...env }, procRoot, dir, pid: 40 });
+  assert.equal(host({ CLAUDE_PID: "20" }), "claude");
+  assert.equal(host({}), null);
+  // Inherited from elsewhere (a tmux server's env): not our session.
+  assert.equal(host({ CLAUDE_PID: "99" }), null);
+  // The Cursor CLI runs Claude Code hooks too: never scope that to claude.
+  assert.equal(host({ CLAUDE_PID: "20", CURSOR_VERSION: "1.0" }), null);
+  // A record still wins.
+  writeSessionRecord({ cli: "cursor", sessionId: "c", pid: 20, procRoot, dir });
+  assert.equal(host({ CLAUDE_PID: "20" }), "cursor");
+});
+
+function noRecordFixture() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lw-"));
+  const rosterPath = path.join(dir, "roster.json");
+  const usagePath = path.join(dir, "usage.json");
+  fs.writeFileSync(rosterPath, JSON.stringify({ models: {}, roles: {}, limits: { warn_at: 0.9, handoff_at: 0.95 } }));
+  const usage = SPLIT();
+  delete usage.windows["codex:5h"]; // stale: would start a real collect
+  usage.windows["claude:week"] = { used: 0.92, updated_at: new Date().toISOString() };
+  fs.writeFileSync(usagePath, JSON.stringify(usage));
+  // No session record; this test process is the hook's parent, so its pid
+  // stands in for the Claude CLI's.
+  return { TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath, CLAUDE_PID: String(process.pid) };
+}
+
+test("the hook scopes to claude from CLAUDE_PID before the session record exists", () => {
+  const out = run(noRecordFixture());
+  assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
+  assert.doesNotMatch(out, /⛔|stop working|codex/);
+});
+
+test("usage --check scopes to claude from CLAUDE_PID before the session record exists", () => {
+  const out = execFileSync(process.execPath, [ROSTER_BIN, "usage", "--check"], {
+    encoding: "utf8",
+    env: { ...process.env, ...noRecordFixture() },
   });
   assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
   assert.doesNotMatch(out, /⛔|stop working|codex/);
