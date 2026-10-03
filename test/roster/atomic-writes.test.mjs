@@ -84,6 +84,16 @@ test("saveRoster (dashboard edits) replaces roster.json whole instead of rewriti
   assert.ok(fs.existsSync(backup));
 });
 
+test("writeScores replaces scores.json whole instead of rewriting it in place", async () => {
+  const { writeScores } = await import("../../src/scores/scores.mjs");
+  const fx = fixture();
+  const dest = path.join(fx.home, "scores.json");
+  const before = fs.statSync(dest).ino;
+  writeScores({ models: {}, role_scores: {} }, dest);
+  assert.notEqual(fs.statSync(dest).ino, before);
+  assert.deepEqual(JSON.parse(fs.readFileSync(dest, "utf8")), { models: {}, role_scores: {} });
+});
+
 test("atomicWriteJson leaves no temp file behind when the rename fails", async () => {
   const { atomicWriteJson } = await import("../../src/json-store.mjs");
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-atomic-"));

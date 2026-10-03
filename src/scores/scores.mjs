@@ -15,6 +15,7 @@ import {
 import { blendedPrice, scoreForRole, ROLE_SCORE_FIELDS } from "./propose.mjs";
 import { scoresPath as scoresPathFromPaths, scoresWritePath } from "../paths.mjs";
 import { configPath, loadJson } from "../roster/config.mjs";
+import { atomicWriteJson } from "../json-store.mjs";
 
 export function scoresPath() {
   return scoresPathFromPaths();
@@ -102,8 +103,7 @@ export async function collectScores({ fixtureDir, fetchFn, env = process.env } =
 }
 
 export function writeScores(scoresFile, dest = scoresWritePath()) {
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.writeFileSync(dest, `${JSON.stringify(scoresFile, null, 2)}\n`);
+  atomicWriteJson(dest, scoresFile);
   return dest;
 }
 
