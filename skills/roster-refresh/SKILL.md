@@ -88,5 +88,6 @@ Manual: `bash ~/.hermes/scripts/roster-refresh-wrapper.sh`
 
 If APPLY rewrote a chain head, remind the user that `pin_head: true` on a role
 freezes that head from future semiauto apply. Burst-window skips at dispatch time
-are independent of score rank — check `roster usage --check` when dispatch
-starts failing with "all models skipped".
+are independent of score rank — check `team-up usage` (every window and mark)
+when dispatch starts failing with "all models skipped". Not `usage --check`:
+it shows only the calling session's own CLI windows.
