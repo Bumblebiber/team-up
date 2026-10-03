@@ -734,3 +734,49 @@ test("listSupervisedRuns persists draft checkpoint but plans observe without rea
     assert.equal(decision.action, "observe");
   });
 });
+
+// STATE.picks missed every start that does not come from the launcher's
+// direct branch: a parked launch started later, a capacity-wait resume and a
+// controller successor. All of them start with a runtimeOverride; the
+// launcher's direct start passes none and records its own pick.
+test("a start with a runtime override records the new cell in STATE.picks", async () => {
+  await withTempEnv(async () => {
+    const run = createRun({
+      cwd: "/tmp",
+      role: "specialist:r3",
+      parent: { cli: "team-up", attach: "manual" },
+      worker: { cli: "claude", model: "m1" },
+      prompt: "hi",
+    });
+    persistLaunchDescriptor(run.runId, makeDescriptor(run.runId));
+    startFromLaunchDescriptor({
+      runId: run.runId,
+      runtimeOverride: { cli: "claude", model: "m2" },
+      startTmux: () => {},
+    });
+    const state = loadState(run.runId);
+    assert.equal(state.status, "watching");
+    assert.equal(state.picks?.length, 1);
+    assert.equal(state.picks[0].cli, "claude");
+    assert.equal(state.picks[0].model, "m2");
+    assert.equal(state.picks[0].pinned, false);
+    assert.equal(state.picks[0].skipped, null);
+  });
+});
+
+test("a start without a runtime override records no pick (the launcher records its own)", async () => {
+  await withTempEnv(async () => {
+    const run = createRun({
+      cwd: "/tmp",
+      role: "specialist:r3",
+      parent: { cli: "team-up", attach: "manual" },
+      worker: { cli: "claude", model: "m1" },
+      prompt: "hi",
+    });
+    persistLaunchDescriptor(run.runId, makeDescriptor(run.runId));
+    startFromLaunchDescriptor({ runId: run.runId, startTmux: () => {} });
+    const state = loadState(run.runId);
+    assert.equal(state.status, "watching");
+    assert.equal(state.picks, undefined);
+  });
+});

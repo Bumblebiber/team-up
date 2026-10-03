@@ -4,6 +4,8 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { loadState, saveState, setStatus } from "../runs/runs.mjs";
 import { buildCommand, tmuxArgs } from "../roster/command.mjs";
+import { resolveLimitWindows } from "../roster/chain.mjs";
+import { recordPick } from "../roster/roster.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
 import { prepareHarnessLaunch, getAdapter } from "../harness/registry.mjs";
 import { pinnedVerifiedBinary } from "../harness/binary.mjs";
@@ -773,6 +775,19 @@ export function startFromLaunchDescriptor({
     descriptorPath,
     runId,
   });
+  // A resume, a successor or a parked launch moves the run to a new cell; the
+  // launcher's direct start passes no override and records its own pick.
+  // What the chooser skipped is not known here.
+  if (runtimeOverride) {
+    recordPick(runId, {
+      cli: prepared.cli,
+      model: prepared.model,
+      effort: prepared.effort ?? null,
+      pinned: false,
+      skipped: null,
+      refresh: null,
+    });
+  }
   const session =
     sessionName ||
     `team-up-${(descriptor.specialist?.id || "run").replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
@@ -958,8 +973,7 @@ export function resolveLimitWindowsForCell(cell, roster = null) {
   if (Array.isArray(cell?.limit_windows) && cell.limit_windows.length) {
     return cell.limit_windows;
   }
-  if (Array.isArray(model?.limit_windows)) return model.limit_windows;
-  return [];
+  return model ? resolveLimitWindows(r, cell.model, model) : [];
 }
 
 export function loadUsageDoc() {

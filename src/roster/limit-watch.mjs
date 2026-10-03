@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadJson, configPath, usagePath } from "./config.mjs";
 import { checkThresholds } from "./chain.mjs";
-import { detectParent } from "../runs/parent.mjs";
+import { detectHostCli } from "../runs/parent.mjs";
 import { debugLog } from "../debug.mjs";
 
 const REFRESH_SCRIPT = fileURLToPath(new URL("../usage/usage-limit-refresh.mjs", import.meta.url));
@@ -27,12 +27,12 @@ function scheduleLimitRefresh(cli) {
  * end the session: an exhausted codex window says nothing about a Claude
  * session's quota. The Cursor CLI runs Claude Code hooks too, so the session
  * registry (written by the SessionStart hook) is asked rather than assuming
- * claude. Unknown (no record yet, unrecognised process) checks every window.
+ * claude; before it exists, an ancestor CLAUDE_PID names claude. Unknown
+ * checks every window.
  */
 function hostCli() {
   try {
-    const { cli } = detectParent();
-    return cli && cli !== "manual" ? cli : null;
+    return detectHostCli();
   } catch (e) {
     debugLog("team-up limit-watch host", e);
     return null;

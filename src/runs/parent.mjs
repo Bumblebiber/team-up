@@ -240,3 +240,19 @@ export function detectParent({
   }
   return { cli: guess ?? "manual", sessionId: null, tmux: null, attach: "manual", cwd: null, detected_by: "none" };
 }
+
+/**
+ * The CLI whose session runs this process, or null when unknown — for scoping
+ * usage windows, not for naming a parent. detectParent sees "manual" before
+ * the SessionStart hook has written the record (the two hooks run in
+ * parallel) and in a desktop Claude build, whose comm is its version
+ * ("2.1.286"); Claude Code's CLAUDE_PID still names the host when it is an
+ * ancestor. The Cursor CLI runs Claude Code hooks too: never claude there.
+ */
+export function detectHostCli({ env = process.env, procRoot = "/proc", dir = sessionsDir(env), pid = process.pid } = {}) {
+  const { cli } = detectParent({ env, procRoot, dir, pid });
+  if (cli && cli !== "manual") return cli;
+  if (env.CURSOR_VERSION) return null;
+  const claudePid = Number(env.CLAUDE_PID);
+  return claudePid > 1 && ancestry(pid, { procRoot }).some((p) => p.pid === claudePid) ? "claude" : null;
+}

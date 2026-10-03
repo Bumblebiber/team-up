@@ -1,4 +1,5 @@
-import { modelUsageGate, parseResetAt, windowIsBlocking } from "../usage/usage-windows.mjs";
+import { modelUsageGate, windowIsBlocking, windowResetAt } from "../usage/usage-windows.mjs";
+import { resolveLimitWindows } from "../roster/chain.mjs";
 
 const CONFIDENCE_RANK = {
   provider: 4,
@@ -9,15 +10,6 @@ const CONFIDENCE_RANK = {
 
 function toMs(now) {
   return typeof now === "string" ? Date.parse(now) : now;
-}
-
-function windowResetMs(w, nowMs) {
-  if (!w) return null;
-  if (w.resets_at && /^\d{4}-\d{2}-\d{2}T/.test(String(w.resets_at))) {
-    const ms = Date.parse(w.resets_at);
-    return Number.isFinite(ms) ? ms : null;
-  }
-  return parseResetAt(w.resets_at_raw || w.resets_at, nowMs);
 }
 
 function normalizeConfidence(value) {
@@ -40,7 +32,7 @@ function weakerConfidence(a, b) {
 export function candidateAvailability({ candidate, usage, roster, now = Date.now() }) {
   const nowMs = toMs(now);
   const model = roster?.models?.[candidate.model] || {};
-  const limitWindows = Array.isArray(model.limit_windows) ? model.limit_windows : [];
+  const limitWindows = resolveLimitWindows(roster, candidate.model, model);
   const limits = roster?.limits || {};
   const gate = modelUsageGate({
     usage,
@@ -69,7 +61,7 @@ export function candidateAvailability({ candidate, usage, roster, now = Date.now
     if (!windowIsBlocking(wkey, usage, limits, nowMs)) continue;
     blocking.push(wkey);
     const w = usage?.windows?.[wkey];
-    const ms = windowResetMs(w, nowMs);
+    const ms = windowResetAt(w, nowMs);
     const wConf = normalizeConfidence(w?.reset_confidence ?? (ms != null ? "provider" : "unknown"));
     confidence = weakerConfidence(confidence, wConf);
     if (ms == null) unknown = true;

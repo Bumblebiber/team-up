@@ -275,3 +275,45 @@ test("parseResetAt does not read a bare number as a clock", () => {
   assert.equal(parseResetAt("10", now, { timeZone: "Europe/Berlin" }), null);
   assert.equal(parseResetAt("13pm", now, { timeZone: "Europe/Berlin" }), null);
 });
+
+/**
+ * A raw reset names the next such moment after it was read, not after now.
+ * Records written before the hour-only parse landed carry resets_at: null and
+ * resets_at_raw "Oct 5, 10am (Europe/Berlin)"; read against now, the reset
+ * rolled forward to 2027 the moment it passed and the window never unblocked.
+ */
+test("a raw reset is read against the reading's own time, so it expires once passed", () => {
+  const legacy = {
+    used: 1,
+    resets_at: null,
+    resets_at_raw: "Oct 5, 10am (Europe/Berlin)",
+    updated_at: "2026-09-29T12:00:00Z",
+  };
+  const usage = { windows: { "claude:week": legacy } };
+  const before = Date.parse("2026-10-05T07:00:00Z");
+  const after = Date.parse("2026-10-05T09:00:00Z");
+  assert.equal(effectiveResetAt(legacy, "claude:week", 0.95, after), Date.parse("2026-10-05T08:00:00Z"));
+  assert.equal(windowIsBlocking("claude:week", usage, 0.95, before), true);
+  assert.equal(windowIsBlocking("claude:week", usage, 0.95, after), false);
+});
+
+test("an unparseable raw reset still expires updated + max age", () => {
+  const w = { used: 1, resets_at: null, resets_at_raw: "soon", updated_at: "2026-09-29T12:00:00Z" };
+  const usage = { windows: { "claude:week": w } };
+  const ceiling = Date.parse("2026-09-29T12:00:00Z") + WINDOW_MAX_AGE_MS["claude:week"];
+  assert.equal(effectiveResetAt(w, "claude:week", 0.95, ceiling - 1), ceiling);
+  assert.equal(windowIsBlocking("claude:week", usage, 0.95, ceiling - 1), true);
+  assert.equal(windowIsBlocking("claude:week", usage, 0.95, ceiling), false);
+});
+
+test("a collector-written ISO reset blocks until it passes", () => {
+  const w = {
+    used: 1,
+    resets_at: "2026-10-05T08:00:00.000Z",
+    resets_at_raw: "Oct 5, 10am (Europe/Berlin)",
+    updated_at: "2026-10-03T12:00:00Z",
+  };
+  const usage = { windows: { "claude:week": w } };
+  assert.equal(windowIsBlocking("claude:week", usage, 0.95, Date.parse("2026-10-05T07:59:00Z")), true);
+  assert.equal(windowIsBlocking("claude:week", usage, 0.95, Date.parse("2026-10-05T08:00:00Z")), false);
+});
