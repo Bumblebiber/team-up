@@ -17,6 +17,7 @@ import { usedFraction } from "../../src/supervisor/production.mjs";
 import { reclaimStaleLease, createAttempt } from "../../src/supervisor/attempts.mjs";
 import { wrapWithSandbox } from "../../src/sandbox/systemd.mjs";
 import { createRun } from "../../src/runs/runs.mjs";
+import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const RUNS_BIN = path.join(ROOT, "src/runs/runs.mjs");
@@ -238,6 +239,7 @@ async function withEntrypointEnv(fn) {
       broker_tool: "passed",
       command_broker: "team-up.command-broker/v1",
       context_isolation: "team-up.context-isolation/v1",
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     })
   );
 

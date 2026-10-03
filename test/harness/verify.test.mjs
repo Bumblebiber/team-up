@@ -19,6 +19,7 @@ test("verifyHarness records version-keyed status from injectable runner", async 
         native_shell: "denied",
         broker_tool: "passed",
         context_isolation: "team-up.context-isolation/v1",
+        context_isolation_absent: ["global.canary-skill"],
       }),
       {
         execFileSync: () => "claude 1.2.3\n",
@@ -28,6 +29,8 @@ test("verifyHarness records version-keyed status from injectable runner", async 
   assert.equal(record.status, "verified");
   assert.equal(record.cli_version, "1.2.3");
   assert.equal(loadVerificationRecord("claude", "1.2.3", env).status, "verified");
+  assert.deepEqual(loadVerificationRecord("claude", "1.2.3", env).context_isolation_absent, ["global.canary-skill"],
+    "the observed canaries are the record's proof");
 
   const failed = await verifyHarness({
     adapter: {

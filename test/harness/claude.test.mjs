@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { claudeAdapter, materializeClaudeAuthHome } from "../../src/harness/claude.mjs";
 import { prepareHarnessLaunch } from "../../src/harness/registry.mjs";
+import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
 
 test("claude prepareLaunch denies shell bypass and writes mcp config", () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-"));
@@ -97,6 +98,7 @@ test("brokered Claude launch strips legacy roster bypass before enforcing policy
       cli_version: "test",
       command_broker: "team-up.command-broker/v1",
       context_isolation: "team-up.context-isolation/v1",
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     },
     brokerBin: "/abs/bin/team-up-command-broker.mjs",
     nodePath: "/abs/node",

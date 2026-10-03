@@ -18,6 +18,7 @@ import {
 import { buildCapsuleContentManifest } from "../../src/capabilities/content-manifest.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 import { getAdapter, harnessCapabilities } from "../../src/harness/registry.mjs";
+import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
 
 function withTempEnv(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r5-cw-"));
@@ -157,6 +158,7 @@ function persistCapsuleRun(cli = "claude", model = "m1") {
         adapter: cli,
         cli_version: version,
         context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+        context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
       },
       capsuleLaunch,
       specialist: { id: "research.reanna", version: "0.1.0" },
@@ -273,6 +275,7 @@ test("verified record missing adapter is invalid under exact-version gate", () =
       status: "verified",
       cli_version: "2.1.220",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     },
     requireExactVersion: "2.1.220",
   });
@@ -285,6 +288,7 @@ test("verified record missing cli_version is invalid under exact-version gate", 
       status: "verified",
       adapter: "claude",
       context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
     },
     requireExactVersion: "2.1.220",
   });

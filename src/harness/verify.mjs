@@ -182,6 +182,11 @@ export async function verifyHarness({
       declaresIsolation && checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY
         ? CONTEXT_ISOLATION_CAPABILITY
         : null,
+    // The proof the grant rests on: which forbidden canaries the run observed
+    // absent. harnessCapabilities withholds the grant from a record without it.
+    ...(declaresIsolation && checks.context_isolation === CONTEXT_ISOLATION_CAPABILITY
+      ? { context_isolation_absent: checks.context_isolation_absent ?? null }
+      : {}),
     status,
     ...capabilityReasons,
   };

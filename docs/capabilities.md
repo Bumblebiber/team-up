@@ -153,8 +153,9 @@ and one plugin, then asks the harness to report its effective capabilities.
 The selected skill and plugin are **positive controls**. If they are missing,
 the launch mechanism itself failed and the run's clean canary sheet proves
 nothing, so the result is `failed` — never `passed`. An unparseable report is
-`unverified`. The record stores `context_isolation_planted` so an unplanted
-canary's absence is never mistaken for an exercised one.
+`unverified`. The record stores `context_isolation_absent`, the forbidden
+canaries the run observed absent, and a launch grants isolation only from a
+record whose list is complete — a token without that proof grants nothing.
 
 Cursor, Codex, Hermes, and OpenCode have no isolation adapter yet and are
 therefore ineligible for specialist runs.

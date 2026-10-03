@@ -17,6 +17,7 @@ import {
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 import { getAdapter } from "../../src/harness/registry.mjs";
 import { execFileSync } from "node:child_process";
+import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
 
 function withTempEnv(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-cap-desc-"));
@@ -161,6 +162,7 @@ test("prepareArgvFromDescriptor rebuilds Claude bare capsule from persisted desc
         adapter: "claude",
         cli_version: claudeVersion,
         context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+        context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
       },
       capsuleLaunch,
       specialist: { id: "research.reanna", version: "0.1.0" },
@@ -238,6 +240,7 @@ test("prepareArgvFromDescriptor fails closed for Codex isolation (no native full
           adapter: "codex",
           cli_version: codexVersion,
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
         },
         capsuleLaunch,
         specialist: { id: "research.reanna", version: "0.1.0" },
@@ -321,6 +324,7 @@ test("Claude verification cannot be reused under Codex runtime override", async 
           adapter: "claude",
           cli_version: claudeVersion,
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
         },
         capsuleLaunch,
         specialist: { id: "research.reanna", version: "0.1.0" },
@@ -369,6 +373,7 @@ test("missing or corrupt capsule launch data fails closed", async () => {
         harnessVerification: {
           status: "verified",
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
         },
         capsuleLaunch,
         specialist: { id: "research.reanna", version: "0.1.0" },
@@ -390,6 +395,7 @@ test("missing or corrupt capsule launch data fails closed", async () => {
             harnessVerification: {
               status: "verified",
               context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+              context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
             },
             specialist: { id: "research.reanna", version: "0.1.0" },
           })
@@ -462,6 +468,7 @@ test("reconstruction fails closed when selected SKILL.md content is mutated", as
           adapter: "claude",
           cli_version: "2.1.220",
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
         },
         capsuleLaunch,
         specialist: { id: "research.reanna", version: "0.1.0" },
@@ -515,6 +522,7 @@ test("reconstruction fails closed when selected skill root is deleted (no recrea
           adapter: "claude",
           cli_version: "2.1.220",
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
         },
         capsuleLaunch,
         specialist: { id: "research.reanna", version: "0.1.0" },
@@ -567,6 +575,7 @@ test("reconstruction never falls back to worker-writable EFFECTIVE_CAPABILITIES"
           adapter: "claude",
           cli_version: "2.1.220",
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
         },
         capsuleLaunch,
         specialist: { id: "research.reanna", version: "0.1.0" },
@@ -624,6 +633,7 @@ test("reconstruction fails closed when unlisted file is added under skill root",
           adapter: "claude",
           cli_version: claudeVersion,
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
         },
         capsuleLaunch,
         specialist: { id: "research.reanna", version: "0.1.0" },
@@ -681,6 +691,7 @@ test("exact unmodified reconstruction succeeds with content manifest", async () 
           adapter: "claude",
           cli_version: claudeVersion,
           context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+          context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
         },
         capsuleLaunch,
         specialist: { id: "research.reanna", version: "0.1.0" },

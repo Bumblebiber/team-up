@@ -28,7 +28,7 @@ export function modelLabel(roster, store, id, cli = roster?.models?.[id]?.cli?.[
   return number ? `${id}-${number}` : id;
 }
 
-function chainView(roster, store, chain) {
+function chainView(roster, store, chain, now) {
   return chain.map((raw) => {
     let parsed;
     try {
@@ -39,7 +39,7 @@ function chainView(roster, store, chain) {
     const cli = parsed.cli ?? roster.models?.[parsed.model]?.cli?.[0] ?? null;
     const known = !!roster.models?.[parsed.model];
     const { state, newest } = cli && known
-      ? cellStatus(roster, store, cli, parsed.model)
+      ? cellStatus(roster, store, cli, parsed.model, now)
       : { state: known ? "unknown" : "missing", newest: null };
     return {
       cli,
@@ -62,7 +62,7 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
         role,
         pin_head: spec?.pin_head === true,
         effort: spec?.effort ?? null,
-        chain: chainView(roster, store, spec?.chain || []),
+        chain: chainView(roster, store, spec?.chain || [], now),
         pick: result.model
           ? { cli: result.cli, model: result.model, effort: result.effort ?? null,
               label: modelLabel(roster, store, result.model, result.cli) }
