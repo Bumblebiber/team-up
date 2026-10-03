@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -310,4 +310,99 @@ test("runParentVerification records commit and cwd", withTempRuns(async (runsRoo
   });
   assert.equal(report.cwd, repoCwd);
   assert.match(report.commit || "", /^[0-9a-f]{7,40}$/);
+}));
+
+// Verification ran on every reconcile of a done mailbox, unlocked: runs s4ji
+// and 0pwq ended failed with a VERIFICATION.json saying pass, written by a
+// second verifier that started before STATE was decided, and side-effecting
+// commands (npm ci) ran again each time.
+function verifiedRun(runsRoot, name, { runs = 2, failAt = 999 } = {}) {
+  const counter = path.join(runsRoot, name);
+  fs.writeFileSync(counter, "0");
+  const state = createRun({
+    cwd: runsRoot,
+    role: "implementer",
+    parent: { cli: "claude", attach: "manual" },
+    worker: { cli: "codex" },
+    prompt: "x",
+    verify: { command: counterScript(counter, failAt), runs },
+  });
+  setStatus(state.runId, "watching");
+  closeMailboxDone(state.runId);
+  return { runId: state.runId, count: () => Number(fs.readFileSync(counter, "utf8")) };
+}
+
+function verificationPath(runId) {
+  return path.join(runDir(runId), "mailbox", "VERIFICATION.json");
+}
+
+function statusMtimeMs(runId) {
+  return fs.statSync(path.join(runDir(runId), "mailbox", "STATUS")).mtimeMs;
+}
+
+test("a done is verified once: a second runs wait neither re-runs nor rewrites it", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "once");
+  assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "done");
+  const first = fs.readFileSync(verificationPath(runId), "utf8");
+  assert.equal(count(), 2);
+
+  assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "done");
+  assert.equal(count(), 2, "verify command ran again");
+  assert.equal(fs.readFileSync(verificationPath(runId), "utf8"), first);
+}));
+
+test("an existing verdict for the same done is reused, not re-run", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "reuse");
+  // A verifier that wrote its verdict and died before STATE was persisted.
+  atomicWriteJson(verificationPath(runId), {
+    schema: "verification/1", verdict: "fail", runs: [{ n: 1, exitCode: 1 }],
+    status_mtime_ms: statusMtimeMs(runId),
+  });
+  const r = waitMailbox(runId, { ceilingSec: 1, observe: false });
+  assert.equal(r.classified.status, "failed");
+  assert.equal(count(), 0);
+  assert.equal(loadState(runId).status, "failed");
+}));
+
+test("a verdict stamped for another STATUS write is not reused", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "stale-verdict");
+  atomicWriteJson(verificationPath(runId), {
+    schema: "verification/1", verdict: "fail", runs: [], status_mtime_ms: statusMtimeMs(runId) - 5000,
+  });
+  assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "done");
+  assert.equal(count(), 2);
+  assert.equal(JSON.parse(fs.readFileSync(verificationPath(runId), "utf8")).status_mtime_ms, statusMtimeMs(runId));
+}));
+
+test("while another live verifier holds the lock, runs wait does not verify or decide", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "busy");
+  const holder = spawn("sleep", ["30"], { stdio: "ignore" });
+  try {
+    fs.writeFileSync(path.join(runDir(runId), "mailbox", ".VERIFICATION.lock"), `${holder.pid}\n`);
+    const r = waitMailbox(runId, { ceilingSec: 2, observe: false, stopTmux: () => assert.fail("killed the worker") });
+    assert.equal(r.waitExit, 2);
+    assert.equal(r.classified.status, "watching");
+    assert.equal(count(), 0);
+    assert.equal(loadState(runId).status, "watching");
+  } finally {
+    holder.kill();
+  }
+}));
+
+test("a lock left behind by a dead verifier is taken over", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "dead-holder");
+  fs.writeFileSync(path.join(runDir(runId), "mailbox", ".VERIFICATION.lock"), "2147483646\n");
+  assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false }).classified.status, "done");
+  assert.equal(count(), 2);
+  assert.equal(fs.existsSync(path.join(runDir(runId), "mailbox", ".VERIFICATION.lock")), false);
+}));
+
+test("a run decided before verification never gets a VERIFICATION.json", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "decided");
+  setStatus(runId, "cancelled");
+  closeMailboxDone(runId);
+  waitMailbox(runId, { ceilingSec: 1, observe: false });
+  assert.equal(count(), 0);
+  assert.equal(fs.existsSync(verificationPath(runId)), false);
+  assert.equal(loadState(runId).status, "cancelled");
 }));

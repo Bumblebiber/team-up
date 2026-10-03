@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 
 /**
  * A worker that finishes writes its RESULT and sets its mailbox STATUS.
@@ -86,5 +87,23 @@ test("adoption is reported so the change is visible in the log", async () => {
     const report = await gc.gcRuns({ now: new Date(), listSessions: () => [] });
     const entry = report.runs.find((r) => r.runId === "20260101T000000Z-seen");
     assert.equal(entry.adopted_from_mailbox, "done");
+  });
+});
+
+// A watcher verifying this done decides it; gc adopting the unverified done
+// first would make a failing verdict unable to land (terminal is final).
+test("a done whose verification is running is left to its verifier", async () => {
+  await withHome(async ({ home, gc }) => {
+    const dir = plant(home, "20260101T000000Z-vrfy", { status: "watching", mailboxStatus: "done" });
+    const state = JSON.parse(fs.readFileSync(path.join(dir, "STATE.json"), "utf8"));
+    fs.writeFileSync(path.join(dir, "STATE.json"), JSON.stringify({ ...state, verify: { command: ["true"], runs: 1 } }));
+    const holder = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      fs.writeFileSync(path.join(dir, "mailbox", ".VERIFICATION.lock"), `${holder.pid}\n`);
+      await gc.gcRuns({ now: new Date(), listSessions: () => [] });
+      assert.equal(statusOf(home, "20260101T000000Z-vrfy"), "watching");
+    } finally {
+      holder.kill();
+    }
   });
 });

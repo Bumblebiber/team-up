@@ -14,7 +14,9 @@ import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stopTmuxSession } from "./tmux.mjs";
-import { parseVerifyCommand, runParentVerification } from "./verification.mjs";
+import {
+  acquireVerificationLock, parseVerifyCommand, recordedVerdict, runParentVerification,
+} from "./verification.mjs";
 
 export { parseVerifyCommand, parseNodeTestCounts, runParentVerification } from "./verification.mjs";
 
@@ -1243,19 +1245,42 @@ export async function resumeAll({
   return report;
 }
 
+/**
+ * Parent verification, at most once per done. It ran on every reconcile,
+ * unlocked: on runs s4ji and 0pwq a second verifier overlapped the first, so
+ * VERIFICATION.json said pass on runs STATE had failed, and side-effecting
+ * commands (npm ci) ran again.
+ */
+function verifyDoneOnce(runId, classified) {
+  const mb = mailboxDir(runId);
+  const statusMtimeMs = readMailboxStatusIdentity(runId).mtimeMs;
+  let report = recordedVerdict(mb, statusMtimeMs);
+  if (!report) {
+    const release = acquireVerificationLock(mb);
+    if (!release) return { status: "watching", pending: "verification" };
+    try {
+      // Under the lock: another verifier may just have finished, or the run
+      // been decided. A decided run's evidence is never rewritten.
+      report = recordedVerdict(mb, statusMtimeMs);
+      const state = loadState(runId);
+      if (!report) {
+        if (!resolveRunState(state, classified).changed) return classified;
+        report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson, statusMtimeMs });
+      }
+    } finally {
+      release();
+    }
+  }
+  if (report.verdict !== "fail") return classified;
+  return { status: "failed", error: "parent verification failed", resultPath: classified.resultPath };
+}
+
 function reconcileMailbox(runId) {
   const state = loadState(runId);
   let classified = classifyMailbox(runId);
 
   if (classified.status === "done" && state?.verify?.command?.length) {
-    const report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson });
-    if (report.verdict === "fail") {
-      classified = {
-        status: "failed",
-        error: "parent verification failed",
-        resultPath: classified.resultPath,
-      };
-    }
+    classified = verifyDoneOnce(runId, classified);
   }
 
   let resolved = resolveRunState(state, classified);
@@ -1336,8 +1361,9 @@ export function waitMailbox(runId, {
       waitExit = r.status ?? 1;
       resolved = reconcileMailbox(runId);
       if (waitExit !== 0 || !resolved.classified?.pending || Date.now() >= deadline) break;
-      // Woke while the result is still pending (the script rounds the grace
-      // to whole seconds): a short pause, not a hot loop.
+      // Woke while still pending — the script rounds the grace to whole
+      // seconds, or another watcher is verifying this done: a short pause,
+      // not a hot loop.
       sleepMs(1000);
     }
     // Still pending at the ceiling: the parent waits again, nothing is decided.
