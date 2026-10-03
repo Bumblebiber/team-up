@@ -15,7 +15,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stopTmuxSession } from "./tmux.mjs";
 import {
-  acquireVerificationLock, parseVerifyCommand, recordedVerdict, runParentVerification,
+  acquireVerificationLock, markVerificationPending, parseVerifyCommand, recordedVerdict, runParentVerification,
 } from "./verification.mjs";
 
 export { parseVerifyCommand, parseNodeTestCounts, runParentVerification } from "./verification.mjs";
@@ -645,6 +645,7 @@ function persistResolvedRunStatus(runId, classified) {
     if (state.status === "failed" && classified?.error) {
       state.failure = { error: classified.error, at: new Date().toISOString() };
     }
+    markVerificationPending(state, readMailboxStatusIdentity(runId).mtimeMs);
     return state;
   });
   const resolution = resolveRunState(latestState, classified);
@@ -1280,10 +1281,13 @@ function verifyDoneOnce(runId, classified) {
       if (!report) {
         // Decided means terminal and not gc's synthetic stale failure, which a
         // real outcome may still supersede. An open stale claim decides nothing.
-        // A done that gc adopted unverified is still verified once, for the
-        // record only: its STATE stays done, since terminal is final.
+        // A done adopted unverified (gc, runs resume) carries a pending stamp
+        // and is verified once, for the record only: its STATE stays done,
+        // since terminal is final. A done without the stamp is left alone, and
+        // a gone cwd keeps the stamp rather than record a fail it never earned.
         const decided = TERMINAL_RUN_STATUSES.has(state?.status) && !isSyntheticStaleFailureState(state);
-        if (decided && state.status !== "done") return classified;
+        const recordOnly = state?.status === "done" && state.verification?.pending && fs.existsSync(state.cwd || "");
+        if (decided && !recordOnly) return classified;
         report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson, statusMtimeMs });
         // The verdict that counts goes where only the parent writes, before the
         // lock is released; mailbox/VERIFICATION.json is the evidence copy.

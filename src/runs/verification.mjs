@@ -148,6 +148,18 @@ export function recordedVerdict(state, statusMtimeMs) {
 }
 
 /**
+ * Stamp a done adopted without a verdict (gc, runs resume) as pending, so the
+ * next `runs wait` verifies it once for the record. Dones decided by older
+ * code carry no stamp and are left alone: their verify commands (npm ci,
+ * healthchecks) are not re-run. Mutates state; call it inside the state write.
+ */
+export function markVerificationPending(state, statusMtimeMs) {
+  if (state.status !== "done" || !state.verify?.command?.length) return;
+  if (recordedVerdict(state, statusMtimeMs)) return;
+  state.verification = { pending: true, status_mtime_ms: statusMtimeMs };
+}
+
+/**
  * Run verify.command `runs` times in state.cwd; write VERIFICATION.json to mailboxDir.
  * `statusMtimeMs` stamps which STATUS=done write the verdict belongs to.
  * @returns {object} verification report

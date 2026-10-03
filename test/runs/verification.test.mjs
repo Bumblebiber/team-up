@@ -17,6 +17,7 @@ import {
   parseVerifyCommand,
   parseNodeTestCounts,
   runParentVerification,
+  resumeAll,
 } from "../../src/runs/runs.mjs";
 import { gcRuns } from "../../src/runs/gc.mjs";
 import { acquireVerificationLock } from "../../src/runs/verification.mjs";
@@ -319,11 +320,11 @@ test("runParentVerification records commit and cwd", withTempRuns(async (runsRoo
 // and 0pwq ended failed with a VERIFICATION.json saying pass, written by a
 // second verifier that started before STATE was decided, and side-effecting
 // commands (npm ci) ran again each time.
-function verifiedRun(runsRoot, name, { runs = 2, failAt = 999 } = {}) {
+function verifiedRun(runsRoot, name, { runs = 2, failAt = 999, cwd = runsRoot } = {}) {
   const counter = path.join(runsRoot, name);
   fs.writeFileSync(counter, "0");
   const state = createRun({
-    cwd: runsRoot,
+    cwd,
     role: "implementer",
     parent: { cli: "claude", attach: "manual" },
     worker: { cli: "codex" },
@@ -544,6 +545,7 @@ test("a done gc adopted unverified is verified once for the record, and stays do
     listSessions: () => [],
   });
   assert.equal(loadState(runId).status, "done");
+  assert.deepEqual(loadState(runId).verification, { pending: true, status_mtime_ms: statusMtimeMs(runId) });
 
   waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => {} });
   assert.equal(count(), 1);
@@ -553,6 +555,51 @@ test("a done gc adopted unverified is verified once for the record, and stays do
 
   waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => {} });
   assert.equal(count(), 1, "verified again");
+}));
+
+test("a done runs resume adopted unverified is stamped pending, then verified once for the record", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "resumed", { runs: 1, failAt: 1 });
+  await resumeAll({
+    tmuxExists: () => true,
+    logDir: path.join(runsRoot, "logs"),
+    execute: () => {},
+    deliver: () => {},
+    listUncollected: () => [],
+  });
+  assert.equal(loadState(runId).status, "done");
+  assert.equal(loadState(runId).verification.pending, true);
+
+  waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => {} });
+  assert.equal(count(), 1);
+  assert.equal(loadState(runId).verification.verdict, "fail");
+  assert.equal(loadState(runId).status, "done");
+}));
+
+// 34 dones on this host predate STATE.verification; re-running their verify
+// commands (npm ci, healthchecks) on the next `runs wait` is not a record.
+test("a done decided without a pending stamp is left alone", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "old-done");
+  setStatus(runId, "done");
+  assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => {} }).classified.status, "done");
+  assert.equal(count(), 0);
+  assert.equal(fs.existsSync(verificationPath(runId)), false);
+  assert.equal(loadState(runId).verification, undefined);
+}));
+
+test("a pending done whose cwd is gone is not verified, and stays pending", withTempRuns(async (runsRoot) => {
+  const cwd = fs.mkdtempSync(path.join(runsRoot, "cwd-"));
+  const { runId, count } = verifiedRun(runsRoot, "gone-cwd", { runs: 1, cwd });
+  gcRuns({
+    states: [loadState(runId)],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: false, activityMs: null, sessionId: null }),
+    listSessions: () => [],
+  });
+  fs.rmSync(cwd, { recursive: true });
+  assert.equal(waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => {} }).classified.status, "done");
+  assert.equal(count(), 0);
+  assert.equal(fs.existsSync(verificationPath(runId)), false);
+  assert.equal(loadState(runId).verification.pending, true);
 }));
 
 test("a run decided before verification never gets a VERIFICATION.json", withTempRuns(async (runsRoot) => {

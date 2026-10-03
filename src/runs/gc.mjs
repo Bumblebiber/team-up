@@ -10,6 +10,7 @@ import {
   loadState,
   mailboxDir,
   publishFileNoReplace,
+  readMailboxStatusIdentity,
   readMaybe,
   resolveRunState,
   updateState,
@@ -20,7 +21,7 @@ import {
   stopTmuxSession,
   tmuxSessionExists,
 } from "./tmux.mjs";
-import { verifierAlive } from "./verification.mjs";
+import { markVerificationPending, verifierAlive } from "./verification.mjs";
 import { readLease, releaseAttemptLease } from "../supervisor/attempts.mjs";
 import { gcHandoffs, readHandoffRetentionDays } from "../handoff/store.mjs";
 import { loadJson, configPath, usagePath, usageWritePath } from "../roster/config.mjs";
@@ -270,6 +271,7 @@ function reconcileTerminalMailboxState(state, classified) {
   if (resolution.changed && state.status === "failed" && classified?.error) {
     state.failure = { error: classified.error, at: new Date().toISOString() };
   }
+  if (resolution.changed) markVerificationPending(state, readMailboxStatusIdentity(state.runId).mtimeMs);
   if (state.cleanup?.stale_detected_at) delete state.cleanup.stale_detected_at;
   if (wasSyntheticStaleFailure && TERMINAL_MAILBOX.has(classified?.status)) {
     delete state.cleanup.stale_reason;
