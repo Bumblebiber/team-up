@@ -1,3 +1,4 @@
+import "../helpers/hermetic-home.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -515,7 +516,6 @@ test("observeContextIsolation liveProbe without stream_text does not grant", asy
     const result = observeContextIsolation({
       adapter: claudeAdapter,
       adapterId: "claude",
-      cleanup: false,
       liveProbe: () => ({
         observed: buildHappyInventory(fixture),
       }),
@@ -589,7 +589,6 @@ test("observeContextIsolation codex never grants even with forged liveProbe", ()
     const result = observeContextIsolation({
       adapter: codexAdapter,
       adapterId: "codex",
-      cleanup: false,
       liveProbe: () => ({
         stream_text: stream,
         observed: buildHappyInventory(fixture),
