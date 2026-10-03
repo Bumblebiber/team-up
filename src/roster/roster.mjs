@@ -108,11 +108,21 @@ async function cmdUsage(args) {
   if (args.includes("--check")) {
     const { checkThresholdsWithRefresh } = await import("./chain.mjs");
     const { collectUsageForCli } = await import("../usage/usage-collect.mjs");
+    // Only the calling session's own CLI can end it, as in the limit-watch
+    // hook: an exhausted codex window says nothing about a claude session.
+    let hostCli = null;
+    try {
+      const { cli } = detectParent();
+      hostCli = cli && cli !== "manual" ? cli : null;
+    } catch {
+      // Unknown host: every window counts, as before.
+    }
     const out = await checkThresholdsWithRefresh({
       roster: rosterCfg,
       usage,
       collectCli: (cli) => collectUsageForCli({ cli, roster: rosterCfg }),
       readUsage: () => loadJson(usagePath()),
+      hostCli,
     });
     if (out.message) console.log(out.message);
     return;

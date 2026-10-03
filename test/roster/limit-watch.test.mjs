@@ -11,6 +11,7 @@ import { checkThresholds } from "../../src/roster/chain.mjs";
 import { writeSessionRecord } from "../../src/runs/parent.mjs";
 
 const SCRIPT = fileURLToPath(new URL("../../src/roster/limit-watch.mjs", import.meta.url));
+const ROSTER_BIN = fileURLToPath(new URL("../../src/roster/roster.mjs", import.meta.url));
 
 function run(env) {
   return execFileSync(process.execPath, [SCRIPT], {
@@ -91,6 +92,27 @@ test("the hook scopes to the CLI its session registry names", () => {
   const out = run({ TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath });
   // The host's own window still reports — proof the hook ran to the end
   // rather than swallowing an error into silence.
+  assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
+  assert.doesNotMatch(out, /⛔|stop working|codex/);
+});
+
+// Codex, Cursor and OpenCode agents run `team-up usage --check` themselves
+// (skills/roster), so it has the hook's bug: a claude session told to stop
+// because codex:weekly is at 100%.
+test("usage --check scopes to the CLI its session registry names", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lw-"));
+  const rosterPath = path.join(dir, "roster.json");
+  const usagePath = path.join(dir, "usage.json");
+  fs.writeFileSync(rosterPath, JSON.stringify({ models: {}, roles: {}, limits: { warn_at: 0.9, handoff_at: 0.95 } }));
+  const usage = SPLIT();
+  delete usage.windows["codex:5h"]; // stale: would start a real collect
+  usage.windows["claude:week"] = { used: 0.92, updated_at: new Date().toISOString() };
+  fs.writeFileSync(usagePath, JSON.stringify(usage));
+  writeSessionRecord({ cli: "claude", sessionId: "s", cwd: dir, pid: process.pid, dir: path.join(dir, "sessions") });
+  const out = execFileSync(process.execPath, [ROSTER_BIN, "usage", "--check"], {
+    encoding: "utf8",
+    env: { ...process.env, TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath },
+  });
   assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
   assert.doesNotMatch(out, /⛔|stop working|codex/);
 });

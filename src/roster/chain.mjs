@@ -409,8 +409,9 @@ export async function checkThresholdsWithRefresh({
   now = Date.now(),
   collectCli,
   scheduleRefresh,
+  hostCli = null,
 }) {
-  const result = checkThresholds({ roster, usage, now, collectCli });
+  const result = checkThresholds({ roster, usage, now, collectCli, hostCli });
   if (!result.needsRefresh.length) return result;
   const schedule = scheduleRefresh
     || (collectCli
