@@ -111,13 +111,13 @@ Full protocol detail lives in the `roster` skill § Cross-CLI runs.
 ```bash
 ROSTER="team-up"
 RUNS="team-up runs"
-TASK_DIR="~/projects/tasks/task-foo"
+TASK_DIR="$HOME/tasks/task-foo"        # absolute: a quoted ~ does not expand
 PROMPT="$TASK_DIR/PLANNER_PROMPT.md"   # bare task text is fine — create wraps it
 
 # 1) Mailbox (wraps PROMPT with templates/worker-prompt.md → HEARTBEAT + STATUS=done)
 # the parent (this session) is detected; --parent-cli/--parent-attach only override it
 CREATE=$($RUNS create --cwd "$TASK_DIR" --role planner \
-  --worker-cli claude --prompt-file "$PROMPT" --project P0062)
+  --worker-cli claude --prompt-file "$PROMPT")
 RUN_ID=$(echo "$CREATE" | awk '/^runId:/{print $2}')
 
 # 2) Worker — with --run-id, dispatch injects mailbox/PROMPT.md (wrapped), NOT the bare file

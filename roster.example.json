@@ -203,7 +203,7 @@
   },
   "openrouter": {
     "$comment": "OpenRouter key for model scans and benchmarks: env OPENROUTER_API_KEY, then ~/.team-up/secrets.env, then this 0600 KEY=VALUE file.",
-    "key_file": "~/.hermes/.env"
+    "key_file": "~/.config/openrouter.env"
   },
   "specialists": {
     "coding.codey": { "role": "implementer" },
