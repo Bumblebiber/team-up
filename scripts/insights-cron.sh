@@ -64,7 +64,7 @@ PROMPT="${JSON%.json}.prompt.md"
 TICKET="${JSON%.json}.ticket.md"
 sed -e "s|{{REPORT_MD}}|$MD|g" -e "s|{{REPORT_JSON}}|$JSON|g" \
     -e "s|{{REPORT_DIR}}|$OUT_DIR|g" -e "s|{{TICKET}}|$TICKET|g" \
-    -e "s|{{BRANCH}}|$BRANCH|g" \
+    -e "s|{{BRANCH}}|$BRANCH|g" -e "s|{{TIM_PROJECT}}|${INSIGHTS_TIM_PROJECT:-P0073}|g" \
     "$REPO/templates/insights-evaluator.md" > "$PROMPT"
 
 # The evaluator's model comes from the roster like every other seat. It needs
