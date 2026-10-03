@@ -18,7 +18,8 @@ do not walk a role chain, do not wait on a mailbox watcher.
 stop; suggest `team-up init` to scaffold one.
 
 `ROSTER="team-up"`
-(the CLI is on PATH after `npm i -g team-up`).
+(the CLI is on PATH after `npm link` in a clone of the team-up repo; the npm
+package named `team-up` is an unrelated project).
 
 ## Auto-approve flags (required for tmux)
 

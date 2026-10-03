@@ -94,7 +94,9 @@ CLI×model pins the user curates — e.g. `cursor:composer-2.5`, `codex:gpt-5.6-
 `hermes:deepseek-v4-pro`. Config-time chain extension, not runtime improvisation.
 Planner/reviewer chains especially need cross-CLI tails when Claude burst is hot.
 
-All commands below use the `team-up` CLI, on PATH after `npm i -g team-up`.
+All commands below use the `team-up` CLI, on PATH after `npm link` in a clone
+of the team-up repo (the `team-up` package on npm is an unrelated project; see
+the repo README § Install).
 Cross-CLI mailbox runs: `team-up runs …`.
 No config yet → `team-up init`, then tell the user to curate `~/.team-up/roster.json`.
 

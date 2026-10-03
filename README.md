@@ -6,6 +6,43 @@ Standalone deterministic model roster and specialist runtime.
 resolution, specialist packages, approvals, context materialization, and
 worker launch. o9k keeps a thin compatibility adapter only.
 
+## Install
+
+team-up is not published to npm: the `team-up` package there is an unrelated
+project. Install from a clone:
+
+```bash
+git clone https://github.com/Bumblebiber/team-up.git && cd team-up
+npm ci              # without it every command fails with ERR_MODULE_NOT_FOUND
+npm link            # puts `team-up` on PATH, linked to this checkout
+team-up init        # copies roster.example.json to ~/.team-up/roster.json
+team-up validate && team-up pick --role implementer
+```
+
+Then curate `~/.team-up/roster.json` down to the CLIs you have and are logged
+in to; `team-up doctor` reports what does not add up.
+
+Requirements:
+
+- Linux. State locking uses `/usr/bin/flock` (util-linux), resource checks read `/proc`.
+- Node.js 18 or newer for the CLI; `npm test` needs Node 21 or newer.
+- tmux and bash: every dispatched worker runs in a detached tmux session.
+- The worker CLIs your roster names (claude, codex, cursor-agent, opencode, hermes), logged in.
+- `expect`, for the usage collectors that read each CLI's usage screen.
+- Optional: inotify-tools, so `runs wait` wakes on mailbox writes instead of polling every second.
+- Optional: systemd `--user` plus `loginctl enable-linger $USER`, for the gc, resume-at-boot and telemetry timers.
+
+Claude Code plugin (the skills and the SessionStart hook):
+
+```bash
+claude plugin marketplace add /path/to/team-up
+claude plugin install team-up@team-up
+```
+
+The plugin is installed as a copy pinned to its version. After pulling a new
+version run `claude plugin update team-up@team-up` at every scope it is
+installed in, then restart the session.
+
 ## Quick start
 
 ```bash
