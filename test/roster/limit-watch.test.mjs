@@ -83,10 +83,14 @@ test("the hook scopes to the CLI its session registry names", () => {
   fs.writeFileSync(rosterPath, JSON.stringify({ models: {}, roles: {}, limits: { warn_at: 0.9, handoff_at: 0.95 } }));
   const usage = SPLIT();
   delete usage.windows["codex:5h"]; // stale: would start a detached collect
+  usage.windows["claude:week"] = { used: 0.92, updated_at: new Date().toISOString() };
   fs.writeFileSync(usagePath, JSON.stringify(usage));
   // The SessionStart hook records the host CLI under its pid; the hook finds
   // it by walking up its own ancestry, which passes through this process.
   writeSessionRecord({ cli: "claude", sessionId: "s", cwd: dir, pid: process.pid, dir: path.join(dir, "sessions") });
   const out = run({ TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath });
-  assert.doesNotMatch(out, /⛔|stop working/);
+  // The host's own window still reports — proof the hook ran to the end
+  // rather than swallowing an error into silence.
+  assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
+  assert.doesNotMatch(out, /⛔|stop working|codex/);
 });
