@@ -415,6 +415,23 @@ test("a lock left behind by a dead verifier is taken over", withTempRuns(async (
   assert.equal(fs.existsSync(path.join(runDir(runId), "mailbox", ".VERIFICATION.lock")), false);
 }));
 
+// An unresolved gc stale claim keeps STATE non-terminal without deciding the
+// run; resolveRunState reports no change there, which read as "decided" and
+// handed the parent the done unverified.
+test("a done under an open gc stale claim is still verified", withTempRuns(async (runsRoot) => {
+  const { runId, count } = verifiedRun(runsRoot, "claim", { runs: 1, failAt: 1 });
+  updateState(runId, (s) => {
+    s.cleanup = {
+      stale_publication_claim: { token: "t", phase: "claimed", worker_tmux: "x", claimed_at: new Date().toISOString() },
+    };
+    return s;
+  });
+  const r = waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => {} });
+  assert.equal(r.classified.status, "failed");
+  assert.equal(count(), 1);
+  assert.equal(loadState(runId).verification.verdict, "fail");
+}));
+
 test("a run decided before verification never gets a VERIFICATION.json", withTempRuns(async (runsRoot) => {
   const { runId, count } = verifiedRun(runsRoot, "decided");
   setStatus(runId, "cancelled");
