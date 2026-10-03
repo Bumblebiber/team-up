@@ -12,7 +12,7 @@ import {
   setStatus, resumeAll, linkDispatchToRun, recordRunEscalation, listActiveStates,
   acquireResumeLock, resumeLockPath, waitTmuxReady,
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
-  resolveGitBase, isValidRunId, listAllStates,
+  resolveGitBase, isValidRunId, listAllStates, executeResumeAction,
 } from "../../src/runs/runs.mjs";
 import { gcRuns } from "../../src/runs/gc.mjs";
 
@@ -440,14 +440,23 @@ test("a cold start the roster cannot rebuild says why instead of launching somet
 
 // A specialist runs inside a capsule its launch descriptor sets up; the
 // roster's clis.claude.cmd (--dangerously-skip-permissions) would bring it
-// back outside it. The supervisor's recover_crash restores those.
-test("a cold start refuses a run launched from a descriptor", () => {
+// back outside it, and so would a bare `claude --resume <id>`. The
+// supervisor's recover_crash restores those.
+test("resume refuses to respawn a run launched from a descriptor, cold or by session", () => {
   const specialist = {
     runId: "20260101T000000Z-r001",
     worker: { cli: "claude", model: "claude-opus" },
     launch_descriptor: { path: "/x/launch.json" },
   };
-  assert.throws(() => coldStartArgv(specialist, DISPATCH_ROSTER, "x", "/tmp"), /launch descriptor/);
+  const action = (sessionId) => ({
+    kind: "spawn_worker", tmux: "tu-test-refused-r001", cwd: "/tmp", cli: "claude", sessionId, inject: "x",
+  });
+  for (const sessionId of [null, "abc-session"]) {
+    assert.throws(
+      () => executeResumeAction(action(sessionId), specialist, { waitReady: () => true, readyTimeoutMs: 0 }),
+      /launch descriptor/,
+    );
+  }
 });
 
 test("waitTmuxReady returns true when pane non-empty", () => {
