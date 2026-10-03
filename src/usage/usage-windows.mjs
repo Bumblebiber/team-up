@@ -284,16 +284,26 @@ export function resolveHandoffAt(wkey, limits) {
 }
 
 /**
+ * A window's reset as the provider stated it, or null. A raw string ("Oct 5,
+ * 10am") names the next such moment after it was read, so it is parsed against
+ * the reading's own time: against now it rolls a year forward once it passes.
+ */
+export function windowResetAt(w, now = Date.now()) {
+  if (w?.resets_at && /^\d{4}-\d{2}-\d{2}T/.test(String(w.resets_at))) {
+    const isoMs = Date.parse(w.resets_at);
+    if (Number.isFinite(isoMs)) return isoMs;
+  }
+  const read = Date.parse(w?.updated_at || w?.updated || "");
+  return parseResetAt(w?.resets_at_raw || w?.resets_at, Number.isFinite(read) ? read : now);
+}
+
+/**
  * When resets_at is missing/unparseable, windows at/over their handoff
  * threshold still expire after windowMaxAgeMs from updated so 100% readings
  * cannot stick forever.
  */
 export function effectiveResetAt(w, wkey, limits = 0.95, now = Date.now()) {
-  if (w?.resets_at && /^\d{4}-\d{2}-\d{2}T/.test(String(w.resets_at))) {
-    const isoMs = Date.parse(w.resets_at);
-    if (Number.isFinite(isoMs)) return isoMs;
-  }
-  const parsed = parseResetAt(w?.resets_at_raw || w?.resets_at, now);
+  const parsed = windowResetAt(w, now);
   if (parsed !== null) return parsed;
   const handoffAt = resolveHandoffAt(wkey, limits);
   if (typeof w?.used !== "number" || w.used < handoffAt) return null;
