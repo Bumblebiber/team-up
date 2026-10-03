@@ -174,7 +174,29 @@ export function harnessStatus(
 
   const records = listVerificationRecords(adapter.id, env);
   const own = records.find((r) => r.version === installed);
-  if (own?.status === "verified") return { cli, installed_version: installed, status: "verified" };
+  if (own?.status === "verified") {
+    // A pass proven against an older canary set: harnessCapabilities withholds
+    // its isolation grant, so it is drift on the same build, and the reverify
+    // cron and a refused launch re-measure it instead of leaving every
+    // specialist down until someone runs `harness verify` by hand.
+    let record = null;
+    try {
+      record = loadVerificationRecord(adapter.id, installed, env);
+    } catch {
+      // Unreadable now: listVerificationRecords just parsed it; keep the verdict.
+    }
+    if (record?.context_isolation && !absentListComplete(record.context_isolation_absent)) {
+      return {
+        cli,
+        installed_version: installed,
+        status: "drifted",
+        stale_proof: true,
+        last_verified_version: installed,
+        last_checked_at: own.checked_at,
+      };
+    }
+    return { cli, installed_version: installed, status: "verified" };
+  }
   // Launches run this build meanwhile; the verdict below stays about the installed one.
   const fallback = verifiedFallbackBinary(adapter.id, { env, execFileSync });
   const base = {
