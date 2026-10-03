@@ -25,7 +25,7 @@ mutate() {
     status=1
   else
     local fail
-    fail=$(node --test test/runs/verification.test.mjs 2>&1 | grep -E "^# (pass|fail)|^ℹ (pass|fail)" | grep -oP '(?<=fail )\d+' | head -1)
+    fail=$(node --import ./test/helpers/hermetic-home.mjs --test test/runs/verification.test.mjs 2>&1 | grep -E "^# (pass|fail)|^ℹ (pass|fail)" | grep -oP '(?<=fail )\d+' | head -1)
     if [[ "$fail" == "0" ]]; then
       echo "SURVIVED  $name  (suite still green)"
     else

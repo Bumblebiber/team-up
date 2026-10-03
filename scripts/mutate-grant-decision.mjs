@@ -232,7 +232,7 @@ process.on("SIGTERM", () => exitOnSignal("SIGTERM"));
 
 function runSuite() {
   return new Promise((resolve, reject) => {
-    const child = spawn("node", ["--test", ...TESTS], { cwd: REPO, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("node", ["--import", "./test/helpers/hermetic-home.mjs", "--test", ...TESTS], { cwd: REPO, stdio: ["ignore", "pipe", "pipe"] });
     activeTestChild = child;
     let stdout = "";
     let stderr = "";

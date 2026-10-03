@@ -11,7 +11,7 @@ cd /home/bbbee/projects/team-up/.worktrees/adaptive-observation
 run() {
   local name="$1"
   local out
-  out=$(node --test test/runs/observe.test.mjs 2>&1 | grep -E "^# (pass|fail)|^ℹ (pass|fail)")
+  out=$(node --import ./test/helpers/hermetic-home.mjs --test test/runs/observe.test.mjs 2>&1 | grep -E "^# (pass|fail)|^ℹ (pass|fail)")
   local fail
   fail=$(echo "$out" | grep -oP '(?<=fail )\d+' | head -1)
   if [[ "$fail" == "0" ]]; then
