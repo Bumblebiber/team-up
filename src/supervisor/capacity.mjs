@@ -1,5 +1,5 @@
 import { modelUsageGate, windowIsBlocking, windowResetAt } from "../usage/usage-windows.mjs";
-import { resolveLimitWindows } from "../roster/chain.mjs";
+import { markedUntil, resolveLimitWindows } from "../roster/chain.mjs";
 
 const CONFIDENCE_RANK = {
   provider: 4,
@@ -42,8 +42,12 @@ export function candidateAvailability({ candidate, usage, roster, now = Date.now
     limits,
     now: nowMs,
   });
+  // As resolveProfile: a mark on the model, its provider or the CLI blocks
+  // the cell until it lapses, and its until is a known reset.
+  const marked = [candidate.model, model.provider, candidate.cli]
+    .filter((key) => key && markedUntil(usage, key, nowMs));
 
-  if (!gate.blocked) {
+  if (!gate.blocked && !marked.length) {
     return {
       candidate,
       available: true,
@@ -66,6 +70,12 @@ export function candidateAvailability({ candidate, usage, roster, now = Date.now
     confidence = weakerConfidence(confidence, wConf);
     if (ms == null) unknown = true;
     else if (latestResetMs == null || ms > latestResetMs) latestResetMs = ms;
+  }
+
+  for (const key of marked) {
+    blocking.push(`marked:${key}`);
+    const ms = Date.parse(usage.marked[key].until);
+    if (latestResetMs == null || ms > latestResetMs) latestResetMs = ms;
   }
 
   if (unknown) confidence = weakerConfidence(confidence, "unknown");

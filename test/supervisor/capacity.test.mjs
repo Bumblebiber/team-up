@@ -171,3 +171,28 @@ test("cursor cells between prepare_at and the start gate hand off to no one", ()
     assert.equal(decideTransition({ state: "running", used }).action, "noop", cell.model);
   }
 });
+
+// resolveProfile blocks a marked model, provider or CLI until the mark lapses;
+// the report called the cell available with no reset, and recheck-capacity
+// started it during the mark.
+test("the capacity report blocks a marked cell until the mark lapses, as the profile does", () => {
+  const now = Date.parse("2026-10-03T12:00:00Z");
+  const updated_at = "2026-10-03T11:55:00Z";
+  const until = "2026-10-03T14:00:00.000Z";
+  const usage = {
+    windows: {
+      "codex:weekly": { used: 1, resets_at: "2026-10-04T12:00:00.000Z", updated_at },
+      "cursor:included": { used: 0.1, resets_at: "2026-10-27T00:00:00.000Z", updated_at },
+    },
+    marked: { cursor: { until } },
+  };
+  const profileResult = resolveProfile({ roster: gated, specialistId: "review.revan", usage, now });
+  assert.equal(profileResult.code, "PROFILE_UNAVAILABLE");
+
+  const report = chainCapacityReport({ profileResult, usage, roster: gated, now });
+  assert.equal(report.available_count, 0);
+  const grok = report.blocked_candidates.find((r) => r.candidate.model === "grok");
+  assert.equal(grok.available_at, until);
+  assert.equal(grok.reset_confidence, "provider");
+  assert.equal(report.next_reset_at, until);
+});
