@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createRun,
   writeTypedResult,
@@ -56,7 +57,7 @@ test("malformed result becomes failed", withTempRuns(async () => {
 
 test("worker prompt names every RESULT.json status the validator accepts", () => {
   const template = fs.readFileSync(
-    path.join(import.meta.dirname, "..", "..", "templates", "worker-prompt.md"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "templates", "worker-prompt.md"),
     "utf8"
   );
   for (const status of RESULT_STATUSES) {
