@@ -135,11 +135,11 @@ Three details are load-bearing and were each confirmed against the CLI:
   real home, so without `--setting-sources user` the host's own skills and
   `CLAUDE.md` files load into every capsule as "Project" config. Redirecting
   `HOME` hides only the user-level ones. Measured on 2.1.286 in the
-  production layout: 88 skills (68 of them the host's) and both host
-  `CLAUDE.md` files without the flag; 21 skills (the selected ones and the
-  CLI's built-ins) and no instructions file with it. Moving the cwd out of the
-  home is not a substitute: a `/tmp` cwd loaded a `CLAUDE.md` planted in its
-  own parent just the same.
+  production layout with `claude --print`: 88 skills (68 of them the host's)
+  and both host `CLAUDE.md` files without the flag; 21 skills (the selected
+  ones and the CLI's built-ins) and no instructions file with it. Moving the
+  cwd out of the home is not a substitute: a `/tmp` cwd loaded a `CLAUDE.md`
+  planted in its own parent just the same.
 - A `--tools` allowlist that omits `Skill` silently disables every skill, so
   `Skill` is on every capsule's allowlist. Plugin skills appear as
   `<plugin>:<skill>`.
@@ -177,8 +177,21 @@ around it:
 The probe runs `claude --print --output-format stream-json` from
 `capsuleContextDir(<fixture run>)`, the function the launcher takes a run's cwd
 from, with the prepared `HOME` and the prepared argv's plugin, MCP, tool and
-`--setting-sources` flags. A layout or flag regression in production therefore
-shows up in the canary.
+`--setting-sources` flags. A regression in the run's directory layout or in
+the capsule flags therefore shows up in the canary.
+
+What the canary does not cover: it measures `--print` mode only — the
+`system/init` inventory and the `-p` session transcript — while production
+workers run Claude interactively in tmux. An interactive capsule on 2.1.286
+(probed once by hand, with the flag) loaded no host skills and no `CLAUDE.md`,
+but its skill listing held 33 entries, not 21: on top of the selected skills
+and the `-p` built-ins it carried 13 `anthropic-skills:*` entries that appear
+to be synced from the Claude account (they are on no path under `HOME`), and
+interactive-only built-ins (`artifact-*`, `claude-in-chrome`,
+`keybindings-help`, `init`, `security-review`). Those are not on the
+filesystem surface a capsule closes, and `--print` never lists them, so the
+canary can neither see nor refuse them. An interactive leg of the canary is
+still to be built.
 
 Proof comes from the CLI's own structured output, never from the model's
 answer. The `system/init` inventory may list only the selected set plus the
