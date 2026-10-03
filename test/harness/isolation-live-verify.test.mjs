@@ -222,10 +222,21 @@ function buildHappySpawnSync(fixture, { inventory, streamLines, mcpNonce } = {})
       };
     }
     if (joined.includes("stream-json") || joined.includes("isolation canary")) {
+      writeSessionTranscript(home, sessionId, nonces.skill);
       return { status: 0, stdout: `${lines.join("\n")}\n`, stderr: "" };
     }
     return { status: 1, stdout: "", stderr: `unexpected: ${joined}` };
   };
+}
+
+/** The transcript claude keeps for the session: the selected skill body, no CLAUDE.md. */
+function writeSessionTranscript(home, sessionId, skillNonce) {
+  const dir = path.join(home, ".claude", "projects", "probe-cwd");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, `${sessionId}.jsonl`),
+    `${JSON.stringify({ type: "user", isMeta: true, message: { content: [{ type: "text", text: `nonce:${skillNonce}` }] } })}\n`
+  );
 }
 
 test("canary fixture exposes selected set, nonces, and .claude.json global MCP", () => {
@@ -629,8 +640,9 @@ test("adversarial: guessed final JSON without structured Skill/plugin/Read proof
     assertIsoFailure(observed, "skill_proof_missing");
 
     // Wrong MCP structured nonce still fails closed even with otherwise-happy stream.
+    // A fresh HOME: the first run left its session transcript in this one.
     const bad = collectLiveIsolationObservation({
-      prepared,
+      prepared: prepareClaudeLaunch(fixture),
       capsule: fixture.capsule,
       globalHome: fixture.globalHome,
       expected: fixture.expected,

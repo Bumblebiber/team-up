@@ -65,6 +65,15 @@ function prepareClaudeLaunch(fixture) {
   });
 }
 
+/** The transcript claude keeps for the session: the selected skill body, no CLAUDE.md. */
+function sessionTranscript(fixture) {
+  return `${line({
+    type: "user",
+    isMeta: true,
+    message: { content: [{ type: "text", text: `nonce:${fixture.expected.nonces.skill}` }] },
+  })}\n`;
+}
+
 function frameworkPath(fixture) {
   return path.join(
     fixture.capsule.frameworkDirs[0],
@@ -198,6 +207,7 @@ test("structured proofs grant v1 from init+events even when final JSON is empty/
     const proofs = parseClaudeStructuredCapabilityProofs(stream, {
       expected: fixture.expected,
       capsule: fixture.capsule,
+      transcriptText: sessionTranscript(fixture),
     });
     assert.ok(proofs);
     assert.deepEqual(proofs.skills, ["capsule.selected-skill"]);
@@ -319,7 +329,12 @@ test("live observation uses structured proofs not final JSON claims", () => {
       globalHome: fixture.globalHome,
       expected: fixture.expected,
       adapterId: "claude",
-      spawnSyncFn: () => ({ status: 0, stdout: `${stream}\n`, stderr: "" }),
+      spawnSyncFn: (cmd, args, opts) => {
+        const dir = path.join(opts.env.HOME, ".claude", "projects", "probe-cwd");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, `${SESSION}.jsonl`), sessionTranscript(fixture));
+        return { status: 0, stdout: `${stream}\n`, stderr: "" };
+      },
     });
     assert.ok(observed);
     assert.equal(observed.content_nonces.skill, fixture.expected.nonces.skill);

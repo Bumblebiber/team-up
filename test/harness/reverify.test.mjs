@@ -5,6 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { reverifyAllDrifted, reverifyDrifted, REVERIFY_COOLDOWN_MS } from "../../src/harness/reverify.mjs";
 import { verificationAttemptPath } from "../../src/harness/verify.mjs";
+import { harnessStatus } from "../../src/harness/registry.mjs";
+import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
+import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 
 /**
  * Drift is repaired, but never more than once per build: a verify that throws
@@ -175,5 +178,44 @@ test("the sweep skips an adapter that was never verified", async () => {
     });
     assert.deepEqual(verified, ["claude"]);
     assert.deepEqual(results.map((r) => r.cli), ["claude"]);
+  });
+});
+
+test("a pass proven against an older canary set is re-verified on the same build", async () => {
+  await withHome(async (home) => {
+    const env = { TEAM_UP_HOME: home };
+    // What every record before the ancestor canaries carries: a grant, and an
+    // absent list harnessCapabilities no longer accepts as its proof.
+    const record = (absent) => {
+      const dir = path.join(home, "harness-verification", "claude");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "2.1.286.json"), JSON.stringify({
+        adapter: "claude",
+        cli_version: "2.1.286",
+        status: "verified",
+        checked_at: "2026-10-03T11:00:44.015Z",
+        context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+        context_isolation_absent: absent,
+      }));
+    };
+    record(ISOLATION_FORBIDDEN_CANARIES.filter((name) => !name.startsWith("ancestor.")));
+    const exec = versionStub("2.1.286 (Claude Code)\n");
+    const stale = harnessStatus("claude", { env, execFileSync: exec });
+    assert.equal(stale.status, "drifted");
+    assert.equal(stale.stale_proof, true);
+    let calls = 0;
+    const r = await reverifyDrifted("claude", {
+      env,
+      execFileSync: exec,
+      verify: async () => {
+        calls += 1;
+        record([...ISOLATION_FORBIDDEN_CANARIES]);
+        return 0;
+      },
+    });
+    assert.equal(calls, 1);
+    assert.equal(r.attempted, true);
+    assert.equal(r.status, "verified");
+    assert.equal(harnessStatus("claude", { env, execFileSync: exec }).stale_proof, undefined);
   });
 });

@@ -49,6 +49,7 @@ import {
   buildStrictMcpConfig,
   collectCapsuleMcpTools,
   autoInvokePrefix,
+  capsuleContextDir,
 } from "../capabilities/capsule.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import { detectParent } from "../runs/parent.mjs";
@@ -456,7 +457,7 @@ export async function launch({
   st.result_protocol = "RESULT.json";
   saveState(st);
 
-  const dest = path.join(runDir(state.runId), "context");
+  const dest = capsuleContextDir(runDir(state.runId));
   await materialize({
     packageDir: installed.path,
     request,
@@ -482,13 +483,15 @@ export async function launch({
       mcpConfig: buildStrictMcpConfig(effective, runDir(state.runId)),
       skillDirs: [path.join(runDir(state.runId), "context", "skills")],
       frameworkDirs: [path.join(runDir(state.runId), "context", "framework")],
+      // The worker's cwd; the isolation canary probes from the same layout.
+      contextDir: dest,
       homeDir: path.join(runDir(state.runId), "harness", "home"),
       codexHome: path.join(runDir(state.runId), "harness", "home"),
       // Directories the worker actually opens. Harnesses that gate on workspace
       // trust need these pre-accepted, or the launch stalls on a prompt nobody
       // is there to answer.
       workspaceDirs: [
-        path.join(runDir(state.runId), "context"),
+        dest,
         ...(runCwd ? [runCwd] : []),
       ],
       effective,

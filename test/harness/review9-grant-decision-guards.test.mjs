@@ -183,7 +183,18 @@ function buildHappySpawnSync(fixture, { streamLines } = {}) {
       },
     }),
   ];
-  return () => ({ status: 0, stdout: `${lines.join("\n")}\n`, stderr: "" });
+  return (cmd, args, opts) => {
+    // The transcript claude keeps for the session: the selected skill body, no CLAUDE.md.
+    if (opts?.env?.HOME) {
+      const dir = path.join(opts.env.HOME, ".claude", "projects", "probe-cwd");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, `${SESSION}.jsonl`),
+        `${JSON.stringify({ type: "user", isMeta: true, message: { content: [{ type: "text", text: `nonce:${nonces.skill}` }] } })}\n`
+      );
+    }
+    return { status: 0, stdout: `${lines.join("\n")}\n`, stderr: "" };
+  };
 }
 
 function proofsWithoutMcp(fixture) {

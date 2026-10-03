@@ -13,13 +13,21 @@ MCP server was loaded for every task.
 ## Decisions already settled — do not re-open these
 
 **Context isolation is already solved, and it is not Docker's job.** The
-capsule mechanism does it today: `CLAUDE_CONFIG_DIR` pointed at a per-run
-home, `--plugin-dir`, `--strict-mcp-config --mcp-config`, `--setting-sources
-user`, and the `--tools` allowlist. Measured against run
-`20260827T214125Z-z0mu`: 81 skills visible on this host, 2 in the capsule; no
-`installed_plugins.json` in the capsule at all (only a marketplace catalogue);
-three named MCP servers instead of the host's full set; MCP tools narrowed to
-the twelve declared browser tools plus context7's two.
+capsule mechanism does it: `HOME` pointed at a per-run auth-only home,
+`--plugin-dir`, `--strict-mcp-config --mcp-config`, `--setting-sources user`,
+and the `--tools` allowlist (details in `docs/capabilities.md`). Measured
+against run `20260827T214125Z-z0mu` (then a `CLAUDE_CONFIG_DIR` home): 81
+skills visible on this host, 2 in the capsule; no `installed_plugins.json` in
+the capsule at all (only a marketplace catalogue); three named MCP servers
+instead of the host's full set; MCP tools narrowed to the twelve declared
+browser tools plus context7's two. The switch to a `HOME` redirect shipped
+without `--setting-sources user`, so from 2026-09-01 every capsule listed the
+host's skills from the directories above its cwd — and, in every transcript
+that records instructions (2.1.284 on), the host's `CLAUDE.md` files — and the
+canary — probing a temp dir with nothing above it — could not see it. Now the
+flag is on every capsule launch, and the canary probes from the production
+cwd layout under a planted ancestor skill and `CLAUDE.md` (2.1.286: 21 skills
+with the flag, 88 without).
 
 **Docker was measured and is not adopted.** It does enforce `project_readonly`
 and `writes` where the systemd sandbox cannot (Ubuntu 24.04 sets

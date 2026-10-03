@@ -146,6 +146,30 @@ test("capsule launch uses auth-only HOME and only explicit plugin and MCP paths"
   }
 });
 
+test("a capsule launch loads user settings only, so ancestor project config stays out", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-sources-"));
+  try {
+    const launch = (argv, capsule) => claudeAdapter.prepareLaunch({
+      argv,
+      runDir,
+      capsule,
+      writeFileSync: () => {},
+      mkdirSync: (d, o) => fs.mkdirSync(d, o),
+      chmodSync: () => {},
+    }).argv;
+    const capsule = { pluginDirs: [], skillDirs: [], mcpConfig: { mcpServers: {} }, mcpToolNames: [] };
+    const flagValues = (argv) => argv.flatMap((a, i) => (a === "--setting-sources" ? [argv[i + 1]] : []));
+    assert.deepEqual(flagValues(launch(["claude", "-p", "work"], capsule)), ["user"]);
+    // A roster argv cannot widen it back to project sources.
+    assert.deepEqual(
+      flagValues(launch(["claude", "--setting-sources", "user,project", "-p", "work"], capsule)),
+      ["user"]
+    );
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("capsule launch materializes skills into HOME and frameworks via --add-dir", () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-add-dir-"));
   try {

@@ -98,6 +98,7 @@ test("isolation observation accepts exact selected set and required absences", a
       "global.canary-skill", "global.canary-plugin", "mcp__global__canary",
       "pool.unselected-skill", "mcp__excluded__lookup",
       "pool.unselected-framework",
+      "ancestor.canary-skill", "ancestor.canary-instructions",
     ],
   };
   assert.deepEqual(validateIsolationObservation({ expected, observed }), {

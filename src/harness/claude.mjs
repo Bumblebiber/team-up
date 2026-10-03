@@ -310,6 +310,17 @@ export const claudeAdapter = {
     while (next.includes("--bare")) {
       next.splice(next.indexOf("--bare"), 1);
     }
+    if (capsule) {
+      // The redirected HOME hides the user's own config, but Claude also reads
+      // `.claude/skills` and `CLAUDE.md` from every directory above the cwd as
+      // project config — and a run's context dir sits under the real home, so
+      // the host's skills and instructions arrived as "Project" (2.1.252-2.1.286).
+      // `user` here is the capsule HOME; project and local sources stay closed.
+      while (next.includes("--setting-sources")) {
+        next.splice(next.indexOf("--setting-sources"), 2);
+      }
+      next.push("--setting-sources", "user");
+    }
     for (const pluginDir of capsule?.pluginDirs ?? []) {
       next.push("--plugin-dir", pluginDir);
     }
