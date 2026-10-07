@@ -56,6 +56,11 @@ For each run, read `~/.team-up/runs/<id>/mailbox/RESULT.json`
   the worker can overwrite it. Without a `verify` command, run the project's
   own check yourself. A worker's own "tests pass" is not evidence.
 - Files named in `deliverables`: confirm they exist and say what is claimed.
+- A review's findings: trace each `blocking` and `worth fixing` failure
+  scenario in the code yourself, or reproduce it with a failing test. One that
+  does not hold drops to polish, with the reason. A finding without a scenario
+  is polish whatever it is labelled. Only findings that hold go into a fix
+  round; polish alone never starts one.
 
 What you could not check, say you could not check.
 

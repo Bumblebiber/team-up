@@ -33,7 +33,7 @@
     {
       "id": "review.revan",
       "name": "Revan",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "repo": "https://github.com/Bumblebiber/team-up-with-revan",
       "summary": "Two-axis review of a merged diff: repository standards, and the originating spec.",
       "call_types": [

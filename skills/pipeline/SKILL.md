@@ -130,6 +130,12 @@ Give the reviewer a fresh session and do **not** pass it the plan. A reviewer
 that has read the reasoning behind a change reviews the reasoning, not the
 change.
 
+A fix round gets reviewed too, but only the fix diff: the fixed point is the
+commit the previous review ran on. Fixes are where review rounds introduce
+new defects, and a second full pass over unchanged code mostly re-finds
+polish. "Nothing blocking" ends the loop; it is a valid outcome, not a review
+that tried too little.
+
 ### Only the Overseer writes to memory
 
 No specialist gets the memory MCP — not read, not write. Three reasons:
