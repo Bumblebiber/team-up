@@ -59,8 +59,9 @@ node bin/team-up.mjs version   # 0.6.0
 node bin/team-up.mjs validate
 node bin/team-up.mjs pick --role <role>
 node bin/team-up.mjs specialist inspect ../team-up-with-tessa
-node bin/team-up.mjs specialist install ../team-up-with-tessa
-node bin/team-up.mjs specialist approve testing.tessa@0.1.0 --project /abs/path
+node bin/team-up.mjs specialist install ../team-up-with-tessa   # also approves it for every project
+# only for specialists that run commands: trust a project's command policy
+node bin/team-up.mjs specialist approve testing.tessa@0.1.0 --global --project /abs/path
 node bin/team-up.mjs runs create ...
 node bin/team-up.mjs runs wait <run-id>
 ```
