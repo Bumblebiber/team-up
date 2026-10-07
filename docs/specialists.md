@@ -224,6 +224,12 @@ metadata:
   (`CAPABILITY_SCOPE_SPECIALIST`).
 - Unscoped packages keep the old behaviour.
 
+A bundle's own skills ship as flat `skills/<name>.md`. Harnesses register
+only skill directories, so the materializer copies each one a second time as
+`context/skills/<name>/SKILL.md`, with `name` and a `description` taken from
+the first paragraph after the title (unless the file already has
+frontmatter). A bundle may also carry a `LICENSE` file at its root.
+
 ### Skills the launcher invokes
 
 A package may name one of its skills in `"auto_invoke"`. When that package is

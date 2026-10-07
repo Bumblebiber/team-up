@@ -12,6 +12,24 @@ function assertUnderRoot(absPath, root) {
   return resolved;
 }
 
+/**
+ * Harnesses register skill directories (`<name>/SKILL.md`), never loose
+ * files, so a flat bundle skill is laid out a second time in that shape. The
+ * description is the first paragraph after the title; a file that already
+ * carries frontmatter is used as is.
+ */
+function writeSkillDir(skillsRoot, name) {
+  const body = fs.readFileSync(path.join(skillsRoot, `${name}.md`), "utf8");
+  let doc = body;
+  if (!body.startsWith("---\n")) {
+    const para = body.replace(/^#[^\n]*\n/, "").trim().split(/\n\s*\n/)[0] ?? "";
+    const description = para.replace(/\s+/g, " ").trim() || name;
+    doc = `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`;
+  }
+  fs.mkdirSync(path.join(skillsRoot, name), { recursive: true });
+  fs.writeFileSync(path.join(skillsRoot, name, "SKILL.md"), doc);
+}
+
 export async function materialize({
   packageDir,
   request,
@@ -45,7 +63,9 @@ export async function materialize({
   const skills = manifest?.capabilities?.skills || [];
   for (const skill of skills) {
     assertSafeSpecialistSegment(String(skill), "skill id");
-    copyFile(path.join("skills", `${skill}.md`));
+    if (copyFile(path.join("skills", `${skill}.md`))) {
+      writeSkillDir(path.join(destRoot, "skills"), String(skill));
+    }
   }
   if (manifest?.eval_suite) {
     const rel = assertSafeRelPath(String(manifest.eval_suite), "eval_suite");

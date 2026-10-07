@@ -43,6 +43,7 @@ const ALLOWED_TOP_LEVEL = new Set([
   "instructions.md",
   "package.json",
   "README.md",
+  "LICENSE",
   "skills",
   "evals",
   "templates",
