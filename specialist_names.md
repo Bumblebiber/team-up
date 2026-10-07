@@ -27,6 +27,7 @@ bundle lives in its own repo `team-up-with-<name>`, manifest is
 | Scott the scout | scout | `scouting.scott` |
 | Susy the summarizer | summarizer | `summary.susy` |
 | Ada the advisor | advisor | `advice.ada` |
+| Martha the marketing expert | marketer | `marketing.martha` |
 
 Already installed and staying: `testing.tessa` — Tessa, test strategy and
 verification review.

@@ -149,10 +149,19 @@ async function cmdSpecialist(args, io) {
   if (sub === "install") {
     const pathArg = rest[0];
     if (!pathArg) {
-      io.err("usage: team-up specialist install <path>");
+      io.err("usage: team-up specialist install <path> [--no-approve]");
       return 1;
     }
     const result = await installPackage(pathArg);
+    // Every specialist works in every project: installing is the trust
+    // decision, so the global grant comes with it. It still binds checksum and
+    // permissions, and a specialist that runs commands still needs each
+    // project's command policy trusted.
+    if (result.ok && !rest.includes("--no-approve")) {
+      const grant = await approveSpecialist({ idAtVersion: `${result.id}@${result.version}`, global: true });
+      result.approved = grant.ok ? "global" : grant.errors;
+      if (!grant.ok) result.ok = false;
+    }
     io.out(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }

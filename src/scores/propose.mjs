@@ -21,6 +21,7 @@ export const ROLE_SCORE_FIELDS = {
   reviewer: ["agentic_index", "coding_index"],
   "prompt-writer": ["intelligence_index"],
   summarizer: ["intelligence_index"],
+  marketer: ["intelligence_index"],
 };
 
 export function scoreForRole(scores, role) {

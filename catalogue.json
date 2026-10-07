@@ -106,6 +106,30 @@
         "the `research.browser` or `research.context7` capability for anything a plain fetch cannot read"
       ],
       "caveat": "The only starter with network access. Its GitHub remote was renamed from team-up-with-hugo; the old URL still redirects."
+    },
+    {
+      "id": "marketing.martha",
+      "name": "Martha",
+      "version": "0.1.0",
+      "repo": "https://github.com/Bumblebiber/team-up-with-martha",
+      "summary": "Positioning, copy, market research, launch plans, content/SEO and growth metrics \u2014 every claim sourced or flagged.",
+      "call_types": [
+        "consult",
+        "delegate",
+        "review"
+      ],
+      "permissions": {
+        "filesystem": "project_readonly",
+        "writes": false,
+        "network": true,
+        "commands": []
+      },
+      "model_profile": {
+        "tier": "medium",
+        "reasoning": "medium"
+      },
+      "needs": [],
+      "caveat": "Drafts only: never publishes, posts, sends or spends. Delivers through the mailbox, not into the repo."
     }
   ],
   "capabilities": [

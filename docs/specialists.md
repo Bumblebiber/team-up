@@ -8,7 +8,8 @@ executable install hooks.
 
 ```bash
 team-up specialist inspect <path>
-team-up specialist install <path>
+team-up specialist install <path> [--no-approve]
+team-up specialist approve <id>@<version> --global [--project <abs-path>]
 team-up specialist approve <id>@<version> --project <abs-path> [--clone-root <abs-path>]
 team-up specialist pin <id>@<version> [--project <abs-path>]
 team-up specialist uninstall <id>@<version>
@@ -16,7 +17,14 @@ team-up specialist list
 team-up specialist run --id <id> --call-type review --objective "..." --project <abs> [--cli <cli>] [--model <model>]
 ```
 
-Approval binds project + id + version + checksum + permissions. Any checksum
+Every specialist works in every project. `install` therefore writes a global
+grant for the installed version itself — installing is the trust decision.
+`--no-approve` skips it, for the old explicit two-step. A global grant binds
+id + version + checksum + permissions but no path; a specialist that runs
+commands still needs each project's command policy trusted, which
+`approve <id>@<version> --global --project <abs>` does.
+
+A project grant binds project + id + version + checksum + permissions. Any checksum
 or permission change requires reapproval. The project is the directory the
 filesystem reports, not the spelling: a symlink and its target are one project
 and share one grant.
