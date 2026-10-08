@@ -906,11 +906,6 @@ export function handleStallCeilingEscalate({
   return { loop, stop: true };
 }
 
-/** @deprecated alias — use handleStallCeilingEscalate */
-export function handleSilenceEscalate(args) {
-  return handleStallCeilingEscalate(args);
-}
-
 export async function runObserver(runId, deps = {}) {
   const pollSec = (deps.pollSec ?? DEFAULT_POLL_SEC) * 1000;
   const silenceSec = deps.silenceSec ?? DEFAULT_SILENCE_SEC;
@@ -998,14 +993,6 @@ export async function runObserver(runId, deps = {}) {
         Object.assign(loop, result.loop);
         if (result.stop) break;
       } else if (next.event === "stall_ceiling_escalate") {
-        const result = handleStallCeilingEscalate({
-          runId,
-          loop,
-          deps,
-        });
-        Object.assign(loop, result.loop);
-        if (result.stop) break;
-      } else if (next.event === "silence_escalate") {
         const result = handleStallCeilingEscalate({
           runId,
           loop,

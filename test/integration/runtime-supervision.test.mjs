@@ -11,19 +11,6 @@ import { approveSpecialist, isApproved } from "../../src/specialists/approvals.m
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { commandPolicyChecksum } from "../../src/commands/policy.mjs";
 import { normalizeBudget } from "../../src/specialists/budget.mjs";
-import { decideTransition } from "../../src/supervisor/controller.mjs";
-import {
-  createAttempt,
-  acquireAttemptLease,
-  releaseAttemptLease,
-} from "../../src/supervisor/attempts.mjs";
-import { createRun, loadState, runDir } from "../../src/runs/runs.mjs";
-import {
-  approveCapacityWait,
-  cancelCapacityWait,
-  listDueWaits,
-} from "../../src/supervisor/waits.mjs";
-import { materializePartialCheckpoint, validateCheckpoint } from "../../src/supervisor/checkpoint.mjs";
 import { findSpecialistRepos } from "../helpers/specialist-repos.mjs";
 
 const REPOS = findSpecialistRepos(path.dirname(fileURLToPath(import.meta.url)));
@@ -172,83 +159,6 @@ test("runtime supervision fake-harness integration", async () => {
       await client.close();
     }
 
-    assert.equal(
-      decideTransition({
-        state: "running",
-        used: 0.9,
-        prepareAt: 0.9,
-        forceAt: 0.95,
-        heartbeatFresh: true,
-        processAlive: true,
-        checkpoint: null,
-      }).action,
-      "request_handoff"
-    );
-
-    const run = createRun({
-      cwd: project,
-      project,
-      role: "specialist:testing.tessa",
-      parent: { cli: "team-up", attach: "manual" },
-      worker: { cli: "claude", model: "frontier-claude" },
-      prompt: "test",
-      result_protocol: "RESULT.json",
-    });
-    const a1 = createAttempt({
-      runId: run.runId,
-      runtime: { cli: "claude", model: "frontier-claude" },
-      specialist: { id: "testing.tessa", version: "0.1.0", checksum: inst.checksum },
-    });
-    assert.equal(acquireAttemptLease({ runId: run.runId, attemptId: a1.id, expectedPrevious: null }).ok, true);
-    const cp = materializePartialCheckpoint({
-      runId: run.runId,
-      attemptId: a1.id,
-    });
-    assert.equal(validateCheckpoint(cp, { runId: run.runId, attemptId: a1.id }).ok, true);
-    releaseAttemptLease({ runId: run.runId, attemptId: a1.id, reason: "handoff" });
-    const a2 = createAttempt({
-      runId: run.runId,
-      runtime: { cli: "claude", model: "frontier-claude" },
-      specialist: { id: "testing.tessa", version: "0.1.0", checksum: inst.checksum },
-    });
-    assert.equal(
-      acquireAttemptLease({ runId: run.runId, attemptId: a2.id, expectedPrevious: a1.id }).ok,
-      true
-    );
-
-    const { chainCapacityReport } = await import("../../src/supervisor/capacity.mjs");
-    const capacity = chainCapacityReport({
-      profileResult: {
-        chain: [{ cli: "claude", model: "frontier-claude" }],
-      },
-      usage: {
-        windows: {
-          "claude:5h": {
-            used: 0.99,
-            resets_at: "2026-07-25T18:30:00.000Z",
-            reset_confidence: "provider",
-            updated_at: "2026-07-25T16:00:00Z",
-          },
-        },
-      },
-      roster: {
-        ...roster,
-        limits: { handoff_at: 0.95, handoff_at_burst: 0.9 },
-      },
-      now: "2026-07-25T16:00:00Z",
-    });
-    assert.equal(capacity.available_count, 0);
-    assert.equal(capacity.next_reset_at, "2026-07-25T18:30:00.000Z");
-
-    approveCapacityWait({
-      runId: run.runId,
-      nextResetAt: "2026-07-25T18:30:00Z",
-      now: "2026-07-25T17:00:00Z",
-    });
-    assert.deepEqual(listDueWaits({ now: "2026-07-25T18:30:01Z" }), [run.runId]);
-    cancelCapacityWait({ runId: run.runId, reason: "human requested" });
-    assert.equal(loadState(run.runId).capacity.auto_resume, false);
-    assert.equal(fs.existsSync(runDir(run.runId)), true);
   } finally {
     for (const k of Object.keys(process.env)) {
       if (!(k in prev)) delete process.env[k];

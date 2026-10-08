@@ -44,12 +44,9 @@ export function watcherConfig(roster) {
   return { ...DEFAULT_CONFIG, ...raw, intervals, cli_intervals };
 }
 
-/**
- * Sleep between watcher ticks. Cap at 60s while supervised runs exist.
- */
-export function watcherSleepSec(cfg, { supervisedCount = 0 } = {}) {
+/** Sleep between watcher ticks. */
+export function watcherSleepSec(cfg) {
   const tick = Number(cfg?.tick_sec) > 0 ? Number(cfg.tick_sec) : DEFAULT_CONFIG.tick_sec;
-  if (supervisedCount > 0) return Math.min(tick, 60);
   return tick;
 }
 
@@ -319,19 +316,6 @@ export function tickOnce({ roster, now = Date.now(), dryRun = false } = {}) {
   return { counts, state, collect: toCollect, successful };
 }
 
-/**
- * After a successful usage collection, supervise specialist runs.
- * Caps collection interval at 60s while supervised runs exist (caller).
- */
-export async function afterUsageCollectSupervise({ now = new Date().toISOString(), deps } = {}) {
-  if (deps) {
-    const { superviseActiveRuns } = await import("../supervisor/controller.mjs");
-    return superviseActiveRuns({ now, deps });
-  }
-  const { superviseProductionRuns } = await import("../supervisor/production.mjs");
-  return superviseProductionRuns({ now });
-}
-
 async function main() {
   const once = process.argv.includes("--once");
   const dryRun = process.argv.includes("--dry-run");
@@ -343,52 +327,18 @@ async function main() {
   if (once) {
     const r = tickOnce({ roster, dryRun });
     console.log(`state=${r.state} counts=${JSON.stringify(r.counts)} collect=${r.collect.join(",") || "(none)"}`);
-    if (!dryRun) {
-      try {
-        const results = await afterUsageCollectSupervise({
-          now: new Date().toISOString(),
-        });
-        if (results?.length) {
-          console.log(`supervised: ${results.map((x) => `${x.runId}:${x.decision.action}`).join(",")}`);
-        }
-      } catch (e) {
-        console.error("supervise error:", e.message || e);
-      }
-    }
     return;
   }
 
   console.log(`team-up usage-watcher tick=${cfg.tick_sec}s`);
   for (;;) {
-    let supervisedCount = 0;
     try {
       const r = tickOnce({ roster });
       if (r.collect.length) console.log(`collected: ${r.successful.join(", ") || "(none ok)"}`);
-      try {
-        const results = await afterUsageCollectSupervise({
-          now: new Date().toISOString(),
-        });
-        supervisedCount = Array.isArray(results) ? results.length : 0;
-        if (results?.length) {
-          console.log(`supervised: ${results.map((x) => `${x.runId}:${x.decision.action}`).join(",")}`);
-        }
-      } catch (e) {
-        console.error("supervise error:", e.message || e);
-      }
-      // Prefer live supervised-run count from production listing when available.
-      try {
-        const { listSupervisedRuns } = await import("../supervisor/production.mjs");
-        supervisedCount = Math.max(
-          supervisedCount,
-          listSupervisedRuns({ now: new Date().toISOString() }).length
-        );
-      } catch {
-        // ignore
-      }
     } catch (e) {
       console.error("watcher tick error:", e.message || e);
     }
-    const sleepSec = watcherSleepSec(cfg, { supervisedCount });
+    const sleepSec = watcherSleepSec(cfg);
     await new Promise((res) => setTimeout(res, sleepSec * 1000));
   }
 }

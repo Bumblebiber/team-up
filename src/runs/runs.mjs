@@ -318,8 +318,8 @@ function writeStateUnderLock(state, expectedRevision) {
   state.updatedAt = new Date().toISOString();
   // Every writer passes through here, so this is the one place a run's end
   // time cannot be forgotten. Run analysis needs durations, not guesses.
-  // A run leaving an end state (stale-failed → real done, a retry) is not
-  // over yet, and a done run must not keep the failure it recovered from.
+  // A run leaving an end state after a deliberate retry is not over yet, and
+  // a done run must not keep a failure it recovered from.
   if (TERMINAL_RUN_STATUSES.has(current?.status) && current.status !== state.status) {
     delete state.finishedAt;
     if (state.status !== "failed") delete state.failure;
@@ -533,17 +533,6 @@ export const RESULT_STATUSES = ["success", "partial", "blocked", "failed"];
 const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "cancelled"]);
 const CAPACITY_RUN_STATUSES = new Set(["waiting_capacity", "waiting_decision"]);
 
-export function isSyntheticStaleFailureState(state) {
-  return state?.status === "failed"
-    && state?.cleanup?.stale_reason === "worker_stale_timeout";
-}
-
-export function isUnresolvedStalePublicationClaim(state) {
-  const claim = state?.cleanup?.stale_publication_claim;
-  if (!claim || claim.aborted_at) return false;
-  return !["finalized"].includes(claim.phase);
-}
-
 export function readMailboxStatusIdentity(runId) {
   const statusPath = path.join(mailboxDir(runId), "STATUS");
   try {
@@ -555,46 +544,11 @@ export function readMailboxStatusIdentity(runId) {
   }
 }
 
-export function isGcOwnedStaleFailedStatus(runId, claim) {
-  if (!claim?.status_published_at) return false;
-  const status = readMailboxStatusIdentity(runId);
-  if (status.line !== "failed") return false;
-  if (claim.status_inode != null && claim.status_mtime_ms != null) {
-    return status.inode === claim.status_inode && status.mtimeMs === claim.status_mtime_ms;
-  }
-  return true;
-}
-
-export function isSyntheticStaleMailboxResult(state, runId = state?.runId) {
-  if (!runId) return false;
-  if (state?.result_protocol === "RESULT.json") {
-    const raw = readMaybe(path.join(mailboxDir(runId), "RESULT.json"));
-    if (!raw) return false;
-    try {
-      const parsed = JSON.parse(raw);
-      return parsed?.status === "failed" && parsed?.summary === "worker_stale_timeout";
-    } catch {
-      return false;
-    }
-  }
-  const md = readMaybe(path.join(mailboxDir(runId), "RESULT.md"));
-  return md?.trim() === "worker_stale_timeout";
-}
-
-export function isMixedLegitimateCloseout(state, runId = state?.runId) {
-  if (!isUnresolvedStalePublicationClaim(state) || !runId) return false;
-  const claim = state.cleanup.stale_publication_claim;
-  if (!isGcOwnedStaleFailedStatus(runId, claim)) return false;
-  return !isSyntheticStaleMailboxResult(state, runId);
-}
-
 /**
  * Purely reconcile durable STATE with a mailbox observation.
  * Terminal STATE is irreversible here; otherwise terminal mailbox outcomes
  * and pending questions override stale active STATE. A watching mailbox does
  * not erase richer controller states such as waiting_capacity.
- * Synthetic stale-timeout failures may be superseded by legitimate mailbox
- * terminal outcomes on a later pass.
  */
 export function resolveRunState(state, classified = { status: "watching" }) {
   if (!state) throw new Error("state required");
@@ -603,23 +557,11 @@ export function resolveRunState(state, classified = { status: "watching" }) {
   let effectiveClassified = classified;
 
   if (TERMINAL_RUN_STATUSES.has(currentStatus)) {
-    if (
-      isSyntheticStaleFailureState(state)
-      && TERMINAL_RUN_STATUSES.has(classified?.status)
-      && classified.status !== "failed"
-    ) {
-      nextStatus = classified.status;
-      effectiveClassified = classified;
-    } else if (classified?.status !== currentStatus) {
+    if (classified?.status !== currentStatus) {
       effectiveClassified = { status: currentStatus };
     }
   } else if (TERMINAL_RUN_STATUSES.has(classified?.status)) {
-    if (isUnresolvedStalePublicationClaim(state)) {
-      nextStatus = currentStatus;
-      effectiveClassified = classified;
-    } else {
-      nextStatus = classified.status;
-    }
+    nextStatus = classified.status;
   } else if (
     classified?.status === "question" &&
     !CAPACITY_RUN_STATUSES.has(currentStatus)
@@ -1283,13 +1225,11 @@ function verifyDoneOnce(runId, classified) {
       const state = loadState(runId);
       report = recordedVerdict(state, statusMtimeMs);
       if (!report) {
-        // Decided means terminal and not gc's synthetic stale failure, which a
-        // real outcome may still supersede. An open stale claim decides nothing.
         // A done adopted unverified (gc, runs resume) carries a pending stamp
         // and is verified once, for the record only: its STATE stays done,
         // since terminal is final. A done without the stamp is left alone, and
         // a gone cwd keeps the stamp rather than record a fail it never earned.
-        const decided = TERMINAL_RUN_STATUSES.has(state?.status) && !isSyntheticStaleFailureState(state);
+        const decided = TERMINAL_RUN_STATUSES.has(state?.status);
         const recordOnly = state?.status === "done" && state.verification?.pending && fs.existsSync(state.cwd || "");
         if (decided && !recordOnly) return classified;
         report = runParentVerification(runId, state, { mailboxDir, atomicWriteJson, statusMtimeMs });
@@ -1328,9 +1268,6 @@ function reconcileMailbox(runId) {
 function cleanupTerminalWorker(state, classified, stopTmux) {
   const status = classified?.status || state?.status;
   if (!TERMINAL_RUN_STATUSES.has(status)) return false;
-  if (isUnresolvedStalePublicationClaim(state)) {
-    return false;
-  }
   const session = state?.worker?.tmux;
   if (!session) return false;
   stopTmux(session);
@@ -1643,55 +1580,31 @@ export async function resumeAdmission(restartReport, { env = process.env, dryRun
 }
 
 /**
- * Due capacity waits, through the unified start path. `reason` limits it to
- * one kind ("resources" from the GC timer); resource waits pass admission
- * first and replay their stored resume action.
+ * Due resource waits, through the unified start path. They pass admission
+ * first, then replay a stored action or start from their launch descriptor.
  */
 export async function resumeDueCapacityWaits({ dryRun = false, reason = null, log = console.log } = {}) {
   const { resumeDueWaits, listDueWaits } = await import("../supervisor/waits.mjs");
-  const due = listDueWaits({ now: new Date().toISOString(), reason });
+  const waitReason = reason ?? "resources";
+  const due = listDueWaits({ now: new Date().toISOString(), reason: waitReason });
   if (dryRun) {
-    for (const id of due) log(`due-wait: ${id}`);
+    for (const id of due) log(`would_resume_resource_wait: ${id}`);
     return [];
   }
   if (!due.length) return [];
-  const { loadJson, requireRoster, usagePath } = await import("../roster/config.mjs");
-  const { resolveProfile } = await import("../roster/profile.mjs");
   const { startFromLaunchDescriptor } = await import("../supervisor/start.mjs");
   const { checkAdmission } = await import("../admission/admission.mjs");
-  const roster = requireRoster();
-  const usage = loadJson(usagePath()) || {};
+  const now = new Date().toISOString();
   const results = await resumeDueWaits({
-    now: new Date().toISOString(),
-    usage,
-    roster,
-    reason,
+    now,
+    reason: waitReason,
     admit: (state) => checkAdmission({ cli: state.worker?.cli ?? state.runtime?.cli ?? null }),
     executeAction: (action, state) => executeResumeAction(action, state),
-    resolveProfileForRun: async (runId, state) => {
-      const profile = state.specialist_profile || null;
-      const specialistId = state.specialist?.id;
-      return resolveProfile({
-        roster,
-        usage,
-        profile,
-        specialistId,
-        requirements:
-          state.harness_requirements ||
-          {},
-      });
-    },
-    startWorker: async ({ attempt, runId }) => {
-      const started = startFromLaunchDescriptor({
-        runId,
-        runtimeOverride: attempt.runtime,
-        attempt,
-      });
-      log(`resumed-wait: ${runId} attempt=${attempt.id} tmux=${started.session}`);
-    },
+    startWorker: ({ runId }) => startFromLaunchDescriptor({ runId }),
   });
   for (const r of results) {
-    log(`capacity-resume: ${r.runId} ok=${r.ok} resumed=${Boolean(r.resumed)} reason=${r.reason || ""}`);
+    if (r.resumed) log(`resumed_resource_wait: ${r.runId}`);
+    else if (r.reason !== "one_start_per_pass") log(`deferred_resource_wait: ${r.runId} reason=${r.reason || "unknown"}`);
   }
   return results;
 }
@@ -1754,80 +1667,6 @@ async function cmdResume(args) {
   console.log(`log: ${report.logFile}`);
 }
 
-function cmdCapacity(args) {
-  const runId = args[0];
-  if (!runId) {
-    console.error("usage: runs.mjs capacity <runId>");
-    process.exit(1);
-  }
-  const state = loadState(runId);
-  console.log(JSON.stringify(state?.capacity || null, null, 2));
-}
-
-async function cmdWaitCapacity(args) {
-  const runId = args[0];
-  const reset = argValue(args, "--next-reset-at") || argValue(args, "--at");
-  if (!runId || !reset) {
-    console.error("usage: runs.mjs wait-capacity <runId> --next-reset-at <iso>");
-    process.exit(1);
-  }
-  const { approveCapacityWait } = await import("../supervisor/waits.mjs");
-  const cap = approveCapacityWait({ runId, nextResetAt: reset });
-  console.log(JSON.stringify(cap, null, 2));
-}
-
-async function cmdCancelWait(args) {
-  const runId = args[0];
-  const reason = argValue(args, "--reason") || "cancelled";
-  if (!runId) {
-    console.error("usage: runs.mjs cancel-wait <runId> --reason <text>");
-    process.exit(1);
-  }
-  const { cancelCapacityWait } = await import("../supervisor/waits.mjs");
-  const state = cancelCapacityWait({ runId, reason });
-  console.log(JSON.stringify({ status: state.status, capacity: state.capacity }, null, 2));
-}
-
-async function cmdRecheckCapacity(args) {
-  const runId = args[0];
-  if (!runId) {
-    console.error("usage: runs.mjs recheck-capacity <runId>");
-    process.exit(1);
-  }
-  const { recheckCapacity } = await import("../supervisor/waits.mjs");
-  const { loadJson, requireRoster, usagePath } = await import("../roster/config.mjs");
-  const { resolveProfile } = await import("../roster/profile.mjs");
-  const { startFromLaunchDescriptor } = await import("../supervisor/start.mjs");
-  const roster = requireRoster();
-  const usage = loadJson(usagePath()) || {};
-  const state = loadState(runId);
-  const profile = state?.specialist_profile || null;
-  const specialistId = state?.specialist?.id;
-  const profileResult = resolveProfile({
-    roster,
-    usage,
-    profile,
-    specialistId,
-    requirements:
-      state?.harness_requirements ||
-      {},
-  });
-  const result = await recheckCapacity({
-    runId,
-    usage,
-    roster,
-    profileResult,
-    startWorker: async ({ attempt }) => {
-      startFromLaunchDescriptor({
-        runId,
-        runtimeOverride: attempt.runtime,
-        attempt,
-      });
-    },
-  });
-  console.log(JSON.stringify(result, null, 2));
-}
-
 function cmdCancel(args) {
   const runId = args[0];
   if (!runId) {
@@ -1846,11 +1685,18 @@ async function cmdGc(args) {
   const { gcRuns } = await import("./gc.mjs");
   const report = gcRuns({ dryRun });
   for (const item of report.runs) {
-    console.log(`runId: ${item.runId} action: ${item.action}`);
+    console.log(`runId: ${item.runId} action: ${dryRun ? `would_${item.action}` : item.action}`);
   }
   // Session records of exited CLIs or earlier boots would name dead parents.
   for (const file of pruneSessionRecords({ dryRun })) {
     console.log(`session: ${path.basename(file, ".json")} action: ${dryRun ? "would_prune" : "pruned"}`);
+  }
+  for (const session of report.idle_sessions?.killed || []) {
+    console.log(`session: ${session} action: ${dryRun ? "would_kill_idle" : "kill_idle"}`);
+  }
+  const expiredMarks = report.expired_marks?.pruned || [];
+  if (expiredMarks.length) {
+    console.log(`usage-marks: ${dryRun ? "would_prune" : "pruned"} count=${expiredMarks.length}`);
   }
   // Runs parked for want of memory start here, or they wait for the next
   // `runs resume`. Not while a resume holds the lock: it runs its own queue.
@@ -1861,7 +1707,6 @@ async function cmdGc(args) {
   try {
     acquireResumeLock();
   } catch {
-    console.log("resource waits: a resume is running; skipped");
     return;
   }
   try {
@@ -1898,9 +1743,8 @@ async function cmdGcInstall() {
 /**
  * Report runs that are stuck, without touching them.
  *
- * gc reaps only active runs with a live terminal, so a protected or
- * terminal-less run is skipped forever by design. Bounding that automatically
- * means deciding when a person is not coming back; reporting it does not.
+ * gc records stale candidates without failing them. Terminal-less and
+ * protected runs remain visible here for a human to decide.
  */
 function cmdStale(args) {
   const hoursArg = args[args.indexOf("--hours") + 1];
@@ -1938,16 +1782,6 @@ const HANDLERS = {
   uncollected: cmdUncollected,
   wait: cmdWait,
   resume: cmdResume,
-  capacity: cmdCapacity,
-  "wait-capacity": (args) => {
-    cmdWaitCapacity(args);
-  },
-  "cancel-wait": (args) => {
-    cmdCancelWait(args);
-  },
-  "recheck-capacity": (args) => {
-    cmdRecheckCapacity(args);
-  },
   cancel: cmdCancel,
   gc: cmdGc,
   "gc-install": cmdGcInstall,

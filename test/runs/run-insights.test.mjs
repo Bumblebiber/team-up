@@ -21,7 +21,6 @@ test("the same cause counts once, whatever temp path or pid it carried", () => {
 test("legacy fields still yield a reason before the mailbox is consulted", () => {
   assert.equal(failureReason({ runId: "x", failure: { error: "boom" } }, "/nonexistent"), "boom");
   assert.equal(failureReason({ runId: "x", last_start_error: "LEASE_TRANSFER_FAILED: gone" }, "/nonexistent"), "LEASE_TRANSFER_FAILED: gone");
-  assert.equal(failureReason({ runId: "x", cleanup: { stale_reason: "worker_stale_timeout" } }, "/nonexistent"), "worker_stale_timeout");
 });
 
 test("a failing model and a recurring reason inside the window become findings; old runs do not", () => {

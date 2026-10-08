@@ -4,25 +4,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { installPackage } from "../../src/specialists/store.mjs";
 import { approveSpecialist } from "../../src/specialists/approvals.mjs";
 import { launchSpecialist } from "../../src/specialists/launcher.mjs";
-import { loadState, runDir, buildResumePlan } from "../../src/runs/runs.mjs";
-import {
-  approveCapacityWait,
-  cancelCapacityWait,
-} from "../../src/supervisor/waits.mjs";
-import { usedFraction } from "../../src/supervisor/production.mjs";
-import { reclaimStaleLease, createAttempt } from "../../src/supervisor/attempts.mjs";
+import { loadState, runDir } from "../../src/runs/runs.mjs";
+import { createAttempt } from "../../src/supervisor/attempts.mjs";
 import { wrapWithSandbox } from "../../src/sandbox/systemd.mjs";
 import { createRun } from "../../src/runs/runs.mjs";
 import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const RUNS_BIN = path.join(ROOT, "src/runs/runs.mjs");
-const USAGE_BIN = path.join(ROOT, "src/usage/usage-watcher.mjs");
 
 /** Stable fake Claude for E2E — version + /usage only; launch path never needs real CLI. */
 const FAKE_CLAUDE_VERSION = "2.1.220";
@@ -306,15 +295,6 @@ test("production launchSpecialist persists descriptor and uses fake tmux new-ses
   });
 });
 
-test("unrelated provider windows do not raise usedFraction", () => {
-  const used = usedFraction(
-    { runtime: { limit_windows: ["claude:5h"] } },
-    { windows: { "cursor:week": { used: 0.99 }, "claude:5h": { used: 0.1 } } }
-  );
-  assert.equal(used, 0.1);
-  assert.equal(usedFraction({ runtime: { limit_windows: [] } }, { windows: { "cursor:week": { used: 0.99 } } }), 0);
-});
-
 test("timeout enforced when isolation is unnecessary", () => {
   const r = wrapWithSandbox({
     command: ["/usr/bin/true"],
@@ -326,157 +306,6 @@ test("timeout enforced when isolation is unnecessary", () => {
   assert.equal(r.argv[0], "timeout");
   assert.ok(r.argv.includes("42s"));
   assert.equal(r.timeout_enforced, true);
-});
-
-test("90 percent usage-watcher --once emits live send-keys; 95 kills and starts successor", async () => {
-  await withEntrypointEnv(async ({ project, home, tmuxLog, env }) => {
-    const launched = await launchSpecialist({
-      specialistId: "testing.entrypoint",
-      callType: "delegate",
-      objective: "handoff path",
-      project,
-      sandbox: { probe: () => false },
-    });
-    const runId = launched.runId;
-    const st = loadState(runId);
-    st.usage_used = 0.9;
-    st.status = "watching";
-    st.supervision = { enabled: true, prepare_at: 0.9, force_at: 0.95 };
-    saveHelper(st);
-    fs.writeFileSync(path.join(runDir(runId), "mailbox", "STATUS"), "watching\n");
-
-    // Clear log after initial launch so we only see watcher actions.
-    fs.writeFileSync(tmuxLog, "");
-
-    const once90 = spawnSync(process.execPath, [USAGE_BIN, "--once"], {
-      encoding: "utf8",
-      env: { ...process.env, ...env },
-      cwd: ROOT,
-    });
-    assert.equal(once90.status, 0, once90.stderr + once90.stdout);
-    const lines90 = tmuxLines(tmuxLog);
-    assert.ok(
-      lines90.some((l) => l.startsWith("send-keys")),
-      `expected send-keys at 90%: ${lines90.join(" | ")}`
-    );
-
-    // Force 95% with no checkpoint → force handoff to frontier-b (different window).
-    const st2 = loadState(runId);
-    st2.usage_used = 0.95;
-    st2.status = "handoff_preparing";
-    saveHelper(st2);
-    fs.writeFileSync(tmuxLog, "");
-
-    const once95 = spawnSync(process.execPath, [USAGE_BIN, "--once"], {
-      encoding: "utf8",
-      env: { ...process.env, ...env },
-      cwd: ROOT,
-    });
-    assert.equal(once95.status, 0, once95.stderr + once95.stdout);
-    const lines95 = tmuxLines(tmuxLog);
-    assert.ok(lines95.some((l) => l.startsWith("kill-session")), lines95.join(" | "));
-    const news = lines95.filter((l) => l.startsWith("new-session"));
-    assert.equal(news.length, 1, lines95.join(" | ") + "\n" + once95.stdout);
-    const st3 = loadState(runId);
-    assert.ok(st3.checkpoint?.status === "partial" || st3.current_attempt_id);
-    assert.ok(st3.harness_requirements?.command_broker || st3.launch_descriptor?.checksum);
-  });
-});
-
-function saveHelper(st) {
-  const p = path.join(runDir(st.runId), "STATE.json");
-  fs.writeFileSync(p, `${JSON.stringify(st, null, 2)}\n`);
-}
-
-test("cancel-wait then runs resume spawns no worker", async () => {
-  await withEntrypointEnv(async ({ project, tmuxLog, env }) => {
-    const launched = await launchSpecialist({
-      specialistId: "testing.entrypoint",
-      callType: "delegate",
-      objective: "cancel wait",
-      project,
-      sandbox: { probe: () => false },
-    });
-    const runId = launched.runId;
-    approveCapacityWait({
-      runId,
-      nextResetAt: "2026-07-25T10:00:00Z",
-      now: "2026-07-25T09:00:00Z",
-    });
-    const cancel = spawnSync(
-      process.execPath,
-      [RUNS_BIN, "cancel-wait", runId, "--reason", "human"],
-      { encoding: "utf8", env: { ...process.env, ...env }, cwd: ROOT }
-    );
-    assert.equal(cancel.status, 0, cancel.stderr);
-
-    // Pretend worker tmux is gone.
-    const st = loadState(runId);
-    st.worker = { ...(st.worker || {}), tmux: "dead-session-xyz" };
-    saveHelper(st);
-    fs.writeFileSync(tmuxLog, "");
-
-    const plan = buildResumePlan(st, { tmuxExists: () => false });
-    assert.ok(!plan.actions.some((a) => a.kind === "spawn_worker"), JSON.stringify(plan));
-
-    const resume = spawnSync(process.execPath, [RUNS_BIN, "resume"], {
-      encoding: "utf8",
-      env: { ...process.env, ...env },
-      cwd: ROOT,
-    });
-    assert.equal(resume.status, 0, resume.stderr + resume.stdout);
-    // Give async capacity resume a moment.
-    await new Promise((r) => setTimeout(r, 200));
-    const lines = tmuxLines(tmuxLog);
-    assert.ok(
-      !lines.some((l) => l.startsWith("new-session")),
-      `forbidden spawn after cancel-wait: ${lines.join(" | ")}`
-    );
-  });
-});
-
-test("approved due wait via runs resume starts through descriptor path", async () => {
-  await withEntrypointEnv(async ({ project, tmuxLog, env }) => {
-    const launched = await launchSpecialist({
-      specialistId: "testing.entrypoint",
-      callType: "delegate",
-      objective: "due wait",
-      project,
-      sandbox: { probe: () => false },
-    });
-    const runId = launched.runId;
-    // Release current lease so resume can acquire a new attempt.
-    const st0 = loadState(runId);
-    const leasePath = path.join(runDir(runId), "ACTIVE_LEASE.json");
-    const lease = JSON.parse(fs.readFileSync(leasePath, "utf8"));
-    lease.released_at = "2026-07-25T09:00:00Z";
-    lease.release_reason = "test";
-    fs.writeFileSync(leasePath, `${JSON.stringify(lease, null, 2)}\n`);
-
-    approveCapacityWait({
-      runId,
-      nextResetAt: "2026-07-25T10:00:00Z",
-      now: "2026-07-25T09:00:00Z",
-    });
-    fs.writeFileSync(tmuxLog, "");
-
-    const resume = spawnSync(process.execPath, [RUNS_BIN, "resume"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        ...env,
-        // force "now" via clock? resumeDueWaits uses Date — set wait in the past
-      },
-      cwd: ROOT,
-    });
-    assert.equal(resume.status, 0, resume.stderr + resume.stdout);
-    await new Promise((r) => setTimeout(r, 400));
-    const lines = tmuxLines(tmuxLog);
-    assert.ok(lines.some((l) => l.startsWith("new-session")), lines.join(" | ") + "\n" + resume.stdout);
-    const st = loadState(runId);
-    assert.equal(st.status, "watching");
-    assert.ok(st.launch_descriptor);
-  });
 });
 
 test("start failure rolls back lease and does not leave watching", async () => {
@@ -512,29 +341,6 @@ test("start failure rolls back lease and does not leave watching", async () => {
       fs.readFileSync(path.join(runDir(st.runId), "ACTIVE_LEASE.json"), "utf8")
     );
     assert.ok(lease.released_at, JSON.stringify(lease));
-  });
-});
-
-test("tmux lease owner is retained while launcher pid is dead pattern", async () => {
-  await withEntrypointEnv(async ({ project }) => {
-    const launched = await launchSpecialist({
-      specialistId: "testing.entrypoint",
-      callType: "delegate",
-      objective: "lease retain",
-      project,
-      sandbox: { probe: () => false },
-    });
-    const runId = launched.runId;
-    const leasePath = path.join(runDir(runId), "ACTIVE_LEASE.json");
-    const lease = JSON.parse(fs.readFileSync(leasePath, "utf8"));
-    assert.match(lease.owner, /^tmux:/);
-    const reclaimed = reclaimStaleLease({
-      runId,
-      now: new Date().toISOString(),
-      maxAgeMs: 60_000 * 60,
-    });
-    assert.equal(reclaimed.ok, false);
-    assert.equal(reclaimed.reason, "not_stale");
   });
 });
 

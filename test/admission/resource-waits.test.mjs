@@ -83,6 +83,29 @@ test("a resources wait is postponed while admission refuses and replays its acti
   });
 });
 
+test("a parked launch without a resume action starts through its descriptor path", async () => {
+  await withTempEnv(async () => {
+    const t0 = new Date("2026-10-01T10:00:00Z");
+    const { runId } = parkedRun();
+    deferForResources({ runId, admission: { reason: "budget 3" }, now: t0 });
+    const due = new Date(t0.getTime() + RESOURCE_RETRY_MS).toISOString();
+    const starts = [];
+
+    const results = await resumeDueWaits({
+      now: due,
+      admit: async () => ({ ok: true }),
+      startWorker: (launch) => starts.push(launch.runId),
+    });
+
+    assert.deepEqual(starts, [runId]);
+    assert.deepEqual(results, [{ runId, ok: true, resumed: true, reason: "resources" }]);
+    assert.equal(loadState(runId).status, "watching");
+    assert.equal(loadState(runId).capacity.auto_resume, false);
+    assert.deepEqual(listDueWaits({ now: "2099-01-01T00:00:00Z" }), []);
+    assert.equal(fs.readFileSync(path.join(mailboxDir(runId), "STATUS"), "utf8").trim(), "watching");
+  });
+});
+
 test("one resources wait starts per pass, and a failed start is retried later", async () => {
   await withTempEnv(async () => {
     const t0 = new Date("2026-10-01T10:00:00Z");

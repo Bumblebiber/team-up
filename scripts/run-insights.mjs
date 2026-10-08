@@ -64,8 +64,7 @@ export function failureReason(state, dir = runDir(state.runId)) {
     state.failure?.error ||
     state.last_start_error ||
     state.supervision_failure?.error ||
-    state.last_error ||
-    state.cleanup?.stale_reason;
+    state.last_error;
   if (direct) return normalizeReason(direct);
   if (readJson(path.join(dir, "mailbox", "VERIFICATION.json"))?.verdict === "fail") {
     return "parent verification failed";

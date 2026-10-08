@@ -541,23 +541,6 @@ test("a lock older than the verify timeout no longer holds, even with its pid al
 // An unresolved gc stale claim keeps STATE non-terminal without deciding the
 // run; resolveRunState reports no change there, which read as "decided" and
 // handed the parent the done unverified.
-test("a done under an open gc stale claim is still verified", withTempRuns(async (runsRoot) => {
-  const { runId, count } = verifiedRun(runsRoot, "claim", { runs: 1, failAt: 1 });
-  updateState(runId, (s) => {
-    s.cleanup = {
-      stale_publication_claim: { token: "t", phase: "claimed", worker_tmux: "x", claimed_at: new Date().toISOString() },
-    };
-    return s;
-  });
-  const r = waitMailbox(runId, { ceilingSec: 1, observe: false, stopTmux: () => {} });
-  assert.equal(r.classified.status, "failed");
-  assert.equal(count(), 1);
-  assert.equal(loadState(runId).verification.verdict, "fail");
-}));
-
-// gc adopts a done when no watcher is attached, before anyone verified it.
-// The later runs wait then saw a decided run and recorded nothing, so a red
-// build reached intake as done with no evidence against it.
 test("a done gc adopted unverified is verified once for the record, and stays done", withTempRuns(async (runsRoot) => {
   const { runId, count } = verifiedRun(runsRoot, "adopted", { runs: 1, failAt: 1 });
   gcRuns({

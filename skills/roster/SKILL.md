@@ -203,10 +203,11 @@ A start that a resume, successor or parked launch makes later records
    Terminal worker cleanup is automatic: `runs wait` stops worker TMUX after
    `done|failed|cancelled`, and the five-minute `runs gc` timer catches missed
    cleanup. Active `starting|watching` workers become stale candidates only when
-   both mailbox HEARTBEAT and TMUX window activity are older than 30 minutes; they
-   are failed and stopped only after another 10 minutes without either signal.
-   Human questions, capacity/decision waits, and handoff states are never
-   stale-killed.
+   both mailbox HEARTBEAT and TMUX window activity are older than 30 minutes.
+   GC records the candidate and leaves its run state, mailbox, and worker TMUX
+   alone after the 10-minute grace; `runs stale` reports stuck runs for review.
+   Human questions, resource waits, and handoff states are not stale
+   candidates.
 6. After host reboot: `team-up runs resume` — or install `team-up runs resume-install` once (needs `loginctl enable-linger $USER`) and it runs at boot. Resume wakes each parent session **once** with a message listing its runs and the exact `team-up runs wait <id>` per watcher, then restarts workers one at a time as memory allows. Runs marked `deferred` wait in `waiting_capacity` and start on their own later. If you get that message: re-spawn one watcher per run (deferred ones too), read `runs uncollected` via `intake`, do not re-dispatch. `REATTACH_WATCHER` marks a run still without a watcher; `runs wait` clears it, `runs stale` reports it after 10 min.
 7. The parent session is recorded automatically (`parent.detected_by`): the plugin's SessionStart hook for Claude Code, the session env var for Hermes, Codex and OpenCode. `--parent-*` flags on `runs create` are only for overriding it.
 

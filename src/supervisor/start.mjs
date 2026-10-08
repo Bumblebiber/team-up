@@ -934,38 +934,6 @@ export function startFromLaunchDescriptor({
   };
 }
 
-/**
- * Start a successor using the same descriptor with a new runtime cell.
- */
-export function startSuccessorFromDescriptor({
-  runId,
-  cell,
-  attempt,
-  now = new Date().toISOString(),
-  startTmux = defaultStartTmux,
-  killTmux = defaultKillTmux,
-  transferOwner = transferLeaseOwner,
-  probe = systemdAvailable,
-  env = process.env,
-}) {
-  const roster = requireRoster();
-  const limit_windows = resolveLimitWindowsForCell(cell, roster);
-  const session = `team-up-handoff-${runId.slice(0, 8)}-${Date.now().toString(36)}`;
-  return startFromLaunchDescriptor({
-    runId,
-    runtimeOverride: { ...cell, limit_windows },
-    sessionName: session,
-    attempt,
-    now,
-    startTmux,
-    killTmux,
-    transferOwner,
-    probe,
-    env,
-    rollbackStatus: "handing_off",
-  });
-}
-
 export function resolveLimitWindowsForCell(cell, roster = null) {
   const r = roster || requireRoster();
   const model = r?.models?.[cell?.model];

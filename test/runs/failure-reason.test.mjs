@@ -61,7 +61,7 @@ test("setStatus records a reason only for failures, and never overwrites the fir
 test("a run that leaves failed for done drops the failure and re-stamps its end", async () => {
   await withHome(({ home, runs }) => {
     plant(home, "20260101T000000Z-r001", "");
-    runs.setStatus("20260101T000000Z-r001", "failed", { reason: "worker_stale_timeout" });
+    runs.setStatus("20260101T000000Z-r001", "failed", { reason: "worker deadline exceeded" });
     const staleEnd = runs.loadState("20260101T000000Z-r001").finishedAt;
     runs.updateState("20260101T000000Z-r001", (s) => ({ ...s, status: "watching" }));
     assert.equal(runs.loadState("20260101T000000Z-r001").finishedAt, undefined);
