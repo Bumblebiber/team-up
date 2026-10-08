@@ -416,17 +416,14 @@ async function refreshRoles() {
       <td class="chain-cell">${r.chain.map(chainChip).join(" ")}${r.skipped.length
         ? `<div class="skipped" title="${esc(r.skipped.map((x) => `${x.model}: ${x.reason}`).join("\n"))}">⚠ ${
           r.skipped.length} skipped right now</div>` : ""}</td>
-      <td><button type="button" class="role-pin" data-role="${esc(r.role)}" title="${r.pin_head
-        ? "Head pinned: the weekly score refresh leaves it alone. Click to let it propose a new head."
-        : "Not pinned: the weekly score refresh may replace the first entry. Click to pin."}">${r.pin_head ? "📌" : "○"}</button></td>
       <td class="row-actions">
         <button type="button" class="role-edit" data-role="${esc(r.role)}" title="Edit chain">✎</button>
         <button type="button" class="role-delete" data-role="${esc(r.role)}" title="Delete role">🗑</button>
       </td>
     </tr>`).join("");
   $("#roles-table").innerHTML = `<table>
-    <thead><tr><th>Role</th><th>Pick now</th><th>Chain</th><th>Pin</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="5">No roles</td></tr>'}</tbody></table>`;
+    <thead><tr><th>Role</th><th>Pick now</th><th>Chain</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="4">No roles</td></tr>'}</tbody></table>`;
 }
 
 async function roleWrite(role, body, note) {
@@ -446,9 +443,8 @@ $("#roles-table").addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-role]");
   if (!btn) return;
   const role = btn.dataset.role;
-  const r = rolesData?.roles.find((x) => x.role === role);
-  if (btn.classList.contains("role-edit")) openRoleEditor(r);
-  else if (btn.classList.contains("role-pin")) roleWrite(role, { pin_head: !r.pin_head }, `${role} ${r.pin_head ? "unpinned" : "pinned"}`);
+  const roleData = rolesData?.roles.find((x) => x.role === role);
+  if (btn.classList.contains("role-edit")) openRoleEditor(roleData);
   else if (btn.classList.contains("role-delete")
     && confirm(`Delete role "${role}"?\n\nAnything that still runs \`team-up pick --role ${role}\` will fail.`)) {
     roleWrite(role, { delete: true }, `${role} deleted`);
@@ -519,10 +515,6 @@ function openRoleEditor(role, specialist = null) {
   $("#role-editor-title").textContent = specialist ? `Own chain for ${specialist}` : role ? `Edit ${role.role}` : "New role";
   $("#role-editor-name").value = specialist || role?.role || "";
   $("#role-editor-name").readOnly = !!(role || specialist);
-  // A specialist's chain is not touched by the weekly score refresh.
-  $("#role-editor-pin").closest("label").hidden = !!specialist;
-  // A hand-written chain pins its head by default; unticking is the opt-out.
-  $("#role-editor-pin").checked = true;
   $("#role-editor-status").textContent = "";
   const list = $("#role-editor-chain");
   list.innerHTML = "";
@@ -563,7 +555,7 @@ $("#role-editor-form").addEventListener("submit", async (e) => {
     else $("#role-editor-status").textContent = $("#capability-status").textContent;
     return;
   }
-  const ok = await roleWrite(role, { chain, pin_head: $("#role-editor-pin").checked }, `${role} saved`);
+  const ok = await roleWrite(role, { chain }, `${role} saved`);
   if (ok) roleDialog.close();
   else $("#role-editor-status").textContent = $("#roles-status").textContent;
 });
@@ -1959,7 +1951,7 @@ const PANEL_HELP = {
   "panel-sessions": "Live tmux sessions (click one to open its terminal) and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
   "panel-projects": "Repos in the collecting folder: branch, command policy, open sessions. Start opens a CLI session in the repo; Fix all / auto-fix write missing policies and approve the specialists there.",
   "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
-  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, 📌 keeps the weekly score refresh off its head, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. The Roster tab lists every model per provider; a checked one is in the roster and offered in the chains. Specialists run on a role's chain or their own — picked in the Specialists widget.",
+  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. The Roster tab lists every model per provider; a checked one is in the roster and offered in the chains. Specialists run on a role's chain or their own — picked in the Specialists widget.",
   "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions, limits and approvals are under Details.",
   "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
   "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",

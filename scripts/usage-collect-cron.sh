@@ -6,16 +6,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 COLLECT_JS="$ROOT/src/usage/usage-collect.mjs"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
-# Reads may still find state left by an older o9k install; writes never do.
-read_path() {
-  local primary="$1" legacy="$2"
-  if [[ -f "$primary" ]]; then printf '%s' "$primary"
-  elif [[ -f "$legacy" ]]; then printf '%s' "$legacy"
-  else printf '%s' "$primary"; fi
-}
 REPORT_BASE="${TEAM_UP_REPORT_DIR:-${O9K_REPORT_DIR:-$HOME/.team-up/reports}}"
-ROSTER="$(read_path "${TEAM_UP_ROSTER:-$HOME/.team-up/roster.json}" "$HOME/.o9k/roster.json")"
-WATCHER_STATE="$(read_path "${TEAM_UP_USAGE_WATCHER_STATE:-$HOME/.team-up/usage-watcher.json}" "$HOME/.o9k/usage-watcher.json")"
+ROSTER="${TEAM_UP_ROSTER:-${O9K_ROSTER:-$HOME/.team-up/roster.json}}"
+WATCHER_STATE="${TEAM_UP_USAGE_WATCHER_STATE:-${O9K_USAGE_WATCHER_STATE:-$HOME/.team-up/usage-watcher.json}}"
 
 # Report location: override the base dir via TEAM_UP_REPORT_DIR (e.g. a cron
 # runner's collected-outputs dir). Default is inside ~/.team-up.

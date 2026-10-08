@@ -300,7 +300,7 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
 }
 .provider-form { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
 .provider-form input { flex: 1; min-width: 12rem; padding: 0.35rem; }
-.provider-form button, #admin-challenge-btn, #refresh-scores-btn {
+.provider-form button, #admin-challenge-btn {
   padding: 0.35rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 4px;

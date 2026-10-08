@@ -51,7 +51,7 @@ test("exit 0 even with corrupt usage.json", () => {
 
 // The hook runs inside one CLI's session, but read every window in usage.json:
 // with claude:session at 10% and codex:weekly at 100%, a healthy Claude Code
-// session was told to write a handoff and "stop working in this session".
+// session was told to stop working in this session.
 const SPLIT = () => {
   const updated_at = new Date().toISOString();
   return {

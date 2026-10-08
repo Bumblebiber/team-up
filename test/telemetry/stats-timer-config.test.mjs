@@ -89,7 +89,7 @@ test("telemetry stats and restart-report run against TEAM_UP_HOME", async () => 
   const out = [];
   const io = { out: (l) => out.push(l), err: (l) => out.push(`ERR ${l}`) };
   try {
-    const env = { TEAM_UP_HOME: home, O9K_HOME: home };
+    const env = { TEAM_UP_HOME: home };
     assert.equal(await runTelemetryCli(["stats", "--json"], io, { env }), 0);
     assert.equal(JSON.parse(out.pop()).samples, 0);
     assert.equal(await runTelemetryCli(["stats", "--days", "-1"], io, { env }), 1);

@@ -23,7 +23,6 @@ import {
 } from "./tmux.mjs";
 import { markVerificationPending, verifierAlive } from "./verification.mjs";
 import { readLease, releaseAttemptLease } from "../supervisor/attempts.mjs";
-import { gcHandoffs, readHandoffRetentionDays } from "../handoff/store.mjs";
 import { loadJson, configPath, usagePath, usageWritePath } from "../roster/config.mjs";
 import { pruneExpiredMarks } from "../roster/chain.mjs";
 
@@ -1014,14 +1013,6 @@ export function gcRuns({
       beforeStaleFailureConfirm,
       reportEntry,
     });
-  }
-
-  try {
-    const roster = loadJson(configPath());
-    const retentionDays = readHandoffRetentionDays(roster, { warn: () => {} });
-    report.handoffs = gcHandoffs({ now, retentionDays, dryRun });
-  } catch (error) {
-    report.handoffs = { error: String(error.message || error) };
   }
 
   try {

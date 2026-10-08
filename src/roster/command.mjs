@@ -103,8 +103,8 @@ export async function spawnPinnedInTmux({
   prompt,
   runId,
   effort = null,
-  sessionPrefix = "team-up-pass",
-  role = "pass-to",
+  sessionPrefix = "team-up-pinned",
+  role = "dispatch",
 }) {
   if (!roster.clis?.[cli]?.cmd) {
     console.error(`no cli template for "${cli}" in roster.json clis section`);

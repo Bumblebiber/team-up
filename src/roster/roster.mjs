@@ -10,7 +10,6 @@ import {
   runDir,
   loadState,
   updateState,
-  recordRunEscalation,
   wrapPromptWithMailboxProtocol,
   promptHasMailboxProtocol,
   atomicWriteText,
@@ -60,25 +59,6 @@ function cmdInit() {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
   console.log(`created ${dest} — curate models/roles/chains before first use`);
-}
-
-function cmdPick(args) {
-  const role = argValue(args, "--role");
-  if (!role) {
-    console.error("usage: team-up pick --role <role>");
-    process.exit(1);
-  }
-  const roster = requireRoster();
-  const usage = loadJson(usagePath());
-  const r = pick({ roster, usage, role });
-  for (const s of r.skipped) console.log(`skipped ${s.model}: ${s.reason}`);
-  if (!r.model) {
-    console.error(`chain exhausted for role ${role} — no viable model`);
-    process.exit(2);
-  }
-  console.log(`model: ${r.model}`);
-  console.log(`cli: ${r.cli}`);
-  if (r.effort) console.log(`effort: ${r.effort}`);
 }
 
 function cmdMarkLimited(args) {
@@ -167,8 +147,7 @@ export async function spawnInTmux({
   spawn = spawnPinnedInTmux,
   createRun = null,
   detectParent: detectParentFn = detectParent,
-  // async ({ cli }) => { ok, reason }: plan 3's admission check. Null skips it
-  // (handoff and pass-to replace a session rather than add a worker).
+  // async ({ cli }) => { ok, reason }: admission check. Null skips it.
   admit = null,
 }) {
   const now = Date.now();
@@ -344,7 +323,7 @@ async function cmdDispatch(args) {
       "usage: team-up dispatch --role <role> --prompt-file <file> [--dir <taskdir>] [--run-id <id>] [--model <name|cli:model>] [--force-admission]",
     );
     console.error("  with --run-id: prefers ~/.team-up/runs/<id>/mailbox/PROMPT.md (mailbox-wrapped)");
-    console.error("  --model: pin CLI×model (no role-chain fallback); same query language as pass-to");
+    console.error("  --model: pin CLI×model (no role-chain fallback); resolves model ids and free text");
     process.exit(1);
   }
   let prompt = null;
@@ -391,226 +370,11 @@ async function cmdDispatch(args) {
   });
 }
 
-async function cmdHandoff(args) {
-  const {
-    closeHandoff,
-    resolveHandoffForSpawn,
-    successorPrompt,
-  } = await import("../handoff/store.mjs");
-
-  const closePath = argValue(args, "--close");
-  if (closePath) {
-    const note = argValue(args, "--note");
-    try {
-      const result = closeHandoff(closePath, { note });
-      if (result.status === "already_closed") {
-        console.log(`handoff already closed: ${result.path}`);
-        return;
-      }
-      console.log(`handoff closed: ${result.path}`);
-    } catch (error) {
-      console.error(String(error.message || error));
-      process.exit(1);
-    }
-    return;
-  }
-
-  const role = argValue(args, "--role");
-  const dir = argValue(args, "--dir") || process.cwd();
-  const handoffFile = argValue(args, "--handoff-file");
-  if (!role) {
-    console.error(
-      "usage: team-up handoff --role <role> [--dir <taskdir>] [--handoff-file <path>]\n" +
-      "       team-up handoff --close <path> [--note <text>]"
-    );
-    process.exit(1);
-  }
-  const rosterCfg = requireRoster();
-  let handoffPath;
-  try {
-    handoffPath = resolveHandoffForSpawn({ dir, handoffFile, label: role });
-  } catch (error) {
-    console.error(String(error.message || error));
-    process.exit(1);
-  }
-  console.log(`handoff stored: ${handoffPath}`);
-  await spawnInTmux({
-    roster: rosterCfg,
-    role,
-    dir,
-    prompt: successorPrompt(handoffPath),
-  });
-  recordRunEscalation(process.env.TEAMUP_RUN_ID, "handoff");
-}
-
-async function cmdPassTo(args) {
-  const { resolvePassTo } = await import("./pass-to.mjs");
-  const {
-    resolveHandoffForSpawn,
-    successorPrompt,
-  } = await import("../handoff/store.mjs");
-  const query = argValue(args, "--model") || firstPositional(args);
-  const dir = argValue(args, "--dir") || process.cwd();
-  const handoffFile = argValue(args, "--handoff-file");
-  if (!query) {
-    console.error("usage: team-up pass-to --model <name|cli:model> [--dir <taskdir>] [--handoff-file <path>]");
-    process.exit(1);
-  }
-  const rosterCfg = requireRoster();
-  const resolved = resolvePassTo(query, rosterCfg);
-  if (resolved.status === "ambiguous") {
-    console.error(`ambiguous model "${query}" — pick one and re-run with --model <exact>:`);
-    for (const m of resolved.matches) console.error(`  ${m.label}`);
-    process.exit(3);
-  }
-  if (resolved.status !== "ok") {
-    console.error(
-      `unresolved model "${query}"${resolved.reason ? ` — ${resolved.reason}` : ""}`
-    );
-    console.error("use a roster model id, cli:model pin, or a recognizable free string (opus, composer-2.5, gpt-…)");
-    process.exit(4);
-  }
-  let handoffPath;
-  try {
-    handoffPath = resolveHandoffForSpawn({ dir, handoffFile, label: resolved.model });
-  } catch (error) {
-    console.error(String(error.message || error));
-    process.exit(1);
-  }
-  console.log(`handoff stored: ${handoffPath}`);
-  console.log(`resolved: ${resolved.label} (via ${resolved.source})`);
-  await spawnPinnedInTmux({
-    roster: rosterCfg,
-    model: resolved.model,
-    cli: resolved.cli,
-    dir,
-    prompt: successorPrompt(handoffPath),
-    sessionPrefix: "team-up-pass",
-  });
-  recordRunEscalation(process.env.TEAMUP_RUN_ID, "pass-to");
-}
-
-function printProposalReport(proposals, unlisted = []) {
-  console.log(`== roster scores report (${proposals.at}) ==`);
-  console.log(`applied: ${proposals.applied.length}`);
-  for (const a of proposals.applied) {
-    console.log(
-      `  APPLY ${a.role}: ${a.current ? `${a.current.cli}:${a.current.model} (${a.current.score})` : "(empty)"} → ${a.entry} (${a.proposed.score}, blended=${a.proposed.blended})`
-    );
-  }
-  console.log(`skipped: ${proposals.skipped.length}`);
-  for (const s of proposals.skipped) {
-    console.log(`  SKIP  ${s.role}: ${s.reason}`);
-  }
-  if (unlisted.length) {
-    console.log(`not in roster: ${unlisted.length}`);
-    for (const u of unlisted) {
-      console.log(
-        `  NEW   ${u.model} scores ${u.score} — ${u.gap.toFixed(1)} above ${u.head} (${u.headScore}) on ${u.role}; add it to models to make it a candidate`
-      );
-    }
-  }
-}
-
-function backupRoster(rosterFile) {
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const bak = `${rosterFile}.bak-${stamp}`;
-  fs.copyFileSync(rosterFile, bak);
-  console.log(`backup: ${bak}`);
-  return bak;
-}
-
-async function cmdRefresh(args) {
-  const { collectScores, buildRoleScores, writeScores } =
-    await import("../scores/scores.mjs");
-  const { proposeRoleChanges, applyProposals, unlistedHighScorers } =
-    await import("../scores/propose.mjs");
-
-  const fixtureDir = argValue(args, "--fixture-dir");
-  const doApply = args.includes("--apply");
-  let collected;
-  try {
-    collected = await collectScores({
-      fixtureDir: fixtureDir || undefined,
-    });
-  } catch (e) {
-    console.error(String(e.message || e));
-    process.exit(1);
-  }
-
-  const rosterCfg = loadJson(configPath());
-  collected.role_scores = buildRoleScores(collected, rosterCfg || { clis: {} });
-  const dest = writeScores(collected);
-  console.log(`scores written: ${dest}`);
-
-  if (!rosterCfg) {
-    console.log("no roster.json — scores only (run init + curate before apply)");
-    return;
-  }
-
-  const proposals = proposeRoleChanges({ roster: rosterCfg, scoresFile: collected });
-  printProposalReport(proposals, unlistedHighScorers({ roster: rosterCfg, scoresFile: collected }));
-
-  if (doApply && proposals.applied.length) {
-    backupRoster(rosterWritePath());
-    const next = applyProposals({ roster: rosterCfg, scoresFile: collected, proposals });
-    atomicWriteJson(rosterWritePath(), next);
-    console.log(`roster updated: ${rosterWritePath()}`);
-  } else if (doApply) {
-    console.log("nothing to auto-apply");
-  } else {
-    console.log("hint: re-run with --apply for semiauto chain updates");
-  }
-}
-
-async function cmdPropose() {
-  const { loadScores } = await import("../scores/scores.mjs");
-  const { proposeRoleChanges, unlistedHighScorers } = await import("../scores/propose.mjs");
-  const rosterCfg = requireRoster();
-  const scoresFile = loadScores();
-  if (!scoresFile) {
-    console.error(`no scores at scores path — run: team-up refresh`);
-    process.exit(1);
-  }
-  printProposalReport(
-    proposeRoleChanges({ roster: rosterCfg, scoresFile }),
-    unlistedHighScorers({ roster: rosterCfg, scoresFile })
-  );
-}
-
-async function cmdApplyScores() {
-  const { loadScores } = await import("../scores/scores.mjs");
-  const { proposeRoleChanges, applyProposals, unlistedHighScorers } =
-    await import("../scores/propose.mjs");
-  const rosterCfg = requireRoster();
-  const scoresFile = loadScores();
-  if (!scoresFile) {
-    console.error(`no scores — run: team-up refresh`);
-    process.exit(1);
-  }
-  const proposals = proposeRoleChanges({ roster: rosterCfg, scoresFile });
-  printProposalReport(proposals, unlistedHighScorers({ roster: rosterCfg, scoresFile }));
-  if (!proposals.applied.length) {
-    console.log("nothing to auto-apply");
-    return;
-  }
-  backupRoster(rosterWritePath());
-  const next = applyProposals({ roster: rosterCfg, scoresFile, proposals });
-  atomicWriteJson(rosterWritePath(), next);
-  console.log(`roster updated: ${rosterWritePath()}`);
-}
-
 const HANDLERS = {
   init: cmdInit,
-  pick: cmdPick,
   "mark-limited": cmdMarkLimited,
   usage: cmdUsage,
   dispatch: cmdDispatch,
-  handoff: cmdHandoff,
-  "pass-to": cmdPassTo,
-  refresh: cmdRefresh,
-  propose: cmdPropose,
-  "apply-scores": cmdApplyScores,
 };
 
 export async function runRosterCli(argv) {

@@ -6,7 +6,7 @@ import { splitVersion, compareVersions, excludedKey } from "../roster/latest.mjs
  * The Models tab: per provider, every model it offers, and which of them the
  * roster carries. A checked row is a roster model the chain dropdowns offer;
  * unchecking one removes it and records the (cli, id) in `models_excluded`,
- * so the newest-version sweep and apply-scores never add that id back. A
+ * so the newest-version sweep never adds that id back. A
  * newer version still arrives through an older sibling that stays checked.
  *
  * Providers are who gets paid. A subscription provider is one CLI whose scan

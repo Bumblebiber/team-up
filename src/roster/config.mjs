@@ -141,7 +141,7 @@ export function aliasFor(modelDef, modelId, cli) {
   return modelId;
 }
 
-/** Every id a model answers to, for name resolution (pass-to). */
+/** Every id a model answers to, for free-text model resolution. */
 export function cliModelAliases(modelDef, modelId) {
   const alias = modelDef?.cli_model;
   if (typeof alias === "string" && alias) return [alias];
@@ -255,13 +255,6 @@ export function validateRoster(roster) {
         if (v !== undefined && (typeof v !== "number" || !(v > 0 && v <= 1))) {
           errors.push(`limits.${key} must be a number in (0, 1]`);
         }
-      }
-      const retention = roster.limits.handoff_retention_days;
-      if (
-        retention !== undefined &&
-        (typeof retention !== "number" || !Number.isInteger(retention) || retention < 1)
-      ) {
-        errors.push("limits.handoff_retention_days must be a positive integer");
       }
     }
   }
