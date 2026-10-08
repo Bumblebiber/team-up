@@ -31,7 +31,7 @@ function parkedRun(status = "watching") {
     worker: { cli: "codex", tmux: "team-up-w", sessionId: "s-1" },
     prompt: "x",
   });
-  setStatus(run.runId, status);
+  if (status) setStatus(run.runId, status);
   const action = { kind: "spawn_worker", tmux: "team-up-w", cli: "codex", sessionId: "s-1", cwd: "/tmp/p" };
   return { runId: run.runId, action };
 }
@@ -86,7 +86,8 @@ test("a resources wait is postponed while admission refuses and replays its acti
 test("a parked launch without a resume action starts through its descriptor path", async () => {
   await withTempEnv(async () => {
     const t0 = new Date("2026-10-01T10:00:00Z");
-    const { runId } = parkedRun();
+    const { runId } = parkedRun(null);
+    assert.equal(fs.readFileSync(path.join(mailboxDir(runId), "STATUS"), "utf8").trim(), "starting");
     deferForResources({ runId, admission: { reason: "budget 3" }, now: t0 });
     const due = new Date(t0.getTime() + RESOURCE_RETRY_MS).toISOString();
     const starts = [];

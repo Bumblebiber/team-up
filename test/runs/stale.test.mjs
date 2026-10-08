@@ -134,3 +134,18 @@ test("a resume marker nobody consumed within ten minutes is reported", () => {
   assert.deepEqual(found.reasons, ["nobody re-attached a watcher"]);
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("a run gc marked idle is reported before the heartbeat threshold", () => {
+  // gc no longer fails a hung worker; it records stale_detected_at and leaves
+  // the report to `runs stale`, which must not wait for the 6 h threshold.
+  const root = runsRoot();
+  const dir = plant(root, "r-hung", { status: "watching", session: "team-up-x", heartbeatAgeMs: 1 * HOUR });
+  const statePath = path.join(dir, "STATE.json");
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  state.cleanup = { stale_detected_at: new Date(NOW - 20 * 60_000).toISOString() };
+  fs.writeFileSync(statePath, JSON.stringify(state));
+  const [found] = findStaleRuns({ root, now: NOW, sessionAlive: alwaysAlive });
+  assert.equal(found.runId, "r-hung");
+  assert.deepEqual(found.reasons, ["gc found it idle"]);
+  fs.rmSync(root, { recursive: true, force: true });
+});

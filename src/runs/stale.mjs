@@ -74,6 +74,7 @@ export function findStaleRuns({
     else if (!alive) reasons.push("terminal is gone");
     if (heartbeatMs === null) reasons.push("no heartbeat was ever written");
     else if (silentMs > thresholdMs) reasons.push("mailbox silent");
+    if (state.cleanup?.stale_detected_at) reasons.push("gc found it idle");
 
     if (!reasons.length) continue;
 

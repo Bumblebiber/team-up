@@ -101,7 +101,7 @@ function postponeResourceWait(runId, admission, now, env) {
   return resumeAt;
 }
 
-function finishResourceWait(runId, status, now, env) {
+function finishResourceWait(runId, status, now, env, mailboxOverride = null) {
   let mailboxStatus = null;
   updateState(runId, (state) => {
     mailboxStatus = state.capacity?.resume_mailbox_status ?? null;
@@ -111,7 +111,7 @@ function finishResourceWait(runId, status, now, env) {
   });
   const statusFile = path.join(runDir(runId), "mailbox", "STATUS");
   fs.mkdirSync(path.dirname(statusFile), { recursive: true });
-  fs.writeFileSync(statusFile, `${mailboxStatus ?? status}\n`);
+  fs.writeFileSync(statusFile, `${mailboxOverride ?? mailboxStatus ?? status}\n`);
   const waits = loadWaits(env);
   delete waits.waits[runId];
   saveWaits(waits, env);
@@ -170,6 +170,9 @@ export async function resumeDueWaits({
         await executeAction(action, state);
       } else {
         if (typeof startWorker !== "function") throw new Error("no starter for a parked launch descriptor");
+        // ponytail: starts the cell frozen in the descriptor without rechecking
+        // limits or mark-limited; add a pick/chain check here if specialist
+        // resource waits see real use.
         await startWorker({ runId, state });
       }
     } catch (error) {
@@ -178,7 +181,9 @@ export async function resumeDueWaits({
       continue;
     }
 
-    finishResourceWait(runId, action ? state.capacity.resume_status || "watching" : "watching", now, env);
+    // The starter already set the worker's mailbox to watching; the parked
+    // STATUS (`starting` from createRun) must not be written back over it.
+    finishResourceWait(runId, action ? state.capacity.resume_status || "watching" : "watching", now, env, action ? null : "watching");
     resourceStarted = true;
     results.push({ runId, ok: true, resumed: true, reason: "resources" });
   }
