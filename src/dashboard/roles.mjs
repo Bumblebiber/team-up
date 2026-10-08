@@ -6,9 +6,7 @@ import { cellStatus, addOfferedVersions } from "../roster/latest.mjs";
  * Roles, their chains, and the roster settings around them — the one place
  * the dashboard writes `roles` and the handful of top-level switches.
  *
- * `apply-scores` rewrites a chain's head every week unless the role carries
- * `pin_head`, so a chain saved here pins its head by default: a hand edit
- * that silently reverts on Monday is worse than no editor.
+ * Edits here write role chains without changing model selection policy.
  */
 
 const ROLE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -60,7 +58,6 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
       const result = pick({ roster, usage, role, now });
       return {
         role,
-        pin_head: spec?.pin_head === true,
         effort: spec?.effort ?? null,
         chain: chainView(roster, store, spec?.chain || [], now),
         pick: result.model
@@ -107,11 +104,10 @@ export function normalizeChain(roster, chain) {
 
 /**
  * One edit per call:
- * - `{ role, chain }` creates or replaces; pins the head unless `pin_head: false`
- * - `{ role, pin_head }` flips the pin alone
+ * - `{ role, chain }` creates or replaces a chain
  * - `{ role, delete: true }` removes it, refused while a specialist runs on it
  */
-export function applyRoleEdit(roster, { role, chain, pin_head, delete: remove } = {}) {
+export function applyRoleEdit(roster, { role, chain, delete: remove } = {}) {
   if (!ROLE_NAME.test(String(role || ""))) {
     throw new Error("role name: lowercase letters, digits, . _ - (max 64)");
   }
@@ -128,17 +124,10 @@ export function applyRoleEdit(roster, { role, chain, pin_head, delete: remove } 
     next.roles[role] = {
       ...(own(next.roles, role) ? next.roles[role] : {}),
       chain: normalizeChain(next, chain),
-      pin_head: pin_head !== false,
     };
     return next;
   }
-  if (pin_head !== undefined) {
-    if (!own(next.roles, role)) throw new Error(`unknown role: ${role}`);
-    if (pin_head) next.roles[role].pin_head = true;
-    else delete next.roles[role].pin_head;
-    return next;
-  }
-  throw new Error("edit names no field (expected chain, pin_head or delete)");
+  throw new Error("edit names no field (expected chain or delete)");
 }
 
 /**

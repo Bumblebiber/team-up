@@ -5,7 +5,7 @@ metadata:
   team-up-scope: main
 ---
 
-> Config lives in `~/.team-up/`. Rosters left behind by an older o9k install are still read from `~/.o9k/` as a fallback, but every write goes to `~/.team-up/` — copy yours over once. Path B is unchanged: `runs create` → `dispatch --run-id` → `runs wait`.
+> Config lives in `~/.team-up/`. `O9K_*` environment aliases still work; files under `~/.o9k/` are not read automatically. Copy state into `~/.team-up/` when migrating. Path B: `runs create` → `dispatch --run-id` → `runs wait`.
 
 # roster — Who Does the Work
 
@@ -121,17 +121,14 @@ No config yet → `team-up init`, then tell the user to curate `~/.team-up/roste
 - **Delegate a task (complete spawn — use this, not bare dispatch):**
   1. `team-up runs create … --prompt-file <prompt.md>` → note `runId`
   2. `team-up dispatch --role <role> --prompt-file <prompt.md> --dir <taskdir> --run-id <runId>`
-     Optional pin: `--model <name|cli:model>` uses that CLI×model directly (same
-     query language as `pass-to`); the role chain is **not** walked as fallback.
+     Optional pin: `--model <name|cli:model>` uses that CLI×model directly;
+     model ids, aliases, and recognizable free text resolve through the roster
+     first. The role chain is **not** walked as fallback.
   3. Spawn a **cheap in-host watcher** (see `dispatch` Path B): only
      `team-up runs wait <runId>`, return status, exit
   4. Then you may tell the human the tmux attach string — never before step 3
 - **Rate-limit:** `team-up mark-limited <model|provider> --ttl 5h --reason rate-limit`
 - **Limits:** `team-up usage --check` / `team-up usage --refresh [--cli claude|codex|cursor]`
-- **Manual pass to a named model (human attaches):** skill `/pass-to` —
-  `team-up pass-to --model <name|cli:model> --dir "$PWD"` (handoff file in
-  `~/.team-up/handoffs/`, or `HANDOFF.md` in `--dir` which is moved into the store)
-- **Scores:** see `roster-refresh` — `team-up refresh [--apply]`
 
 `--run-id` is **required** whenever the parent needs a completion signal (always,
 for Overseer / multi-phase pipelines). Omitting it is only for intentional
@@ -153,12 +150,8 @@ not be notified otherwise. See `dispatch` § Incomplete-spawn gate.
 
 When a limit warning arrives (hook injection, or your own `usage --check`):
 
-- **≥ warn threshold:** converge — finish the current unit, commit, keep state checkpointable.
-- **≥ handoff threshold:**
-  1. Write the handoff content (current state, completed steps, open steps, verification commands, relevant paths) — either as `HANDOFF.md` in the task dir (moved into the store on spawn) or via `--handoff-file <path>`. **Do not leave handoff files in the working tree** after spawn.
-  2. `team-up handoff --role <your current role> --dir "$PWD"` (or `--handoff-file <path>`)
-  3. Report the tmux session name + attach command to the user.
-  4. Stop working in this session. The successor closes the work order with `team-up handoff --close <absolute-path>` when done.
+- **≥ warn threshold:** finish the current unit and converge to a clean committed state.
+- **≥ limit threshold:** write a TIM handoff note using the `tim-handoff` skill. If the limit is hit, run `team-up mark-limited <model|provider> --ttl <30m|5h|1d>` through its reset. Stop working in this session.
 
 ## Degraded mode (hosts without a per-turn hook)
 

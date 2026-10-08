@@ -2,16 +2,17 @@
 
 ## Paths
 
-| Concern | Env | Default write | Legacy read fallback |
-|---------|-----|---------------|----------------------|
-| Home | `TEAM_UP_HOME` | `~/.team-up` | — |
-| Roster | `TEAM_UP_ROSTER` / `O9K_ROSTER` | `~/.team-up/roster.json` | `~/.o9k/roster.json` |
-| Usage | `TEAM_UP_USAGE` / `O9K_USAGE` | `~/.team-up/usage.json` | `~/.o9k/usage.json` |
-| Runs | `TEAM_UP_RUNS` / `O9K_RUNS` | `~/.team-up/runs` | — |
-| Scores | `TEAM_UP_SCORES` / `O9K_SCORES` | `~/.team-up/scores.json` | `~/.o9k/roster-scores.json` |
-| Telemetry | `TEAM_UP_TELEMETRY` | `~/.team-up/telemetry` | — |
+| Concern | Environment variables | Default path |
+|---------|-----------------------|--------------|
+| Home | `TEAM_UP_HOME` | `~/.team-up` |
+| Roster | `TEAM_UP_ROSTER` / `O9K_ROSTER` | `~/.team-up/roster.json` |
+| Usage | `TEAM_UP_USAGE` / `O9K_USAGE` | `~/.team-up/usage.json` |
+| Runs | `TEAM_UP_RUNS` / `O9K_RUNS` | `~/.team-up/runs` |
+| Telemetry | `TEAM_UP_TELEMETRY` | `~/.team-up/telemetry` |
 
-Writes always target `~/.team-up` (or an explicit `TEAM_UP_*` override).
+`O9K_*` values are environment aliases only. Files under `~/.o9k` are never
+read automatically. Writes target `~/.team-up` (or an explicit
+`TEAM_UP_*` override).
 
 ## Migration from o9k
 
@@ -44,9 +45,9 @@ Exactly one of `role` or `chain`. The chain is tried top to bottom with the same
 gates as role dispatch, plus the harness capabilities the specialist needs
 (context isolation, command broker). Effort comes from the chain entry, then the
 role's `effort`, then the model's default. An unassigned specialist does not
-launch. A manifest's `model_profile` is ignored; `migrateRoster()` drops legacy
-`tier` fields, specialist tier profiles and the old `triage` block (its
-`key_file` moves to `openrouter.key_file`).
+launch. A manifest's `model_profile` is ignored. When migrating an older roster,
+remove legacy `tier` fields and the old `triage` block; move its `key_file` to
+`openrouter.key_file` if needed.
 
 ## Accounts
 
@@ -79,18 +80,14 @@ isolation is applied. See `docs/command-broker.md`.
 
 | Field | Default | Meaning |
 |-------|---------|---------|
-| `limits.warn_at` | `0.9` | Usage fraction that triggers a prepare-for-handoff warning |
-| `limits.handoff_at` | `0.95` | Usage fraction that triggers mandatory handoff |
-| `limits.handoff_at_burst` | `0.8` | Burst-window handoff threshold (5h/session windows) |
-| `limits.handoff_retention_days` | `14` | Open and closed handoff files under `~/.team-up/handoffs/` older than this are deleted by `team-up runs gc` |
+| `limits.warn_at` | `0.9` | Usage fraction that asks the agent to converge to a clean committed state |
+| `limits.handoff_at` | `0.95` | Usage fraction that triggers a TIM handoff note and session stop |
+| `limits.handoff_at_burst` | `0.8` | Burst-window threshold (5h/session windows) |
 
-The warning and handoff thresholds (the limit-watch hook and `team-up usage
+The warning and limit thresholds (the limit-watch hook and `team-up usage
 --check`) count only the windows of the CLI the calling session runs on; an
 exhausted codex window never ends a Claude Code session. When the host CLI
 cannot be detected, every window counts.
-
-Session handoff work orders live in `~/.team-up/handoffs/` (open) and
-`~/.team-up/handoffs/done/` (closed). They are not written into project repos.
 
 ## Telemetry
 

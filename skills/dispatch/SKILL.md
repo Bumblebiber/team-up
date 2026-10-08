@@ -134,6 +134,10 @@ $ROSTER dispatch --role planner --prompt-file "$PROMPT" --dir "$TASK_DIR" --run-
 #    return status; see templates/watcher-prompt.md
 ```
 
+Optional `--model <name|cli:model>` pins one CLI/model for this dispatch. It
+resolves roster ids and aliases first, then recognizable free text. A pin skips
+the role chain; omit it to use the normal chain and its fallbacks.
+
 Minimum mental model:
 
 1. `$RUNS create …` (auto-wraps mailbox protocol into `mailbox/PROMPT.md`).

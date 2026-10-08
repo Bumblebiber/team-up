@@ -18,8 +18,7 @@ import { checkModelAvailability } from "./roster/availability.mjs";
 import { LIST_TIMEOUT_MS } from "./collectors/cli-models.mjs";
 import { listVerificationRecords, loadVerificationRecord } from "./harness/verify.mjs";
 import { HARNESS_VERIFY_CLIS, UNVERIFIABLE_ISOLATION_REASONS } from "./harness/cli-verify.mjs";
-import { listOpenHandoffs, listUnreadableOpenHandoffs } from "./handoff/store.mjs";
-import { debugLogDir, handoffsDir, telemetryDir } from "./paths.mjs";
+import { debugLogDir, telemetryDir } from "./paths.mjs";
 import { journalPersistence, listRestartReports } from "./telemetry/restart.mjs";
 import { FALLBACK_REMEDY, admissionConfig, deriveLimits, memoryDelegation } from "./admission/admission.mjs";
 import { workerFootprint } from "./telemetry/stats.mjs";
@@ -353,31 +352,6 @@ export function diagnose(env = process.env, {
         fix: `drop the chain entry, or set models.${cell.model}.cli_model to the id ${cell.cli} uses`,
       });
     }
-  }
-
-  for (const bad of listUnreadableOpenHandoffs(env)) {
-    findings.push({
-      kind: "unreadable_handoff",
-      severity: "medium",
-      path: bad.path,
-      detail:
-        `handoff store entry ${path.basename(bad.path)} is unreadable ` +
-        `(${bad.error || bad.reason})`,
-      fix: `remove or repair ${bad.path}`,
-    });
-  }
-
-  for (const stale of listOpenHandoffs(env)) {
-    findings.push({
-      kind: "forgotten_handoff",
-      severity: "medium",
-      path: stale.path,
-      age_hours: stale.ageHours,
-      detail:
-        `open handoff ${path.basename(stale.path)} is ${stale.ageHours}h old ` +
-        `(store: ${handoffsDir(env)}) — successor may never have run, or forgot team-up handoff --close`,
-      fix: `team-up handoff --close ${stale.path}`,
-    });
   }
 
   // Resuming everything at once after a restart team-up probably caused

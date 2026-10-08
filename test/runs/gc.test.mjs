@@ -324,22 +324,6 @@ test("evaluateIdleSessionAction leaves unclaimed idle sessions alone", () => {
   assert.equal(decision.kind, "skip");
 });
 
-test("evaluateIdleSessionAction leaves team-up-pass sessions alone", () => {
-  const idleMs = 2 * 3_600_000;
-  const claims = sessionClaimsByTmux([
-    { status: "done", worker: { tmux: "team-up-pass-m5x2abc" } },
-  ]);
-  const decision = evaluateIdleSessionAction({
-    sessionName: "team-up-pass-m5x2abc",
-    attached: false,
-    activityMs: NOW - idleMs - 1,
-    nowMs: NOW,
-    idleSessionMs: idleMs,
-    sessionClaims: claims,
-  });
-  assert.equal(decision.kind, "skip");
-});
-
 test("evaluateIdleSessionAction kills idle terminal-run session", () => {
   const idleMs = 2 * 3_600_000;
   const claims = sessionClaimsByTmux([

@@ -239,7 +239,7 @@ test("POST without CSRF header is refused", () =>
     const { server } = createDashboardServer({ token });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
-    const r = await req(port, "/api/refresh", { method: "POST", cookie, body: {} });
+    const r = await req(port, "/api/roles/not-a-role", { method: "POST", cookie, body: {} });
     assert.equal(r.status, 403);
     assert.match(r.json.error, /csrf/i);
     server.close();
@@ -250,7 +250,7 @@ test("foreign Origin on POST is refused", () =>
     const { server } = createDashboardServer({ token });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
-    const r = await req(port, "/api/refresh", {
+    const r = await req(port, "/api/roles/not-a-role", {
       method: "POST",
       cookie,
       csrf: true,
@@ -266,7 +266,7 @@ test("the configured public origin passes the CSRF check", () =>
     const { server } = createDashboardServer({ token, publicOrigin: "https://dash.example", requireAdminConfirm: true });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
-    const r = await req(port, "/api/refresh", {
+    const r = await req(port, "/api/roles/not-a-role", {
       method: "POST",
       cookie,
       csrf: true,
@@ -289,7 +289,7 @@ test("several public origins are accepted, one per name the host answers to", ()
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
     for (const origin of ["http://strato:8556", "http://strato.example.ts.net:8556"]) {
-      const r = await req(port, "/api/refresh", {
+      const r = await req(port, "/api/roles/not-a-role", {
         method: "POST",
         cookie,
         csrf: true,
@@ -306,7 +306,7 @@ test("a public origin does not open the door to other origins", () =>
     const { server } = createDashboardServer({ token, publicOrigin: "https://dash.example" });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
-    const r = await req(port, "/api/refresh", {
+    const r = await req(port, "/api/roles/not-a-role", {
       method: "POST",
       cookie,
       csrf: true,
@@ -323,7 +323,7 @@ test("write without admin capability is refused when the gate is on", () =>
     const { server } = createDashboardServer({ token, requireAdminConfirm: true });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
-    const r = await req(port, "/api/refresh", {
+    const r = await req(port, "/api/roles/not-a-role", {
       method: "POST",
       cookie,
       csrf: true,
@@ -343,7 +343,7 @@ test("expired admin capability is refused", () =>
     const cookie = await loginCookie(port, token);
     await grantAdmin(port, cookie, adminGate);
     ts += adminGate.CAPABILITY_TTL_MS + 1;
-    const r = await req(port, "/api/refresh", {
+    const r = await req(port, "/api/roles/not-a-role", {
       method: "POST",
       cookie,
       csrf: true,
@@ -360,7 +360,7 @@ test("write endpoint on non-loopback bind is refused", () =>
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
     await grantAdmin(port, cookie, adminGate, { viaHttp: false });
-    const r = await req(port, "/api/refresh", {
+    const r = await req(port, "/api/roles/not-a-role", {
       method: "POST",
       cookie,
       csrf: true,
@@ -491,7 +491,7 @@ test("a refused write is written to the audit log", () =>
     const { server } = createDashboardServer({ token, requireAdminConfirm: true });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
-    await req(port, "/api/refresh", { method: "POST", cookie, csrf: true, body: {} });
+    await req(port, "/api/roles/not-a-role", { method: "POST", cookie, csrf: true, body: {} });
     server.close();
     // The refusal happens before the handler, so this line is the only record
     // that anyone tried at all.
@@ -499,7 +499,7 @@ test("a refused write is written to the audit log", () =>
       .trim().split("\n").map((l) => JSON.parse(l));
     const denied = lines.find((l) => l.action === "write.denied");
     assert.ok(denied, `expected a write.denied line, got ${JSON.stringify(lines)}`);
-    assert.equal(denied.target, "/api/refresh");
+    assert.equal(denied.target, "/api/roles/not-a-role");
     assert.equal(denied.result, "fail");
   }));
 
@@ -508,7 +508,7 @@ test("a write refused for a bad origin is audited too", () =>
     const { server } = createDashboardServer({ token });
     const port = await listen(server);
     const cookie = await loginCookie(port, token);
-    await req(port, "/api/refresh", {
+    await req(port, "/api/roles/not-a-role", {
       method: "POST",
       cookie,
       csrf: true,

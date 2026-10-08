@@ -2,26 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { resolveReadPath, resolveWritePath, teamUpHome, legacyO9kHome } from "../../src/paths.mjs";
+import { resolveReadPath, resolveWritePath, teamUpHome } from "../../src/paths.mjs";
 
-test("resolveReadPath falls back to o9k when team-up missing", () => {
+test("resolveReadPath uses team-up by default, not O9K_HOME", () => {
   const home = "/tmp/fake-home";
   const env = { HOME: home, TEAM_UP_HOME: path.join(home, ".team-up"), O9K_HOME: path.join(home, ".o9k") };
-  const o9kPath = path.join(legacyO9kHome(env), "roster.json");
   const teamUpPath = path.join(teamUpHome(env), "roster.json");
   assert.equal(
     resolveReadPath({
       teamUpEnv: "TEAM_UP_ROSTER",
       o9kEnv: "O9K_ROSTER",
       teamUpRelative: "roster.json",
-      o9kRelative: "roster.json",
       env,
-      teamUpExists: false,
-      o9kExists: true,
     }),
-    o9kPath
+    teamUpPath
   );
-  assert.notEqual(teamUpPath, o9kPath);
 });
 
 test("resolveWritePath always targets team-up", () => {
@@ -48,12 +43,18 @@ test("explicit TEAM_UP env wins over legacy", () => {
       teamUpEnv: "TEAM_UP_ROSTER",
       o9kEnv: "O9K_ROSTER",
       teamUpRelative: "roster.json",
-      o9kRelative: "roster.json",
       env,
-      teamUpExists: false,
-      o9kExists: false,
     }),
     "/tmp/tu-roster.json"
+  );
+  assert.equal(
+    resolveReadPath({
+      teamUpEnv: "TEAM_UP_ROSTER",
+      o9kEnv: "O9K_ROSTER",
+      teamUpRelative: "roster.json",
+      env: { O9K_ROSTER: "/tmp/o9k-roster.json", TEAM_UP_HOME: "/tmp/home/.team-up" },
+    }),
+    "/tmp/o9k-roster.json"
   );
 });
 
@@ -98,19 +99,6 @@ test("runsRoot honours TEAM_UP_HOME, like every other path helper", async () => 
   process.env.TEAM_UP_HOME = "/tmp/tu-isolation-probe";
   try {
     assert.equal(runsRoot(), "/tmp/tu-isolation-probe/runs");
-  } finally {
-    if (prior === undefined) delete process.env.TEAM_UP_HOME;
-    else process.env.TEAM_UP_HOME = prior;
-  }
-});
-
-test("handoffs paths stay inside TEAM_UP_HOME", async () => {
-  const { handoffsDir, handoffsDoneDir } = await import("../../src/paths.mjs");
-  const prior = process.env.TEAM_UP_HOME;
-  process.env.TEAM_UP_HOME = "/tmp/tu-handoffs-home";
-  try {
-    assert.equal(handoffsDir(), "/tmp/tu-handoffs-home/handoffs");
-    assert.equal(handoffsDoneDir(), "/tmp/tu-handoffs-home/handoffs/done");
   } finally {
     if (prior === undefined) delete process.env.TEAM_UP_HOME;
     else process.env.TEAM_UP_HOME = prior;

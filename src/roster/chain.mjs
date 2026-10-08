@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   modelUsageGate,
   windowIsBlocking,
@@ -365,7 +363,7 @@ export function checkThresholds({ roster, usage, now = Date.now(), collectCli, h
         handoff = true;
         if (cli && stale) needsRefresh.add(cli);
       } else if (info.used >= warn_at) {
-        lines.push(`⚠️ team-up roster: ${wkey} at ${pct}% — prepare for handoff: converge to a checkpointable state.`);
+        lines.push(`⚠️ team-up roster: ${wkey} at ${pct}% — converge to a clean committed state.`);
       }
     }
   } else {
@@ -376,7 +374,7 @@ export function checkThresholds({ roster, usage, now = Date.now(), collectCli, h
         lines.push(`⛔ team-up roster: ${provider} at ${pct}% — session limit reached.`);
         handoff = true;
       } else if (info.used >= warn_at) {
-        lines.push(`⚠️ team-up roster: ${provider} at ${pct}% — prepare for handoff: converge to a checkpointable state.`);
+        lines.push(`⚠️ team-up roster: ${provider} at ${pct}% — converge to a clean committed state.`);
       }
     }
   }
@@ -386,14 +384,9 @@ export function checkThresholds({ roster, usage, now = Date.now(), collectCli, h
     }
   }
   if (handoff) {
-    const rosterScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "roster.mjs");
     lines.push(
-      "Do this now: (1) write the handoff content (HANDOFF.md in the task dir, or any file for --handoff-file); " +
-      "include current state, done steps, open steps, verification commands — " +
-      "do not leave HANDOFF.md in the working directory after step (2), " +
-      `(2) run node ${rosterScript} handoff --role <your role> --dir "$PWD" ` +
-      "(or pass --handoff-file <path>), " +
-      "(3) report the printed tmux session + attach command to the user, (4) stop working in this session."
+      "Limit reached: write a TIM handoff note with the tim-handoff skill; " +
+      "if the provider limit is hit, run `team-up mark-limited <model|provider> --ttl <30m|5h|1d>` through its reset; then stop working in this session."
     );
   }
   return { message: lines.join("\n"), needsRefresh: [...needsRefresh] };

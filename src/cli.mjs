@@ -314,20 +314,15 @@ export async function runCli(args, io = { out: console.log, err: console.error }
     [
       "init",
       "dispatch",
-      "handoff",
-      "pass-to",
       "mark-limited",
       "usage",
-      "refresh",
-      "propose",
-      "apply-scores",
     ].includes(cmd)
   ) {
     // Preserve roster CLI surface through the facade (uses console directly).
     return runRosterCli(args);
   }
   io.err(
-    "usage: team-up <version|init|validate|doctor|pick|models|dispatch|handoff|\npass-to|mark-limited|usage|refresh|propose|apply-scores|runs|specialist|\ncapability|telemetry|admission|harness|dashboard>"
+    "usage: team-up <version|init|validate|doctor|pick|models|dispatch|mark-limited|usage|runs|specialist|capability|telemetry|admission|harness|dashboard>"
   );
   return 1;
 }

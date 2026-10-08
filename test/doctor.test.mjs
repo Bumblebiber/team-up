@@ -7,11 +7,10 @@ import { diagnose } from "../src/doctor.mjs";
 import { appendSample } from "../src/telemetry/store.mjs";
 import { ISOLATION_FORBIDDEN_CANARIES } from "../src/harness/isolation-canary.mjs";
 
-// The whole world a diagnosis may see. O9K_HOME is named too because the read
-// paths fall back to the legacy home for migration, and an unnamed one is the
-// host's — which is how the host's roster reached these tests to begin with.
+// The whole world a diagnosis may see. An unnamed TEAM_UP_HOME is the host's,
+// which is how the host's roster reached these tests to begin with.
 function homeEnv(home) {
-  return { TEAM_UP_HOME: home, O9K_HOME: home };
+  return { TEAM_UP_HOME: home };
 }
 
 function withHome(state, fn) {

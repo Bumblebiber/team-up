@@ -7,7 +7,6 @@ import {
   parseChainEntry, firstPositional, resolveLimitWindows, resolvePickAfterRefresh,
   validateRoster, resolveDispatchDir,
 } from "../../src/roster/roster.mjs";
-import { fileURLToPath } from "node:url";
 
 const ROSTER = {
   clis: {
@@ -254,27 +253,25 @@ test("checkThresholds is silent below warn_at", () => {
   assert.equal(checkThresholds({ roster: ROSTER, usage, now: NOW }).message, "");
 });
 
-test("checkThresholds warns at warn_at and instructs handoff at handoff_at", () => {
+test("checkThresholds asks for a clean commit at warning and a TIM note at threshold", () => {
   const warn = checkThresholds({
     roster: ROSTER,
     usage: { providers: { anthropic: { used: 0.91 } } },
     now: NOW,
   });
   assert.match(warn.message, /anthropic at 91%/);
-  assert.match(warn.message, /prepare for handoff/i);
-  assert.doesNotMatch(warn.message, /HANDOFF\.md/);
+  assert.match(warn.message, /clean committed state/i);
+  assert.doesNotMatch(warn.message, /team-up handoff|pass-to/i);
 
   const handoff = checkThresholds({
     roster: ROSTER,
     usage: { providers: { anthropic: { used: 0.96 } } },
     now: NOW,
   });
-  assert.match(handoff.message, /HANDOFF\.md in the task dir/);
-  assert.match(handoff.message, /--handoff-file/);
-  const rosterScript = fileURLToPath(new URL("../../src/roster/roster.mjs", import.meta.url));
-  const handoffCmd = `node ${rosterScript} handoff`;
-  assert.equal((handoff.message.match(new RegExp(handoffCmd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length, 1);
-  assert.doesNotMatch(handoff.message, /<o9k>/);
+  assert.match(handoff.message, /TIM handoff note with the tim-handoff skill/);
+  assert.match(handoff.message, /team-up mark-limited/);
+  assert.match(handoff.message, /stop working in this session/);
+  assert.doesNotMatch(handoff.message, /team-up handoff|pass-to|HANDOFF\.md/);
 });
 
 test("buildCommand substitutes model and prompt per argv element", () => {

@@ -21,12 +21,12 @@ test("an alias shows the version its CLI resolves it to", () => {
   assert.equal(modelLabel(roster, {}, "claude-opus"), "claude-opus");
 });
 
-test("saving a chain creates the role and pins its head", () => {
+test("saving a chain creates the role without score-pipeline metadata", () => {
   const next = applyRoleEdit(roster, {
     role: "scout", chain: [{ cli: "claude", model: "claude-opus" }, { cli: "codex", model: "gpt-6-sol", effort: "high" }],
   });
   assert.deepEqual(next.roles.scout, {
-    chain: ["claude:claude-opus", { model: "gpt-6-sol", cli: "codex", effort: "high" }], pin_head: true,
+    chain: ["claude:claude-opus", { model: "gpt-6-sol", cli: "codex", effort: "high" }],
   });
   assert.equal(roster.roles.scout, undefined, "input untouched");
 });
@@ -49,6 +49,7 @@ test("settings: only whitelisted paths, typed", () => {
   assert.throws(() => applySettingsEdit(roster, { path: "accounts.nope.enabled", value: true }), /invalid/);
   assert.throws(() => applySettingsEdit(roster, { path: "subscriptions", value: ["ghost"] }), /invalid/);
   assert.throws(() => applySettingsEdit(roster, { path: "triage.enabled", value: true }), /not editable/);
+  assert.throws(() => applyRoleEdit(roster, { role: "planner", pin_head: true }), /expected chain or delete/);
   assert.throws(() => applySettingsEdit(roster, { path: "accounts.claude.remaining", value: 3 }), /invalid/);
 });
 

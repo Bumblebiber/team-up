@@ -682,18 +682,6 @@ export function linkDispatchToRun(runId, session, { model, cli, effort } = {}) {
   return true;
 }
 
-/** Record an escalation launched from a worker that has TEAMUP_RUN_ID. */
-export function recordRunEscalation(runId, kind, at = new Date()) {
-  if (!runId) return false;
-  if (kind !== "handoff" && kind !== "pass-to") throw new Error(`unknown escalation ${kind}`);
-  updateState(runId, (state) => {
-    state.escalations = state.escalations || [];
-    state.escalations.push({ kind, at: at.toISOString() });
-    return state;
-  });
-  return true;
-}
-
 export function writeAnswer(runId, body, { source = "parent" } = {}) {
   const header = `<!-- source: ${source} -->\n`;
   atomicWriteText(path.join(mailboxDir(runId), "ANSWER.md"), header + body.trim() + "\n");

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   runsRoot, runDir, atomicWriteJson, atomicWriteText, createRun, loadState, saveState, updateState,
   classifyMailbox, writeAnswer, buildResumePlan, coldStartArgv, buildCliArgv,
-  setStatus, resumeAll, linkDispatchToRun, recordRunEscalation, listActiveStates,
+  setStatus, resumeAll, linkDispatchToRun, listActiveStates,
   acquireResumeLock, resumeLockPath, waitTmuxReady,
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
   resolveGitBase, isValidRunId, listAllStates, executeResumeAction,
@@ -581,21 +581,6 @@ test("linkDispatchToRun sets worker.tmux and watching", withTempRuns(async () =>
   assert.equal(st.worker.effort, "high");
   assert.equal(st.status, "watching");
   assert.equal(st.watcher.attached, true);
-}));
-
-test("recordRunEscalation stores handoff and pass-to events", withTempRuns(async () => {
-  const state = createRun({
-    cwd: "/tmp/p", role: "implementer",
-    parent: { cli: "claude", attach: "manual" },
-    worker: { cli: "codex" }, prompt: "x",
-  });
-  assert.equal(recordRunEscalation(null, "handoff"), false);
-  recordRunEscalation(state.runId, "handoff", new Date("2026-09-22T10:00:00Z"));
-  recordRunEscalation(state.runId, "pass-to", new Date("2026-09-22T10:01:00Z"));
-  assert.deepEqual(loadState(state.runId).escalations, [
-    { kind: "handoff", at: "2026-09-22T10:00:00.000Z" },
-    { kind: "pass-to", at: "2026-09-22T10:01:00.000Z" },
-  ]);
 }));
 
 test("CLI wait ceiling returns exit 2", withTempRuns(async (dir) => {

@@ -63,7 +63,7 @@ export function offeredIds(store, cli, now = Date.now()) {
  * a copy of its newest sibling on that CLI (reasoning, account, limit
  * windows), minus anything that describes the old version (price, notes).
  * Only families the roster already runs on that CLI; a new family is a
- * judgement for `team-up propose`, not for a version bump.
+ * manual roster edit, not for a version bump.
  * @returns {{ next: object, added: Array<{ id, cli, from }> }}
  */
 export function addOfferedVersions(roster, store, now = Date.now()) {

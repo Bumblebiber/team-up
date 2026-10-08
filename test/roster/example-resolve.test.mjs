@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { migrateRoster } from "../../src/roster/migrate.mjs";
 import { validateRoster } from "../../src/roster/config.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 
@@ -18,52 +17,6 @@ test("shipped example roster resolves every starter specialist through its role"
     assert.equal(r.code, "OK", `${id}: ${JSON.stringify(r.skipped.slice(0, 8))}`);
     assert.deepEqual(r.profile, { role });
   }
-});
-
-test("migration drops tiers, specialist tier profiles and triage, keeping the OpenRouter key file", () => {
-  const legacy = JSON.parse(fs.readFileSync(examplePath, "utf8"));
-  delete legacy.openrouter;
-  delete legacy.specialists;
-  legacy.models["claude-sonnet-5"].tier = "mid";
-  legacy.triage = { enabled: false, key_file: "~/.hermes/.env", roles: ["implementer"] };
-  legacy.specialists = { "review.revan": { model_profile: { tier: "frontier", reasoning: "max" } } };
-  delete legacy.accounts;
-
-  const migrated = migrateRoster(legacy);
-  assert.equal(migrated.models["claude-sonnet-5"].tier, undefined);
-  assert.equal(migrated.triage, undefined);
-  assert.deepEqual(migrated.openrouter, { key_file: "~/.hermes/.env" });
-  assert.equal(migrated.specialists, undefined);
-  assert.ok(migrated.accounts.claude);
-  assert.deepEqual(validateRoster(migrated).errors, []);
-});
-
-test("legacy Claude command gains an effort slot without losing tmux auto-approval", () => {
-  const migrated = migrateRoster({
-    clis: {
-      claude: {
-        cmd: [
-          "claude",
-          "--dangerously-skip-permissions",
-          "--model",
-          "{model}",
-          "{prompt}",
-        ],
-      },
-    },
-    models: {},
-    roles: {},
-  });
-
-  assert.deepEqual(migrated.clis.claude.cmd, [
-    "claude",
-    "--dangerously-skip-permissions",
-    "--model",
-    "{model}",
-    "--effort",
-    "{effort}",
-    "{prompt}",
-  ]);
 });
 
 test("hot provider without limit_windows is gated like pick()", () => {

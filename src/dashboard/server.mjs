@@ -41,7 +41,6 @@ import {
   readMailboxFiles,
   sanitizeForDashboard,
 } from "./data.mjs";
-import { collectScores, buildRoleScores, writeScores } from "../scores/scores.mjs";
 import { createAdminGate } from "./admin.mjs";
 import { appendAudit } from "./audit.mjs";
 import {
@@ -658,28 +657,6 @@ export function createDashboardServer({
         }
         auditServerFailure(env, "provider.remove", "openrouter");
         jsonResponse(res, 500, { error: "server error" });
-      }
-      return;
-    }
-
-    if (req.method === "POST" && pathname === "/api/refresh") {
-      if (!requireWriteAccess(req, res)) return;
-      try {
-        const roster = loadRoster(env);
-        const collected = await collectScores({ fetchFn, env });
-        collected.role_scores = buildRoleScores(collected, roster);
-        const dest = writeScores(collected);
-        appendAudit(
-          { actor: "127.0.0.1", action: "refresh", target: dest, result: "ok" },
-          { env },
-        );
-        jsonResponse(res, 200, { ok: true, path: dest });
-      } catch (e) {
-        appendAudit(
-          { actor: "127.0.0.1", action: "refresh", target: "scores.json", result: "fail" },
-          { env },
-        );
-        jsonResponse(res, 500, { error: String(e.message || e) });
       }
       return;
     }

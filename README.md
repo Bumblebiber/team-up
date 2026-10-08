@@ -66,8 +66,9 @@ node bin/team-up.mjs runs create ...
 node bin/team-up.mjs runs wait <run-id>
 ```
 
-State lives under `~/.team-up` (override with `TEAM_UP_HOME`). Reads may fall
-back to `~/.o9k` during migration; writes never touch `~/.o9k`.
+State lives under `~/.team-up` (override with `TEAM_UP_HOME`). The legacy
+`O9K_*` environment aliases still work; files under `~/.o9k` are not read
+automatically. Copy needed state into `~/.team-up` during migration.
 
 ## Capability isolation
 

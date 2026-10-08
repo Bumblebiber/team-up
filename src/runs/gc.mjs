@@ -16,7 +16,6 @@ import {
   stopTmuxSession,
 } from "./tmux.mjs";
 import { markVerificationPending, verifierAlive } from "./verification.mjs";
-import { gcHandoffs, readHandoffRetentionDays } from "../handoff/store.mjs";
 import { loadJson, configPath, usagePath, usageWritePath } from "../roster/config.mjs";
 import { pruneExpiredMarks } from "../roster/chain.mjs";
 
@@ -93,7 +92,6 @@ export function evaluateIdleSessionAction({
   sessionClaims,
 }) {
   if (!isManagedTeamUpSession(sessionName)) return { kind: "skip" };
-  if (sessionName.startsWith("team-up-pass-")) return { kind: "skip" };
   const state = sessionClaims?.get(sessionName);
   if (!state) return { kind: "skip" };
   if (!TERMINAL_RUN.has(state.status)) return { kind: "skip" };
@@ -291,14 +289,6 @@ export function gcRuns({
       if (!dryRun) clearStaleDetected(state.runId);
       report.runs.push({ runId: state.runId, action: "clear_stale" });
     }
-  }
-
-  try {
-    const roster = loadJson(configPath());
-    const retentionDays = readHandoffRetentionDays(roster, { warn: () => {} });
-    report.handoffs = gcHandoffs({ now, retentionDays, dryRun });
-  } catch (error) {
-    report.handoffs = { error: String(error.message || error) };
   }
 
   try {

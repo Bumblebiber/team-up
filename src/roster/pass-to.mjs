@@ -1,5 +1,5 @@
-// pass-to.mjs — resolve a free-form model string to {cli, model} for manual
-// session handoff. Roster-first (exact → fuzzy); heuristic only when no hits.
+// pass-to.mjs — resolve dispatch --model free text to {cli, model}.
+// Roster-first (exact → fuzzy); heuristic only when no hits.
 // Pure: no I/O. Kept separate from roster.mjs to avoid circular imports.
 
 import { cliModelAliases } from "./config.mjs";
@@ -164,7 +164,7 @@ export function findRosterMatches(query, roster) {
 }
 
 /**
- * Resolve pass-to target.
+ * Resolve a free-text model target.
  * @returns {{
  *   status: "ok"|"ambiguous"|"unresolved"|"error",
  *   model?: string,
