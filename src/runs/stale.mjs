@@ -6,6 +6,9 @@ import { tmuxSessionExists } from "./tmux.mjs";
 /** Statuses after which a run is finished and cannot be stuck. */
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
 
+/** Statuses gc watches for idleness, and the only ones where it clears its marker. */
+const ACTIVE = new Set(["starting", "watching"]);
+
 /** Default age past which a quiet run is worth a human's attention. */
 export const DEFAULT_THRESHOLD_MS = 6 * 60 * 60 * 1000;
 
@@ -23,9 +26,10 @@ export const REATTACH_GRACE_MS = 10 * 60 * 1000;
  * seven runs had accumulated here, one of them a `waiting_human` that had been
  * asking whether a session was still alive for 31 days.
  *
- * A run is reported when it is unfinished and either its terminal is gone or
- * its mailbox has been silent past the threshold. `reasons` says which, so the
- * report can be read without opening anything.
+ * A run is reported when it is unfinished and its terminal is gone, its
+ * mailbox has been silent past the threshold, nobody re-attached a watcher
+ * after a resume, or gc marked an active run idle. `reasons` says which, so
+ * the report can be read without opening anything.
  */
 export function findStaleRuns({
   env = process.env,
@@ -74,7 +78,9 @@ export function findStaleRuns({
     else if (!alive) reasons.push("terminal is gone");
     if (heartbeatMs === null) reasons.push("no heartbeat was ever written");
     else if (silentMs > thresholdMs) reasons.push("mailbox silent");
-    if (state.cleanup?.stale_detected_at) reasons.push("gc found it idle");
+    // gc clears the marker only while a run is starting/watching; on any other
+    // status it would linger from an earlier quiet spell.
+    if (ACTIVE.has(state.status) && state.cleanup?.stale_detected_at) reasons.push("gc found it idle");
 
     if (!reasons.length) continue;
 

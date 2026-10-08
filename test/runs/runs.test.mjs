@@ -374,9 +374,8 @@ test("buildResumePlan leaves the parent to the grouped wake-up", () => {
 });
 
 // executeResumeAction refuses these, so a spawn_worker parked for resources
-// was replayed and refused every retry, stuck in waiting_capacity, where the
-// supervisor's recover_crash never looks.
-test("buildResumePlan leaves a run launched from a descriptor to the supervisor", () => {
+// would be replayed and refused every retry, stuck in waiting_capacity.
+test("buildResumePlan does not plan a respawn for a run launched from a descriptor", () => {
   const plan = buildResumePlan({
     status: "watching",
     runId: "20260101T000000Z-r001",
@@ -455,8 +454,8 @@ test("a cold start the roster cannot rebuild says why instead of launching somet
 
 // A specialist runs inside a capsule its launch descriptor sets up; the
 // roster's clis.claude.cmd (--dangerously-skip-permissions) would bring it
-// back outside it, and so would a bare `claude --resume <id>`. The
-// supervisor's recover_crash restores those.
+// back outside it, and so would a bare `claude --resume <id>`. Nothing
+// respawns those; `runs stale` reports them.
 test("resume refuses to respawn a run launched from a descriptor, cold or by session", () => {
   const specialist = {
     runId: "20260101T000000Z-r001",

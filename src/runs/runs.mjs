@@ -737,7 +737,7 @@ export function buildResumePlan(state, {
   // A run launched from a descriptor is not restored automatically: a cold
   // start would bring it back outside its capsule, so executeResumeAction
   // refuses it and an action parked for resources would be refused forever in
-  // waiting_capacity. `runs stale` reports it; `specialist run` restarts it.
+  // waiting_capacity. `runs stale` reports it; a new `specialist run` replaces it.
   const crashSpawnDisabled =
     state.recovery?.crash_spawn === false ||
     state.capacity?.wait_cancelled === true ||
@@ -947,7 +947,7 @@ export function executeResumeAction(action, state, {
   // (the roster command) or a bare session resume would bring it back outside
   // it, with the roster's permissions.
   if (state.launch_descriptor) {
-    throw new Error(`resume of ${state.runId}: launched from a launch descriptor; restart it with \`specialist run\``);
+    throw new Error(`resume of ${state.runId}: launched from a launch descriptor; cancel it and start a new \`specialist run\``);
   }
 
   const resumed = buildCliArgv({ cli: action.cli, sessionId: action.sessionId });

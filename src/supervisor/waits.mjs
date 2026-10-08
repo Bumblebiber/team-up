@@ -171,7 +171,7 @@ export async function resumeDueWaits({
       } else {
         if (typeof startWorker !== "function") throw new Error("no starter for a parked launch descriptor");
         // ponytail: starts the cell frozen in the descriptor without rechecking
-        // limits or mark-limited; add a pick/chain check here if specialist
+        // usage limits or mark-limited; add a pick/chain check here if specialist
         // resource waits see real use.
         await startWorker({ runId, state });
       }

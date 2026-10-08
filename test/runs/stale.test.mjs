@@ -149,3 +149,16 @@ test("a run gc marked idle is reported before the heartbeat threshold", () => {
   assert.deepEqual(found.reasons, ["gc found it idle"]);
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("a gc marker left on a protected run is not reported", () => {
+  // gc marks a quiet worker, the worker then asks a question: gc skips
+  // waiting_human before it would clear the marker, so the marker lingers.
+  const root = runsRoot();
+  const dir = plant(root, "r-asks", { status: "waiting_human", session: "team-up-x", heartbeatAgeMs: 0 });
+  const statePath = path.join(dir, "STATE.json");
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  state.cleanup = { stale_detected_at: new Date(NOW - 60 * 60_000).toISOString() };
+  fs.writeFileSync(statePath, JSON.stringify(state));
+  assert.deepEqual(findStaleRuns({ root, now: NOW, sessionAlive: alwaysAlive }), []);
+  fs.rmSync(root, { recursive: true, force: true });
+});
