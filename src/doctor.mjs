@@ -15,13 +15,10 @@ import { configPath, loadJson, validateRoster } from "./roster/config.mjs";
 import { defaultHarnessCapabilities, harnessStatus, listHarnessAdapters } from "./harness/registry.mjs";
 import { checkModelAvailability } from "./roster/availability.mjs";
 import { LIST_TIMEOUT_MS } from "./collectors/cli-models.mjs";
-import { listVerificationRecords, loadVerificationRecord } from "./harness/verify.mjs";
-import { HARNESS_VERIFY_CLIS, UNVERIFIABLE_ISOLATION_REASONS } from "./harness/cli-verify.mjs";
 import { debugLogDir, telemetryDir } from "./paths.mjs";
 import { journalPersistence, listRestartReports } from "./telemetry/restart.mjs";
-import { FALLBACK_REMEDY, admissionConfig, deriveLimits, memoryDelegation } from "./admission/admission.mjs";
+import { FALLBACK_REMEDY, admissionConfig, deriveLimits } from "./admission/admission.mjs";
 import { workerFootprint } from "./telemetry/stats.mjs";
-import { listActiveStates } from "./runs/runs.mjs";
 
 function readJson(file) {
   try {
@@ -44,8 +41,6 @@ function readJson(file) {
 export function diagnose(env = process.env, {
   execFileSync,
   journalStore = journalPersistence,
-  delegation = memoryDelegation,
-  activeStates = () => listActiveStates({ onCorrupt: () => {} }),
 } = {}) {
   const findings = [];
   const installed = listInstalled(env).specialists ?? {};
@@ -87,12 +82,9 @@ export function diagnose(env = process.env, {
     }
   }
 
-  // A specialist with no role or chain, or whose chain no roster cell can
-  // satisfy, installs without complaint, then fails at
-  // launch with PROFILE_UNAVAILABLE. Nothing between building it and running
-  // it says so. Asking the real resolver is the only honest check: the reason
-  // is often not the chain itself but an adapter with no verified context
-  // isolation on this host.
+  // A specialist with no role or chain installs without complaint, then fails
+  // at launch with PROFILE_UNAVAILABLE. The resolver checks declared adapter
+  // support; verification health is reported separately as a warning.
   // The roster comes from the env we were handed, like everything else here.
   // Reading the caller's real environment instead mixed the specialists of one
   // home with the roster of another, and made the answer depend on the host.
@@ -151,101 +143,36 @@ export function diagnose(env = process.env, {
     }
   }
 
-  // Harness verification is keyed by CLI version, so a self-update silently
-  // revokes every grant on the host. Until now that surfaced only as
-  // `no_model_for_profile` — the symptom, named after the roster, and only
-  // when a specialist with a model_profile happened to be installed. This
-  // reports the cause directly and does not care whether anything is
-  // installed.
-  //
-  // Only adapters that already have a record are inspected: an adapter with
-  // none cannot have drifted, and skipping them keeps `diagnose` free of a
-  // subprocess per CLI in the common case (a fresh home has no records).
-  // A finding whose fix cannot work is worse than no finding: this cron runs
-  // daily, and two permanently-red highs teach the reader to skip the report.
-  // `harness verify` has a runner for claude and codex only, and codex can
-  // never pass context-isolation/v1 (it has no plugin/framework surface). Both
-  // are real — capabilities stay revoked — but they are facts to record, not
-  // work to do, so they get their own kind and a fix line that says so.
-  const unverifiable = (cli, isoReason) =>
-    !HARNESS_VERIFY_CLIS.has(cli) || UNVERIFIABLE_ISOLATION_REASONS.has(isoReason);
-  const unverifiableFix = (cli, isoReason) =>
-    HARNESS_VERIFY_CLIS.has(cli)
-      ? `none — ${cli} cannot satisfy context-isolation/v1 (${isoReason}); `
-        + "grants stay revoked until it grows the surface or the contract changes"
-      : `none — \`harness verify\` has no runner for ${cli}; `
-        + "grants stay revoked until one is written";
-
+  // Verification is health evidence only. It never changes adapter grants or
+  // specialist eligibility; missing, failed, and drifted records are warnings.
   for (const cli of listHarnessAdapters()) {
-    if (!listVerificationRecords(cli, env).length) continue;
     const status = harnessStatus(cli, execFileSync ? { env, execFileSync } : { env });
-    if (status.status === "drifted") {
-      const cannotVerify = unverifiable(cli, null);
-      findings.push({
-        kind: cannotVerify ? "harness_verification_unsupported" : "harness_version_drift",
-        severity: cannotVerify ? "low" : "high",
-        cli,
-        installed: status.installed_version,
-        last_verified: status.last_verified_version,
-        detail: status.stale_proof
-          ? `${cli} ${status.installed_version} passed on ${status.last_checked_at} against an older ` +
-            "canary set; its isolation grant is withheld until it is re-verified"
-          : `${cli} ${status.installed_version} has no verification record ` +
-            `(${status.last_verified_version} passed on ${status.last_checked_at}); ` +
-            (status.fallback_version
-              ? `launches run the pinned ${status.fallback_version} until it is re-verified`
-              : "every capability it granted is revoked until it is re-verified"),
-        fix: cannotVerify
-          ? unverifiableFix(cli, null)
-          : "team-up harness reverify",
-      });
-      continue;
-    }
-    if (status.status !== "failed" || !status.installed_version) continue;
-    const record = loadVerificationRecord(cli, status.installed_version, env)
-      ?? (status.record_version
-        ? loadVerificationRecord(cli, status.record_version, env)
-        : null);
-    if (!record || record.status === "verified") continue;
-    const isoReason = record.context_isolation_reason?.code;
-    const brokerReason = record.command_broker_reason?.code;
-    const reasonBits = [];
-    if (isoReason) {
-      reasonBits.push(
-        `context_isolation: ${isoReason}${
-          record.context_isolation_reason.detail
-            ? ` (${record.context_isolation_reason.detail})`
-            : ""
-        }`
-      );
-    } else if (record.status === "unverified" || record.status === "failed") {
-      reasonBits.push(`context_isolation: ${record.status}`);
-    }
-    if (brokerReason) {
-      reasonBits.push(
-        `command_broker: ${brokerReason}${
-          record.command_broker_reason.detail
-            ? ` (${record.command_broker_reason.detail})`
-            : ""
-        }`
-      );
-    }
-    const cannotVerify = unverifiable(cli, isoReason);
+    if (!["no_record", "failed", "drifted"].includes(status.status)) continue;
+    const reasonText = (label, value) => value?.code
+      ? `${label}: ${value.code}${value.detail ? ` (${value.detail})` : ""}`
+      : null;
+    const reasons = [
+      reasonText("context_isolation", status.context_isolation_reason),
+      reasonText("command_broker", status.command_broker_reason),
+    ].filter(Boolean);
     findings.push({
-      kind: cannotVerify ? "harness_verification_unsupported" : "harness_verification_failed",
-      severity: cannotVerify ? "low" : "high",
+      kind: status.status === "drifted" ? "harness_version_drift" : `harness_verification_${status.status === "no_record" ? "missing" : "failed"}`,
+      severity: "warning",
       cli,
       installed: status.installed_version,
-      status: record.status,
-      ...(isoReason ? { context_isolation_reason: isoReason } : {}),
-      ...(brokerReason ? { command_broker_reason: brokerReason } : {}),
-      detail:
-        `${cli} ${status.installed_version} harness verification ${record.status}` +
-        (reasonBits.length ? ` — ${reasonBits.join("; ")}` : "") +
-        (status.fallback_version ? ` — launches run the pinned ${status.fallback_version} meanwhile` : ""),
-      fix: cannotVerify
-        ? unverifiableFix(cli, isoReason)
-        : `team-up harness verify ${cli} --fixture-project <path>`,
+      status: status.status,
+      ...(status.record_status ? { record_status: status.record_status } : {}),
+      ...(status.context_isolation_reason?.code
+        ? { context_isolation_reason: status.context_isolation_reason.code }
+        : {}),
+      ...(status.command_broker_reason?.code
+        ? { command_broker_reason: status.command_broker_reason.code }
+        : {}),
+      detail: `${cli} ${status.installed_version} harness verification ${status.status}`
+        + (status.record_status ? ` (${status.record_status})` : "")
+        + (reasons.length ? ` — ${reasons.join("; ")}` : "")
+        + "; specialist launches continue using the declared adapter capabilities",
+      fix: `team-up harness verify ${cli}`,
     });
   }
 
@@ -343,47 +270,14 @@ export function diagnose(env = process.env, {
     }
   }
 
-  // Per-worker memory ceilings (plan 3) only exist where the memory
-  // controller is delegated, and only for workers that run under systemd-run.
-  const ceiling = admission?.memory_ceiling;
-  const memoryDelegated = delegation();
-  if (ceiling?.enabled) {
-    if (memoryDelegated.delegated !== true) {
-      findings.push({
-        kind: "memory_ceiling_unavailable",
-        severity: "medium",
-        path: memoryDelegated.path,
-        detail: memoryDelegated.delegated === false
-          ? "admission.memory_ceiling is on, but the user manager has no memory controller: MemoryMax will not hold"
-          : "admission.memory_ceiling is on, but cgroup delegation could not be read",
-        fix: "systemctl edit user@.service → [Service] Delegate=cpu cpuset io memory pids, then reboot",
-      });
-    }
-    let unconstrained = [];
-    try {
-      unconstrained = activeStates().filter((st) => st.sandbox?.memory_max_applied === false).map((st) => st.runId);
-    } catch {
-      // no runs directory yet
-    }
-    if (unconstrained.length) {
-      findings.push({
-        kind: "workers_without_memory_ceiling",
-        severity: "medium",
-        path: "runs",
-        detail: `${unconstrained.length} active worker(s) run without a memory ceiling (no systemd sandbox): ${unconstrained.slice(0, 5).join(", ")}`,
-      });
-    }
-  }
-
   const count = (s) => findings.filter((f) => f.severity === s).length;
   return {
     ok: findings.length === 0,
     checked: {
       specialists: ids.size,
       assignments: assignments.length,
-      memory_ceiling_possible: memoryDelegated.delegated,
     },
-    counts: { high: count("high"), medium: count("medium"), low: count("low") },
+    counts: { high: count("high"), medium: count("medium"), low: count("low"), warning: count("warning") },
     findings,
   };
 }

@@ -57,7 +57,7 @@ export function buildCommand({ roster, model, cli, prompt, effort = null, dir = 
     try {
       cwd = fs.realpathSync(cwd);
     } catch (error) {
-      // Dry-run descriptors can name directories that have not been materialized yet.
+      // Dry runs can name directories that have not been materialized yet.
       if (error.code !== "ENOENT") throw error;
     }
     // The dotted projects."<path>".trust_level override did not suppress the
@@ -94,6 +94,17 @@ export function tmuxArgs({ session, dir, argv, env = {} }) {
   return ["new-session", "-d", "-s", session, "-c", dir, ...envFlags, argv.map(shellQuote).join(" ")];
 }
 
+/** Start an already-built worker argv in detached tmux. */
+export function startInTmux({ session, dir, argv, runId, exec = execFileSync }) {
+  exec("tmux", tmuxArgs({
+    session,
+    dir,
+    argv,
+    env: runId ? { TEAMUP_RUN_ID: runId } : {},
+  }), { stdio: "inherit" });
+  return { session };
+}
+
 /** Spawn a pinned CLI×model in detached tmux (no role chain / usage pick). */
 export async function spawnPinnedInTmux({
   roster,
@@ -124,7 +135,7 @@ export async function spawnPinnedInTmux({
   }
   const argv = buildCommand({ roster, model, cli, prompt, effort, dir });
   const session = `${sessionPrefix}-${Date.now().toString(36)}`;
-  execFileSync("tmux", tmuxArgs({ session, dir, argv, env: { TEAMUP_RUN_ID: effectiveRunId } }), { stdio: "inherit" });
+  startInTmux({ session, dir, argv, runId: effectiveRunId });
   linkDispatchToRun(effectiveRunId, session, {
     model,
     cli,

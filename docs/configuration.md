@@ -56,26 +56,19 @@ A model's `account` keys into top-level `accounts` (`subscription` or
 `credit`). A declared account that is disabled or out of credit bars the model;
 a model without one is not gated by account.
 
-## CLI sandbox capabilities
+## Harness support
 
-Per-CLI optional fields under `sandbox` (or top-level legacy aliases):
-
-| Field | Meaning |
-|-------|---------|
-| `runtime_paths` / `sandbox_runtime_paths` | Non-empty list of extra read-only binds for home-installed CLIs under `ProtectHome=tmpfs` when OS isolation is applied. Empty `[]` = not configured. |
-
-Command-broker support comes from installed harness adapters plus
-`~/.team-up/harness-verification` records — **never** from roster booleans
-like `mediated_commands`. Token targets are advisory (see
+Specialist capability support comes from the installed harness adapter's
+declared capabilities, never from roster booleans such as
+`mediated_commands`. `~/.team-up/harness-verification/<cli>/<version>.json`
+records are health evidence only: missing, failed, or drifted records appear
+as doctor warnings and do not block a launch. Run `team-up harness verify
+claude` to refresh the live isolation check. Token targets are advisory (see
 `docs/specialists.md`); there is no hard `token_adapter` gate.
 
 Specialists that declare `permissions.commands` resolve only CLI cells whose
-verified harness advertises `team-up.command-broker/v1`. Otherwise the
+installed harness adapter declares `team-up.command-broker/v1`. Otherwise the
 profile fails with `PROFILE_UNAVAILABLE` before a run is created.
-
-Installed specialist launches use **best-effort** OS isolation. Missing home
-CLI runtime paths still fail with `SANDBOX_RUNTIME_UNAVAILABLE` when
-isolation is applied. See `docs/command-broker.md`.
 
 Specialists with `permissions.commands` need a project `.team-up/commands.json`
 whose checksum has been trusted with
@@ -108,14 +101,13 @@ wrong type is an error rather than a silent default.
 | `telemetry.verdict.team_up_share` | `0.5` | team-up's share of used memory at the tightest sample at or above this makes an unclean, memory-exhausted restart `team_up_suspected` |
 
 An OOM kill whose victim was a team-up worker makes the verdict
-`team_up_suspected` regardless of the share. A kill inside a memory ceiling
-(`CONSTRAINT_MEMCG`) is recorded but is not memory exhaustion.
+`team_up_suspected` regardless of the share.
 
 ## Admission
 
 The `admission` block of `roster.json` decides whether one more worker may
-start (`team-up dispatch`, `team-up specialist run`, `runs resume`, and parked
-runs started by `runs gc`). Every key is optional; a wrong value is an error.
+start (`team-up dispatch`, `team-up specialist run`, `runs resume`, and stored
+dispatch deferrals resumed by `runs gc`). Every key is optional; a wrong value is an error.
 
 | Field | Default | Meaning |
 |-------|---------|---------|
@@ -125,9 +117,6 @@ runs started by `runs gc`). Every key is optional; a wrong value is an error.
 | `admission.reserve_mb` | `1024` | `MemAvailable` that must be left after the new worker's p95 |
 | `admission.psi_some_max` | `10` | Refuse while memory pressure `some avg10` is at or above this |
 | `admission.psi_full_max` | `2` | Refuse while memory pressure `full avg10` is at or above this |
-| `admission.memory_ceiling.enabled` | `false` | Give each sandboxed worker `MemoryHigh`/`MemoryMax` |
-| `admission.memory_ceiling.high_factor` | `1.5` | `MemoryHigh` = p95 × this |
-| `admission.memory_ceiling.max_factor` | `2` | `MemoryMax` = p95 × this; the kernel kills that worker alone above it |
 
 Without `max_workers` and without enough telemetry (no `team-up telemetry
 install-timer`, or fewer than `min_samples` worker samples), every start is
@@ -140,6 +129,3 @@ After a `team_up_suspected` restart, `runs resume` caps the limit at half the
 workers that ran before it; the cap holds until `team-up admission reset` or
 24 h without a refusal. `team-up admission check [--cli <cli>]` shows the
 decision and why (exit 3 when refused).
-
-Memory ceilings only hold under `systemd-run --user` with the memory
-controller delegated to the user manager; `doctor` reports both.

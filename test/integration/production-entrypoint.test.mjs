@@ -8,9 +8,6 @@ import { installPackage } from "../../src/specialists/store.mjs";
 import { trustProjectPolicy } from "../../src/specialists/approvals.mjs";
 import { launchSpecialist } from "../../src/specialists/launcher.mjs";
 import { loadState, runDir } from "../../src/runs/runs.mjs";
-import { createAttempt } from "../../src/supervisor/attempts.mjs";
-import { wrapWithSandbox } from "../../src/sandbox/systemd.mjs";
-import { createRun } from "../../src/runs/runs.mjs";
 import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
 
 /** Stable fake Claude for E2E — version + /usage only; launch path never needs real CLI. */
@@ -147,7 +144,6 @@ async function withEntrypointEnv(fn) {
     TEAM_UP_USAGE: path.join(home, "usage.json"),
     TEAM_UP_PTY_LOCK: path.join(home, ".usage-pty.lock"),
     TEAM_UP_AGENT_PROCS_FIXTURE: agentProcsFixture,
-    TEAM_UP_SANDBOX_FORCE_NONE: "1",
   };
   Object.assign(process.env, env);
 
@@ -174,7 +170,6 @@ async function withEntrypointEnv(fn) {
       clis: {
         claude: {
           cmd: ["claude", "--print", "{prompt}"],
-          sandbox: { runtime_paths: ["/usr/bin", process.execPath, binDir] },
         },
       },
       models: {
@@ -259,50 +254,35 @@ function tmuxLines(logPath) {
   return fs.readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean);
 }
 
-test("production launchSpecialist persists descriptor and uses fake tmux new-session", async () => {
+test("production launchSpecialist starts the prepared argv once through fake tmux", async () => {
   await withEntrypointEnv(async ({ project, tmuxLog }) => {
     const result = await launchSpecialist({
       specialistId: "testing.entrypoint",
       callType: "delegate",
       objective: "entrypoint smoke",
       project,
-      sandbox: { probe: () => false },
+      admission: "force",
     });
     assert.ok(result.runId);
     const st = loadState(result.runId);
-    assert.equal(st.launch_descriptor?.schema, "team-up.launch-ref/v1");
+    assert.equal(st.specialist.id, "testing.entrypoint");
+    assert.equal(st.specialist.version, "0.1.0");
+    assert.match(st.specialist.checksum, /^sha256:[a-f0-9]+$/);
     assert.ok(st.harness_requirements?.command_broker);
-    assert.ok(st.launch_descriptor?.checksum);
     assert.deepEqual(st.runtime.limit_windows, ["claude:5h"]);
-    assert.match(st.ACTIVE_LEASE?.owner || fs.readFileSync(path.join(runDir(result.runId), "ACTIVE_LEASE.json"), "utf8"), /tmux:/);
     const lines = tmuxLines(tmuxLog);
     assert.ok(lines.some((l) => l.startsWith("new-session")), lines.join("\n"));
-    assert.ok(
-      result.argv.some((a) => String(a).includes("mcp-config") || String(a).includes("claude-mcp.json")) ||
-        result.argv.includes("--mcp-config") ||
-        result.argv.includes("--disallowedTools"),
-      result.argv.join(" ")
-    );
-    assert.ok(result.argv.includes("Bash") || result.argv.includes("--disallowedTools"));
-    // Bash denial + MCP config must be in prepared argv
+    assert.equal(result.argv[0], "timeout");
+    assert.equal(result.argv[1], "--signal=TERM");
+    assert.equal(result.argv[2], "--kill-after=5s");
+    assert.equal(result.argv[3], "60s");
+    assert.equal(result.argv[4], "env");
+    assert.equal(result.argv[5], `HOME=${path.join(runDir(result.runId), "claude-home")}`);
     const joined = result.argv.join(" ");
     assert.match(joined, /disallowedTools/);
     assert.match(joined, /mcp-config|claude-mcp/);
-    assert.match(joined, /timeout|RuntimeMaxSec|systemd-run/);
+    assert.equal(st.worker.tmux.startsWith("team-up-testing-entrypoint-"), true);
   });
-});
-
-test("timeout enforced when isolation is unnecessary", () => {
-  const r = wrapWithSandbox({
-    command: ["/usr/bin/true"],
-    permissions: {},
-    cwd: "/tmp",
-    timeoutSeconds: 42,
-    probe: () => false,
-  });
-  assert.equal(r.argv[0], "timeout");
-  assert.ok(r.argv.includes("42s"));
-  assert.equal(r.timeout_enforced, true);
 });
 
 test("start failure rolls back lease and does not leave watching", async () => {
@@ -324,7 +304,7 @@ test("start failure rolls back lease and does not leave watching", async () => {
           callType: "delegate",
           objective: "fail start",
           project,
-          sandbox: { probe: () => false },
+          admission: "force",
         }),
       /boom|Command failed|status 1|tmux/i
     );
@@ -334,25 +314,5 @@ test("start failure rolls back lease and does not leave watching", async () => {
     assert.ok(runs.length >= 1);
     const st = loadState(runs[runs.length - 1]);
     assert.notEqual(st.status, "watching");
-    const lease = JSON.parse(
-      fs.readFileSync(path.join(runDir(st.runId), "ACTIVE_LEASE.json"), "utf8")
-    );
-    assert.ok(lease.released_at, JSON.stringify(lease));
-  });
-});
-
-test("dead lock owner recovers without permanent lock_busy", async () => {
-  await withEntrypointEnv(async () => {
-    const run = createRun({
-      cwd: "/tmp",
-      role: "specialist:x",
-      parent: { cli: "team-up", attach: "manual" },
-      worker: { cli: "claude" },
-      prompt: "hi",
-    });
-    const lockPath = path.join(runDir(run.runId), "ATTEMPTS.lock");
-    fs.writeFileSync(lockPath, "99999999\n0\n");
-    const a = createAttempt({ runId: run.runId, runtime: { cli: "claude", model: "m" } });
-    assert.ok(a.id);
   });
 });

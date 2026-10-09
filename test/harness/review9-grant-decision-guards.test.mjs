@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { claudeAdapter } from "../../src/harness/claude.mjs";
-import { codexAdapter } from "../../src/harness/codex.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 import {
   buildIsolationCanaryFixture,
@@ -580,25 +579,6 @@ test("parseClaudeStructuredCapabilityProofs is unaffected by probe HOME leaks", 
       spawnSyncFn: () => ({ status: 0, stdout: `${stream}\n`, stderr: "" }),
     });
     assertIsoFailure(observed, "closed_world_failed");
-  } finally {
-    fixture.cleanup();
-  }
-});
-
-test("observeContextIsolation codex never grants even with forged liveProbe", () => {
-  const fixture = buildIsolationCanaryFixture();
-  try {
-    const stream = buildHappySpawnSync(fixture)().stdout;
-    const result = observeContextIsolation({
-      adapter: codexAdapter,
-      adapterId: "codex",
-      liveProbe: () => ({
-        stream_text: stream,
-        observed: buildHappyInventory(fixture),
-      }),
-    });
-    assert.equal(result.context_isolation, null);
-    assert.notEqual(result.isolation_status, "passed");
   } finally {
     fixture.cleanup();
   }

@@ -125,13 +125,11 @@ export function assertCallTypeAllowed(callType, manifest) {
  * Builtin tools a specialist may hold, derived from its declared permissions.
  * Without this every specialist gets the adapter default — including `Write`
  * for a read-only researcher, and no web tool for one whose manifest asks for
- * the network. The sandbox still enforces the filesystem side; this keeps the
- * tool list from advertising what the manifest did not grant.
+ * the network. This keeps the tool list from advertising capabilities the
+ * manifest did not grant.
  *
- * Lives here rather than beside the launcher because the authoritative launch
- * rebuilds its argv from the persisted descriptor, in a module the launcher
- * imports — deriving it in only one of those two places is how a read-only
- * researcher ended up holding `Write`.
+ * Keep permission derivation beside its policy so read-only calls do not gain
+ * an adapter default that the specialist did not request.
  */
 export function builtinsForPermissions(permissions = {}) {
   // `Write` is unconditional: the mailbox is how a specialist reports at all,
@@ -139,8 +137,8 @@ export function builtinsForPermissions(permissions = {}) {
   // from `writes` left a read-only researcher able to finish the work and
   // unable to hand it over — she said so herself and returned the report as
   // terminal output nobody was watching. `writes` governs the project, not the
-  // specialist's own output channel; which paths are writable is the sandbox's
-  // job, and the mailbox is bound writable there for every call type.
+  // specialist's own output channel; the mailbox remains writable for every
+  // call type.
   //
   // ToolSearch and Skill are on the floor for the same kind of reason: neither
   // writes nor reaches the network, and a `--tools` list without Skill silently

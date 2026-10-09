@@ -253,131 +253,68 @@ test("a fixed admission.max_workers is no fallback finding", () => {
 });
 
 test("a clean install reports ok", () => {
-  const report = withHome({ "specialists-index.json": INDEX }, diagnose);
+  const report = withHome({ "specialists-index.json": INDEX }, (env) => diagnose(env, { execFileSync: () => { throw new Error("cli not installed"); } }));
   assert.equal(report.ok, true);
-  assert.deepEqual(report.counts, { high: 0, medium: 0, low: 0 });
+  assert.deepEqual(report.counts, { high: 0, medium: 0, low: 0, warning: 0 });
   assert.equal(report.checked.specialists, 1);
 });
 
-/**
- * The drift finding exists because the old signal was indirect: drift showed
- * up as `no_model_for_profile`, named after the roster, and only when a
- * specialist with a model_profile happened to be installed. Uninstall the
- * specialists and the host is equally unable to launch anything, with a clean
- * report. This finding does not depend on any of that.
- */
-test("a harness whose CLI updated past its verified version is reported", () => {
+test("missing harness verification is a warning with a direct verify fix", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    const report = diagnose(homeEnv(home), { execFileSync: () => "2.1.300 (Claude Code)\n" });
+    const finding = report.findings.find((item) => item.kind === "harness_verification_missing");
+    assert.ok(finding);
+    assert.equal(finding.severity, "warning");
+    assert.equal(finding.installed, "2.1.300");
+    assert.equal(finding.fix, "team-up harness verify claude");
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("failed harness verification is a warning", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
   try {
     const dir = path.join(home, "harness-verification", "claude");
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, "2.1.252.json"),
-      JSON.stringify({
-        adapter: "claude",
-        cli_version: "2.1.252",
-        status: "verified",
-        checked_at: "2026-09-01T09:57:52.333Z",
-      })
-    );
+    fs.writeFileSync(path.join(dir, "2.1.300.json"), JSON.stringify({
+      adapter: "claude", cli_version: "2.1.300", status: "failed",
+    }));
+    const report = diagnose(homeEnv(home), { execFileSync: () => "2.1.300 (Claude Code)\n" });
+    const finding = report.findings.find((item) => item.kind === "harness_verification_failed");
+    assert.ok(finding);
+    assert.equal(finding.severity, "warning");
+    assert.equal(finding.fix, "team-up harness verify claude");
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("harness version drift is a warning and does not revoke specialist eligibility", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
+  try {
+    const dir = path.join(home, "harness-verification", "claude");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "2.1.252.json"), JSON.stringify({
+      adapter: "claude", cli_version: "2.1.252", status: "verified",
+      checked_at: "2026-09-01T09:57:52.333Z",
+    }));
     const report = diagnose(homeEnv(home), { execFileSync: () => "2.1.259 (Claude Code)\n" });
-    const finding = report.findings.find((f) => f.kind === "harness_version_drift");
-    assert.ok(finding, "drift must be reported on its own, not via a specialist");
-    assert.equal(finding.severity, "high");
+    const finding = report.findings.find((item) => item.kind === "harness_version_drift");
+    assert.ok(finding);
+    assert.equal(finding.severity, "warning");
     assert.equal(finding.installed, "2.1.259");
-    assert.equal(finding.last_verified, "2.1.252");
-    assert.match(finding.fix, /harness reverify/);
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-// A pass proven against an older canary set is drift on the same build. It
-// has a record — saying it has none sent the reader looking for a missing file.
-test("a pass against an older canary set says so instead of claiming no record", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
-  try {
-    const dir = path.join(home, "harness-verification", "claude");
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, "2.1.286.json"),
-      JSON.stringify({
-        adapter: "claude",
-        cli_version: "2.1.286",
-        status: "verified",
-        context_isolation: "team-up.context-isolation/v1",
-        context_isolation_absent: ISOLATION_FORBIDDEN_CANARIES.filter((n) => !n.startsWith("ancestor.")),
-        checked_at: "2026-10-03T11:00:44.015Z",
-      })
-    );
-    const report = diagnose(homeEnv(home), { execFileSync: () => "2.1.286 (Claude Code)\n" });
-    const finding = report.findings.find((f) => f.kind === "harness_version_drift");
-    assert.ok(finding, "a stale proof must be reported as drift");
-    assert.equal(finding.severity, "high");
-    assert.match(finding.fix, /harness reverify/);
-    assert.match(finding.detail, /claude 2\.1\.286 passed on 2026-10-03T11:00:44\.015Z against an older canary set/);
-    assert.match(finding.detail, /isolation grant is withheld until it is re-verified/);
-    assert.doesNotMatch(finding.detail, /has no verification record/);
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-/**
- * A finding whose fix cannot work is worse than none: this cron runs daily and
- * a permanently-red high teaches the reader to skip the report. Drift on a CLI
- * `harness verify` has no runner for, and a codex record that can never pass
- * context-isolation/v1, are both facts to record, not work to do.
- */
-test("drift on a CLI with no verify runner is low and says no command helps", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
-  try {
-    const dir = path.join(home, "harness-verification", "opencode");
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, "1.18.15.json"),
-      JSON.stringify({
-        adapter: "opencode",
-        cli_version: "1.18.15",
-        status: "verified",
-        checked_at: "2026-08-15T10:18:18.847Z",
-      })
-    );
-    const report = diagnose(homeEnv(home), { execFileSync: () => "1.18.23\n" });
-    assert.equal(report.findings.some((f) => f.kind === "harness_version_drift"), false);
-    const finding = report.findings.find((f) => f.kind === "harness_verification_unsupported");
-    assert.ok(finding, "drift on an unverifiable CLI must still be reported");
-    assert.equal(finding.severity, "low");
-    assert.equal(finding.cli, "opencode");
-    assert.doesNotMatch(finding.fix, /team-up harness verify/);
-    assert.match(finding.fix, /no runner/);
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("a codex record that can never pass is low, not a high with a dead fix", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
-  try {
-    const dir = path.join(home, "harness-verification", "codex");
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, "0.156.1.json"),
-      JSON.stringify({
-        adapter: "codex",
-        cli_version: "0.156.1",
-        status: "unverified",
-        checked_at: "2026-09-23T12:00:00.000Z",
-        context_isolation_reason: { code: "codex_no_live_collector" },
-      })
-    );
-    const report = diagnose(homeEnv(home), { execFileSync: () => "codex-cli 0.156.1\n" });
-    assert.equal(report.findings.some((f) => f.kind === "harness_verification_failed"), false);
-    const finding = report.findings.find((f) => f.kind === "harness_verification_unsupported");
-    assert.ok(finding, "an unverifiable codex record must still be reported");
-    assert.equal(finding.severity, "low");
-    assert.equal(finding.context_isolation_reason, "codex_no_live_collector");
-    assert.doesNotMatch(finding.fix, /team-up harness verify/);
+    assert.equal(finding.fix, "team-up harness verify claude");
+    const roster = {
+      clis: { claude: { cmd: ["claude", "{prompt}"] } },
+      accounts: { anthropic: { kind: "subscription", enabled: true } },
+      models: { m: { cli: ["claude"], account: "anthropic", reasoning: { low: null }, priority: 1 } },
+      specialists: { "review.example": { chain: ["claude:m"] } },
+    };
+    fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify(roster));
+    const after = diagnose(homeEnv(home), { execFileSync: () => "2.1.259 (Claude Code)\n" });
+    assert.equal(after.findings.some((item) => item.kind === "no_model_for_profile"), false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -479,24 +416,4 @@ test("a volatile journal is a medium finding once telemetry runs", () => {
     return diagnose(env, { journalStore: () => ({ persistent: true }) });
   });
   assert.equal(persistent.findings.some((f) => f.kind === "journal_not_persistent"), false);
-});
-
-test("memory ceilings: doctor reports a missing delegation and unconstrained workers, only when enabled", () => {
-  const on = { "roster.json": { admission: { memory_ceiling: { enabled: true } } } };
-  const states = () => [
-    { runId: "r1", sandbox: { memory_max_applied: false } },
-    { runId: "r2", sandbox: { memory_max_applied: true } },
-  ];
-  const off = withHome({}, (env) => diagnose(env, { delegation: () => ({ delegated: false, path: "/x" }), activeStates: states }));
-  assert.equal(off.findings.some((f) => /memory_ceiling|memory_ceiling_unavailable|workers_without/.test(f.kind)), false);
-  assert.equal(off.checked.memory_ceiling_possible, false);
-
-  const missing = withHome(on, (env) => diagnose(env, { delegation: () => ({ delegated: false, path: "/x" }), activeStates: states }));
-  const kinds = missing.findings.map((f) => f.kind);
-  assert.ok(kinds.includes("memory_ceiling_unavailable"));
-  const unconstrained = missing.findings.find((f) => f.kind === "workers_without_memory_ceiling");
-  assert.match(unconstrained.detail, /1 active worker\(s\).*r1/);
-
-  const fine = withHome(on, (env) => diagnose(env, { delegation: () => ({ delegated: true, path: "/x" }), activeStates: () => [] }));
-  assert.equal(fine.findings.some((f) => f.kind === "memory_ceiling_unavailable"), false);
 });

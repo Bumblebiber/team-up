@@ -29,8 +29,8 @@ function saveWaits(data, env = process.env) {
 export const RESOURCE_RETRY_MS = 2 * 60 * 1000;
 
 /**
- * Park a run until the machine has room. `action` is replayed once admitted;
- * without one, a specialist launch starts from its durable launch descriptor.
+ * Park a run until the machine has room. A due wait can resume only through
+ * its stored dispatch action.
  */
 export function deferForResources({
   runId,
@@ -134,7 +134,6 @@ export function listDueWaits({ now = new Date().toISOString(), env = process.env
 export async function resumeDueWaits({
   now = new Date().toISOString(),
   env = process.env,
-  startWorker,
   admit = null,
   executeAction = null,
 } = {}) {
@@ -164,26 +163,21 @@ export async function resumeDueWaits({
     }
 
     const action = state.capacity.resume_action;
+    if (!action) {
+      results.push({ runId, ok: true, resumed: false, reason: "no_resume_action" });
+      continue;
+    }
     try {
-      if (action) {
-        if (typeof executeAction !== "function") throw new Error("no executor for a stored resume action");
-        await executeAction(action, state);
-      } else {
-        if (typeof startWorker !== "function") throw new Error("no starter for a parked launch descriptor");
-        // ponytail: starts the cell frozen in the descriptor without rechecking
-        // usage limits or mark-limited; add a pick/chain check here if specialist
-        // resource waits see real use.
-        await startWorker({ runId, state });
-      }
+      if (typeof executeAction !== "function") throw new Error("no executor for a stored resume action");
+      await executeAction(action, state);
     } catch (error) {
       const next = postponeResourceWait(runId, { reason: `start failed: ${error.message || error}` }, now, env);
       results.push({ runId, ok: false, reason: "start_worker_failed", error: String(error.message || error), resume_not_before: next });
       continue;
     }
 
-    // The starter already set the worker's mailbox to watching; the parked
-    // STATUS (`starting` from createRun) must not be written back over it.
-    finishResourceWait(runId, action ? state.capacity.resume_status || "watching" : "watching", now, env, action ? null : "watching");
+    // Restore the worker-owned status after replaying its stored dispatch action.
+    finishResourceWait(runId, state.capacity.resume_status || "watching", now, env);
     resourceStarted = true;
     results.push({ runId, ok: true, resumed: true, reason: "resources" });
   }

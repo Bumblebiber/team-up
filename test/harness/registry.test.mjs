@@ -9,192 +9,60 @@ import {
   harnessCapabilities,
   prepareHarnessLaunch,
 } from "../../src/harness/registry.mjs";
-import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
-import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
+import {
+  COMMAND_BROKER_CAPABILITY,
+  CONTEXT_ISOLATION_CAPABILITY,
+} from "../../src/harness/capabilities.mjs";
 
-/**
- * A TEAM_UP_HOME with no verification records. Without it these assertions read
- * the developer's real records and start failing the moment a harness is
- * verified on that machine.
- */
-const UNVERIFIED_ENV = {
-  TEAM_UP_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "tu-no-records-")),
-};
+test("Claude launch capabilities come from adapter declarations, independent of verification", () => {
+  assert.deepEqual(declaredHarnessCapabilities("claude"), {
+    command_broker: COMMAND_BROKER_CAPABILITY,
+    context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+    native_shell: "denied",
+    mcp: "stdio",
+  });
+  for (const verification of [null, { status: "failed" }, { status: "verified", adapter: "elsewhere" }]) {
+    assert.deepEqual(harnessCapabilities("claude", { verification }), declaredHarnessCapabilities("claude"));
+  }
+  assert.deepEqual(defaultHarnessCapabilities("claude", { verification: null }), declaredHarnessCapabilities("claude"));
+});
 
-test("claude advertises brokered commands; unverified harnesses do not", () => {
-  assert.equal(declaredHarnessCapabilities("claude").command_broker, "team-up.command-broker/v1");
-  assert.equal(harnessCapabilities("claude", { verification: null }).command_broker, null);
-  assert.equal(
-    harnessCapabilities("claude", {
-      verification: {
-        status: "verified",
-        adapter: "claude",
-        cli_version: "fixture",
-        command_broker: "team-up.command-broker/v1",
-      },
-    }).command_broker,
-    "team-up.command-broker/v1"
-  );
-  for (const id of ["cursor", "codex", "hermes", "opencode"]) {
-    assert.equal(harnessCapabilities(id, { env: UNVERIFIED_ENV }).command_broker, null);
+test("unsupported fallback declares no capsule or broker capabilities", () => {
+  for (const id of ["cursor", "codex", "hermes", "opencode", "unknown"]) {
+    assert.equal(harnessCapabilities(id).command_broker, null);
+    assert.equal(harnessCapabilities(id).context_isolation, null);
   }
 });
 
-test("unknown harness fails closed", () => {
-  assert.throws(() => prepareHarnessLaunch({ cli: "unknown" }), /HARNESS_UNSUPPORTED/);
-});
-
-test("unverified harness never advertises context isolation", () => {
-  assert.equal(
-    defaultHarnessCapabilities("claude", { verification: null }).context_isolation,
-    null
-  );
-  for (const id of ["cursor", "codex", "hermes", "opencode"]) {
-    assert.equal(
-      defaultHarnessCapabilities(id, { env: UNVERIFIED_ENV }).context_isolation,
-      null
-    );
-  }
-});
-
-test("verified Claude advertises the versioned contract", () => {
-  assert.equal(defaultHarnessCapabilities("claude", {
-    verification: {
-      status: "verified",
-      adapter: "claude",
-      cli_version: "2.1.220",
-      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
-    },
-  }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
-});
-
-test("Codex declared context_isolation stays null without full native matrix", () => {
-  assert.equal(declaredHarnessCapabilities("codex").context_isolation, null);
-  assert.equal(harnessCapabilities("codex", {
-    verification: null,
-  }).context_isolation, null);
-  assert.equal(harnessCapabilities("codex", {
-    verification: {
-      status: "verified",
-      adapter: "codex",
-      cli_version: "0.145.0",
-      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
-    },
-  }).context_isolation, null);
-});
-
-test("Claude verification record cannot be reused under Codex runtime", () => {
-  assert.equal(harnessCapabilities("codex", {
-    verification: {
-      status: "verified",
-      adapter: "claude",
-      cli_version: "2.1.220",
-      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
-      command_broker: "team-up.command-broker/v1",
-    },
-  }).context_isolation, null);
-  assert.throws(() => prepareHarnessLaunch({
-    cli: "codex",
-    argv: ["codex", "exec", "x"],
-    runDir: "/run",
+test("Claude capsule launch is prepared without a verification record", (t) => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-harness-capsule-"));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+  const prepared = prepareHarnessLaunch({
+    cli: "claude",
+    argv: ["claude", "--dangerously-skip-permissions", "--", "task"],
+    runDir,
     capsule: {
       pluginDirs: [],
       skillDirs: [],
-      codexHome: "/run/harness/home",
+      workspaceDirs: [],
       mcpConfig: { mcpServers: {} },
+      mcpToolNames: [],
     },
-    verification: {
-      status: "verified",
-      adapter: "claude",
-      cli_version: "2.1.220",
-      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
-    },
-  }), /HARNESS_CONTEXT_ISOLATION_UNVERIFIED|HARNESS_VERIFICATION_ADAPTER/);
+    allowedBuiltins: ["Read", "Write"],
+    env: { TEAM_UP_HOME: path.join(runDir, "team-up-home") },
+    verification: { status: "failed" },
+  });
+  assert.ok(fs.existsSync(path.join(runDir, "claude-home", ".claude", ".credentials.json")));
+  assert.equal(prepared.argv.includes("--dangerously-skip-permissions"), false);
+  assert.equal(prepared.argv[prepared.argv.indexOf("--tools") + 1], "Read,Write");
+  assert.equal(prepared.capabilities.context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });
 
-test("verification adapter/version mismatch fails closed", () => {
-  assert.equal(harnessCapabilities("claude", {
-    verification: {
-      status: "verified",
-      adapter: "claude",
-      cli_version: "2.1.219",
-      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
-    },
-    requireExactVersion: "2.1.220",
-  }).context_isolation, null);
-  assert.equal(harnessCapabilities("claude", {
-    verification: {
-      status: "verified",
-      adapter: "claude",
-      cli_version: "2.1.220",
-      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
-    },
-    requireExactVersion: "2.1.220",
-  }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
-});
-
-test("exact adapter and version match preserves verified Claude isolation", () => {
-  assert.equal(harnessCapabilities("claude", {
-    verification: {
-      status: "verified",
-      adapter: "claude",
-      cli_version: "2.1.220",
-      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
-      command_broker: "team-up.command-broker/v1",
-    },
-    requireExactVersion: "2.1.220",
-  }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
-});
-
-test("Cursor Hermes and OpenCode remain ineligible without adapters", () => {
-  for (const id of ["cursor", "hermes", "opencode"]) {
-    assert.equal(harnessCapabilities(id, {
-      verification: { status: "verified" },
-    }).context_isolation, null);
-  }
-});
-
-test("verified broker-only record does not grant context isolation", () => {
-  assert.equal(harnessCapabilities("claude", {
-    verification: {
-      status: "verified",
-      adapter: "claude",
-      cli_version: "2.1.220",
-      command_broker: "team-up.command-broker/v1",
-      context_isolation: null,
-    },
-  }).context_isolation, null);
-  assert.equal(harnessCapabilities("claude", {
-    verification: {
-      status: "verified",
-      adapter: "claude",
-      cli_version: "2.1.220",
-      command_broker: "team-up.command-broker/v1",
-      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-      context_isolation_absent: [...ISOLATION_FORBIDDEN_CANARIES],
-    },
-  }).context_isolation, CONTEXT_ISOLATION_CAPABILITY);
-});
-
-test("capsule launch without proven isolation fails closed", () => {
+test("unsupported fallback cannot prepare a capsule", () => {
   assert.throws(() => prepareHarnessLaunch({
-    cli: "claude",
-    argv: ["claude", "-p", "x"],
-    runDir: "/run",
-    capsule: { pluginDirs: [], mcpConfig: { mcpServers: {} } },
-    verification: {
-      status: "verified",
-      adapter: "claude",
-      cli_version: "2.1.220",
-      command_broker: "team-up.command-broker/v1",
-      context_isolation: null,
-    },
-  }), /HARNESS_CONTEXT_ISOLATION_UNVERIFIED/);
+    cli: "codex",
+    argv: ["codex", "task"],
+    runDir: "/tmp/run",
+    capsule: { mcpConfig: { mcpServers: {} } },
+  }), /HARNESS_CONTEXT_ISOLATION_UNSUPPORTED/);
 });

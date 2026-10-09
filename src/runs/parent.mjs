@@ -252,9 +252,13 @@ export function detectParent({
  * node, so no process name names it.
  */
 export function detectHostCli({ env = process.env, procRoot = "/proc", dir = sessionsDir(env), pid = process.pid } = {}) {
-  const { cli } = detectParent({ env, procRoot, dir, pid });
-  if (cli && cli !== "manual") return cli;
+  const parent = detectParent({ env, procRoot, dir, pid });
+  if (parent.detected_by === "registry") return parent.cli;
   if (env.CURSOR_VERSION || env.CURSOR_INVOKED_AS) return null;
+  if (parent.detected_by === "env") return parent.cli;
   const claudePid = Number(env.CLAUDE_PID);
-  return claudePid > 1 && ancestry(pid, { procRoot }).some((p) => p.pid === claudePid) ? "claude" : null;
+  if (claudePid > 1 && ancestry(pid, { procRoot }).some((p) => p.pid === claudePid)) {
+    return "claude";
+  }
+  return parent.cli === "manual" ? null : parent.cli;
 }

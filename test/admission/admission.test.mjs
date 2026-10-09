@@ -12,8 +12,6 @@ import {
   currentCap,
   deriveLimits,
   footprintFor,
-  memoryCeiling,
-  memoryDelegation,
   recordRefusal,
   resetCap,
   swapRising,
@@ -131,19 +129,15 @@ test("roster.example.json documents an admission block that loads, $comment and 
 });
 
 test("admissionConfig validates every key", () => {
-  assert.deepEqual(admissionConfig({}, { roster: {} }), { ...DEFAULT_ADMISSION, memory_ceiling: { ...DEFAULT_ADMISSION.memory_ceiling } });
-  const custom = admissionConfig({}, { roster: { admission: { reserve_mb: 2048, max_workers: 3, memory_ceiling: { enabled: true } } } });
+  assert.deepEqual(admissionConfig({}, { roster: {} }), { ...DEFAULT_ADMISSION });
+  const custom = admissionConfig({}, { roster: { admission: { reserve_mb: 2048, max_workers: 3 } } });
   assert.equal(custom.reserve_mb, 2048);
   assert.equal(custom.max_workers, 3);
-  assert.equal(custom.memory_ceiling.enabled, true);
-  assert.equal(custom.memory_ceiling.max_factor, 2);
   for (const bad of [
     { admission: [] },
     { admission: { nope: 1 } },
     { admission: { max_workers: 1.5 } },
     { admission: { reserve_mb: -1 } },
-    { admission: { memory_ceiling: { enabled: "yes" } } },
-    { admission: { memory_ceiling: { high_factor: 3, max_factor: 2 } } },
   ]) {
     assert.throws(() => admissionConfig({}, { roster: bad }), /ADMISSION_CONFIG/, JSON.stringify(bad));
   }
@@ -186,23 +180,4 @@ test("checkAdmission takes the live sample and the recent ones from telemetry", 
   assert.equal(decision.ok, false);
   assert.match(decision.reason, /swap use rising/);
   assert.equal(decision.limits.max_workers, 8);
-});
-
-test("memoryCeiling scales the cli's p95 only when enabled", () => {
-  const on = { ...DEFAULT_ADMISSION, memory_ceiling: { enabled: true, high_factor: 1.5, max_factor: 2 } };
-  assert.equal(memoryCeiling({ footprint: FOOTPRINT, cli: "codex", config: DEFAULT_ADMISSION }), null);
-  assert.deepEqual(memoryCeiling({ footprint: FOOTPRINT, cli: "codex", config: on }), { high_kb: 1.5 * GB, max_kb: 2 * GB, source: "cli codex" });
-  assert.equal(memoryCeiling({ footprint: { all: { samples: 1, p95_rss_kb: GB }, by_cli: {} }, cli: "codex", config: on }), null);
-});
-
-test("memoryDelegation reads the user manager's controllers", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tu-cgroup-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const dir = path.join(root, "user.slice", "user-1000.slice", "user@1000.service");
-  assert.equal(memoryDelegation({ cgroupRoot: root, uid: 1000 }).delegated, null);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "cgroup.controllers"), "cpu pids\n");
-  assert.equal(memoryDelegation({ cgroupRoot: root, uid: 1000 }).delegated, false);
-  fs.writeFileSync(path.join(dir, "cgroup.controllers"), "cpu memory pids\n");
-  assert.equal(memoryDelegation({ cgroupRoot: root, uid: 1000 }).delegated, true);
 });

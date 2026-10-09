@@ -45,10 +45,10 @@ async function defaultListStates() {
 }
 
 /**
- * One row per live worker. A worker under `systemd-run --user` is not a
- * descendant of its tmux pane (the pane only holds the `systemd-run` client),
- * so it is read from its unit's cgroup; every other worker is the pane's
- * process tree. A run whose tmux session is gone has no live worker and no row.
+ * One row per live worker. Older run state can record a `systemd-run --user`
+ * unit, whose worker is not a descendant of its tmux pane; when that legacy
+ * field exists, read the unit cgroup. Otherwise read the pane's process tree.
+ * A run whose tmux session is gone has no live worker and no row.
  */
 export function workerRows(states, {
   procRoot = "/proc",

@@ -471,7 +471,7 @@ test("resumeAll maps question to waiting_human before planning recovery", withTe
   assert.match(runs.classifyMailbox(state.runId).question, /Which database/);
 }));
 
-test("capacity states never use generic recovery and due approved waits route supervision only", () => {
+test("waiting capacity runs never use generic recovery or a resume-plan action", () => {
   const base = {
     runId: "capacity-run",
     cwd: "/tmp/project",
@@ -527,7 +527,7 @@ test("capacity states never use generic recovery and due approved waits route su
         status: "waiting_capacity",
         capacity: { auto_resume: true, resume_not_before: "2026-07-25T18:00:00Z" },
       },
-      actions: [{ kind: "resume_capacity_supervision", runId: "capacity-run" }],
+      actions: [],
     },
   ];
 
@@ -556,7 +556,7 @@ test("resumeAll preserves waiting_capacity when mailbox says watching", withTemp
 
   const entry = report.runs.find((item) => item.runId === state.runId);
   assert.equal(entry.status, "waiting_capacity");
-  assert.deepEqual(entry.actions, [{ kind: "resume_capacity_supervision", runId: state.runId }]);
+  assert.deepEqual(entry.actions, []);
   assert.equal(runs.loadState(state.runId).status, "waiting_capacity");
 }));
 
@@ -604,7 +604,7 @@ test("capacity QUESTIONS.md does not bypass capacity-specific resume routing", w
   assert.equal(dueEntry.status, "waiting_capacity");
   assert.deepEqual(
     dueEntry.actions,
-    [{ kind: "resume_capacity_supervision", runId: due.runId }],
+    [],
   );
   const decisionEntry = report.runs.find((entry) => entry.runId === decision.runId);
   assert.equal(decisionEntry.status, "waiting_decision");
@@ -617,7 +617,7 @@ test("resumeAll wakes a parent with three runs once, before its workers", withTe
   const parent = { cli: "claude", sessionId: "p-1", tmux: "main", attach: "tmux", cwd: "/home/u/proj", detected_by: "registry" };
   const ids = [0, 1, 2].map((i) => runs.createRun({
     cwd: "/tmp/project",
-    role: "specialist:coding.codey",
+    role: "implementer",
     parent,
     worker: { cli: "codex", tmux: `team-up-w${i}` },
     prompt: "work",
@@ -658,7 +658,7 @@ test("a staggered resume after a team_up_suspected restart starts half and parks
   const parent = { cli: "claude", sessionId: "p-2", tmux: "main", attach: "tmux", cwd: "/home/u/proj", detected_by: "registry" };
   const ids = [0, 1, 2, 3, 4, 5].map((i) => runs.createRun({
     cwd: "/tmp/project",
-    role: "specialist:coding.codey",
+    role: "implementer",
     parent,
     worker: { cli: "codex", tmux: `team-up-s${i}` },
     prompt: "work",

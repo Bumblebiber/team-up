@@ -12,12 +12,12 @@ function runsRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "tu-stale-"));
 }
 
-function plant(root, runId, { status, session = null, heartbeatAgeMs = null }) {
+function plant(root, runId, { status, session = null, heartbeatAgeMs = null, role = null }) {
   const dir = path.join(root, runId);
   fs.mkdirSync(path.join(dir, "mailbox"), { recursive: true });
   fs.writeFileSync(
     path.join(dir, "STATE.json"),
-    JSON.stringify({ runId, status, ...(session ? { worker: { tmux: session } } : {}) })
+    JSON.stringify({ runId, status, ...(role ? { role } : {}), ...(session ? { worker: { tmux: session } } : {}) })
   );
   if (heartbeatAgeMs !== null) {
     const hb = path.join(dir, "mailbox", "HEARTBEAT");
@@ -56,6 +56,20 @@ test("a run whose terminal is gone is reported even while recently alive", () =>
   assert.equal(found.runId, "r-lost");
   assert.deepEqual(found.reasons, ["terminal is gone"]);
   assert.equal(found.silent_hours, 1);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("a dead specialist worker is reported as terminal gone", () => {
+  const root = runsRoot();
+  plant(root, "r-specialist", {
+    status: "watching",
+    role: "specialist:writer",
+    session: "team-up-writer",
+    heartbeatAgeMs: 1 * HOUR,
+  });
+  const [found] = findStaleRuns({ root, now: NOW, sessionAlive: neverAlive });
+  assert.equal(found.runId, "r-specialist");
+  assert.deepEqual(found.reasons, ["terminal is gone"]);
   fs.rmSync(root, { recursive: true, force: true });
 });
 

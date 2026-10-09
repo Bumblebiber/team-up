@@ -52,6 +52,24 @@ test("Claude response without MCP call cannot set broker_tool=passed", async () 
   );
 });
 
+test("Claude text claiming shell denial without structured evidence stays unverified", async () => {
+  const { evaluateNativeShellFromStream } = await import(
+    "../../src/harness/cli-verify.mjs"
+  );
+  assert.equal(evaluateNativeShellFromStream({
+    events: [],
+    text: "NATIVE_SHELL_DENIED",
+  }), "unverified");
+  assert.equal(evaluateNativeShellFromStream({
+    events: [{ type: "tool_use", name: "Bash", error: "disallowed" }],
+    text: "whatever",
+  }), "denied");
+  assert.equal(evaluateNativeShellFromStream({
+    events: [{ type: "tool_use", name: "Bash", input: { command: "echo x" }, result: "x" }],
+    text: "",
+  }), "allowed");
+});
+
 test("direct MCP preflight alone is insufficient for verification record", async () => {
   const { verifyHarness } = await import("../../src/harness/verify.mjs");
   const { claudeAdapter } = await import("../../src/harness/claude.mjs");

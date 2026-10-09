@@ -15,8 +15,7 @@ import { readSamples } from "../telemetry/store.mjs";
  *     "reserve_mb": 1024,           // MemAvailable left after a start
  *     "psi_some_max": 10,
  *     "psi_full_max": 2,
- *     "min_samples": 20,            // worker samples needed to trust a p95
- *     "memory_ceiling": { "enabled": false, "high_factor": 1.5, "max_factor": 2 }
+ *     "min_samples": 20             // worker samples needed to trust a p95
  *   }
  */
 export const DEFAULT_ADMISSION = Object.freeze({
@@ -26,7 +25,6 @@ export const DEFAULT_ADMISSION = Object.freeze({
   psi_some_max: 10,
   psi_full_max: 2,
   min_samples: 20,
-  memory_ceiling: Object.freeze({ enabled: false, high_factor: 1.5, max_factor: 2 }),
 });
 
 /**
@@ -55,31 +53,13 @@ export function admissionConfig(env = process.env, { roster } = {}) {
   const doc = roster === undefined ? loadJson(configPath(env)) : roster;
   const raw = doc?.admission ?? {};
   if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("ADMISSION_CONFIG: admission must be an object");
-  const out = { ...DEFAULT_ADMISSION, memory_ceiling: { ...DEFAULT_ADMISSION.memory_ceiling } };
+  const out = { ...DEFAULT_ADMISSION };
   for (const [key, value] of Object.entries(raw)) {
     // The roster's comment convention, as in clis.* and openrouter.
     if (key === "$comment") continue;
     if (!(key in DEFAULT_ADMISSION)) throw new Error(`ADMISSION_CONFIG: unknown admission.${key}`);
-    if (key === "memory_ceiling") {
-      if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        throw new Error("ADMISSION_CONFIG: admission.memory_ceiling must be an object");
-      }
-      for (const [k, v] of Object.entries(value)) {
-        if (!(k in DEFAULT_ADMISSION.memory_ceiling)) throw new Error(`ADMISSION_CONFIG: unknown admission.memory_ceiling.${k}`);
-        if (k === "enabled") {
-          if (typeof v !== "boolean") throw new Error("ADMISSION_CONFIG: admission.memory_ceiling.enabled must be a boolean");
-          out.memory_ceiling.enabled = v;
-        } else {
-          out.memory_ceiling[k] = positiveNumber(v, `memory_ceiling.${k}`);
-        }
-      }
-      continue;
-    }
     const integer = ["max_workers", "fallback_max_workers", "min_samples"].includes(key);
     out[key] = positiveNumber(value, key, { integer, allowNull: key === "max_workers" });
-  }
-  if (out.memory_ceiling.max_factor < out.memory_ceiling.high_factor) {
-    throw new Error("ADMISSION_CONFIG: admission.memory_ceiling.max_factor must not be below high_factor");
   }
   return out;
 }
@@ -293,33 +273,4 @@ export async function checkAdmission({
   });
   if (!decision.ok) recordRefusal({ env, now });
   return { ...decision, limits, sample_at: sample.at };
-}
-
-/**
- * Whether the user's systemd manager may set memory limits: the memory
- * controller must be delegated to user@UID.service. null when unreadable.
- */
-export function memoryDelegation({ cgroupRoot = "/sys/fs/cgroup", uid = process.getuid?.() } = {}) {
-  const file = path.join(cgroupRoot, "user.slice", `user-${uid}.slice`, `user@${uid}.service`, "cgroup.controllers");
-  try {
-    const controllers = fs.readFileSync(file, "utf8").trim().split(/\s+/);
-    return { delegated: controllers.includes("memory"), path: file, controllers };
-  } catch {
-    return { delegated: null, path: file, controllers: null };
-  }
-}
-
-/**
- * MemoryHigh/MemoryMax for one worker of `cli`, or null when ceilings are off
- * or no footprint is known to scale them from.
- */
-export function memoryCeiling({ footprint, cli, config = DEFAULT_ADMISSION }) {
-  if (!config.memory_ceiling.enabled) return null;
-  const size = footprintFor(footprint, cli, { minSamples: config.min_samples });
-  if (!size.p95_rss_kb) return null;
-  return {
-    high_kb: Math.round(size.p95_rss_kb * config.memory_ceiling.high_factor),
-    max_kb: Math.round(size.p95_rss_kb * config.memory_ceiling.max_factor),
-    source: size.source,
-  };
 }

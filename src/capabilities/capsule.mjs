@@ -7,7 +7,6 @@ import {
   estimatePromptTokenContribution,
   mcpSchemaBytesFromToolsList,
 } from "./mcp-schema.mjs";
-import { assertPathInsideRunRoot } from "./content-manifest.mjs";
 import { capabilityScope } from "./skill-scope.mjs";
 
 const DESTINATIONS = {
@@ -29,6 +28,46 @@ export function capsuleContextDir(runRoot) {
 
 /** Prompt-facing types: skill / framework / plugin prose+metadata. */
 const PROMPT_TYPES = new Set(["skills", "frameworks", "plugins"]);
+
+function assertPathInsideRunRoot(candidate, runRoot, { label = "path" } = {}) {
+  const fail = (code, message) => {
+    const err = new Error(message);
+    err.code = code;
+    throw err;
+  };
+  if (!runRoot) fail("CONTENT_MANIFEST_REQUIRED", "CONTENT_MANIFEST_REQUIRED: runRoot required");
+  const root = path.resolve(runRoot);
+  const resolved = path.resolve(candidate);
+  let rootReal = root;
+  try {
+    rootReal = fs.realpathSync.native(root);
+  } catch {
+    // The root may not exist yet when a caller validates a destination.
+  }
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    fail(
+      "CONTENT_MANIFEST_ROOT_ESCAPE",
+      `CONTENT_MANIFEST_ROOT_ESCAPE: ${label} ${resolved} outside runRoot ${root}`
+    );
+  }
+  try {
+    const stat = fs.lstatSync(resolved);
+    if (stat.isSymbolicLink()) {
+      fail("CONTENT_MANIFEST_SYMLINK", `CONTENT_MANIFEST_SYMLINK: ${label} ${resolved} is a symlink`);
+    }
+    const real = fs.realpathSync.native(resolved);
+    if (real !== rootReal && !real.startsWith(`${rootReal}${path.sep}`)) {
+      fail(
+        "CONTENT_MANIFEST_ROOT_ESCAPE",
+        `CONTENT_MANIFEST_ROOT_ESCAPE: ${label} realpath ${real} outside runRoot ${rootReal}`
+      );
+    }
+    return real;
+  } catch (error) {
+    if (error.code?.startsWith("CONTENT_MANIFEST_")) throw error;
+    return resolved;
+  }
+}
 
 function directoryByteSize(root) {
   let total = 0;

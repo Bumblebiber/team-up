@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { installPackage } from "../../src/specialists/store.mjs";
 import { trustProjectPolicy } from "../../src/specialists/approvals.mjs";
-import { launch, cliSandboxConfig } from "../../src/specialists/launcher.mjs";
+import { launch } from "../../src/specialists/launcher.mjs";
 import { resolveCommandMediation } from "../../src/specialists/adapters.mjs";
 import { normalizeBudget } from "../../src/specialists/budget.mjs";
 import { loadState } from "../../src/runs/runs.mjs";
@@ -58,21 +58,11 @@ function writeProjectCommands(project, actions = ["project-test"]) {
 test("legacy mediated_commands:true cannot enable mediation (no concrete adapter)", () => {
   const r = resolveCommandMediation({ mediated_commands: true }, { mediated_commands: true });
   assert.equal(r.enabled, false);
-  const cfg = cliSandboxConfig(
-    { clis: { cursor: { sandbox: { mediated_commands: true } } } },
-    "cursor"
-  );
-  assert.equal(cfg.mediated_commands, false);
 });
 
 test("legacy token_budget_adapter boolean is ignored; tokens stay advisory", () => {
   const normalized = normalizeBudget({ timeout_seconds: 60, max_tokens: 80000 });
   assert.equal(normalized.tokens.enforcement, "advisory");
-  const cfg = cliSandboxConfig(
-    { clis: { cursor: { sandbox: { token_budget_adapter: true } } } },
-    "cursor"
-  );
-  assert.equal(cfg.token_budget_adapter, undefined);
 });
 
 test("setting mediated_commands true cannot bypass missing command broker capability", async () => {
@@ -137,7 +127,6 @@ test("setting mediated_commands true cannot bypass missing command broker capabi
           project,
           env,
           dryRun: true,
-          sandbox: { available: true, probe: () => true },
         }),
       (e) => e.code === "PROFILE_UNAVAILABLE" || /PROFILE_UNAVAILABLE|command broker/.test(e.message)
     );
@@ -169,22 +158,19 @@ test("max_tokens is advisory and does not block launch", async () => {
     fs.writeFileSync(
       env.TEAM_UP_ROSTER,
       JSON.stringify({
-        accounts: { cursor: { kind: "subscription", enabled: true } },
+        accounts: { anthropic: { kind: "subscription", enabled: true } },
         clis: {
-          cursor: {
-            cmd: ["true", "{prompt}"],
-            sandbox: { token_budget_adapter: true },
-          },
+          claude: { cmd: ["claude", "{prompt}"] },
         },
         models: {
           m: {
-            cli: ["cursor"],
-            account: "cursor",
+            cli: ["claude"],
+            account: "anthropic",
             reasoning: { low: null },
             priority: 1,
           },
         },
-        specialists: { "testing.tokbypass": { chain: ["cursor:m"] } },
+        specialists: { "testing.tokbypass": { chain: ["claude:m"] } },
       })
     );
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
@@ -205,15 +191,8 @@ test("max_tokens is advisory and does not block launch", async () => {
       env,
       dryRun: true,
       dependencyOverrides: {
-        harnessCapabilities: () => ({
-          command_broker: null,
-          context_isolation: "team-up.context-isolation/v1",
-          native_shell: "unverified",
-          mcp: "unverified",
-        }),
         prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
       },
-      sandbox: { available: true, probe: () => true },
     });
     assert.equal(result.budget.tokens.target, 80000);
     assert.equal(result.budget.tokens.enforcement, "advisory");

@@ -81,7 +81,7 @@ test("the npm package ships every file the runtime reads outside src", () => {
       "templates/worker-prompt.md", // runs.mjs wrapPromptWithMailboxProtocol
       "templates/worker-prompt-legacy.md",
       "scripts/wait-mailbox.sh", // runs wait
-      "test/fixtures/harness-project/.team-up/commands.json", // harness verify / reverify
+      "test/fixtures/harness-project/.team-up/commands.json", // harness verify
       "hooks/hooks.json",
       "bin/team-up-command-broker.mjs",
     ]) {

@@ -5,14 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { harnessStatus } from "../../src/harness/registry.mjs";
 
-/**
- * `harnessCapabilities` returns the same empty grant set whether an adapter was
- * never checked, checked and failed, or checked and passed at a version the
- * CLI has since updated away from. Only the last is an incident, and it was
- * invisible: a self-update revokes every grant on the host, and the only
- * symptom was specialists becoming unlaunchable for reasons that named the
- * roster.
- */
+/** Verification health stays distinct from the adapter's launch capabilities. */
 function withHome(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-hstatus-"));
   try {
@@ -77,42 +70,39 @@ test("no record at all is not drift", () => {
   });
 });
 
-test("a newest verdict that failed is a known no, never drift", () => {
+test("an older failed record does not describe the installed version", () => {
   withHome((home) => {
-    // codex's shape on this host: an old pass, then a failure, then the CLI
-    // moved on again. Nothing regressed — reporting that as an incident every
-    // hour would train the reader to ignore the alert.
-    plant(home, "codex", "0.145.0", {
-      adapter: "codex",
-      cli_version: "0.145.0",
+    plant(home, "claude", "2.1.252", {
+      adapter: "claude",
+      cli_version: "2.1.252",
       status: "verified",
       checked_at: "2026-07-01T00:00:00.000Z",
     });
-    plant(home, "codex", "0.150.1", {
-      adapter: "codex",
-      cli_version: "0.150.1",
+    plant(home, "claude", "2.1.255", {
+      adapter: "claude",
+      cli_version: "2.1.255",
       status: "failed",
       checked_at: "2026-08-29T00:00:00.000Z",
     });
-    const s = harnessStatus("codex", {
+    const s = harnessStatus("claude", {
       env: { TEAM_UP_HOME: home },
-      execFileSync: versionStub("codex-cli 0.152.1\n"),
+      execFileSync: versionStub("2.1.259 (Claude Code)\n"),
     });
-    assert.equal(s.status, "failed");
+    assert.equal(s.status, "drifted");
   });
 });
 
 test("a failed record for the installed version is failed, not drift", () => {
   withHome((home) => {
-    plant(home, "codex", "0.150.1", {
-      adapter: "codex",
-      cli_version: "0.150.1",
+    plant(home, "claude", "2.1.259", {
+      adapter: "claude",
+      cli_version: "2.1.259",
       status: "failed",
       checked_at: "2026-08-29T00:00:00.000Z",
     });
-    const s = harnessStatus("codex", {
+    const s = harnessStatus("claude", {
       env: { TEAM_UP_HOME: home },
-      execFileSync: versionStub("codex-cli 0.150.1\n"),
+      execFileSync: versionStub("2.1.259 (Claude Code)\n"),
     });
     assert.equal(s.status, "failed");
   });

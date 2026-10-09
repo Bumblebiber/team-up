@@ -83,7 +83,7 @@ test("a resources wait is postponed while admission refuses and replays its acti
   });
 });
 
-test("a parked launch without a resume action starts through its descriptor path", async () => {
+test("a resource wait without a stored action never starts a parked launch", async () => {
   await withTempEnv(async () => {
     const t0 = new Date("2026-10-01T10:00:00Z");
     const { runId } = parkedRun(null);
@@ -95,15 +95,15 @@ test("a parked launch without a resume action starts through its descriptor path
     const results = await resumeDueWaits({
       now: due,
       admit: async () => ({ ok: true }),
-      startWorker: (launch) => starts.push(launch.runId),
+      executeAction: (action) => starts.push(action),
     });
 
-    assert.deepEqual(starts, [runId]);
-    assert.deepEqual(results, [{ runId, ok: true, resumed: true, reason: "resources" }]);
-    assert.equal(loadState(runId).status, "watching");
-    assert.equal(loadState(runId).capacity.auto_resume, false);
-    assert.deepEqual(listDueWaits({ now: "2099-01-01T00:00:00Z" }), []);
-    assert.equal(fs.readFileSync(path.join(mailboxDir(runId), "STATUS"), "utf8").trim(), "watching");
+    assert.deepEqual(starts, []);
+    assert.deepEqual(results, [{ runId, ok: true, resumed: false, reason: "no_resume_action" }]);
+    assert.equal(loadState(runId).status, "waiting_capacity");
+    assert.equal(loadState(runId).capacity.auto_resume, true);
+    assert.deepEqual(listDueWaits({ now: due }), [runId]);
+    assert.equal(fs.readFileSync(path.join(mailboxDir(runId), "STATUS"), "utf8").trim(), "waiting_capacity");
   });
 });
 

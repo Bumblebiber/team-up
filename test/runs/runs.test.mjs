@@ -373,18 +373,27 @@ test("buildResumePlan leaves the parent to the grouped wake-up", () => {
   assert.deepEqual(kinds, ["spawn_worker", "flag_reattach_watcher"]);
 });
 
-// executeResumeAction refuses these, so a spawn_worker parked for resources
-// would be replayed and refused every retry, stuck in waiting_capacity.
-test("buildResumePlan does not plan a respawn for a run launched from a descriptor", () => {
+test("buildResumePlan never plans respawn for modern or legacy specialist runs", () => {
   const plan = buildResumePlan({
     status: "watching",
     runId: "20260101T000000Z-r001",
+    role: "specialist:writer",
+    specialist: { id: "writer", version: "1", checksum: "sha256:x" },
     cwd: "/tmp/p",
     parent: { attach: "manual", cli: "claude" },
     worker: { cli: "claude", sessionId: "abc", tmux: "w1" },
-    launch_descriptor: { path: "/x/launch.json" },
   }, { tmuxExists: () => false });
   assert.deepEqual(plan.actions.map((a) => a.kind), ["flag_reattach_watcher"]);
+
+  const old = buildResumePlan({
+    status: "watching",
+    runId: "20260101T000000Z-r002",
+    cwd: "/tmp/p",
+    parent: { attach: "manual", cli: "claude" },
+    worker: { cli: "claude", sessionId: "abc", tmux: "w2" },
+    launch_descriptor: { path: "/x/launch.json" },
+  }, { tmuxExists: () => false });
+  assert.deepEqual(old.actions.map((a) => a.kind), ["flag_reattach_watcher"]);
 });
 
 test("buildCliArgv resumes a recorded session and has nothing for a cold start", () => {
@@ -452,24 +461,30 @@ test("a cold start the roster cannot rebuild says why instead of launching somet
   assert.throws(() => coldStartArgv(run("claude", "m"), null, "x", "/tmp"), /roster/);
 });
 
-// A specialist runs inside a capsule its launch descriptor sets up; the
-// roster's clis.claude.cmd (--dangerously-skip-permissions) would bring it
-// back outside it, and so would a bare `claude --resume <id>`. Nothing
-// respawns those; `runs stale` reports them.
-test("resume refuses to respawn a run launched from a descriptor, cold or by session", () => {
-  const specialist = {
-    runId: "20260101T000000Z-r001",
-    worker: { cli: "claude", model: "claude-opus" },
-    launch_descriptor: { path: "/x/launch.json" },
-  };
+test("resume refuses to respawn modern and legacy specialists, cold or by session", () => {
+  const specialists = [
+    {
+      runId: "20260101T000000Z-r001",
+      role: "specialist:writer",
+      specialist: { id: "writer", version: "1", checksum: "sha256:x" },
+      worker: { cli: "claude", model: "claude-opus" },
+    },
+    {
+      runId: "20260101T000000Z-r002",
+      worker: { cli: "claude", model: "claude-opus" },
+      launch_descriptor: { path: "/x/launch.json" },
+    },
+  ];
   const action = (sessionId) => ({
     kind: "spawn_worker", tmux: "tu-test-refused-r001", cwd: "/tmp", cli: "claude", sessionId, inject: "x",
   });
-  for (const sessionId of [null, "abc-session"]) {
-    assert.throws(
-      () => executeResumeAction(action(sessionId), specialist, { waitReady: () => true, readyTimeoutMs: 0 }),
-      /launch descriptor/,
-    );
+  for (const specialist of specialists) {
+    for (const sessionId of [null, "abc-session"]) {
+      assert.throws(
+        () => executeResumeAction(action(sessionId), specialist, { waitReady: () => true, readyTimeoutMs: 0 }),
+        /specialist capsule/,
+      );
+    }
   }
 });
 

@@ -5,27 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { launch, resolveRuntimeOverride, runSpecialist } from "../../src/specialists/launcher.mjs";
-import { wrapWithSandbox } from "../../src/sandbox/systemd.mjs";
 import { installPackage } from "../../src/specialists/store.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { createRun, loadState } from "../../src/runs/runs.mjs";
 import { capsuleContextDir } from "../../src/capabilities/capsule.mjs";
-import { loadAuthoritativeLaunchDescriptor } from "../../src/supervisor/start.mjs";
 
-test("launcher refuses required sandbox when probe fails; missing specialist still errors", async () => {
-  await assert.rejects(
-    async () => {
-      wrapWithSandbox({
-        command: ["true"],
-        permissions: { writes: false },
-        cwd: "/tmp",
-        probe: () => false,
-        enforcement: "required",
-      });
-    },
-    /SANDBOX_UNAVAILABLE/
-  );
+test("missing specialist still errors", async () => {
   await assert.rejects(
     () =>
       launch({
@@ -33,7 +19,6 @@ test("launcher refuses required sandbox when probe fails; missing specialist sti
         callType: "review",
         objective: "x",
         project: "/tmp",
-        sandbox: { probe: () => false },
         permissions: { network: false },
       }),
     /not installed/
@@ -100,7 +85,7 @@ async function fixtureLaunch(overrides = {}) {
       project,
       env,
       dryRun: true,
-      sandbox: { available: true, probe: () => true },
+      admission: "force",
       ...overrides,
     },
   };
@@ -128,12 +113,12 @@ test("install then specialist run --dry-run works without a separate trust step"
       launchFn: (args) => launch({
         ...args,
         env: fixture.env,
-        sandbox: { available: true, probe: () => true },
         dependencyOverrides: ISOLATED,
       }),
     });
     assert.equal(result.code, 0, output.join("\n"));
     assert.ok(output.includes("dry_run: true"));
+    assert.ok(output.includes(`argv: ${JSON.stringify(result.result.argv)}`));
   } finally {
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }
@@ -166,17 +151,18 @@ test("capsule failure prevents worker creation and requires isolation", async ()
           events.push("run-record");
           return createRun(args);
         },
-        startFromLaunchDescriptor: () => events.push("worker"),
+        startInTmux: () => events.push("worker"),
         prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
       },
     }), /broken capsule/);
     assert.deepEqual(events, ["resolve", "run-record", "capsule"]);
-    assert.equal(events.includes("worker"), false);  } finally {
+    assert.equal(events.includes("worker"), false);
+  } finally {
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }
 });
 
-test("profile skips harness verified for broker but not isolation", () => {
+test("profile requires every declared adapter capability", () => {
   const result = resolveProfile({
     roster: {
       accounts: { anthropic: { kind: "subscription", enabled: true } },
@@ -221,9 +207,6 @@ const ISOLATED = {
  *  the override tests. */
 function widenRoster(env) {
   const roster = JSON.parse(fs.readFileSync(env.TEAM_UP_ROSTER, "utf8"));
-  // The fixture's `claude` is the home-installed one; the sandbox refuses it
-  // without explicit runtime paths, and that refusal is not what is under test.
-  roster.clis.claude.sandbox_runtime_paths = ["/usr/bin", "/bin"];
   roster.models.big = {
     cli: ["claude"], account: "anthropic", reasoning: { low: null }, priority: 1,
   };
@@ -287,7 +270,7 @@ test("the worker cwd is capsuleContextDir, the function the isolation canary pro
     // if both derive the cwd the same way.
     const cwd = capsuleContextDir(seen.runDir);
     assert.equal(seen.capsule.contextDir, cwd);
-    assert.equal(loadAuthoritativeLaunchDescriptor(result.runId).context_dir, cwd);
+    assert.equal(result.argv[0], "timeout");
   } finally {
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }
@@ -295,16 +278,15 @@ test("the worker cwd is capsuleContextDir, the function the isolation canary pro
 
 // A dispatch records its routing decision on the run (STATE.picks); a
 // specialist launch picks its cell through the same gates and recorded none.
-test("a launch records its routing decision in STATE.picks before the worker starts", async () => {
+test("a launch records its routing decision in STATE.picks after the worker starts", async () => {
   const fixture = await fixtureLaunch();
   widenRoster(fixture.env);
   const picksAtStart = [];
   const deps = {
     ...ISOLATED,
     prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
-    memoryCeiling: () => null,
     checkAdmission: async () => ({ ok: true }),
-    startFromLaunchDescriptor: ({ runId }) => picksAtStart.push(loadState(runId).picks),
+    startInTmux: ({ runId }) => picksAtStart.push(loadState(runId).picks),
   };
   try {
     const plain = await launch({ ...fixture.args, dryRun: false, dependencyOverrides: deps });
@@ -312,7 +294,8 @@ test("a launch records its routing decision in STATE.picks before the worker sta
       ...fixture.args, dryRun: false, runtime: { model: "big" }, dependencyOverrides: deps,
     });
     assert.equal(picksAtStart.length, 2);
-    const [[first], [second]] = picksAtStart;
+    assert.deepEqual(picksAtStart, [undefined, undefined]);
+    const [[first], [second]] = [loadState(plain.runId).picks, loadState(pinned.runId).picks];
     assert.deepEqual(
       { ...first, at: undefined },
       { at: undefined, cli: "claude", model: "m", effort: plain.runtime.effort ?? null, pinned: false, skipped: [], refresh: null },
@@ -336,98 +319,6 @@ test("an override still has to pass the gates, and is refused rather than swappe
       }),
       /RUNTIME_OVERRIDE_UNAVAILABLE: unreachable/,
     );
-  } finally {
-    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
-  }
-});
-
-/**
- * A CLI self-update revokes every grant it proved, and the first launch after
- * one used to fail with PROFILE_UNAVAILABLE naming the roster. It now pays for
- * one re-verification instead — but only when a capability was what got
- * skipped, never for an exhausted quota window.
- */
-test("a launch re-verifies drift once instead of refusing", async () => {
-  const fixture = await fixtureLaunch();
-  widenRoster(fixture.env);
-  try {
-    let verified = false;
-    const calls = [];
-    const result = await launch({
-      ...fixture.args,
-      dryRun: false,
-      dependencyOverrides: {
-        startFromLaunchDescriptor: () => {},
-        prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
-        harnessCapabilities: () => ({
-          command_broker: null,
-          context_isolation: verified ? CONTEXT_ISOLATION_CAPABILITY : null,
-          native_shell: "denied",
-          mcp: "stdio",
-        }),
-        reverifyDrifted: async (cli) => {
-          calls.push(cli);
-          verified = true;
-          return { cli, attempted: true, status: "verified" };
-        },
-      },
-    });
-    assert.deepEqual(calls, ["claude"]);
-    assert.equal(result.runtime.model, "m");
-  } finally {
-    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
-  }
-});
-
-test("a cell skipped for anything but a capability buys no verification", async () => {
-  const fixture = await fixtureLaunch();
-  widenRoster(fixture.env);
-  try {
-    const calls = [];
-    await assert.rejects(
-      () => launch({
-        ...fixture.args,
-        runtime: { model: "unreachable" },
-        dependencyOverrides: {
-          ...ISOLATED,
-          reverifyDrifted: async (cli) => {
-            calls.push(cli);
-            return { cli, attempted: false, status: "verified" };
-          },
-        },
-      }),
-      /RUNTIME_OVERRIDE_UNAVAILABLE/,
-    );
-    assert.deepEqual(calls, []);
-  } finally {
-    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
-  }
-});
-
-test("a dry run previews the refusal instead of paying for a verification", async () => {
-  const fixture = await fixtureLaunch();
-  widenRoster(fixture.env);
-  try {
-    const calls = [];
-    await assert.rejects(
-      () => launch({
-        ...fixture.args,
-        dependencyOverrides: {
-          harnessCapabilities: () => ({
-            command_broker: null,
-            context_isolation: null,
-            native_shell: "denied",
-            mcp: "stdio",
-          }),
-          reverifyDrifted: async (cli) => {
-            calls.push(cli);
-            return { cli, attempted: true, status: "verified" };
-          },
-        },
-      }),
-      /PROFILE_UNAVAILABLE/,
-    );
-    assert.deepEqual(calls, []);
   } finally {
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }
@@ -469,14 +360,14 @@ test("an auto_invoke package opens the worker prompt with its skill", async () =
   }
 });
 
-test("admission: a refusal creates nothing, --wait-capacity parks the run, --force-admission is recorded", async () => {
+test("admission refusal creates nothing and force-admission is recorded", async () => {
   const fixture = await fixtureLaunch();
   widenRoster(fixture.env);
   const base = {
     ...ISOLATED,
-    startFromLaunchDescriptor: () => {},
+    startInTmux: () => {},
     prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
-    memoryCeiling: () => null,
+    checkAdmission: async () => ({ ok: true }),
   };
   const refused = async () => ({ ok: false, reason: "MemAvailable 900 MB - 1200 MB for the worker < reserve 1024 MB" });
   try {
@@ -484,27 +375,10 @@ test("admission: a refusal creates nothing, --wait-capacity parks the run, --for
     await assert.rejects(() => launch({
       ...fixture.args,
       dryRun: false,
+      admission: "check",
       dependencyOverrides: { ...base, checkAdmission: refused, createRun: (a) => { created.push(a); return createRun(a); } },
     }), (e) => e.code === "ADMISSION_REFUSED" && /reserve 1024 MB/.test(e.message));
     assert.equal(created.length, 0);
-
-    const parkedArgs = [];
-    let started = false;
-    const parked = await launch({
-      ...fixture.args,
-      dryRun: false,
-      admission: "wait",
-      dependencyOverrides: {
-        ...base,
-        checkAdmission: refused,
-        startFromLaunchDescriptor: () => { started = true; },
-        deferForResources: (args) => parkedArgs.push(args),
-      },
-    });
-    assert.equal(started, false);
-    assert.match(parked.waiting_capacity, /reserve 1024 MB/);
-    assert.equal(parkedArgs.length, 1);
-    assert.equal(parkedArgs[0].runId, parked.runId);
 
     let checked = false;
     const forced = await launch({
@@ -524,15 +398,17 @@ test("admission: a refusal creates nothing, --wait-capacity parks the run, --for
 
 test("specialist run maps ADMISSION_REFUSED to exit 3 and passes the admission flags", async () => {
   const seen = [];
-  const io = { out: () => {}, err: (line) => seen.push(line) };
+  const errors = [];
+  const io = { out: () => {}, err: (line) => errors.push(line) };
   const refuse = async (args) => {
     seen.push(args.admission);
     throw Object.assign(new Error("ADMISSION_REFUSED: 3 workers running, limit 3"), { code: "ADMISSION_REFUSED" });
   };
   const base = ["--id", "x", "--objective", "o"];
   assert.equal((await runSpecialist(base, io, { launchFn: refuse })).code, 3);
-  await runSpecialist([...base, "--wait-capacity"], io, { launchFn: refuse });
+  assert.equal((await runSpecialist([...base, "--wait-capacity"], io, { launchFn: refuse })).code, 1);
   await runSpecialist([...base, "--force-admission"], io, { launchFn: refuse });
-  assert.deepEqual(seen.filter((s) => !String(s).startsWith("ADMISSION")), ["check", "wait", "force"]);
-  assert.ok(seen.some((s) => /ADMISSION_REFUSED: 3 workers running/.test(s)));
+  assert.deepEqual(seen, ["check", "force"]);
+  assert.match(errors[0], /ADMISSION_REFUSED: 3 workers running/);
+  assert.match(errors[1], /unsupported admission option/);
 });

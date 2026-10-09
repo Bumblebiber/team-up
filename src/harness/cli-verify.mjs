@@ -6,7 +6,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { getAdapter } from "./registry.mjs";
 import { verifyHarness } from "./verify.mjs";
-import { pinVerifiedBinary } from "./binary.mjs";
 import { snapshotCommandPolicy } from "../commands/policy.mjs";
 import { packageRoot } from "../paths.mjs";
 import { brokerBinPath } from "../commands/mcp-server.mjs";
@@ -502,92 +501,31 @@ export async function liveClaudeVerifyRunner({ adapter, fixtureProject, cliVersi
   }
 }
 
-/**
- * Live Codex conformance: run-specific CODEX_HOME capsule + exact isolation
- * observation. Never reports "adapter not ready"; credential/runtime gaps are
- * explicit unverified results.
- */
-export async function liveCodexVerifyRunner({ adapter, fixtureProject, cliVersion }) {
-  void fixtureProject;
-  let versionOut = "";
-  try {
-    versionOut = execFileSync("codex", ["--version"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
-  } catch (e) {
-    return {
-      native_shell: "unverified",
-      broker_tool: "unverified",
-      isolation_status: "unverified",
-      context_isolation: null,
-      error: `codex executable unavailable: ${e.message}`,
-      cli_version: cliVersion,
-    };
-  }
-
-  const authPath = path.join(
-    process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
-    "auth.json"
-  );
-  if (!fs.existsSync(authPath)) {
-    return {
-      native_shell: "unverified",
-      broker_tool: "unverified",
-      isolation_status: "unverified",
-      context_isolation: null,
-      error: "codex auth.json unavailable; isolation not verified",
-      cli_version: cliVersion || String(versionOut).trim(),
-    };
-  }
-
-  const isolation = observeContextIsolation({
-    adapter,
-    adapterId: "codex",
-    spawnSyncFn: spawnSync,
-  });
-
-  return {
-    native_shell: "unverified",
-    broker_tool: "unverified",
-    isolation_status: isolation.isolation_status,
-    context_isolation: isolation.context_isolation ?? null,
-    context_isolation_absent: isolation.observed?.absent ?? null,
-    cli_version: cliVersion || String(versionOut).trim(),
-    ...(isolation.isolation_reason
-      ? { context_isolation_reason: isolation.isolation_reason }
-      : {}),
-    ...(isolation.error ? { isolation_error: isolation.error } : {}),
-  };
-}
-
 /** The fixture project every verification run is measured against. */
 export function harnessFixtureProject() {
   return path.join(packageRoot(), "test", "fixtures", "harness-project");
 }
 
 /**
- * CLIs `harness verify` has a live runner for. Anything else has no way to be
- * verified at all, so telling a user to run the command is a dead end.
+ * CLIs `harness verify` has a live runner for.
  */
-export const HARNESS_VERIFY_CLIS = new Set(["claude", "codex"]);
+export const HARNESS_VERIFY_CLIS = new Set(["claude"]);
 
-/**
- * Reason codes that mean "this CLI cannot pass, ever" rather than "it did not
- * pass this time". Re-running the command changes nothing.
- */
-export const UNVERIFIABLE_ISOLATION_REASONS = new Set(["codex_no_live_collector"]);
+/** Legacy reason retained so the dashboard can read old Codex verify logs. */
+export const UNVERIFIABLE_ISOLATION_REASONS = new Set([
+  "codex_no_live_collector",
+]);
 
 export async function runHarnessVerify(args, io = { out: console.log, err: console.error }) {
   const [cli, ...rest] = args;
   if (!cli) {
-    io.err("usage: team-up harness verify <claude|codex> --fixture-project <path>");
+    io.err("usage: team-up harness verify <claude> [--fixture-project <path>]");
     return 1;
   }
   const fixtureIdx = rest.indexOf("--fixture-project");
-  const fixtureProject = fixtureIdx === -1 ? null : rest[fixtureIdx + 1];
+  const fixtureProject = fixtureIdx === -1 ? harnessFixtureProject() : rest[fixtureIdx + 1];
   if (!fixtureProject) {
-    io.err("usage: team-up harness verify <claude|codex> --fixture-project <path>");
+    io.err("usage: team-up harness verify <claude> [--fixture-project <path>]");
     return 1;
   }
   if (!fs.existsSync(fixtureProject)) {
@@ -606,8 +544,7 @@ export async function runHarnessVerify(args, io = { out: console.log, err: conso
     return 2;
   }
   const runners = io.runners || {};
-  const runner = runners[cli]
-    || (cli === "codex" ? liveCodexVerifyRunner : liveClaudeVerifyRunner);
+  const runner = runners[cli] || liveClaudeVerifyRunner;
   const env = io.env || process.env;
   try {
     const record = await verifyHarness({
@@ -635,16 +572,6 @@ export async function runHarnessVerify(args, io = { out: console.log, err: conso
         ? ` (${record.command_broker_reason.detail})`
         : "";
       io.out(`command_broker_reason: ${record.command_broker_reason.code}${detail}`);
-    }
-    // Keep the build that just passed runnable for when its successor does not.
-    // Only a live run measured a real binary; injected runners measured nothing.
-    if (record.status === "verified" && !runners[cli]) {
-      try {
-        const pinned = pinVerifiedBinary(cli, record.cli_version, { env });
-        if (pinned) io.out(`pinned: ${pinned}`);
-      } catch (e) {
-        io.err(`pin failed (fallback unavailable for ${record.cli_version}): ${e.message || e}`);
-      }
     }
     return record.status === "verified" ? 0 : 2;
   } catch (e) {

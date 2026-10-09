@@ -256,3 +256,26 @@ test("the materialized home clears both headless-fatal first-run gates", () => {
   fs.rmSync(source, { recursive: true, force: true });
   fs.rmSync(run, { recursive: true, force: true });
 });
+
+test("materializing Claude auth home removes ambient skills from prior contents", () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-home-gen-"));
+  const authHome = fs.mkdtempSync(path.join(os.tmpdir(), "tu-claude-auth-src-"));
+  try {
+    fs.mkdirSync(path.join(authHome, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(authHome, ".claude", ".credentials.json"), "{}\n");
+    const first = materializeClaudeAuthHome(runDir, { authSourceHome: authHome });
+    const planted = path.join(first.home, ".claude", "skills", "planted.skill");
+    fs.mkdirSync(planted, { recursive: true });
+    fs.writeFileSync(path.join(planted, "SKILL.md"), "# planted\n");
+
+    const second = materializeClaudeAuthHome(runDir, { authSourceHome: authHome });
+    assert.equal(
+      fs.existsSync(path.join(second.home, ".claude", "skills", "planted.skill")),
+      false
+    );
+    assert.notEqual(first.generationId, second.generationId);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+    fs.rmSync(authHome, { recursive: true, force: true });
+  }
+});

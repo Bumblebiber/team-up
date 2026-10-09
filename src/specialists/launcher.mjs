@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { loadInstalledManifest, verifyInstalledIntegrity } from "./store.mjs";
 import { isPolicyTrusted } from "./approvals.mjs";
 import { normalizeRequest } from "./request.mjs";
@@ -11,7 +10,7 @@ import {
 } from "./permissions.mjs";
 import { resolveProfile } from "../roster/profile.mjs";
 import { requireRoster, loadJson, usagePath } from "../roster/config.mjs";
-import { buildCommand, tmuxArgs } from "../roster/command.mjs";
+import { buildCommand, startInTmux } from "../roster/command.mjs";
 import { recordPick } from "../roster/roster.mjs";
 import {
   createRun,
@@ -24,8 +23,6 @@ import {
   setStatus,
 } from "../runs/runs.mjs";
 import { materialize } from "../sandbox/materialize.mjs";
-import { wrapWithSandbox, systemdAvailable } from "../sandbox/systemd.mjs";
-import { resolveCommandMediation } from "./adapters.mjs";
 import { normalizeBudget } from "./budget.mjs";
 import {
   resolveCommandPolicyForApproval,
@@ -35,10 +32,10 @@ import {
   defaultHarnessCapabilities,
   prepareHarnessLaunch,
   getAdapter,
-  effectiveHarnessBinary,
+  harnessStatus,
+  injectAdapterEnv,
 } from "../harness/registry.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../harness/capabilities.mjs";
-import { reverifyDrifted } from "../harness/reverify.mjs";
 import { loadAssignments } from "../capabilities/assignments.mjs";
 import {
   listInstalledCapabilities,
@@ -54,75 +51,13 @@ import {
 } from "../capabilities/capsule.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import { detectParent } from "../runs/parent.mjs";
-import { admissionConfig, memoryCeiling } from "../admission/admission.mjs";
-import { workerFootprint } from "../telemetry/stats.mjs";
-import { telemetryDir } from "../paths.mjs";
-import {
-  buildLaunchDescriptor,
-  buildCapsuleLaunchRecord,
-  persistLaunchDescriptor,
-  startFromLaunchDescriptor,
-  prepareArgvFromDescriptor,
-  resolveLimitWindowsForCell,
-  loadAuthoritativeLaunchDescriptor,
-} from "../supervisor/start.mjs";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
   return i === -1 ? undefined : args[i + 1];
 }
 
-/** Resolve argv0 to a realpath (follow symlink wrappers). */
-export function resolveCliPath(argv0) {
-  if (!argv0) return null;
-  let candidate = null;
-  if (path.isAbsolute(argv0) && fs.existsSync(argv0)) {
-    candidate = argv0;
-  } else {
-    try {
-      const which = execFileSync("which", [argv0], { encoding: "utf8" }).trim();
-      candidate = which || null;
-    } catch {
-      candidate = null;
-    }
-  }
-  if (!candidate) return null;
-  try {
-    return fs.realpathSync(candidate);
-  } catch {
-    return path.resolve(candidate);
-  }
-}
-
-/**
- * CLI sandbox config. Legacy mediated_commands boolean never enables
- * enforcement — verified harness command_broker capability does.
- * Token targets are always advisory; no token_budget_adapter gate.
- */
-export function cliSandboxConfig(roster, cli, { harnessCapabilities: caps } = {}) {
-  const entry = roster?.clis?.[cli] || {};
-  const sandbox = entry.sandbox && typeof entry.sandbox === "object" ? entry.sandbox : {};
-  const resolvedCaps = caps ?? defaultHarnessCapabilities(cli);
-  const cmd = resolveCommandMediation(sandbox, entry, { harnessCapabilities: resolvedCaps });
-  return {
-    mediated_commands: cmd.enabled,
-    command_adapter: cmd.adapter,
-    harness_capabilities: resolvedCaps,
-    sandbox_runtime_paths:
-      sandbox.runtime_paths ??
-      entry.sandbox_runtime_paths ??
-      null,
-  };
-}
-
 export { builtinsForPermissions };
-
-function needsCommandMediation(effectivePerms, manifest) {
-  if ((effectivePerms.commands || []).length > 0) return true;
-  const tools = effectivePerms.tools ?? manifest?.capabilities?.tools ?? [];
-  return tools.some((t) => /^(command|shell|exec)([.]|$)/i.test(String(t)));
-}
-
 
 /**
  * A one-off {cli, model} for this launch. A named model replaces the
@@ -156,13 +91,11 @@ export async function launch({
   objective,
   project,
   inputs = [],
-  sandbox = {},
   permissions,
   runtime = null,
   env = process.env,
   dryRun = false,
-  // "check": refuse with ADMISSION_REFUSED; "wait": park the run in
-  // waiting_capacity; "force": start regardless, and say so in state.
+  // "check": refuse with ADMISSION_REFUSED; "force": start regardless.
   admission = "check",
   dependencyOverrides = {},
 }) {
@@ -181,16 +114,13 @@ export async function launch({
     dependencyOverrides.materializeCapabilityCapsule ?? materializeCapabilityCapsule;
   const createRunFn = dependencyOverrides.createRun ?? createRun;
   const detectParentFn = dependencyOverrides.detectParent ?? detectParent;
-  const startFromLaunchDescriptorFn =
-    dependencyOverrides.startFromLaunchDescriptor ?? startFromLaunchDescriptor;
+  const startInTmuxFn = dependencyOverrides.startInTmux ?? startInTmux;
   const harnessCapabilitiesFn =
     dependencyOverrides.harnessCapabilities ?? defaultHarnessCapabilities;
+  const harnessStatusFn = dependencyOverrides.harnessStatus ?? harnessStatus;
   const prepareHarnessLaunchFn =
     dependencyOverrides.prepareHarnessLaunch ?? prepareHarnessLaunch;
-  const reverifyDriftedFn = dependencyOverrides.reverifyDrifted ?? reverifyDrifted;
   const checkAdmissionFn = dependencyOverrides.checkAdmission ?? defaultCheckAdmission;
-  const deferForResourcesFn = dependencyOverrides.deferForResources ?? defaultDeferForResources;
-  const memoryCeilingFn = dependencyOverrides.memoryCeiling ?? defaultMemoryCeiling;
 
   // Install trust and permission gates stay ordered before launch setup below.
   const installed = loadInstalledManifest(specialistId, { env });
@@ -315,66 +245,38 @@ export async function launch({
     return { profileResult, cell, err: null };
   };
 
-  let { profileResult, cell, err: cellErr } = pickCell();
-  // A capability skip right after a CLI self-update is drift, not a verdict:
-  // the record is keyed by version, so the grant it proved is gone until
-  // someone re-measures the new build. Pay for that measurement once, here,
-  // rather than refuse a launch whose only problem is an update — and only
-  // for the CLIs whose skip reason was a capability, so an exhausted quota
-  // window never buys a verification it cannot use.
-  // A dry run is a preview and never pays for a real CLI run.
-  if (cellErr && !dryRun) {
-    const drifted = new Set(
-      profileResult.skipped
-        .filter((sk) => / unavailable \(need /.test(String(sk.reason)))
-        .map((sk) => String(sk.model).split(":")[0])
-    );
-    let repaired = false;
-    for (const cli of drifted) {
-      try {
-        const r = await reverifyDriftedFn(cli, { env, wait: true });
-        if (r.status === "verified") repaired = true;
-      } catch {
-        // Best-effort repair: a broken marker must not replace the real refusal.
-      }
-    }
-    if (repaired) ({ profileResult, cell, err: cellErr } = pickCell());
-  }
+  const { profileResult, cell, err: cellErr } = pickCell();
   if (cellErr) throw cellErr;
-  // What a capacity wait re-resolves later: the assignment, or the one cell a
-  // model override asked for.
+  // Record the assignment profile, or the exact one-cell runtime override.
   const launchedProfile = runtimeOverride?.model
     ? { chain: [{ model: cell.model, cli: cell.cli }] }
     : profileResult.profile;
 
-  // Admission (plan 3): one more worker only if the machine has room for it.
-  // Checked before the run exists, so a refusal leaves nothing behind.
+  if (admission !== "check" && admission !== "force") {
+    const err = new Error("unsupported admission mode; use check or force");
+    err.code = "ADMISSION_MODE_UNSUPPORTED";
+    throw err;
+  }
+
+  // Match dispatch: admission precedes run creation, so refusal leaves no run.
   let admissionRecord = null;
-  if (!dryRun) {
-    if (admission === "force") {
-      admissionRecord = { forced: true, at: new Date().toISOString() };
-    } else {
-      const decision = await checkAdmissionFn({ cli: cell.cli, env });
-      admissionRecord = { ok: decision.ok, reason: decision.reason ?? null, at: new Date().toISOString() };
-      if (!decision.ok && admission !== "wait") {
-        const err = new Error(`ADMISSION_REFUSED: ${decision.reason}`);
-        err.code = "ADMISSION_REFUSED";
-        err.details = decision;
-        throw err;
-      }
+  if (admission === "force") {
+    admissionRecord = { forced: true, at: new Date().toISOString() };
+  } else {
+    const decision = await checkAdmissionFn({ cli: cell.cli, env });
+    admissionRecord = { ok: decision.ok, reason: decision.reason ?? null, at: new Date().toISOString() };
+    if (!decision.ok) {
+      const err = new Error(`ADMISSION_REFUSED: ${decision.reason}`);
+      err.code = "ADMISSION_REFUSED";
+      err.details = decision;
+      throw err;
     }
   }
-  const memoryLimits = dryRun ? null : memoryCeilingFn({ cli: cell.cli, env });
-  const harnessCaps = harnessCapabilitiesFn(cell.cli);
-  // Which build those grants were proven on — a pinned older one while the
-  // installed build is not verified. The launch must run that same build.
-  let effectiveBin = null;
-  try {
-    effectiveBin = effectiveHarnessBinary(cell.cli, { env, execFileSync });
-  } catch {
-    // Not installed: the launch fails where it always did.
-  }
-  const cliCfg = cliSandboxConfig(roster, cell.cli, { harnessCapabilities: harnessCaps });
+  const verification = harnessStatusFn(cell.cli, { env });
+  const verificationNeedsWarning = ["no_record", "failed", "drifted"].includes(verification.status);
+  const harnessWarning = verificationNeedsWarning
+    ? `${cell.cli} ${verification.installed_version} harness verification ${verification.status}; launch continues. Run team-up harness verify ${cell.cli}.`
+    : null;
 
   const budgetNorm = normalizeBudget(manifest.budget ?? {});
 
@@ -399,7 +301,7 @@ export async function launch({
       ? `Advisory token target: ${budgetNorm.tokens.target} (not hard-enforced).`
       : null,
     budgetNorm.timeout_seconds
-      ? `Timeout budget: ${budgetNorm.timeout_seconds}s (enforced by sandbox runtime or timeout(1) fallback).`
+      ? `Timeout budget: ${budgetNorm.timeout_seconds}s (enforced by timeout(1)).`
       : null,
   ].filter(Boolean).join("\n");
 
@@ -412,6 +314,16 @@ export async function launch({
     prompt: barePrompt,
     result_protocol: "RESULT.json",
   });
+
+  const st = loadState(state.runId);
+  st.specialist = {
+    id: specialistId,
+    version: installed.version,
+    checksum: installed.checksum,
+  };
+  if (harnessWarning) st.harness_warning = harnessWarning;
+  saveState(st);
+  if (harnessWarning) console.error(`warning: ${harnessWarning}`);
 
   let policySnapshot = null;
   if (projectPolicy) {
@@ -441,18 +353,19 @@ export async function launch({
   });
   request.run_id = state.runId;
 
-  const st = loadState(state.runId);
-  st.budget = {
+  const launchState = loadState(state.runId);
+  launchState.budget = {
     timeout_seconds: budgetNorm.timeout_seconds,
     tokens: budgetNorm.tokens,
     warnings: budgetNorm.warnings,
   };
-  st.command_policy = policySnapshot
+  launchState.command_policy = policySnapshot
     ? { checksum: policySnapshot.checksum, snapshot: policySnapshot.path }
     : { checksum: null, snapshot: null };
-  st.output_contract = "team-up.result/v1";
-  st.result_protocol = "RESULT.json";
-  saveState(st);
+  launchState.output_contract = "team-up.result/v1";
+  launchState.result_protocol = "RESULT.json";
+  if (admissionRecord) launchState.admission = admissionRecord;
+  saveState(launchState);
 
   const dest = capsuleContextDir(runDir(state.runId));
   await materialize({
@@ -541,10 +454,6 @@ export async function launch({
     effort: cell.effort,
     dir: dest,
   });
-  if (effectiveBin?.fallback_from && path.basename(cliArgvRaw[0]) === cell.cli) {
-    cliArgvRaw[0] = effectiveBin.bin;
-  }
-
   const runPath = runDir(state.runId);
   const broker = policySnapshot
     ? {
@@ -563,124 +472,18 @@ export async function launch({
     capsule,
     allowedBuiltins: builtinsForPermissions(effectivePerms),
     env,
-    verification: {
-      status: "verified",
-      adapter: cell.cli,
-      cli_version: effectiveBin?.version ?? null,
-      command_broker: harnessCaps.command_broker,
-      context_isolation: harnessCaps.context_isolation,
-    },
   });
-  let cliArgv = prepared.argv;
-
-  const cliPath = resolveCliPath(cliArgv[0]);
-  const timeoutSec = budgetNorm.timeout_seconds;
+  const timeoutSeconds = budgetNorm.timeout_seconds ?? 0;
+  const argv = [
+    "timeout",
+    "--signal=TERM",
+    "--kill-after=5s",
+    `${timeoutSeconds}s`,
+    ...injectAdapterEnv(prepared.argv, prepared.env),
+  ];
   const limitWindows = resolveLimitWindowsForCell(cell, roster);
 
-  const probe = sandbox?.probe
-    ? sandbox.probe
-    : systemdAvailable;
-
-  const workerWritable = [
-    path.join(runPath, "mailbox"),
-    path.join(runPath, "context"),
-    path.join(runPath, "attempts"),
-    dest,
-  ];
-  if (fs.existsSync(path.join(runPath, "policy"))) {
-    workerWritable.push(path.join(runPath, "policy"));
-  }
-
-  const readOnlyPaths = [];
-  if (cliPath) readOnlyPaths.push(cliPath);
-  // Authoritative policy snapshot must remain readable under ProtectHome.
-  if (policySnapshot?.path) readOnlyPaths.push(policySnapshot.path);
-
-  const wrapped = wrapWithSandbox({
-    command: cliArgv,
-    setenv: { TEAMUP_WORKER: "1", TEAMUP_RUN_ID: state.runId },
-    permissions: effectivePerms,
-    cwd: dest,
-    writablePaths: workerWritable,
-    readOnlyPaths,
-    callType,
-    projectPath: fsMode === "none" ? null : project,
-    packagePath: installed.path,
-    runPath,
-    cliPath,
-    writableProject:
-      fsMode !== "none" &&
-      callType === "delegate" &&
-      (effectivePerms.writes === "delegated_only" || effectivePerms.writes === true) &&
-      effectivePerms.filesystem === "project",
-    probe,
-    timeoutSeconds: timeoutSec,
-    sandboxRuntimePaths: cliCfg.sandbox_runtime_paths,
-    enforcement: "best_effort",
-  });
-
-  const capsuleLaunch = buildCapsuleLaunchRecord({
-    runRoot: runPath,
-    capsule: {
-      ...capsule,
-      effectivePath: path.join(runPath, "EFFECTIVE_CAPABILITIES.json"),
-    },
-    env,
-  });
-  const descriptor = buildLaunchDescriptor({
-    cli: cell.cli,
-    model: cell.model,
-    effort: cell.effort,
-    promptPath: path.join(runPath, "mailbox", "PROMPT.md"),
-    contextDir: dest,
-    project: fsMode === "none" ? null : path.resolve(project),
-    packagePath: installed.path,
-    permissions: effectivePerms,
-    callType,
-    broker: policySnapshot
-      ? {
-          policySnapshot: policySnapshot.path,
-          policyChecksum: policySnapshot.checksum,
-          project: path.resolve(project),
-          runDir: runPath,
-          actionIds: effectivePerms.commands || [],
-        }
-      : null,
-    harnessRequirements: requirements,
-    harnessVerification: {
-      status: "verified",
-      adapter: cell.cli,
-      cli_version: effectiveBin?.version ?? null,
-      command_broker: harnessCaps.command_broker,
-      context_isolation: harnessCaps.context_isolation,
-    },
-    capsuleLaunch,
-    specialistProfile: launchedProfile,
-    limitWindows,
-    timeoutSeconds: timeoutSec,
-    sandboxRuntimePaths: cliCfg.sandbox_runtime_paths,
-    specialist: {
-      id: specialistId,
-      version: installed.version,
-      checksum: installed.checksum,
-    },
-    filesystemMode: fsMode,
-    memoryLimits,
-    writableProject:
-      fsMode !== "none" &&
-      callType === "delegate" &&
-      (effectivePerms.writes === "delegated_only" || effectivePerms.writes === true) &&
-      effectivePerms.filesystem === "project",
-  });
-  persistLaunchDescriptor(state.runId, descriptor);
-
   const stAfter = loadState(state.runId);
-  stAfter.sandbox = {
-    kind: wrapped.sandbox,
-    enforced: wrapped.enforced === true,
-    warning: wrapped.warning ?? null,
-    enforcement: "best_effort",
-  };
   stAfter.harness_requirements = requirements;
   stAfter.specialist_profile = launchedProfile;
   stAfter.runtime = {
@@ -689,28 +492,16 @@ export async function launch({
     effort: cell.effort,
     limit_windows: limitWindows,
   };
-  stAfter.budget = st.budget;
-  stAfter.command_policy = st.command_policy;
-  stAfter.output_contract = st.output_contract;
-  stAfter.result_protocol = st.result_protocol;
-  if (admissionRecord) stAfter.admission = admissionRecord;
+  stAfter.budget = launchState.budget;
+  stAfter.command_policy = launchState.command_policy;
+  stAfter.output_contract = launchState.output_contract;
+  stAfter.result_protocol = launchState.result_protocol;
   saveState(stAfter);
 
-  const parked = admissionRecord && admissionRecord.ok === false;
-  if (parked) {
-    // Created and fully described, but not started: the GC timer starts it
-    // from its launch descriptor once admission passes.
-    deferForResourcesFn({ runId: state.runId, admission: admissionRecord, env });
-  } else if (!dryRun) {
+  if (!dryRun) {
     const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
-    const startTmux =
-      sandbox?.startWorker ||
-      (({ argv, dir, sessionName, runId }) => {
-        execFileSync("tmux", tmuxArgs({ session: sessionName, dir, argv, env: { TEAMUP_RUN_ID: runId } }), {
-          stdio: "inherit",
-        });
-      });
-    // Before the start, as dispatch does: a start that fails still leaves the decision behind.
+    startInTmuxFn({ session, dir: dest, argv, runId: state.runId });
+    linkDispatchToRun(state.runId, session);
     recordPick(state.runId, {
       cli: cell.cli,
       model: cell.model,
@@ -719,25 +510,6 @@ export async function launch({
       skipped: profileResult.skipped,
       refresh: null,
     });
-    try {
-      startFromLaunchDescriptorFn({
-        runId: state.runId,
-        sessionName: session,
-        probe,
-        startTmux: ({ session: sess, dir, argv }) => {
-          startTmux({
-            argv,
-            dir,
-            sessionName: sess,
-            runId: state.runId,
-          });
-        },
-        rollbackStatus: "failed",
-      });
-    } catch (e) {
-      throw e;
-    }
-    linkDispatchToRun(state.runId, session);
   } else {
     const dryState = loadState(state.runId);
     dryState.dry_run = true;
@@ -745,10 +517,8 @@ export async function launch({
     setStatus(state.runId, "cancelled");
   }
 
-  const live = loadState(state.runId);
   return {
     runId: state.runId,
-    ...(parked ? { waiting_capacity: admissionRecord.reason } : {}),
     ...(admissionRecord?.forced ? { admission_forced: true } : {}),
     runtime: {
       cli: cell.cli,
@@ -756,17 +526,10 @@ export async function launch({
       effort: cell.effort,
       limit_windows: limitWindows,
     },
-    sandbox: live?.sandbox?.kind || wrapped.sandbox,
-    enforced: live?.sandbox?.enforced === true || wrapped.enforced === true,
-    sandbox_warning: live?.sandbox?.warning ?? wrapped.warning ?? null,
-    argv: dryRun || parked
-      ? wrapped.argv
-      : prepareArgvFromDescriptor(loadAuthoritativeLaunchDescriptor(state.runId), {
-          probe,
-          runId: state.runId,
-        }).argv,
+    argv,
     permissions: effectivePerms,
-    budget: st.budget,
+    budget: launchState.budget,
+    ...(harnessWarning ? { harness_warning: harnessWarning } : {}),
   };
 }
 
@@ -775,16 +538,10 @@ async function defaultCheckAdmission({ cli, env }) {
   return checkAdmission({ cli, env });
 }
 
-async function defaultDeferForResources(args) {
-  const { deferForResources } = await import("../supervisor/waits.mjs");
-  return deferForResources(args);
-}
-
-/** MemoryHigh/MemoryMax for this worker when ceilings are on, else null. */
-function defaultMemoryCeiling({ cli, env }) {
-  const config = admissionConfig(env);
-  if (!config.memory_ceiling.enabled) return null;
-  return memoryCeiling({ footprint: workerFootprint({ dir: telemetryDir(env) }), cli, config });
+function resolveLimitWindowsForCell(cell, roster) {
+  const model = roster?.models?.[cell?.model];
+  if (Array.isArray(cell?.limit_windows) && cell.limit_windows.length) return cell.limit_windows;
+  return Array.isArray(model?.limit_windows) ? model.limit_windows : [];
 }
 
 /** Alias used by production entrypoint tests. */
@@ -809,9 +566,13 @@ export async function runSpecialist(args, io = { out: console.log, err: console.
   const objective = argValue(args, "--objective") || "";
   const dryRun = args.includes("--dry-run");
   const runtime = { cli: argValue(args, "--cli"), model: argValue(args, "--model") };
-  const admission = args.includes("--force-admission") ? "force" : args.includes("--wait-capacity") ? "wait" : "check";
+  if (args.includes("--wait-capacity")) {
+    io.err("unsupported admission option; retry after capacity is available or pass --force-admission");
+    return { code: 1 };
+  }
+  const admission = args.includes("--force-admission") ? "force" : "check";
   if (!id || !objective) {
-    io.err("usage: team-up specialist run --id <id> --call-type <consult|delegate|review> --objective <text> --project <path> [--cli <cli>] [--model <model>] [--wait-capacity|--force-admission]");
+    io.err("usage: team-up specialist run --id <id> --call-type <consult|delegate|review> --objective <text> --project <path> [--cli <cli>] [--model <model>] [--force-admission]");
     return { code: 1 };
   }
   try {
@@ -827,6 +588,7 @@ export async function runSpecialist(args, io = { out: console.log, err: console.
     io.out(`run_id: ${result.runId}`);
     io.out(`cli: ${result.runtime.cli}`);
     io.out(`model: ${result.runtime.model}`);
+    io.out(`argv: ${JSON.stringify(result.argv)}`);
     if (result.runtime.effort != null && result.runtime.effort !== "") {
       io.out(`effort: ${result.runtime.effort}`);
     }

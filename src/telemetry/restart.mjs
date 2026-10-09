@@ -225,9 +225,9 @@ export function parseOomd(entries) {
 const UNIT_RUN = /team-up-(\d{8}T\d{6}Z-[a-z0-9]+)-[a-z0-9]+\.service/;
 
 /**
- * Tie a victim to a worker: by pid from the last sample, or by the unit name
- * team-up gives sandboxed workers. A matching process name alone is noted but
- * decides nothing; the human's own `claude` has the same name.
+ * Tie a victim to a worker: by pid from the last sample, or by a legacy
+ * systemd unit name. A matching process name alone is noted but decides
+ * nothing; the human's own `claude` has the same name.
  */
 function attributeVictims(victims, lastSample) {
   const workers = lastSample?.workers ?? [];

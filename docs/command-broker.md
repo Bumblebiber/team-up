@@ -19,15 +19,18 @@ checksum checks and broker execution always read the home snapshot.
 The technical command restriction protects normal harness tool use and
 accidental mutation (wrong tool, stray shell, worker-writable policy
 copies). It is **not** a defense against a hostile process sharing the
-controller's Unix UID — see `docs/specialists.md` § Accepted same-UID
-trust boundary.
+controller's Unix UID — see `docs/specialists.md` § Permissions and fail-closed
+policy.
 
 ## Adapters
 
 | Harness | Status |
 |---|---|
-| Claude | Supported after `team-up harness verify claude --fixture-project …` |
-| Cursor / Codex / Hermes / OpenCode | Explicitly unverified — filtered from command-requiring chains |
+| Claude | Adapter declares command broker and capsule support |
+| Other CLIs | Unsupported fallback; cannot launch specialist capsules |
 
 Adapter capability is never asserted by roster booleans. Verification records
-live under `~/.team-up/harness-verification/<adapter>/<cli-version>.json`.
+live under `~/.team-up/harness-verification/<adapter>/<cli-version>.json` and
+are health evidence only. Missing, failed, or drifted records produce launch
+and doctor warnings without refusing a supported launch. Refresh with
+`team-up harness verify claude`.

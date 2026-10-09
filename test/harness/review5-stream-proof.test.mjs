@@ -59,6 +59,52 @@ test("stream proof accepts real Claude 2.1.220 tool_use then matching tool_resul
   });
 });
 
+test("stream proof rejects same-event tool_use and tool_result", () => {
+  const stream = [
+    initEvent(),
+    line({
+      type: "assistant",
+      session_id: SESSION,
+      message: {
+        content: [
+          { type: "tool_use", id: "tu-1", name: TOOL, input: {} },
+          { type: "tool_result", tool_use_id: "tu-1", content: `team-up-canary-ok:${NONCE}` },
+        ],
+      },
+    }),
+  ].join("\n");
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }), "wrong_event_type");
+});
+
+test("stream proof rejects tool_use on user and tool_result on assistant", () => {
+  const badUseRole = [
+    initEvent(),
+    line({
+      type: "user",
+      session_id: SESSION,
+      message: { content: [{ type: "tool_use", id: "tu-1", name: TOOL, input: {} }] },
+    }),
+    toolResult(),
+  ].join("\n");
+  assertIsoFailure(parseClaudeStreamToolProof(badUseRole, { toolName: TOOL, nonce: NONCE }), "wrong_event_type");
+
+  const badResultRole = [
+    initEvent(),
+    toolUse(),
+    line({
+      type: "assistant",
+      session_id: SESSION,
+      message: { content: [{ type: "tool_result", tool_use_id: "tu-1", content: `team-up-canary-ok:${NONCE}` }] },
+    }),
+  ].join("\n");
+  assertIsoFailure(parseClaudeStreamToolProof(badResultRole, { toolName: TOOL, nonce: NONCE }), "wrong_event_type");
+});
+
+test("stream proof rejects duplicate tool_use ids", () => {
+  const stream = [initEvent(), toolUse("tu-1"), toolUse("tu-1"), toolResult("tu-1")].join("\n");
+  assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }), "duplicate_tool_use");
+});
+
 test("stream proof rejects tool_result before tool_use", () => {
   const stream = [initEvent(), toolResult(), toolUse()].join("\n");
   assertIsoFailure(parseClaudeStreamToolProof(stream, { toolName: TOOL, nonce: NONCE }), "proof_incomplete");

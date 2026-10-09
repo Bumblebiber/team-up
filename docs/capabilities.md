@@ -89,6 +89,7 @@ The effective set for specialist `S` is:
 │   ├── plugins/
 │   ├── claude-mcp.json  # strict MCP config
 │   └── home/            # run-specific harness config dir
+├── claude-home/          # auth-only HOME with selected skills and onboarding keys
 └── EFFECTIVE_CAPABILITIES.json
 ```
 
@@ -122,7 +123,8 @@ for `Bash` plus the credential-file read rules. The home is rebuilt from empty
 staging for every attempt and holds only `.claude/.credentials.json`, the
 selected skills under `.claude/skills/`, and a `.claude.json` carrying the
 first-run markers and workspace trust for the context dir and project — never
-the user's settings, plugins, MCP servers or other skills. The worker's cwd is
+the user's settings, plugins, MCP servers or other skills. The home is built
+once for the run. The worker's cwd is
 `<run>/context` (`capsuleContextDir`).
 
 Three details are load-bearing and were each confirmed against the CLI:
@@ -152,10 +154,13 @@ are the floor no capsule can go below.
 OAuth and keychain credentials, so it would break every
 subscription-authenticated launch; the auth-only `HOME` does its job instead.
 
-Verification is version-keyed to the harness executable, and a verified record
-grants only what it actually proved: a proven command broker never implies
-context isolation. A harness that cannot prove the contract is excluded during
-profile resolution, before any worker process exists.
+Harness support comes from the installed adapter's declared capabilities.
+Verification records are keyed to the installed CLI version and provide health
+evidence only; their status does not grant or revoke launch capabilities. A
+missing, failed, or drifted record is printed and stored as a launch warning,
+and `team-up doctor` reports it at warning severity. It does not block a
+supported capsule launch. The adapter still has to declare each required
+capability, such as context isolation or command broker support.
 
 ### Live conformance
 
@@ -210,36 +215,10 @@ failed proof leaves the record without a grant, and `context_isolation_reason`
 names the first one that failed.
 
 The record stores `context_isolation_absent`, the forbidden canaries the run
-observed absent, and a launch grants isolation only from a record whose list
-is complete against the current canary set — a token without that proof
-grants nothing.
-
-Only Claude can earn the grant today. Codex declares no context isolation (it
-has no live collector), OpenCode has an adapter but no `harness verify`
-runner, and Cursor and Hermes have no adapter, so all four are ineligible for
-specialist runs.
-
-### Drift
-
-Because the record is keyed by CLI version, a self-updating harness revokes
-every grant it proved until the new build is measured. `team-up harness
-reverify` re-runs verification for any adapter whose installed build drifted
-away from a passing record; the health cron calls it before `doctor`, and a
-specialist launch calls it once for the CLI a capability skip named, rather
-than refusing a launch whose only problem is an update. A passing record whose
-absent list predates the current canary set counts as drifted too
-(`stale_proof`), so adding a canary re-measures the installed build instead of
-leaving every specialist unlaunchable.
-
-One attempt is made per build: a sidecar `<version>.attempt` marker is both
-the lock a parallel fan-out needs and the cooldown that keeps a logged-out
-host from paying for a verification run every two hours.
-
-The drift check itself is cheap — one `--version` per adapter — so it runs
-from cron every ten minutes and the expensive fixture run happens only when a
-build actually changed. That bounds the window in which a self-update leaves
-the host without grants to ten minutes, without loosening what a record
-proves.
+observed absent, and the reason for any failed proof. Only Claude has a
+specialist harness adapter today; other CLIs use the unsupported fallback.
+Refresh the installed Claude version's health record with
+`team-up harness verify claude`.
 
 ## Commands
 

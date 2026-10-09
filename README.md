@@ -92,19 +92,15 @@ Results nobody has read yet: `team-up runs uncollected`; the host's `intake`
 skill reads, checks and records them, then `team-up runs collect <id>`.
 
 This isolates model context, not Unix files. Workers run as the same trusted
-user. A harness must have a version-keyed verification record that explicitly
-stores `context_isolation: "team-up.context-isolation/v1"` before it is
-eligible for specialist work. Live `team-up harness verify` plants global
+user. Capsule support comes from the installed harness adapter's declared
+capabilities. `team-up harness verify claude` is a live health check for the
+installed CLI version; missing, failed, or drifted records produce a doctor
+warning and do not refuse a specialist launch. The canary plants global
 canaries on a fake HOME, prepares a capsule launch, and collects a live CLI
-observation proving the full selected skill/plugin/MCP/framework matrix with
-fresh content nonces (Claude stream-json init + tool proof). The token is
-stored only on an exact match with every forbidden canary absent. Missing,
-malformed, or skipped live observations stay fail-closed at
-`context_isolation: null`. Codex 0.145.0 declares `context_isolation: null`
-because it lacks native plugin/framework isolation surfaces for the full
-generic matrix — partial MCP/skill proof must not grant v1. Closed-world
-content manifests require Linux `/proc` fd-based directory walks; other
-platforms fail closed rather than using a weaker path-based fallback.
+observation proving the selected skill/plugin/MCP/framework matrix with fresh
+content nonces. Closed-world content manifests require Linux `/proc` fd-based
+directory walks; other platforms fail closed rather than using a weaker
+path-based fallback.
 
 ## Resource telemetry and restart reports
 
@@ -161,8 +157,7 @@ workers that ran before come back; the rest wait in `waiting_capacity`
 (`reason: "resources"`), the parent's message says which, and the GC timer
 starts them one per pass once there is room. `team-up dispatch` and
 `specialist run` go through the same check and fail with `ADMISSION_REFUSED`
-(exit 3); `--force-admission` overrides it, `specialist run --wait-capacity`
-parks the run instead. Re-run `runs gc-install` and `runs resume-install`
+(exit 3); `--force-admission` overrides it. Re-run `runs gc-install` and `runs resume-install`
 once after updating so the units pick up the new settings. Keys:
 [configuration.md](docs/configuration.md#admission).
 

@@ -162,7 +162,19 @@ function noRecordFixture() {
   fs.writeFileSync(usagePath, JSON.stringify(usage));
   // No session record; this test process is the hook's parent, so its pid
   // stands in for the Claude CLI's.
-  return { TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath, CLAUDE_PID: String(process.pid) };
+  return {
+    TEAM_UP_HOME: dir,
+    TEAM_UP_ROSTER: rosterPath,
+    TEAM_UP_USAGE: usagePath,
+    CLAUDE_PID: String(process.pid),
+    // Ignore session hints inherited from whichever CLI runs this test suite.
+    CLAUDE_CODE_SESSION_ID: "",
+    HERMES_SESSION_ID: "",
+    CODEX_SESSION_ID: "",
+    OPENCODE_SESSION_ID: "",
+    CURSOR_VERSION: "",
+    CURSOR_INVOKED_AS: "",
+  };
 }
 
 test("the hook scopes to claude from CLAUDE_PID before the session record exists", () => {

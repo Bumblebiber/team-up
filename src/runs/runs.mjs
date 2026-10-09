@@ -718,30 +718,17 @@ export function buildResumePlan(state, {
     return { actions: [] };
   }
   if (state.status === "waiting_capacity") {
-    const resumeAtMs = Date.parse(state.capacity?.resume_not_before || "");
-    const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
-    const due =
-      state.capacity?.auto_resume === true &&
-      state.capacity?.wait_cancelled !== true &&
-      Number.isFinite(resumeAtMs) &&
-      Number.isFinite(nowMs) &&
-      nowMs >= resumeAtMs;
-    return {
-      actions: due
-        ? [{ kind: "resume_capacity_supervision", runId: state.runId }]
-        : [],
-    };
+    return { actions: [] };
   }
   const actions = [];
 
-  // A run launched from a descriptor is not restored automatically: a cold
-  // start would bring it back outside its capsule, so executeResumeAction
-  // refuses it and an action parked for resources would be refused forever in
-  // waiting_capacity. `runs stale` reports it; a new `specialist run` replaces it.
+  // Specialists cannot be restored automatically: a cold start or session
+  // resume would bring them back outside their capsule. `runs stale` reports
+  // the missing terminal; starting a new specialist run continues the work.
   const crashSpawnDisabled =
     state.recovery?.crash_spawn === false ||
     state.capacity?.wait_cancelled === true ||
-    Boolean(state.launch_descriptor);
+    isSpecialistRun(state);
 
   if (
     !crashSpawnDisabled &&
@@ -761,6 +748,15 @@ export function buildResumePlan(state, {
   // wakes each parent once (buildParentPlan in wakeup.mjs).
   actions.push({ kind: "flag_reattach_watcher", runId: state.runId });
   return { actions };
+}
+
+/** New state and legacy descriptor-only runs both require their capsule. */
+function isSpecialistRun(state) {
+  return Boolean(
+    state.specialist ||
+    String(state.role || "").startsWith("specialist:") ||
+    state.launch_descriptor
+  );
 }
 
 /** Resume a recorded session; null when there is none to resume (cold start). */
@@ -943,11 +939,10 @@ export function executeResumeAction(action, state, {
   }
   // Parents come back through deliverParentWakeup, never through here.
   if (action.kind !== "spawn_worker") return;
-  // A specialist's capsule comes from its launch descriptor; a cold start
-  // (the roster command) or a bare session resume would bring it back outside
-  // it, with the roster's permissions.
-  if (state.launch_descriptor) {
-    throw new Error(`resume of ${state.runId}: launched from a launch descriptor; cancel it and start a new \`specialist run\``);
+  // A specialist must never be resumed by roster command or session id: both
+  // paths would discard its capsule and closed tool allowlist.
+  if (isSpecialistRun(state)) {
+    throw new Error(`resume of ${state.runId}: specialist capsule cannot be restored; cancel it and start a new \`specialist run\``);
   }
 
   const resumed = buildCliArgv({ cli: action.cli, sessionId: action.sessionId });
@@ -1568,10 +1563,7 @@ export async function resumeAdmission(restartReport, { env = process.env, dryRun
   };
 }
 
-/**
- * Due resource waits, through the unified start path. They pass admission
- * first, then replay a stored action or start from their launch descriptor.
- */
+/** Due resource waits replay only their stored dispatch action. */
 export async function resumeDueCapacityWaits({ dryRun = false, reason = null, log = console.log } = {}) {
   const { resumeDueWaits, listDueWaits } = await import("../supervisor/waits.mjs");
   const waitReason = reason ?? "resources";
@@ -1581,7 +1573,6 @@ export async function resumeDueCapacityWaits({ dryRun = false, reason = null, lo
     return [];
   }
   if (!due.length) return [];
-  const { startFromLaunchDescriptor } = await import("../supervisor/start.mjs");
   const { checkAdmission } = await import("../admission/admission.mjs");
   const now = new Date().toISOString();
   const results = await resumeDueWaits({
@@ -1589,7 +1580,6 @@ export async function resumeDueCapacityWaits({ dryRun = false, reason = null, lo
     reason: waitReason,
     admit: (state) => checkAdmission({ cli: state.worker?.cli ?? state.runtime?.cli ?? null }),
     executeAction: (action, state) => executeResumeAction(action, state),
-    startWorker: ({ runId }) => startFromLaunchDescriptor({ runId }),
   });
   for (const r of results) {
     if (r.resumed) log(`resumed_resource_wait: ${r.runId}`);

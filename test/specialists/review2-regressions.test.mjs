@@ -4,18 +4,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { validateManifest, sha256Declared, declaredPackageFiles, loadManifestFromDir } from "../../src/specialists/manifest.mjs";
 import { installPackage } from "../../src/specialists/store.mjs";
 import { trustProjectPolicy } from "../../src/specialists/approvals.mjs";
 import { launch } from "../../src/specialists/launcher.mjs";
 import { materialize } from "../../src/sandbox/materialize.mjs";
-import { systemdSandboxArgv, wrapWithSandbox, systemdAvailable } from "../../src/sandbox/systemd.mjs";
 import { createRun, classifyMailbox, setStatus, runDir, wrapPromptWithMailboxProtocol, loadState } from "../../src/runs/runs.mjs";
 import { atomicWriteText } from "../../src/json-store.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { buildCommand } from "../../src/roster/command.mjs";
-import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 
 function validManifest(overrides = {}) {
   return {
@@ -143,7 +140,6 @@ test("tampered installed file fails PACKAGE_INTEGRITY_FAILED and does not launch
         project,
         env,
         dryRun: true,
-        sandbox: { available: true, probe: () => true },
       }),
       (e) => e.code === "PACKAGE_INTEGRITY_FAILED" || /PACKAGE_INTEGRITY_FAILED/.test(e.message)
     );
@@ -160,7 +156,7 @@ test("tampered installed file fails PACKAGE_INTEGRITY_FAILED and does not launch
 
 // --- 3. unmediated command/tool policy ---
 
-test("non-empty commands without verified command broker → PROFILE_UNAVAILABLE", async () => {
+test("non-empty commands without declared command broker → PROFILE_UNAVAILABLE", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-allow-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-ap-"));
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-apk-"));
@@ -215,7 +211,6 @@ test("non-empty commands without verified command broker → PROFILE_UNAVAILABLE
         project,
         env,
         dryRun: true,
-        sandbox: { available: true, probe: () => true },
       }),
       (e) => e.code === "PROFILE_UNAVAILABLE" || /PROFILE_UNAVAILABLE|command broker/.test(e.message)
     );
@@ -228,19 +223,6 @@ test("non-empty commands without verified command broker → PROFILE_UNAVAILABLE
     fs.rmSync(project, { recursive: true, force: true });
     fs.rmSync(pkg, { recursive: true, force: true });
   }
-});
-
-test("sandbox argv includes NoExecPaths=/ and ExecPaths=", () => {
-  const argv = systemdSandboxArgv({
-    cwd: "/tmp/ctx",
-    network: false,
-    command: ["/usr/bin/true"],
-    cliPath: "/usr/bin/true",
-    execPaths: ["/usr/bin/true"],
-  });
-  const joined = argv.join("\n");
-  assert.match(joined, /NoExecPaths=\//);
-  assert.match(joined, /ExecPaths=/);
 });
 
 // --- 4. generic vs typed mailbox ---
@@ -323,32 +305,7 @@ test("already-wrapped legacy prompt stays compatible", () => {
 
 // --- 6. filesystem:none ---
 
-test("filesystem:none does not bind project or materialize from project root", async () => {
-  const argv = systemdSandboxArgv({
-    cwd: "/tmp/run/context",
-    network: false,
-    command: ["/usr/bin/true"],
-    projectPath: null,
-    packagePath: "/pkg",
-    runPath: "/tmp/run",
-    cliPath: "/usr/bin/true",
-  });
-  const joined = argv.join(" ");
-  assert.ok(!/BindReadOnlyPaths=\/secret\/project|BindPaths=\/secret\/project/.test(joined), joined);
-  assert.ok(!joined.includes("WorkingDirectory=/secret/project"), joined);
-
-  const withNone = wrapWithSandbox({
-    command: ["/usr/bin/true"],
-    permissions: { filesystem: "none", network: false, writes: false },
-    cwd: "/tmp/run/context",
-    projectPath: "/secret/project",
-    packagePath: "/pkg",
-    runPath: "/tmp/run",
-    cliPath: "/usr/bin/true",
-    probe: () => true,
-  });
-  assert.ok(!withNone.argv.join(" ").includes("/secret/project"));
-
+test("filesystem:none does not materialize from project root", async () => {
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-fn-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-fnp-"));
   const dest = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-fnd-"));
@@ -371,46 +328,7 @@ test("filesystem:none does not bind project or materialize from project root", a
   fs.rmSync(dest, { recursive: true, force: true });
 });
 
-// --- 7. systemd smoke + missing runtime ---
-
-test("missing home CLI runtime paths → SANDBOX_RUNTIME_UNAVAILABLE", () => {
-  assert.throws(
-    () => wrapWithSandbox({
-      command: ["/home/nobody/.local/bin/fake-cli", "hi"],
-      permissions: { network: false, filesystem: "project_readonly" },
-      cwd: "/tmp/ctx",
-      projectPath: "/tmp/proj",
-      packagePath: "/tmp/pkg",
-      runPath: "/tmp/run",
-      cliPath: "/home/nobody/.local/bin/fake-cli",
-      sandboxRuntimePaths: null,
-      requireHomeRuntime: true,
-      probe: () => true,
-    }),
-    (e) => e.code === "SANDBOX_RUNTIME_UNAVAILABLE" || /SANDBOX_RUNTIME_UNAVAILABLE/.test(e.message)
-  );
-});
-
-test("actual systemd-run --user smoke with /usr/bin/true", () => {
-  if (!systemdAvailable()) {
-    // Environment without user systemd — skip without failing CI hard
-    return;
-  }
-  const argv = systemdSandboxArgv({
-    cwd: "/tmp",
-    network: false,
-    writablePaths: ["/tmp"],
-    command: ["/usr/bin/true"],
-    cliPath: "/usr/bin/true",
-    execPaths: ["/usr/bin"],
-    packagePath: null,
-    projectPath: null,
-    runPath: "/tmp",
-  });
-  execFileSync(argv[0], argv.slice(1), { stdio: "ignore", timeout: 15_000 });
-});
-
-// --- 8. token budget advisory ---
+// --- 7. token budget advisory ---
 
 test("max_tokens is advisory and does not block launch", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-tok-"));
@@ -464,7 +382,6 @@ test("max_tokens is advisory and does not block launch", async () => {
         }),
         prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
       },
-      sandbox: { available: true, probe: () => true },
     });
     assert.equal(result.budget.tokens.target, 80000);
     assert.equal(result.budget.tokens.enforcement, "advisory");
@@ -528,7 +445,7 @@ test("a cell with no effort anywhere runs without the flag; the nearest effort w
   ), "low");
 });
 
-test("a project without a command policy launches the specialist without its commands", async () => {
+test("a project without a command policy launches on Claude without its commands", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-nopol-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-np-"));
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-npk-"));
@@ -544,10 +461,10 @@ test("a project without a command policy launches the specialist without its com
   try {
     // The same broker-less roster that refuses a launch needing commands.
     fs.writeFileSync(env.TEAM_UP_ROSTER, JSON.stringify({
-      accounts: { cursor: { kind: "subscription", enabled: true } },
-      clis: { cursor: { cmd: ["true", "{prompt}"] } },
-      models: { m: { cli: ["cursor"], account: "cursor", reasoning: { low: null }, priority: 1 } },
-      specialists: { "testing.nopol": { chain: ["cursor:m"] } },
+      accounts: { anthropic: { kind: "subscription", enabled: true } },
+      clis: { claude: { cmd: ["claude", "--dangerously-skip-permissions", "{prompt}"] } },
+      models: { m: { cli: ["claude"], account: "anthropic", reasoning: { low: null }, priority: 1 } },
+      specialists: { "testing.nopol": { chain: ["claude:m"] } },
     }));
     fs.writeFileSync(env.TEAM_UP_USAGE, JSON.stringify({ windows: {} }));
     writePkg(pkg, validManifest({
@@ -562,20 +479,14 @@ test("a project without a command policy launches the specialist without its com
       project,
       env,
       dryRun: true,
-      sandbox: { available: true, probe: () => true },
-      // Isolation verified, no command broker.
       dependencyOverrides: {
-        harnessCapabilities: () => ({
-          command_broker: null,
-          context_isolation: CONTEXT_ISOLATION_CAPABILITY,
-          native_shell: "denied",
-          mcp: "stdio",
-        }),
+        checkAdmission: async () => ({ ok: true }),
+        harnessStatus: () => ({ cli: "claude", installed_version: "2.1.300", status: "verified" }),
       },
     };
-    // No commands.json drops command permissions; this fixture then stops at
-    // the later harness isolation check.
-    await assert.rejects(() => launch(args), (e) => e.code === "HARNESS_CONTEXT_ISOLATION_UNVERIFIED");
+    const result = await launch(args);
+    assert.deepEqual(result.permissions.commands, []);
+    assert.equal(loadState(result.runId).status, "cancelled");
 
     // A present policy needs its own trust action.
     writeProjectCommands(project);

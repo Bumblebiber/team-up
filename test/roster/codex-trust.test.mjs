@@ -7,7 +7,6 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildCommand, tmuxArgs } from "../../src/roster/command.mjs";
-import { prepareArgvFromDescriptor } from "../../src/supervisor/start.mjs";
 
 const roster = {
   clis: { codex: { cmd: ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "{model}", "--", "{prompt}"] } },
@@ -38,16 +37,6 @@ test("Codex worker trusts only its canonical cwd with a TOML table override", (t
 test("command previews without a worker directory and other CLIs keep their arguments", () => {
   assert.deepEqual(buildCommand({ roster, cli: "codex", model: "m", prompt: "p" }), ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "m", "--", "p"]);
   assert.deepEqual(buildCommand({ roster: { clis: { claude: { cmd: ["claude", "{prompt}"] } } }, cli: "claude", model: "m", prompt: "p", dir: "/tmp" }), ["claude", "p"]);
-});
-
-test("supervisor rebuilds Codex trust for the actual worker context directory", (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-trust-supervisor-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const promptPath = path.join(dir, "PROMPT.md");
-  fs.writeFileSync(promptPath, "Do work.");
-  const prepared = prepareArgvFromDescriptor({ cli: "codex", model: "m", context_dir: dir, prompt_path: promptPath, permissions: {} }, { roster, probe: () => false });
-  assert.ok(prepared.argv.includes(`projects={${JSON.stringify(dir)}={trust_level="trusted"}}`));
-  assert.equal(prepared.dir, dir);
 });
 
 test("dispatch --run-id pre-authorizes the run cwd and an explicit --dir override", (t) => {
