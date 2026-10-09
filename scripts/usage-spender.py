@@ -47,7 +47,9 @@ TEAMUP = ["node", str(REPO / "bin/team-up.mjs")]
 OUT_ROOT = Path(ENV.get("TEAM_UP_REPORT_DIR") or ENV.get("O9K_REPORT_DIR") or TU_HOME / "reports") / "usage-spender"
 LEDGER = OUT_ROOT / "ledger.json"
 PROJECTS = HOME / "projects"
-HOST_CWD = REPO  # .tim-project -> P0073; the host session binds there
+# .tim-project -> P0073; the host session binds there. Must be a folder Claude Code already trusts,
+# or the host sits in the trust dialog forever (a test run from a fresh clone sets it).
+HOST_CWD = Path(ENV.get("USAGE_SPENDER_HOST_CWD") or REPO)
 TELEGRAM = HOME / ".hermes/bin/send-cron-telegram"
 LABEL = ENV.get("USAGE_SPENDER_LABEL") or "usage-spender"  # Telegram headline; a test run sets its own
 CLONES = TU_HOME / "spender" / "clones"
@@ -76,6 +78,10 @@ DEDUPE_DAYS = 7           # a task key spawned within this many days is not spaw
 TIM_RANK = {"P0": 0, "critical": 0, "P1": 1, "high": 1, "P2": 2, "medium": 2}
 AUTHORS = {"Bumblebiber"}  # issues are implemented unattended: only from these GitHub logins
 SELF_TAG = "#usage-spender"  # the host files findings with this tag; never feed them back in
+# Spender-only model for implement runs, overriding the roster's implementer chain on that cli.
+# Benni 2026-10-09: the roster pins claude-haiku as implementer on claude (right for quick jobs), but
+# spare Max 20x quota should buy real implementation work, so the spender uses claude-sonnet there.
+IMPLEMENT_MODEL = {"claude": "claude:claude-sonnet"}
 IMPLEMENT = True          # TIM tasks / issues -> implement in a clone; False -> triage only
 SPAWN_HOURS = {23, 0, 1, 2}  # local hours a tick may spawn (Benni: 23:00-03:00); intake runs any hour
 MAX_RUN_H = 4             # a run still active after this long is cancelled, so it can't block the queue
@@ -332,7 +338,7 @@ def choose(cands, roster, cli, taken):
     for c in cands:
         if c["key"] in taken:
             continue
-        model = pin(roster, c["role"], cli)
+        model = (c["role"] == "implementer" and IMPLEMENT_MODEL.get(cli)) or pin(roster, c["role"], cli)
         if model:  # roster has no entry for this CLI in that role -> next, never vibe-pick
             return dict(c, cli=cli, model=model)
     return None
@@ -635,6 +641,9 @@ def selftest():
     assert choose(iter(cands), roster, "claude", set())["key"] == "pr:a#1@x"
     assert choose(iter(cands), roster, "claude", {"pr:a#1@x"})["key"] == "code-audit:r"  # planner has no claude pin
     assert choose(iter(cands), roster, "codex", {"pr:a#1@x"})["model"] == "codex:sol"
+    impl = [{"key": "tim:T2", "role": "implementer"}]
+    assert choose(iter(impl), roster, "claude", set())["model"] == "claude:claude-sonnet"  # spender override
+    assert choose(iter(impl), roster, "codex", set()) is None  # no override, no roster pin -> skip
     old = (now - timedelta(days=8)).isoformat()
     ledger = [{"key": "a", "at": old, "status": "done"}, {"key": "b", "at": old, "status": "watching"},
               {"key": "c", "at": now.isoformat(), "status": "done"}]
