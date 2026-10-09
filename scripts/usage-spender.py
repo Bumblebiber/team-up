@@ -593,9 +593,10 @@ def main(argv):
 
     if ERRORS:
         tick["errors"] = ERRORS
-    if not dry and (isinstance(tick["action"], dict) or "intake" in tick or ERRORS):  # quiet ticks leave no file
-        (day_dir / f"tick-{local.strftime('%H%M')}.json").write_text(json.dumps(tick, indent=2) + "\n")
+    if not dry:  # the ledger every tick (statuses, answered flags); a tick file only when something happened
         LEDGER.write_text(json.dumps(ledger, indent=2) + "\n")
+        if isinstance(tick["action"], dict) or "intake" in tick or ERRORS:
+            (day_dir / f"tick-{local.strftime('%H%M')}.json").write_text(json.dumps(tick, indent=2) + "\n")
     print(json.dumps(tick, indent=2))
 
 
