@@ -10,6 +10,7 @@
 | Runs | `TEAM_UP_RUNS` / `O9K_RUNS` | `~/.team-up/runs` |
 | Telemetry | `TEAM_UP_TELEMETRY` | `~/.team-up/telemetry` |
 | Dashboard AI Trending reports (read only) | `TEAM_UP_TRENDING_DIR` | `~/.hermes/cron-outputs/framework-scout` |
+| Cron reports (usage-collector, usage-spender) | `TEAM_UP_REPORT_DIR` / `O9K_REPORT_DIR` | `~/.team-up/reports` |
 
 `O9K_*` values are environment aliases only. Files under `~/.o9k` are never
 read automatically. Writes target `~/.team-up` (or an explicit

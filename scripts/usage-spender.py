@@ -5,7 +5,7 @@ Daily cron (00:00). Reads team-up's live quota windows (usage.json, refreshed ev
 the usage watcher), decides whether a weekly window will reset with paid capacity unused, and
 spawns at most MAX_SPAWNS read-only team-up workers on that CLI (runs create + dispatch).
 A cron cannot wait, so on spawn nights it also starts one Claude Code host session in tmux
-(templates/usage-spender-host.md): the parent of those runs. It records them in TIM, waits,
+(scripts/usage-spender-host.md): the parent of those runs. It records them in TIM, waits,
 does intake, collects, exits. Workers never write memory; the host does.
 
   scripts/usage-spender.py              cron mode: decide, spawn, write <day>/decision.json
@@ -21,12 +21,14 @@ from pathlib import Path
 
 HOME = Path.home()
 REPO = Path(__file__).resolve().parents[1]
-TU_HOME = Path(os.environ.get("TEAM_UP_HOME") or HOME / ".team-up")
-USAGE = TU_HOME / "usage.json"
-ROSTER = TU_HOME / "roster.json"
+ENV = os.environ
+TU_HOME = Path(ENV.get("TEAM_UP_HOME") or HOME / ".team-up")
+# Same precedence as src/paths.mjs and usage-collect-cron.sh.
+USAGE = Path(ENV.get("TEAM_UP_USAGE") or ENV.get("O9K_USAGE") or TU_HOME / "usage.json")
+ROSTER = Path(ENV.get("TEAM_UP_ROSTER") or ENV.get("O9K_ROSTER") or TU_HOME / "roster.json")
 # The entry point directly, not `team-up`: a cron PATH may lack nvm's bin.
 TEAMUP = ["node", str(REPO / "bin/team-up.mjs")]
-OUT_ROOT = TU_HOME / "reports/usage-spender"
+OUT_ROOT = Path(ENV.get("TEAM_UP_REPORT_DIR") or ENV.get("O9K_REPORT_DIR") or TU_HOME / "reports") / "usage-spender"
 PROJECTS = HOME / "projects"
 HOST_CWD = REPO  # .tim-project -> P0073; the host session binds there
 
@@ -56,7 +58,7 @@ TASKS = {
     "framework-research": "Find maintained open-source libraries or native platform features that could "
                           "replace hand-rolled code in {repo}. Web research allowed; cite links.",
 }
-HOST_PROMPT = (REPO / "templates/usage-spender-host.md").read_text()
+HOST_PROMPT = (REPO / "scripts/usage-spender-host.md").read_text()
 HOST_ALLOW = ["Read", "Grep", "Glob", "Skill", "mcp__tim", "Bash(git -C:*)", "Bash(git log:*)", "Bash(git show:*)",
               f"Bash({' '.join(TEAMUP)} runs:*)", "Bash(tmux kill-session -t usage-spender-host-:*)"]
 RULES = ("\n\nRead-only: do not edit, commit or push anything in {repo}. Report at most 15 findings, "
