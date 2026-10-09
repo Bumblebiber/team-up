@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { ensureAgyWorkspaceTrusted } from "../roster/agy-trust.mjs";
 import { tmuxArgs } from "../roster/command.mjs";
 import { cliModelFor } from "../roster/config.mjs";
 import { listTmuxSessions } from "../runs/tmux.mjs";
@@ -190,6 +191,7 @@ export function startTaskSession({
   // refused by the CLI, `--model sonnet` is what it answers to.
   const promptText = framing ? `${framing}\n${text}` : text;
   const flag = model ? ["--model", cliModelFor(roster, model, cli)] : [];
+  if (cli === "agy") ensureAgyWorkspaceTrusted(dir, { env });
   const argv = cli === "agy"
     ? [cmd, ...flag, "-i", promptText]
     : [cmd, ...flag, promptText];

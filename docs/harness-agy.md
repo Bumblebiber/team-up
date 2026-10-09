@@ -126,9 +126,8 @@ Other print-mode slash commands: `/skills`, `/agents` work; `/mcp` errors
 - **Built into agy** (8): `agy-customizations`, `antigravity-guide`, `automation`,
   `generative_ui`, `migrate-workflows`, `permissioned-github`, `plugin`,
   `ui-plugin-navigation`. Only the first two are mounted by default.
-- **Global, picked up today:** the ~40 `hmem-*` and `tim-*` skills in
-  `~/.gemini/skills/` (left over from gemini-cli). hmem is archived — an agy
-  worker would see stale hmem instructions.
+- **Global, picked up today:** 18 `tim-*` skills in `~/.gemini/skills/`.
+  The 22 `hmem-*` skills moved out of that directory.
 - **Plugins:** `agy plugin import claude|gemini` imports existing plugins;
   marketplace `antigravity-plugins-official` (Google Workspace, Android CLI, …).
 - **Community skills for driving agy from Claude:** `oaustegard/claude-skills`
@@ -138,15 +137,15 @@ Other print-mode slash commands: `/skills`, `/agents` work; `/mcp` errors
 
 ## team-up wiring
 
-Templates (prompt position verified; first live `-i` check reached the consent screen before a model turn):
+Templates (prompt position verified):
 
     "agy": {
-      "cmd":          ["agy", "--dangerously-skip-permissions", "--model", "{model}", "--effort", "{effort}", "-i", "{prompt}"],
-"headless_cmd": ["agy", "-p", "{prompt}", "--output-format", "stream-json", "--print-timeout", "0",
-                       "--dangerously-skip-permissions", "--model", "{model}", "--effort", "{effort}"]
+      "cmd": ["agy", "--dangerously-skip-permissions", "--model", "{model}", "--effort", "max", "-i", "{prompt}"],
+      "headless_cmd": ["agy", "-p", "{prompt}", "--output-format", "stream-json", "--print-timeout", "0",
+                       "--dangerously-skip-permissions", "--model", "{model}", "--effort", "max"]
     }
 
-The requested interactive tmux check launched with a temporary `HOME` and scratch workspace on 2026-10-09. First-run onboarding asked whether to agree to Google collecting interaction data; the default checkbox was opted in. The check stopped at that screen without accepting it, so the model prompt has not run and interactive persistence remains unverified pending a human choice.
+The first interactive tmux attempt used a temporary `HOME` and stopped at agy's first-run Google interaction-data consent screen without accepting it. A second attempt used the real `HOME` and a fresh scratch workspace. Before launch, the trust helper added that exact workspace path to `trustedWorkspaces`; agy replied `PONG`, returned to its `>` prompt, and kept the tmux session alive for five seconds. The session was killed and the temporary trust entry removed. The account's data-use choice was not changed. The trust helper runs only for interactive agy launches; headless `-p` does not need workspace trust.
 
 Account: `accounts.gemini` (`kind: subscription`, `plan: pro`) — `PLAN_TIERS.gemini`
 and the dashboard label `gemini: "Google"` already exist; models set
@@ -154,7 +153,7 @@ and the dashboard label `gemini: "Google"` already exist; models set
 
 Must change together (else silent failures):
 
-1. Headless allowlists: `src/roster/config.mjs` (`headless_cmd` codex/cursor only),
+1. Headless allowlists: `src/roster/config.mjs` (`headless_cmd` codex/cursor/agy),
    `src/runs/headless.mjs` `parseArgs`; tests `test/roster/headless-command.test.mjs`,
    `test/runs/headless.test.mjs`.
 2. `src/runs/headless.mjs` `finalMessageFor` + session id: last `event:"result"` line →

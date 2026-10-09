@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { linkDispatchToRun, mailboxDir, setStatus } from "../runs/runs.mjs";
 import { detectParent } from "../runs/parent.mjs";
 import { runsPath, teamUpHome } from "../paths.mjs";
+import { ensureAgyWorkspaceTrusted } from "./agy-trust.mjs";
 
 /** First non-flag argv token; skips values that belong to --flags. */
 export function firstPositional(args) {
@@ -157,6 +158,7 @@ export async function spawnPinnedInTmux({
     effectiveRunId = state.runId;
   }
   const headless = Boolean(roster.clis[cli].headless_cmd);
+  if (cli === "agy" && !headless) ensureAgyWorkspaceTrusted(dir);
   const lastMessage = path.resolve(mailboxDir(effectiveRunId), "LAST_MESSAGE.md");
   const built = buildCommand({ roster, model, cli, prompt, effort, dir, headless, lastMessage });
   const argv = headless

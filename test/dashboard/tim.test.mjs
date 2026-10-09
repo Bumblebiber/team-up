@@ -91,6 +91,26 @@ test("startTaskSession spawns the bare binary with the entry in the prompt", (t)
   assert.ok(tmux.args.includes("TEAMUP_WORKER=1") === false);
 });
 
+test("startTaskSession trusts an agy workspace before spawning its interactive session", (t) => {
+  const root = fixture();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-agy-home-"));
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  const calls = [];
+  const settingsPath = path.join(home, ".gemini", "antigravity-cli", "settings.json");
+  startTaskSession({
+    id: "e-1", cli: "agy", projectsDir: root,
+    roster: { clis: { agy: { cmd: ["agy"] } } },
+    env: { HOME: home }, exec: execFake(calls), sessions: [],
+  });
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf8")), {
+    trustedWorkspaces: [path.join(root, "alpha")],
+  });
+  assert.match(calls.find((c) => c.cmd === "tmux").args.at(-1), /^agy -i /);
+});
+
 test("two entries of one project get two sessions", (t) => {
   const root = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
