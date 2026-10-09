@@ -21,15 +21,7 @@ The parent chat **cannot see your tmux pane**. It only wakes when mailbox
 1. On start: write `{{RUN_DIR}}/mailbox/STATUS` = `watching`. Touch `{{RUN_DIR}}/mailbox/HEARTBEAT` with UTC ISO now.
 2. Every ~5 minutes of work (and after each meaningful step): update `HEARTBEAT`.
 3. Need a human/parent decision: write `{{RUN_DIR}}/mailbox/QUESTIONS.md`, set `{{RUN_DIR}}/mailbox/STATUS` = `waiting_human`, update HEARTBEAT, then wait for `{{RUN_DIR}}/mailbox/ANSWER.md` (do not exit).
-4. Quota handoff (when `{{RUN_DIR}}/mailbox/CONTROL.json` has `type: request_handoff`):
-   - Stop starting new work.
-   - Write a typed `{{RUN_DIR}}/mailbox/CHECKPOINT.json` conforming to `team-up.checkpoint/v1`
-     (`schema`, `run_id`, `attempt_id`, `status` complete|partial, `summary`,
-     `completed`, `open`, `artifacts`, `verification_commands`, `risks`,
-     `questions`, `repository`, `created_at`).
-   - Set `handoff_ready: true` in `{{RUN_DIR}}/mailbox/CONTROL.json`.
-   - Keep refreshing `HEARTBEAT` until the controller stops this session.
-5. Finished:
+4. Finished:
    - Write task-dir artifacts (`PLAN.md`, `GRILL.md`, code, …) as required by the task.
    - Write `{{RUN_DIR}}/mailbox/RESULT.json` conforming to schema `team-up.result/v1`
      (`status`, `summary`, …). This is the live specialist mailbox protocol.
@@ -39,7 +31,7 @@ The parent chat **cannot see your tmux pane**. It only wakes when mailbox
    - Optionally write `{{RUN_DIR}}/mailbox/RESULT.md` as human-readable detail (not sufficient alone).
    - Set `{{RUN_DIR}}/mailbox/STATUS` = `done` (or run: `team-up runs set-status {{RUN_ID}} done`).
    - Then you may stop.
-6. Hard failure: `{{RUN_DIR}}/mailbox/STATUS` = `failed` and explain in `{{RUN_DIR}}/mailbox/RESULT.json` (and optional RESULT.md).
+5. Hard failure: `{{RUN_DIR}}/mailbox/STATUS` = `failed` and explain in `{{RUN_DIR}}/mailbox/RESULT.json` (and optional RESULT.md).
 
 The parent may write `{{RUN_DIR}}/mailbox/VERIFICATION.json` after you close the mailbox — that file is
 **parent-owned evidence**, not yours to author. Do not write or rely on it.
