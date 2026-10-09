@@ -120,6 +120,7 @@ No config yet → `team-up init`, then tell the user to curate `~/.team-up/roste
 | scout | codebase search |
 | summarizer | digesting logs/diffs/docs |
 | test-writer | tests after implementation |
+| overseer | cheap ops agent: triage, digests, run watching (Hermes first) |
 
 ## Commands
 
