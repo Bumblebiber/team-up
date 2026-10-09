@@ -35,8 +35,9 @@ Record one TIM task per run with tim_write:
   - "done" otherwise
   - "cancelled" if the run failed or was cancelled
 
-If the run came from a TIM task, add a short note there with tim_update: the PR, branch or
-triage result, and the run id. Do not change that task's status.
+If the run came from a TIM task: tim_write a child entry under it (parentId = that task's id),
+title "usage-spender {date}: <PR url | local branch | not implemented>", content = the run id and a
+two-line summary. Never tim_update that task: its content would be replaced. Leave its status alone.
 
 Then `$TU runs outcome <run_id> merged` (findings kept or a PR opened) or `discarded`,
 and `$TU runs collect <run_id> --note "<TIM id>"`.

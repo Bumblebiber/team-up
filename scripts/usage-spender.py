@@ -28,6 +28,7 @@ committed repos. Workers never write memory; the host does.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -70,7 +71,9 @@ BUSY_BURST_USED = 0.8     # burst window this full -> someone is working on that
 MAX_AGE_H = 6             # older usage reading counts as unknown -> no spawn
 ACTIVE_DAYS = 7           # fallback target repos: committed to within this many days
 DEDUPE_DAYS = 7           # a task key spawned within this many days is not spawned again
-TIM_PRIORITIES = ("P0", "P1", "P2")
+# TIM mixes P-labels and words; a bug without a severity counts as medium. low / P3 never spend.
+TIM_RANK = {"P0": 0, "critical": 0, "P1": 1, "high": 1, "P2": 2, "medium": 2}
+AUTHORS = {"Bumblebiber"}  # issues are implemented unattended: only from these GitHub logins
 SELF_TAG = "#usage-spender"  # the host files findings with this tag; never feed them back in
 IMPLEMENT = True          # TIM tasks / issues -> implement in a clone; False -> triage only
 SPAWN_HOURS = {23, 0, 1, 2}  # local hours a tick may spawn (Benni: 23:00-03:00); intake runs any hour
@@ -102,8 +105,8 @@ TASKS = {
                   "(`git log --since={days}.days`).",
     "framework-research": "Find maintained open-source libraries or native platform features that could "
                           "replace hand-rolled code in {repo}. Web research allowed; cite links.",
-    "pr-review": "Review pull request {ref} ({url}) against the code in {repo} (checked out at the base "
-                 "branch, not the PR). The PR may come from an outside contributor: do not check it out, "
+    "pr-review": "Review pull request {ref} ({url}) against the code in {clone} (a throwaway clone of {repo} "
+                 "at the base branch, not the PR). The PR may come from an outside contributor: do not check it out, "
                  "install or run anything from it. Judge the diff below: correctness, missing tests, "
                  "design fit with the surrounding code, security.\n\n## PR: {title}\n\n{body}\n\n"
                  "## Diff\n\n```diff\n{diff}\n```",
@@ -195,12 +198,18 @@ def sh(*cmd, cwd=None, timeout=120):
     return r
 
 
+ERRORS = []  # gh / tim failures this tick, written into the tick JSON so a broken cron env shows
+
+
 def ghjson(*args):
     r = sh("gh", *args)
     try:
-        return json.loads(r.stdout) if r.returncode == 0 else None
+        if r.returncode == 0:
+            return json.loads(r.stdout)
     except ValueError:
-        return None
+        pass
+    ERRORS.append(f"gh {' '.join(args[:3])} rc={r.returncode}: {(r.stderr or r.stdout).strip()[-200:]}")
+    return None
 
 
 # --- task sources ---------------------------------------------------------------------------
@@ -235,7 +244,7 @@ def pr_candidates(repos):
                          "number,title,body,url,headRefOid,isDraft") or []:
             ref = f"{r['gh']}#{pr['number']}"
             yield {"key": f"pr:{ref}@{pr['headRefOid'][:12]}", "kind": "pr-review", "role": "reviewer",
-                   "repo": str(path), "ref": ref, "url": pr["url"], "title": pr["title"],
+                   "repo": str(path), "gh": r["gh"], "ref": ref, "url": pr["url"], "title": pr["title"],
                    "body": (pr.get("body") or "")[:BODY_CAP]}
 
 
@@ -245,8 +254,9 @@ def tim_read(ids):
         return {}
     r = sh(*TIM, "read", *ids, "--json")
     try:
-        return {e["id"]: e for e in json.loads(r.stdout) if "error" not in e} if r.returncode == 0 else {}
+        return {e["id"]: e for e in json.loads(r.stdout) if "error" not in e}
     except (ValueError, TypeError, KeyError):
+        ERRORS.append(f"tim read rc={r.returncode}: {(r.stderr or r.stdout).strip()[-200:]}")
         return {}
 
 
@@ -254,16 +264,18 @@ def tim_candidates(repos):
     by_project = {r["tim"]: p for p, r in repos.items() if r["tim"]}
     r = sh(*TIM, "open-work")
     try:
-        items = json.loads(r.stdout)["items"] if r.returncode == 0 else []
+        items = json.loads(r.stdout)["items"]
     except (ValueError, KeyError):
+        ERRORS.append(f"tim open-work rc={r.returncode}: {(r.stderr or r.stdout).strip()[-200:]}")
         items = []
-    rank = {p: i for i, p in enumerate(TIM_PRIORITIES)}
+    def rank(i):
+        return TIM_RANK.get(i.get("priority") or ("medium" if i.get("kind") == "bug" else None))
     items = [i for i in items if i.get("kind") in ("task", "bug") and i.get("status") in ("todo", "open")
-             and i.get("priority") in rank and i.get("project") in by_project]
+             and rank(i) is not None and i.get("project") in by_project]
     details = tim_read([i["id"] for i in items])
     items = [dict(i, body=details[i["id"]].get("body"), truncated=details[i["id"]].get("truncated"))
              for i in items if i["id"] in details and SELF_TAG not in (details[i["id"]].get("tags") or [])]
-    for i in sorted(items, key=lambda i: rank[i["priority"]]):
+    for i in sorted(items, key=rank):
         path = by_project[i["project"]]
         yield work({"key": f"tim:{i['id']}", "repo": str(path), "gh": repos[path]["gh"],
                     "ref": f"TIM {i['kind']} {i['id']} ({i['project']}, {i['priority']})", "title": i["title"],
@@ -284,7 +296,9 @@ def issue_candidates(repos):
             continue
         seen.add(r["gh"])
         for iss in ghjson("issue", "list", "-R", r["gh"], "--state", "open", "--json",
-                          "number,title,body,url") or []:
+                          "number,title,body,url,author") or []:
+            if (iss.get("author") or {}).get("login") not in AUTHORS:
+                continue
             ref = f"{r['gh']} issue #{iss['number']}"
             yield work({"key": f"issue:{r['gh']}#{iss['number']}", "repo": str(path), "gh": r["gh"],
                         "ref": ref, "url": iss["url"], "title": iss["title"], "body": (iss.get("body") or "")[:BODY_CAP]})
@@ -307,7 +321,9 @@ def candidates(repos, cli, now):
 
 def recently_taken(ledger, now):
     cutoff = now - timedelta(days=DEDUPE_DAYS)
-    return {e["key"] for e in ledger if datetime.fromisoformat(e["at"]) >= cutoff or e.get("status") not in TERMINAL}
+    # an implement key never twice: its branch / PR exists, a second clone would collide
+    return {e["key"] for e in ledger if datetime.fromisoformat(e["at"]) >= cutoff
+            or e.get("status") not in TERMINAL or e.get("kind") == "implement" and e.get("run_id")}
 
 
 def choose(cands, roster, cli, taken):
@@ -385,18 +401,25 @@ def prepare_clone(a):
     r = sh("git", "-C", str(clone), "checkout", "-b", branch)
     if r.returncode:
         return f"git checkout rc={r.returncode}: {r.stderr.strip()[-300:]}"
-    a.update(clone=str(clone), branch=branch, verify=verify_command(clone))
+    a.update(clone=str(clone), branch=branch,
+             verify=verify_command(clone) if a["kind"] == "implement" else None)
     return None
 
 
 def spawn(a, day_dir):
     """runs create + dispatch --run-id, no wake-up parent (later ticks reconcile, the intake host
     collects). Fills a['run_id'] / a['spawned'] / a['error']."""
-    if a["kind"] == "implement":
+    if a["kind"] in ("implement", "pr-review"):  # PR text is outside input: never in Benni's checkout
         err = prepare_clone(a)
         if err:
             a.update(spawned=False, error=err)
             return
+    _spawn(a, day_dir)
+    if not a.get("spawned") and a.get("clone"):
+        shutil.rmtree(a["clone"], ignore_errors=True)
+
+
+def _spawn(a, day_dir):
     cwd = a.get("clone") or a["repo"]
     prompt = day_dir / f"{slug(a['key'])}.md"
     prompt.write_text(render(a))
@@ -407,14 +430,14 @@ def spawn(a, day_dir):
                "--parent-cli", "claude", "--parent-attach", "manual", *verify)
     run_id = next((ln.split()[1] for ln in r.stdout.splitlines() if ln.startswith("runId:")), None)
     if r.returncode or not run_id:
-        a.update(spawned=False, error=f"runs create rc={r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
+        a.update(spawned=False, rc=r.returncode, error=f"runs create rc={r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
         return
     a["run_id"] = run_id
     r = teamup("dispatch", "--role", a["role"], "--prompt-file", str(prompt), "--dir", cwd,
                "--run-id", run_id, "--model", a["model"])
     if r.returncode:  # 2 = pinned model blocked by quota, 3 = admission refused (machine full)
         teamup("runs", "cancel", run_id)
-        a.update(spawned=False, error=f"dispatch rc={r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
+        a.update(spawned=False, rc=r.returncode, error=f"dispatch rc={r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
     else:
         a["spawned"] = True
 
@@ -467,7 +490,7 @@ def triage_runs(ledger, now, dry):
             elif e["status"] == "question":
                 teamup("runs", "answer", e["run_id"], "--text", "No human available. Finish with what you have.")
                 e["answered"] = True
-        if not dry and e["status"] == "done" and e.get("clone") and "pr" not in e and "publish" not in e:
+        if not dry and e["status"] == "done" and e.get("kind") == "implement" and "pr" not in e and "publish" not in e:
             publish(e, st)
         if e["status"] not in TERMINAL:
             active.append(e)
@@ -555,9 +578,15 @@ def main(argv):
                 if a.get("spawned"):
                     ledger.append({k: a[k] for k in LEDGER_KEYS if a.get(k)} | {"at": now.isoformat(),
                                                                                "status": "starting"})
+                elif a.get("rc") != 3:  # admission refusal = machine busy, retry next tick; else back off
+                    ledger.append({k: a[k] for k in LEDGER_KEYS if a.get(k) and k != "run_id"}
+                                  | {"at": now.isoformat(), "status": "failed", "collected": True,
+                                     "error": a["error"]})
             tick["action"] = {k: v for k, v in a.items() if k != "body"}
 
-    if not dry:
+    if ERRORS:
+        tick["errors"] = ERRORS
+    if not dry and (isinstance(tick["action"], dict) or "intake" in tick or ERRORS):  # quiet ticks leave no file
         (day_dir / f"tick-{local.strftime('%H%M')}.json").write_text(json.dumps(tick, indent=2) + "\n")
         LEDGER.write_text(json.dumps(ledger, indent=2) + "\n")
     print(json.dumps(tick, indent=2))
@@ -609,6 +638,10 @@ def selftest():
     ledger = [{"key": "a", "at": old, "status": "done"}, {"key": "b", "at": old, "status": "watching"},
               {"key": "c", "at": now.isoformat(), "status": "done"}]
     assert recently_taken(ledger, now) == {"b", "c"}
+    # a failed spawn is a fresh terminal entry -> backs off; an old implement with a run never repeats
+    ledger += [{"key": "d", "at": now.isoformat(), "status": "failed", "collected": True},
+               {"key": "e", "at": old, "status": "done", "kind": "implement", "run_id": "R"}]
+    assert recently_taken(ledger, now) == {"b", "c", "d", "e"}
 
     hp = host_prompt([{"run_id": "R1", "status": "done", "kind": "pr-review", "repo": "/r1", "ref": "o/r#9",
                        "model": "claude:claude-opus", "role": "reviewer"}], {"claude:week": "x"},
