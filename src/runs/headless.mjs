@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { atomicWriteText, loadState, mailboxDir, setWorkerMailboxStatus } from "./runs.mjs";
@@ -50,6 +50,46 @@ export function signalWorker(child, signal, { platform = process.platform, kill 
     }
   }
   try { child.kill(signal); } catch { /* already gone */ }
+}
+
+/** Pids below `root`. agy starts each tool in its own session, so a group kill misses them. */
+export function descendantPids(root, { ps = () => execFileSync("ps", ["-e", "-o", "pid=,ppid="], { encoding: "utf8" }) } = {}) {
+  const children = new Map();
+  for (const line of ps().trim().split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (!children.has(ppid)) children.set(ppid, []);
+    children.get(ppid).push(pid);
+  }
+  const found = [];
+  const queue = [root];
+  while (queue.length) {
+    for (const pid of children.get(queue.shift()) || []) {
+      found.push(pid);
+      queue.push(pid);
+    }
+  }
+  return found;
+}
+
+/**
+ * SIGTERM the worker's group and every descendant, then SIGKILL what is left
+ * after the grace. Always SIGTERM: agy ignores SIGHUP, which is what a killed
+ * tmux pane forwards. The SIGKILL timer is not unref'd, so the wrapper outlives
+ * the child long enough to reap tools the child orphaned.
+ */
+function stopWorker(child) {
+  let pids = [];
+  if (process.platform !== "win32" && Number.isInteger(child.pid)) {
+    try { pids = descendantPids(child.pid); } catch { /* no ps: group kill only */ }
+  }
+  const hit = (signal) => {
+    signalWorker(child, signal);
+    for (const pid of pids) {
+      try { process.kill(pid, signal); } catch { /* already gone */ }
+    }
+  };
+  hit("SIGTERM");
+  setTimeout(() => hit("SIGKILL"), KILL_GRACE_MS);
 }
 
 function makeFailureText(mailbox, reason) {
@@ -208,18 +248,19 @@ async function main() {
   const heartbeat = setInterval(() => touchHeartbeat(mailbox), 60 * 1000);
   const timeout = setTimeout(() => {
     timedOut = true;
-    signalWorker(child, "SIGTERM");
-    // Keep wrapper alive through the grace period so descendants that ignore
-    // SIGTERM still receive SIGKILL as a process group, even if parent exits.
-    setTimeout(() => signalWorker(child, "SIGKILL"), KILL_GRACE_MS);
+    stopWorker(child);
   }, HEADLESS_TIMEOUT_MS);
   heartbeat.unref();
   timeout.unref();
 
   const forwardSignal = (signal) => {
     externalSignal = signal;
-    signalWorker(child, signal);
+    stopWorker(child);
   };
+  // A killed tmux pane closes the tty: a late write must not crash the wrapper
+  // before stopWorker's SIGKILL fires.
+  process.stdout.on("error", () => {});
+  process.stderr.on("error", () => {});
   const onSigterm = () => forwardSignal("SIGTERM");
   const onSighup = () => forwardSignal("SIGHUP");
   process.once("SIGTERM", onSigterm);

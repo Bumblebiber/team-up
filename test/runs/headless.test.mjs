@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { atomicWriteText, createRun as createRunRecord, mailboxDir } from "../../src/runs/runs.mjs";
-import { signalWorker } from "../../src/runs/headless.mjs";
+import { descendantPids, signalWorker } from "../../src/runs/headless.mjs";
 
 const HEADLESS = fileURLToPath(new URL("../../src/runs/headless.mjs", import.meta.url));
 
@@ -80,6 +80,12 @@ function agyFixtureCode() {
   const lines = fs.readFileSync(fixturePath, "utf8").trim().split(/\r?\n/);
   return `for (const line of ${JSON.stringify(lines)}) console.log(line);`;
 }
+
+test("descendantPids walks the whole tree, including tools that left the group", () => {
+  const ps = () => " 10 1\n 20 10\n 30 20\n 31 20\n 40 1\n 50 30\n";
+  assert.deepEqual(descendantPids(10, { ps }).sort((a, b) => a - b), [20, 30, 31, 50]);
+  assert.deepEqual(descendantPids(40, { ps }), []);
+});
 
 test("timeout signaling targets detached worker process group", () => {
   const calls = [];
