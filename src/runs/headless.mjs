@@ -73,7 +73,7 @@ function finalize({ runId, cli, mailbox, code, signal, cursorResult, timedOut, c
     finalMessage = cursorResult.result;
   }
 
-  if (code === 0 && finalMessage !== null) {
+  if (code === 0 && finalMessage?.trim()) {
     const state = loadState(runId);
     if (state?.result_protocol === "RESULT.json" && !fs.existsSync(path.join(mailbox, "RESULT.json"))) {
       setWorkerMailboxStatus(runId, "failed", { reason: "typed run exited without RESULT.json" });

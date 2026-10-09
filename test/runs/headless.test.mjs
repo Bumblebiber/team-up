@@ -98,6 +98,15 @@ test("headless fails clean exit without final message", withTempRuns(async () =>
   assert.match(mailboxText(state.runId, "FAILURE.md"), /worker exited with code 0/);
 }));
 
+test("headless fails clean exit with an empty last message", withTempRuns(async () => {
+  const state = createRun();
+  const resultPath = mailboxFile(state.runId, "LAST_MESSAGE.md");
+  const result = runHeadless(state.runId, { code: codexSuccessCode("  \n"), args: [resultPath] });
+  assert.equal(result.status, 0);
+  assert.equal(mailboxText(state.runId, "STATUS").trim(), "failed");
+  assert.equal(fs.existsSync(mailboxFile(state.runId, "RESULT.md")), false);
+}));
+
 test("headless failure includes only last 40 stderr lines", withTempRuns(async () => {
   const state = createRun();
   const code = `for (let i = 0; i < 50; i++) console.error("line-" + i); process.exit(3);`;

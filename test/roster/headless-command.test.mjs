@@ -45,3 +45,8 @@ test("validateRoster requires headless_cmd to be an array of strings", () => {
     .errors.some((error) => error.includes("clis.codex.headless_cmd")));
   assert.deepEqual(validateRoster(ROSTER).errors, []);
 });
+
+test("validateRoster rejects headless_cmd outside codex and cursor", () => {
+  assert.ok(validateRoster({ clis: { hermes: { cmd: ["hermes"], headless_cmd: ["hermes"] } } })
+    .errors.includes("clis.hermes.headless_cmd is only supported for codex and cursor"));
+});

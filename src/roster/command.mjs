@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { linkDispatchToRun, mailboxDir } from "../runs/runs.mjs";
+import { linkDispatchToRun, mailboxDir, setStatus } from "../runs/runs.mjs";
 import { detectParent } from "../runs/parent.mjs";
 
 /** First non-flag argv token; skips values that belong to --flags. */
@@ -150,13 +150,20 @@ export async function spawnPinnedInTmux({
     ]
     : built;
   const session = `${sessionPrefix}-${Date.now().toString(36)}`;
-  startInTmux({ session, dir, argv, runId: effectiveRunId });
+  // Link first: a headless wrapper whose child fails at once closes the
+  // mailbox within milliseconds, and a later STATUS=watching would undo that.
   linkDispatchToRun(effectiveRunId, session, {
     model,
     cli,
     effort: effort ?? null,
     headless,
   });
+  try {
+    startInTmux({ session, dir, argv, runId: effectiveRunId });
+  } catch (error) {
+    setStatus(effectiveRunId, "failed", { reason: `tmux start failed: ${error.message}` });
+    throw error;
+  }
   console.log(`model: ${model} (${cli})`);
   if (effort) console.log(`effort: ${effort}`);
   console.log(`tmux session: ${session}`);

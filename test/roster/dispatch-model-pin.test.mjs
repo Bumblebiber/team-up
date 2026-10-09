@@ -295,3 +295,39 @@ test("dispatch --model with --run-id and --dir keeps cwd rules", () => {
     Object.assign(process.env, prev);
   }
 });
+
+function onlyRunState(runsDir) {
+  const [runId] = fs.readdirSync(runsDir);
+  return JSON.parse(fs.readFileSync(path.join(runsDir, runId, "STATE.json"), "utf8"));
+}
+
+test("dispatch wraps a headless_cmd CLI in the headless wrapper and marks the run", () => {
+  const fx = makeFixture();
+  const roster = JSON.parse(fs.readFileSync(fx.rosterPath, "utf8"));
+  roster.clis.cursor.headless_cmd = ["cursor-agent", "-p", "--model", "{model}", "{prompt}"];
+  fs.writeFileSync(fx.rosterPath, JSON.stringify(roster));
+  const taskDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-dispatch-pin-task-"));
+  const promptFile = path.join(fx.home, "prompt.md");
+  fs.writeFileSync(promptFile, "headless work\n");
+
+  dispatch(fx.env, ["--role", "implementer", "--prompt-file", promptFile, "--dir", taskDir, "--model", "composer-2.5"]);
+  const cmd = tmuxCommandFromLog(fx.tmuxLog);
+  assert.match(cmd, /src\/runs\/headless\.mjs/);
+  assert.match(cmd, /cursor-agent -p/);
+  const state = onlyRunState(fx.runsDir);
+  assert.equal(state.worker.headless, true);
+  assert.equal(state.status, "watching");
+});
+
+test("dispatch fails the linked run when tmux cannot start", () => {
+  const fx = makeFixture();
+  fs.writeFileSync(path.join(fx.binDir, "tmux"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+  const taskDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-dispatch-pin-task-"));
+  const promptFile = path.join(fx.home, "prompt.md");
+  fs.writeFileSync(promptFile, "no tmux\n");
+
+  dispatch(fx.env, ["--role", "implementer", "--prompt-file", promptFile, "--dir", taskDir], { expectFail: true });
+  const state = onlyRunState(fx.runsDir);
+  assert.equal(state.status, "failed");
+  assert.match(state.failure.error, /tmux start failed/);
+});
