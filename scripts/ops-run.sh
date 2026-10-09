@@ -25,7 +25,7 @@ if [[ $# -ne 2 || -z "$JOB" ]]; then
   exit 64
 fi
 CWD=$1 PROMPT=$2
-MODEL=$(awk -v s="[$JOB]" '$0==s{f=1;next} /^\[/{f=0} f && $1=="model"{sub(/^[^=]*=[ \t]*/,""); sub(/[ \t]+$/,""); print; exit}' "$INI" 2>/dev/null)
+MODEL=$(awk -v s="[$JOB]" '$0==s{f=1;next} /^\[/{f=0} f && /^[ \t]*model[ \t]*=/{sub(/^[^=]*=[ \t]*/,""); sub(/[ \t]+$/,""); print; exit}' "$INI" 2>/dev/null)
 if [[ "$MODEL" != *:* ]]; then
   echo "ops-run: no 'model = <cli>:<model>' for [$JOB] in $INI"
   exit 64
