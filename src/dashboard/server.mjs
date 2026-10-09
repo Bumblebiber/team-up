@@ -1008,7 +1008,7 @@ export function createDashboardServer({
     const cronJobMatch = pathname.match(/^\/api\/cron-jobs\/([^/]+)$/);
     if (req.method === "POST" && cronJobMatch) {
       if (!requireWriteAccess(req, res)) return;
-      const name = cronJobMatch[1];
+      const name = decodeURIComponent(cronJobMatch[1]);
       const action = "cron.job.model";
       try {
         const body = JSON.parse(await readBody(req) || "{}");
