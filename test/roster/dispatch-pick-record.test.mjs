@@ -147,12 +147,27 @@ test("dispatch refuses a specialist run instead of starting it outside its capsu
   const exit = process.exit;
   let code = null;
   process.exit = (c) => { code = c; throw new Error("exit"); };
-  let spawned;
+  const spawned = [];
   try {
-    ({ spawned } = await dispatch({ runId: run.runId }).catch(() => ({ spawned: [] })));
+    await dispatch({ runId: run.runId, spawn: async (args) => { spawned.push(args); return { session: "s" }; } }).catch(() => {});
   } finally {
     process.exit = exit;
   }
   assert.equal(code, 5);
+  assert.deepEqual(spawned, []);
+  assert.equal(loadState(run.runId).picks, undefined);
+});
+
+test("dispatch refuses an unknown run id instead of crashing or spawning", async () => {
+  const exit = process.exit;
+  let code = null;
+  process.exit = (c) => { code = c; throw new Error("exit"); };
+  const spawned = [];
+  try {
+    await dispatch({ runId: "20991231T235959Z-none", spawn: async (args) => { spawned.push(args); return { session: "s" }; } }).catch(() => {});
+  } finally {
+    process.exit = exit;
+  }
+  assert.equal(code, 1);
   assert.deepEqual(spawned, []);
 });

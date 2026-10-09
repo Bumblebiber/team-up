@@ -317,227 +317,236 @@ export async function launch({
     result_protocol: "RESULT.json",
   });
 
-  const st = loadState(state.runId);
-  st.specialist = {
-    id: specialistId,
-    version: installed.version,
-    checksum: installed.checksum,
-  };
-  if (harnessWarning) st.harness_warning = harnessWarning;
-  saveState(st);
-  if (harnessWarning) console.error(`warning: ${harnessWarning}`);
+  // Anything that throws once the run exists leaves it failed, not starting.
+  try {
+    const st = loadState(state.runId);
+    st.specialist = {
+      id: specialistId,
+      version: installed.version,
+      checksum: installed.checksum,
+    };
+    if (harnessWarning) st.harness_warning = harnessWarning;
+    saveState(st);
+    if (harnessWarning) console.error(`warning: ${harnessWarning}`);
 
-  let policySnapshot = null;
-  if (projectPolicy) {
-    policySnapshot = snapshotCommandPolicy({
-      policy: projectPolicy,
-      runId: state.runId,
-      workerVisibleDir: path.join(runDir(state.runId), "policy"),
+    let policySnapshot = null;
+    if (projectPolicy) {
+      policySnapshot = snapshotCommandPolicy({
+        policy: projectPolicy,
+        runId: state.runId,
+        workerVisibleDir: path.join(runDir(state.runId), "policy"),
+      });
+    }
+
+    const request = normalizeRequest({
+      specialist_id: specialistId,
+      specialist_version: installed.version,
+      call_type: callType,
+      objective,
+      inputs,
+      permissions: effectivePerms,
+      budget: {
+        timeout_seconds: budgetNorm.timeout_seconds,
+        tokens: budgetNorm.tokens,
+      },
+      // Explicit, though it is also the default: this is the call site an
+      // orchestrator has to change to `parent.depth + 1`, and `normalizeRequest`
+      // caps it at `MAX_DEPTH`. Leaving the field out hides where the increment
+      // belongs.
+      depth: 0,
     });
-  }
+    request.run_id = state.runId;
 
-  const request = normalizeRequest({
-    specialist_id: specialistId,
-    specialist_version: installed.version,
-    call_type: callType,
-    objective,
-    inputs,
-    permissions: effectivePerms,
-    budget: {
+    const launchState = loadState(state.runId);
+    launchState.budget = {
       timeout_seconds: budgetNorm.timeout_seconds,
       tokens: budgetNorm.tokens,
-    },
-    // Explicit, though it is also the default: this is the call site an
-    // orchestrator has to change to `parent.depth + 1`, and `normalizeRequest`
-    // caps it at `MAX_DEPTH`. Leaving the field out hides where the increment
-    // belongs.
-    depth: 0,
-  });
-  request.run_id = state.runId;
+      warnings: budgetNorm.warnings,
+    };
+    launchState.command_policy = policySnapshot
+      ? { checksum: policySnapshot.checksum, snapshot: policySnapshot.path }
+      : { checksum: null, snapshot: null };
+    launchState.output_contract = "team-up.result/v1";
+    launchState.result_protocol = "RESULT.json";
+    if (admissionRecord) launchState.admission = admissionRecord;
+    saveState(launchState);
 
-  const launchState = loadState(state.runId);
-  launchState.budget = {
-    timeout_seconds: budgetNorm.timeout_seconds,
-    tokens: budgetNorm.tokens,
-    warnings: budgetNorm.warnings,
-  };
-  launchState.command_policy = policySnapshot
-    ? { checksum: policySnapshot.checksum, snapshot: policySnapshot.path }
-    : { checksum: null, snapshot: null };
-  launchState.output_contract = "team-up.result/v1";
-  launchState.result_protocol = "RESULT.json";
-  if (admissionRecord) launchState.admission = admissionRecord;
-  saveState(launchState);
-
-  const dest = capsuleContextDir(runDir(state.runId));
-  await materialize({
-    packageDir: installed.path,
-    request,
-    destination: dest,
-    manifest,
-    projectRoot: fsMode === "none" ? null : project,
-    inputs,
-    filesystem: fsMode,
-  });
-
-  let effective;
-  let capsule;
-  try {
-    effective = materializeCapabilityCapsuleFn({
-      runRoot: runDir(state.runId),
-      specialistId,
-      packages: capabilityResolution.packages,
-      exclusions: capabilityResolution.exclusions,
+    const dest = capsuleContextDir(runDir(state.runId));
+    await materialize({
+      packageDir: installed.path,
+      request,
+      destination: dest,
+      manifest,
+      projectRoot: fsMode === "none" ? null : project,
+      inputs,
+      filesystem: fsMode,
     });
-    capsule = {
-      pluginDirs: effective.packages.flatMap((item) =>
-        item.resolved.plugins.map((rel) => path.join(runDir(state.runId), rel))),
-      mcpConfig: buildStrictMcpConfig(effective, runDir(state.runId)),
-      skillDirs: [path.join(runDir(state.runId), "context", "skills")],
-      frameworkDirs: [path.join(runDir(state.runId), "context", "framework")],
-      // The worker's cwd; the isolation canary probes from the same layout.
-      contextDir: dest,
-      homeDir: path.join(runDir(state.runId), "harness", "home"),
-      codexHome: path.join(runDir(state.runId), "harness", "home"),
-      // Directories the worker actually opens. Harnesses that gate on workspace
-      // trust need these pre-accepted, or the launch stalls on a prompt nobody
-      // is there to answer.
-      workspaceDirs: [
-        dest,
-        ...(runCwd ? [runCwd] : []),
-      ],
-      effective,
-      ...collectCapsuleMcpTools(effective, runDir(state.runId)),
-    };
-    for (const dir of [
-      ...capsule.skillDirs,
-      ...capsule.frameworkDirs,
-      capsule.codexHome,
-    ]) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-  } catch (e) {
-    setStatus(state.runId, "failed", { reason: `capsule setup: ${e.message}` });
-    throw e;
-  }
 
-  atomicWriteJson(path.join(runDir(state.runId), "mailbox", "REQUEST.json"), request);
-
-  let autoInvoke;
-  try {
-    autoInvoke = autoInvokePrefix(effective, skillInvocationFor(cell.cli));
-  } catch (e) {
-    setStatus(state.runId, "failed", { reason: `capsule setup: ${e.message}` });
-    throw e;
-  }
-  // Prefixed after wrapping: the invocation has to be the first thing the
-  // harness reads, ahead of the mailbox protocol.
-  const workerPrompt = autoInvoke.prefix + wrapPromptWithMailboxProtocol(barePrompt, {
-    runId: state.runId,
-    runDirectory: runDir(state.runId),
-    resultProtocol: "RESULT.json",
-  });
-  atomicWriteText(path.join(runDir(state.runId), "mailbox", "PROMPT.md"), workerPrompt);
-  if (autoInvoke.skills.length) {
-    const stInvoke = loadState(state.runId);
-    stInvoke.auto_invoke = {
-      skills: autoInvoke.skills,
-      applied: autoInvoke.prefix !== "",
-      ...(autoInvoke.skipped ? { skipped: autoInvoke.skipped } : {}),
-    };
-    saveState(stInvoke);
-  }
-
-  const cliArgvRaw = buildCommand({
-    roster,
-    model: cell.model,
-    cli: cell.cli,
-    prompt: workerPrompt,
-    effort: cell.effort,
-    dir: dest,
-  });
-  const runPath = runDir(state.runId);
-  const broker = policySnapshot
-    ? {
-        policySnapshot: policySnapshot.path,
-        policyChecksum: policySnapshot.checksum,
-        project: path.resolve(project),
-        runDir: runPath,
-        actionIds: effectivePerms.commands || [],
-      }
-    : null;
-  const prepared = prepareHarnessLaunchFn({
-    cli: cell.cli,
-    argv: cliArgvRaw,
-    runDir: runPath,
-    broker,
-    capsule,
-    allowedBuiltins: builtinsForPermissions(effectivePerms),
-    env,
-  });
-  const timeoutSeconds = budgetNorm.timeout_seconds ?? 0;
-  const argv = [
-    "timeout",
-    "--signal=TERM",
-    "--kill-after=5s",
-    `${timeoutSeconds}s`,
-    ...injectAdapterEnv(prepared.argv, prepared.env),
-  ];
-  const limitWindows = resolveLimitWindowsForCell(cell, roster);
-
-  const stAfter = loadState(state.runId);
-  stAfter.harness_requirements = requirements;
-  stAfter.specialist_profile = launchedProfile;
-  stAfter.runtime = {
-    cli: cell.cli,
-    model: cell.model,
-    effort: cell.effort,
-    limit_windows: limitWindows,
-  };
-  stAfter.budget = launchState.budget;
-  stAfter.command_policy = launchState.command_policy;
-  stAfter.output_contract = launchState.output_contract;
-  stAfter.result_protocol = launchState.result_protocol;
-  saveState(stAfter);
-
-  if (!dryRun) {
-    const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
+    let effective;
+    let capsule;
     try {
-      startInTmuxFn({ session, dir: dest, argv, runId: state.runId });
-    } catch (error) {
-      setStatus(state.runId, "failed", { reason: `tmux start: ${error?.message || error}` });
-      throw error;
+      effective = materializeCapabilityCapsuleFn({
+        runRoot: runDir(state.runId),
+        specialistId,
+        packages: capabilityResolution.packages,
+        exclusions: capabilityResolution.exclusions,
+      });
+      capsule = {
+        pluginDirs: effective.packages.flatMap((item) =>
+          item.resolved.plugins.map((rel) => path.join(runDir(state.runId), rel))),
+        mcpConfig: buildStrictMcpConfig(effective, runDir(state.runId)),
+        skillDirs: [path.join(runDir(state.runId), "context", "skills")],
+        frameworkDirs: [path.join(runDir(state.runId), "context", "framework")],
+        // The worker's cwd; the isolation canary probes from the same layout.
+        contextDir: dest,
+        homeDir: path.join(runDir(state.runId), "harness", "home"),
+        codexHome: path.join(runDir(state.runId), "harness", "home"),
+        // Directories the worker actually opens. Harnesses that gate on workspace
+        // trust need these pre-accepted, or the launch stalls on a prompt nobody
+        // is there to answer.
+        workspaceDirs: [
+          dest,
+          ...(runCwd ? [runCwd] : []),
+        ],
+        effective,
+        ...collectCapsuleMcpTools(effective, runDir(state.runId)),
+      };
+      for (const dir of [
+        ...capsule.skillDirs,
+        ...capsule.frameworkDirs,
+        capsule.codexHome,
+      ]) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    } catch (e) {
+      setStatus(state.runId, "failed", { reason: `capsule setup: ${e.message}` });
+      throw e;
     }
-    linkDispatchToRun(state.runId, session);
-    recordPick(state.runId, {
-      cli: cell.cli,
-      model: cell.model,
-      effort: cell.effort ?? null,
-      pinned: Boolean(runtimeOverride),
-      skipped: profileResult.skipped,
-      refresh: null,
-    });
-  } else {
-    const dryState = loadState(state.runId);
-    dryState.dry_run = true;
-    saveState(dryState);
-    setStatus(state.runId, "cancelled");
-  }
 
-  return {
-    runId: state.runId,
-    ...(admissionRecord?.forced ? { admission_forced: true } : {}),
-    runtime: {
+    atomicWriteJson(path.join(runDir(state.runId), "mailbox", "REQUEST.json"), request);
+
+    let autoInvoke;
+    try {
+      autoInvoke = autoInvokePrefix(effective, skillInvocationFor(cell.cli));
+    } catch (e) {
+      setStatus(state.runId, "failed", { reason: `capsule setup: ${e.message}` });
+      throw e;
+    }
+    // Prefixed after wrapping: the invocation has to be the first thing the
+    // harness reads, ahead of the mailbox protocol.
+    const workerPrompt = autoInvoke.prefix + wrapPromptWithMailboxProtocol(barePrompt, {
+      runId: state.runId,
+      runDirectory: runDir(state.runId),
+      resultProtocol: "RESULT.json",
+    });
+    atomicWriteText(path.join(runDir(state.runId), "mailbox", "PROMPT.md"), workerPrompt);
+    if (autoInvoke.skills.length) {
+      const stInvoke = loadState(state.runId);
+      stInvoke.auto_invoke = {
+        skills: autoInvoke.skills,
+        applied: autoInvoke.prefix !== "",
+        ...(autoInvoke.skipped ? { skipped: autoInvoke.skipped } : {}),
+      };
+      saveState(stInvoke);
+    }
+
+    const cliArgvRaw = buildCommand({
+      roster,
+      model: cell.model,
+      cli: cell.cli,
+      prompt: workerPrompt,
+      effort: cell.effort,
+      dir: dest,
+    });
+    const runPath = runDir(state.runId);
+    const broker = policySnapshot
+      ? {
+          policySnapshot: policySnapshot.path,
+          policyChecksum: policySnapshot.checksum,
+          project: path.resolve(project),
+          runDir: runPath,
+          actionIds: effectivePerms.commands || [],
+        }
+      : null;
+    const prepared = prepareHarnessLaunchFn({
+      cli: cell.cli,
+      argv: cliArgvRaw,
+      runDir: runPath,
+      broker,
+      capsule,
+      allowedBuiltins: builtinsForPermissions(effectivePerms),
+      env,
+    });
+    const timeoutSeconds = budgetNorm.timeout_seconds ?? 0;
+    const argv = [
+      "timeout",
+      "--signal=TERM",
+      "--kill-after=5s",
+      `${timeoutSeconds}s`,
+      ...injectAdapterEnv(prepared.argv, prepared.env),
+    ];
+    const limitWindows = resolveLimitWindowsForCell(cell, roster);
+
+    const stAfter = loadState(state.runId);
+    stAfter.harness_requirements = requirements;
+    stAfter.specialist_profile = launchedProfile;
+    stAfter.runtime = {
       cli: cell.cli,
       model: cell.model,
       effort: cell.effort,
       limit_windows: limitWindows,
-    },
-    argv,
-    permissions: effectivePerms,
-    budget: launchState.budget,
-    ...(harnessWarning ? { harness_warning: harnessWarning } : {}),
-  };
+    };
+    stAfter.budget = launchState.budget;
+    stAfter.command_policy = launchState.command_policy;
+    stAfter.output_contract = launchState.output_contract;
+    stAfter.result_protocol = launchState.result_protocol;
+    saveState(stAfter);
+
+    if (!dryRun) {
+      const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
+      try {
+        startInTmuxFn({ session, dir: dest, argv, runId: state.runId });
+      } catch (error) {
+        setStatus(state.runId, "failed", { reason: `tmux start: ${error?.message || error}` });
+        throw error;
+      }
+      linkDispatchToRun(state.runId, session);
+      recordPick(state.runId, {
+        cli: cell.cli,
+        model: cell.model,
+        effort: cell.effort ?? null,
+        pinned: Boolean(runtimeOverride),
+        skipped: profileResult.skipped,
+        refresh: null,
+      });
+    } else {
+      const dryState = loadState(state.runId);
+      dryState.dry_run = true;
+      saveState(dryState);
+      setStatus(state.runId, "cancelled");
+    }
+
+    return {
+      runId: state.runId,
+      ...(admissionRecord?.forced ? { admission_forced: true } : {}),
+      runtime: {
+        cli: cell.cli,
+        model: cell.model,
+        effort: cell.effort,
+        limit_windows: limitWindows,
+      },
+      argv,
+      permissions: effectivePerms,
+      budget: launchState.budget,
+      ...(harnessWarning ? { harness_warning: harnessWarning } : {}),
+    };
+  } catch (error) {
+    const current = loadState(state.runId);
+    if (current && current.status !== "failed" && current.status !== "cancelled") {
+      setStatus(state.runId, "failed", { reason: `launch: ${error?.message || error}` });
+    }
+    throw error;
+  }
 }
 
 async function defaultCheckAdmission({ cli, env }) {

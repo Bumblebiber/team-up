@@ -450,3 +450,28 @@ test("a dry run takes no admission slot, and a failed tmux start fails the run",
     restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
   }
 });
+
+test("any failure after the run exists fails it instead of leaving it starting", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  try {
+    let runId = null;
+    await assert.rejects(() => launch({
+      ...fixture.args,
+      dryRun: false,
+      admission: "force",
+      dependencyOverrides: {
+        ...ISOLATED,
+        startInTmux: () => {},
+        prepareHarnessLaunch: ({ runId: id }) => { runId = id; throw new Error("HARNESS_UNSUPPORTED: x"); },
+      },
+    }), /HARNESS_UNSUPPORTED/);
+    const runs = fs.readdirSync(fixture.env.TEAM_UP_RUNS);
+    const states = runs.map((r) => JSON.parse(fs.readFileSync(path.join(fixture.env.TEAM_UP_RUNS, r, "STATE.json"), "utf8")));
+    assert.ok(states.length > 0);
+    for (const s of states) assert.notEqual(s.status, "starting");
+    assert.ok(states.some((s) => s.status === "failed" && /launch: HARNESS_UNSUPPORTED: x/.test(s.failure?.error)));
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});

@@ -134,6 +134,22 @@ async function cmdUsageRefresh(args) {
   if (!results.some((r) => r.ok)) process.exit(1);
 }
 
+/** Exit unless `runId` names an existing run that dispatch may start. */
+function refuseRunOutsideItsPath(runId) {
+  const state = loadState(runId);
+  if (!state) {
+    console.error(`unknown run ${runId}`);
+    process.exit(1);
+  }
+  // A specialist run starts only in its capsule (`team-up specialist run`).
+  // The roster template would start it with the real HOME, Bash and the
+  // template's permission-bypass flag.
+  if (isSpecialistRun(state)) {
+    console.error(`run ${runId} is a specialist run; dispatch never starts it outside its capsule — use \`team-up specialist run\``);
+    process.exit(5);
+  }
+}
+
 export async function spawnInTmux({
   roster: rosterCfg,
   role,
@@ -154,10 +170,7 @@ export async function spawnInTmux({
   // A specialist run starts only in its capsule (`team-up specialist run`).
   // The roster template would start it with the real HOME, Bash and the
   // template's permission-bypass flag.
-  if (runId && isSpecialistRun(loadState(runId))) {
-    console.error(`run ${runId} is a specialist run; dispatch never starts it outside its capsule — use \`team-up specialist run\``);
-    process.exit(5);
-  }
+  if (runId) refuseRunOutsideItsPath(runId);
   const now = Date.now();
   let usage = usageSnapshot ?? loadJson(usagePath());
   let r;
@@ -334,6 +347,7 @@ async function cmdDispatch(args) {
     console.error("  --model: pin CLI×model (no role-chain fallback); resolves model ids and free text");
     process.exit(1);
   }
+  if (runId) refuseRunOutsideItsPath(runId);
   let prompt = null;
   if (runId) {
     const mbPrompt = path.join(runDir(runId), "mailbox", "PROMPT.md");

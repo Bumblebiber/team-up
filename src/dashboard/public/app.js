@@ -1502,9 +1502,10 @@ async function trustProject(p) {
 
 /**
  * What "Fix all" and auto-fix do to one project: only what needs no judgement.
- * Trusting a policy is a judgement — a delegate specialist can edit
- * commands.json, and the broker runs it outside the capsule — so only the
- * explicit "Fix all" click trusts; auto-fix only writes a missing policy.
+ * Trusting a policy is a judgement: a delegate specialist can edit
+ * commands.json, and the broker runs it outside the capsule. So "Fix all"
+ * trusts only a policy it wrote in the same click, auto-fix trusts nothing,
+ * and a changed policy is trusted per project with `specialist trust-policy`.
  */
 async function fixProject(p, { trust }) {
   let wrote = false;
@@ -1516,7 +1517,7 @@ async function fixProject(p, { trust }) {
     });
     wrote = true;
   }
-  if (trust && (wrote || ((p.policy?.state === "valid" || p.policy?.state === "inherited") && p.policy.trusted === false))) {
+  if (trust && wrote) {
     await trustProject(p);
     trusted = true;
   }
@@ -1540,10 +1541,14 @@ async function fixProjects(projects, { trust }) {
       projectsNote = `${p.name}: ${err.message}`;
     }
   }
+  const changed = projects.filter((p) => (p.policy?.state === "valid" || p.policy?.state === "inherited") && p.policy.trusted === false);
   if (written.length) {
     projectsNote = `wrote .team-up/commands.json (uncommitted) in: ${written.join(", ")}`;
   } else if (trusted.length) {
     projectsNote = `trusted command policy in: ${trusted.join(", ")}`;
+  }
+  if (changed.length) {
+    projectsNote = `${projectsNote ? `${projectsNote}. ` : ""}untrusted policy (review it, then run team-up specialist trust-policy --project <path>): ${changed.map((p) => p.path).join(", ")}`;
   }
   return { written, trusted };
 }
