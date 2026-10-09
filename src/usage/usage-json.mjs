@@ -1,4 +1,5 @@
 // JSON usage collectors for CLIs whose credentials already authorize usage APIs.
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

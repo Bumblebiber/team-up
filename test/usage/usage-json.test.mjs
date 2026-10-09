@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { collectUsageForCli, mergeUsageWindows } from "../../src/usage/usage-collect.mjs";
@@ -381,6 +382,19 @@ test("agy /usage maps all four quota buckets and runs prompt immediately after -
   assert.equal(result.windows["agy:gemini-5h"].used, 0.4);
   assert.equal(result.windows["agy:3p-weekly"].source, "agy:usage-command");
   assert.equal(result.windows["agy:3p-5h"].updated_at, UPDATED);
+});
+
+test("agy /usage default runner executes the agy binary found on env PATH", () => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "agy-bin-"));
+  try {
+    const stub = path.join(bin, "agy");
+    fs.writeFileSync(stub, `#!/bin/sh\ncat ${JSON.stringify(path.join(FIXTURES, "agy-usage.json"))}\n`, { mode: 0o755 });
+    const result = fetchAgyUsageJson({ env: { PATH: `${bin}:/usr/bin:/bin` }, now: NOW });
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(Object.keys(result.windows).length, 4);
+  } finally {
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
 });
 
 test("agy rejects partial quota responses and does not accept invalid fractions", () => {
