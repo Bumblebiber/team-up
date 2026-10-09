@@ -608,6 +608,14 @@ export function setStatus(runId, status, { reason = null } = {}) {
   return state;
 }
 
+/** Worker closeout publishes failure details before the terminal STATUS. */
+export function setWorkerMailboxStatus(runId, status, { reason = null } = {}) {
+  if (status === "failed" && reason) {
+    atomicWriteText(path.join(mailboxDir(runId), "FAILURE.md"), reason);
+  }
+  atomicWriteText(path.join(mailboxDir(runId), "STATUS"), status);
+}
+
 /**
  * What the run was worth, recorded after the fact.
  *
@@ -667,7 +675,7 @@ export function outcomeSummary(states = listAllStates({ onCorrupt: () => {} })) 
 }
 
 /** After roster dispatch spawns tmux, link session to run registry. */
-export function linkDispatchToRun(runId, session, { model, cli, effort } = {}) {
+export function linkDispatchToRun(runId, session, { model, cli, effort, headless } = {}) {
   if (!runId) return false;
   const st = loadState(runId);
   if (!st) return false;
@@ -676,6 +684,7 @@ export function linkDispatchToRun(runId, session, { model, cli, effort } = {}) {
   if (model !== undefined) st.worker.model = model;
   if (cli !== undefined) st.worker.cli = cli;
   if (effort !== undefined) st.worker.effort = effort ?? null;
+  if (headless) st.worker.headless = true;
   st.watcher = { ...(st.watcher || { kind: "internal_subagent" }), attached: true };
   saveState(st);
   setStatus(runId, "watching");
@@ -1434,9 +1443,7 @@ function cmdSetStatus(args) {
   // (no marker, or another run's id) still decide STATE directly.
   if (process.env.TEAMUP_WORKER && process.env.TEAMUP_RUN_ID === runId) {
     const reason = argValue(args, "--reason");
-    // Before STATUS, so whoever wakes on STATUS=failed reads it as the error.
-    if (status === "failed" && reason) atomicWriteText(path.join(mailboxDir(runId), "FAILURE.md"), reason);
-    atomicWriteText(path.join(mailboxDir(runId), "STATUS"), status);
+    setWorkerMailboxStatus(runId, status, { reason });
     return;
   }
   setStatus(runId, status, { reason: argValue(args, "--reason") });
