@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { linkDispatchToRun, mailboxDir, setStatus } from "../runs/runs.mjs";
 import { detectParent } from "../runs/parent.mjs";
-import { runsPath } from "../paths.mjs";
+import { runsPath, teamUpHome } from "../paths.mjs";
 
 /** First non-flag argv token; skips values that belong to --flags. */
 export function firstPositional(args) {
@@ -98,15 +98,24 @@ export function tmuxArgs({ session, dir, argv, env = {} }) {
   return ["new-session", "-d", "-s", session, "-c", dir, ...envFlags, argv.map(shellQuote).join(" ")];
 }
 
+/**
+ * The tmux server's env, not the dispatcher's, reaches the pane: a non-default
+ * runs dir must be named, or the worker (and the headless wrapper) close a
+ * mailbox nobody reads. Only then — a TEAM_UP_RUNS in every worker made its
+ * `npm test` write test runs into the live dir (2026-10-09).
+ */
+function runsOverride() {
+  const runs = runsPath();
+  return runs === path.join(teamUpHome({}), "runs") ? {} : { TEAM_UP_RUNS: runs };
+}
+
 /** Start an already-built worker argv in detached tmux. */
 export function startInTmux({ session, dir, argv, runId, exec = execFileSync }) {
   exec("tmux", tmuxArgs({
     session,
     dir,
     argv,
-    // The tmux server's env, not the dispatcher's, reaches the pane: name the
-    // runs dir so the worker (and the headless wrapper) close this mailbox.
-    env: runId ? { TEAMUP_RUN_ID: runId, TEAM_UP_RUNS: runsPath() } : {},
+    env: runId ? { TEAMUP_RUN_ID: runId, ...runsOverride() } : {},
   }), { stdio: "inherit" });
   return { session };
 }

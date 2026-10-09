@@ -50,3 +50,25 @@ test("validateRoster rejects headless_cmd outside codex and cursor", () => {
   assert.ok(validateRoster({ clis: { hermes: { cmd: ["hermes"], headless_cmd: ["hermes"] } } })
     .errors.includes("clis.hermes.headless_cmd is only supported for codex and cursor"));
 });
+
+test("startInTmux names the runs dir only when it is not the default", async () => {
+  const { startInTmux } = await import("../../src/roster/command.mjs");
+  const saved = { TEAM_UP_HOME: process.env.TEAM_UP_HOME, TEAM_UP_RUNS: process.env.TEAM_UP_RUNS };
+  const tmuxEnv = () => {
+    let args;
+    startInTmux({ session: "s", dir: "/tmp", argv: ["x"], runId: "R", exec: (_cmd, a) => { args = a; } });
+    return args.filter((a) => a.startsWith("TEAM_UP_RUNS="));
+  };
+  try {
+    delete process.env.TEAM_UP_HOME;
+    delete process.env.TEAM_UP_RUNS;
+    assert.deepEqual(tmuxEnv(), []);
+    process.env.TEAM_UP_RUNS = "/elsewhere/runs";
+    assert.deepEqual(tmuxEnv(), ["TEAM_UP_RUNS=/elsewhere/runs"]);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
