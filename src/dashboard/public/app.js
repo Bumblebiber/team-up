@@ -23,7 +23,7 @@ function applyRoute() {
 window.addEventListener("hashchange", applyRoute);
 applyRoute();
 
-const dashboardMetrics = { runs: [], usage: null, tim: null };
+const dashboardMetrics = { runCounts: null, usage: null, tim: null };
 
 function usageLevelName(level) {
   return ({ red: "Critical", amber: "Warn", ok: "OK" })[level] || "Unknown";
@@ -38,13 +38,11 @@ function updateNavBadge(id, text, tone = "", visible = Boolean(text), title = ""
   badge.title = title;
 }
 
+// TIM tasks carry P0–P3 or the older low/medium/high/critical.
+const URGENT_PRIORITIES = new Set(["P0", "P1", "P2", "CRITICAL", "HIGH"]);
+
 function updateDashboardMetrics() {
-  const runs = dashboardMetrics.runs;
-  const active = runs.filter((run) => run.active).length;
-  const waiting = runs.filter((run) => run.status === "waiting_human").length;
-  const uncollected = runs.filter((run) => run.uncollected).length;
-  // Only failures nobody has looked at yet: every failed run stays on disk forever.
-  const failed = runs.filter((run) => run.uncollected && run.status === "failed").length;
+  const { active = 0, waiting = 0, uncollected = 0, failedUncollected: failed = 0 } = dashboardMetrics.runCounts || {};
   $("#kpi-active-runs").textContent = String(active);
   $("#kpi-waiting-runs").textContent = String(waiting);
   $("#kpi-uncollected-runs").textContent = String(uncollected);
@@ -52,7 +50,7 @@ function updateDashboardMetrics() {
   const runsTone = waiting || failed ? "red" : "";
   const runsBadge = active ? String(active) : failed ? "!" : "";
   updateNavBadge("badge-runs", runsBadge, runsTone, Boolean(runsBadge),
-    [waiting ? `${waiting} waiting on the human` : "", failed ? `${failed} failed` : ""]
+    [waiting ? `${waiting} waiting on the human` : "", failed ? `${failed} failed, not collected` : ""]
       .filter(Boolean).join("; "));
 
   const windows = Object.entries(dashboardMetrics.usage?.windows || {})
@@ -75,12 +73,12 @@ function updateDashboardMetrics() {
   const installed = Boolean(tim?.installed);
   const p1p2 = installed
     ? (tim.projects || []).flatMap((project) => project.items || [])
-      .filter((item) => item.kind === "task" && ["P0", "P1", "P2"].includes(String(item.priority || "").toUpperCase())).length
+      .filter((item) => item.kind === "task" && URGENT_PRIORITIES.has(String(item.priority || "").toUpperCase())).length
     : 0;
   $("#kpi-tim-tile").classList.toggle("hidden", !installed);
   $("#kpi-tim-tasks").textContent = String(p1p2);
   updateNavBadge("badge-tim", p1p2 ? String(p1p2) : "", "", p1p2 > 0,
-    p1p2 ? `${p1p2} open P0–P2 TIM tasks` : "");
+    p1p2 ? `${p1p2} open high-priority TIM tasks` : "");
 }
 
 async function api(path, opts = {}) {
@@ -255,12 +253,10 @@ function repairStatusLine(collectors = {}) {
 }
 
 async function refreshRuns() {
-  const data = await api("/api/runs");
-  dashboardMetrics.runs = data.runs;
+  const data = await api(`/api/runs?active=${$("#active-only").checked ? "1" : "0"}`);
+  dashboardMetrics.runCounts = data.counts;
   updateDashboardMetrics();
-  const visibleRuns = $("#active-only").checked
-    ? data.runs.filter((run) => run.active)
-    : data.runs;
+  const visibleRuns = data.runs;
   const rows = visibleRuns.map((r) => `
     <tr class="clickable" data-run="${esc(r.runId)}"${providerAttr(r.worker)}>
       <td><code>${esc(r.runId.slice(-8))}</code></td>
@@ -1590,6 +1586,7 @@ async function refreshTim() {
   // not the attribute: `nav a` sets display and would win over [hidden].
   $("#panel-tim").classList.toggle("hidden", !data.installed);
   $("#nav-tim").classList.toggle("hidden", !data.installed);
+  if (!data.installed && location.hash === "#/tim") location.hash = "#/overview";
   if (!data.installed) return;
 
   fillSelect($("#tim-launch-cli"), (data.clis || []).map((c) => ({ value: c, label: c })));

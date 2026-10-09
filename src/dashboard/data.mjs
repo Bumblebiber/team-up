@@ -2,6 +2,8 @@ import { pick, limits } from "../roster/chain.mjs";
 import { SESSION_PREFIX } from "./projects.mjs";
 import { DEFAULT_UNCOLLECTED_DAYS } from "../runs/collect.mjs";
 
+const WAITING_HUMAN = new Set(["waiting_human", "waiting_decision"]);
+
 export { RUN_ID_PATTERN, isValidRunId } from "../runs/runs.mjs";
 
 const SECRET_KEY = /key|token|secret|password/i;
@@ -74,9 +76,17 @@ export function buildRunsView(states, { activeOnly = false, heartbeats = {}, now
   let rows = states.map((s) =>
     buildRunRow(s, { heartbeatMtimeMs: heartbeats[s.runId] ?? null, now }),
   );
-  if (activeOnly) rows = rows.filter((r) => r.active);
+  // Counted over every run, so the overview needs no full list on each poll.
+  const counts = {
+    active: rows.filter((r) => r.active).length,
+    waiting: rows.filter((r) => WAITING_HUMAN.has(r.status)).length,
+    uncollected: rows.filter((r) => r.uncollected).length,
+    failedUncollected: rows.filter((r) => r.uncollected && r.status === "failed").length,
+  };
+  // "Open" = still running or finished with nobody having read the result.
+  if (activeOnly) rows = rows.filter((r) => r.active || r.uncollected);
   rows.sort((a, b) => (b.ageMs ?? 0) - (a.ageMs ?? 0));
-  return { runs: rows, now: new Date(now).toISOString() };
+  return { runs: rows, counts, now: new Date(now).toISOString() };
 }
 
 export function joinTmuxSessions(sessions, states) {

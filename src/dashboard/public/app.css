@@ -168,7 +168,7 @@ body {
   font-weight: 700;
   line-height: 1.4;
 }
-.nav-badge.is-red { background: var(--red); color: #fff; }
+.nav-badge.is-red { background: #dc2626; color: #fff; }
 .nav-badge.is-amber { background: var(--amber); color: #000; }
 .workspace { min-width: 0; min-height: 100vh; }
 main { min-width: 0; padding: 1rem; }
@@ -197,6 +197,7 @@ main { min-width: 0; padding: 1rem; }
 .kpi-tile small { color: var(--muted); font-size: 0.75rem; overflow-wrap: anywhere; }
 .panel {
   min-width: 0;
+  overflow-x: auto;
   padding: 0.75rem;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -278,7 +279,8 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
   background: var(--prov, var(--accent));
 }
 
-@media (max-width: 600px) {
+/* 900px, not 600: the 15rem sidebar eats the room the row needs. */
+@media (max-width: 900px) {
   .usage-row { grid-template-columns: 3rem 7rem 1fr; }
   .usage-row .key, .usage-row .bar { grid-column: 1 / -1; }
 }
@@ -404,15 +406,10 @@ tr.greyed td { opacity: 0.55; }
   }
   .sidebar-nav > a, .nav-group { flex: 0 0 auto; }
   .sidebar-nav > a { white-space: nowrap; }
-  .nav-group {
-    flex-direction: row;
-    align-items: center;
-    gap: 0.1rem;
-    padding: 0;
-    border: 0;
-  }
-  .nav-group > summary { padding: 0 0.2rem; white-space: nowrap; }
-  .sidebar-nav .nav-group a { padding: 0.4rem 0.45rem; white-space: nowrap; }
+  /* A <details> is no flex container: its links flow inline on one line. */
+  .nav-group { display: block; padding: 0; border: 0; white-space: nowrap; }
+  .nav-group > summary { display: inline; padding: 0 0.2rem; }
+  .sidebar-nav .nav-group a { display: inline-flex; padding: 0.4rem 0.45rem; }
   .nav-trending { margin-top: 0; }
   main { padding: 0.75rem; }
 }

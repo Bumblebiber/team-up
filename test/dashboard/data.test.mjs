@@ -75,6 +75,25 @@ test("runs view marks finished done or failed runs that have not been collected"
   assert.equal(buildRunRow(states[0], { now }).uncollected, true);
 });
 
+test("runs view counts every run and the open filter keeps uncollected ones", () => {
+  const now = Date.parse("2026-10-09T12:00:00Z");
+  const recent = "2026-10-08T12:00:00Z";
+  const states = [
+    { runId: "running", status: "watching" },
+    { runId: "asking", status: "waiting_human" },
+    { runId: "deciding", status: "waiting_decision" },
+    { runId: "failed-open", status: "failed", finishedAt: recent },
+    { runId: "done-open", status: "done", finishedAt: recent },
+    { runId: "done-collected", status: "done", collected: true, finishedAt: recent },
+  ];
+  const all = buildRunsView(states, { now });
+  assert.deepEqual(all.counts, { active: 3, waiting: 2, uncollected: 2, failedUncollected: 1 });
+  const open = buildRunsView(states, { now, activeOnly: true });
+  assert.deepEqual(open.counts, all.counts);
+  assert.deepEqual(open.runs.map((r) => r.runId).sort(),
+    ["asking", "deciding", "done-open", "failed-open", "running"]);
+});
+
 test("joinTmuxSessions links sessions to runs and flags orphans", () => {
   const sessions = ["team-up-worker-1", "team-up-orphan", "other-session"];
   const states = [
