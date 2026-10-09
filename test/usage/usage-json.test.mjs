@@ -97,14 +97,16 @@ test("Claude JSON collector ignores unknown and surface-scoped limits", async ()
     fileReader: credentialReader(claudeCredentials),
     fetchImpl: async () => jsonResponse({
       limits: [
+        { kind: "session", percent: 10, resets_at: "2026-10-09T12:00:00Z" },
+        { kind: "weekly_all", percent: 20, resets_at: "2026-10-12T08:00:00Z" },
         { kind: "weekly_scoped", percent: 90, resets_at: "2026-10-12T08:00:00Z", scope: { model: { display_name: "Fable" }, surface: "web" } },
         { kind: "monthly", percent: 90, resets_at: "2026-10-12T08:00:00Z" },
       ],
     }),
     now: NOW,
   });
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /lacked the/);
+  assert.equal(result.ok, true);
+  assert.deepEqual(Object.keys(result.windows).sort(), ["claude:session", "claude:week"]);
 });
 
 test("expired Claude token and unsafe credential mode refuse request", async () => {
@@ -178,14 +180,15 @@ test("Codex omits account header when auth has no account id and skips other dur
     fileReader: credentialReader({ tokens: { access_token: TOKEN } }),
     fetchImpl: async (_url, options) => {
       assert.equal(Object.hasOwn(options.headers, "ChatGPT-Account-ID"), false);
-      return jsonResponse({ rate_limit: { primary_window: {
-        used_percent: 50, limit_window_seconds: 3600, reset_at: 1_791_551_591,
-      } } });
+      return jsonResponse({ rate_limit: {
+        primary_window: { used_percent: 50, limit_window_seconds: 3600, reset_at: 1_791_551_591 },
+        secondary_window: { used_percent: 5, limit_window_seconds: 604_800, reset_at: 1_791_970_144 },
+      } });
     },
     now: NOW,
   });
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /lacked the/);
+  assert.equal(result.ok, true);
+  assert.deepEqual(Object.keys(result.windows), ["codex:weekly"]);
 });
 
 test("JSON source failures fall back and preserve safe reasons", async () => {
@@ -291,7 +294,7 @@ test("a response missing a base window falls back to the PTY path with both reas
     loggedOut: () => false,
   });
   assert.equal(result.ok, false);
-  assert.match(result.reason, /lacked the 5h or weekly window/);
+  assert.match(result.reason, /lacked the weekly window/);
   assert.match(result.reason, /PTY fallback failed: PTY_TIMEOUT codex: tail <pane>/);
 });
 
@@ -300,4 +303,22 @@ test("a record without scope keeps the scope the JSON source recorded", () => {
   const merged = mergeUsageWindows(existing, { "codex:luna-reserve-weekly": { used: 0.2, source: "codex:/status" } });
   assert.equal(merged.windows["codex:luna-reserve-weekly"].scope, "gpt-5.6-luna");
   assert.equal(merged.windows["codex:luna-reserve-weekly"].used, 0.2);
+});
+
+test("a window without a reset keeps its reading with an unknown reset", async () => {
+  const result = await fetchClaudeUsageJson({
+    env: { CLAUDE_CONFIG_DIR: "/fixture/claude" },
+    fileReader: credentialReader(claudeCredentials),
+    fetchImpl: async () => jsonResponse({
+      limits: [
+        { kind: "session", percent: 0, resets_at: null },
+        { kind: "weekly_all", percent: 40, resets_at: "2026-10-12T08:00:00Z" },
+      ],
+    }),
+    now: NOW,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.windows["claude:session"].used, 0);
+  assert.equal(result.windows["claude:session"].resets_at, null);
+  assert.equal(result.windows["claude:session"].reset_confidence, "unknown");
 });

@@ -55,14 +55,17 @@ function usageRecord(key, percent, resetAt, source, updatedAt, scope) {
   if (!Number.isFinite(percent) || percent < 0) return null;
   percent = Math.min(percent, 100);
   const resetMs = typeof resetAt === "number" ? resetAt * 1_000 : Date.parse(resetAt);
-  if (!Number.isFinite(resetMs)) return null;
+  // No usable reset (an idle session can have none): keep the fresh reading
+  // with an unknown reset rather than drop it; effectiveResetAt then expires
+  // a high reading by the window's staleness ceiling.
+  const hasReset = resetAt != null && Number.isFinite(resetMs);
   const record = normalizeWindowRecord(
     key,
     {
       used: percent / 100,
-      resets_at: new Date(resetMs).toISOString(),
+      resets_at: hasReset ? new Date(resetMs).toISOString() : null,
       resets_at_raw: null,
-      reset_confidence: "provider",
+      reset_confidence: hasReset ? "provider" : "unknown",
       updated_at: updatedAt,
       source,
       ...(scope ? { scope } : {}),
@@ -211,8 +214,8 @@ export async function fetchClaudeUsageJson({
   } catch {
     return { ok: false, reason: "usage API returned an invalid response" };
   }
-  if (!windows["claude:session"] || !windows["claude:week"]) {
-    return { ok: false, reason: "usage API response lacked the session or week window" };
+  if (!windows["claude:week"]) {
+    return { ok: false, reason: "usage API response lacked the week window" };
   }
   return { ok: true, windows };
 }
@@ -261,8 +264,8 @@ export async function fetchCodexUsageJson({
   } catch {
     return { ok: false, reason: "usage API returned an invalid response" };
   }
-  if (!windows["codex:5h"] || !windows["codex:weekly"]) {
-    return { ok: false, reason: "usage API response lacked the 5h or weekly window" };
+  if (!windows["codex:weekly"]) {
+    return { ok: false, reason: "usage API response lacked the weekly window" };
   }
   return { ok: true, windows };
 }
