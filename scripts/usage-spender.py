@@ -549,7 +549,11 @@ def main(argv):
     except (OSError, ValueError) as e:
         usage = {"windows": {}}
         print(f"cannot read {USAGE}: {e}", file=sys.stderr)
-    roster = json.loads(ROSTER.read_text())
+    try:
+        roster = json.loads(ROSTER.read_text())
+    except (OSError, ValueError) as e:  # still reconcile and run intake; just spawn nothing
+        roster = {"roles": {}, "accounts": {}}
+        ERRORS.append(f"cannot read {ROSTER}: {e}")
     if not dry:
         day_dir.mkdir(parents=True, exist_ok=True)
 
