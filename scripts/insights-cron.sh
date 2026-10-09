@@ -83,7 +83,9 @@ BEFORE=$(git -C "$REPO" status --porcelain)
 DECISION="${JSON%.json}.decision.md"
 "${CMD[@]}" > "$DECISION" 2>> "$LOG_DIR/stderr.log"
 RC=$?
-echo "$HASH" > "$HASH_FILE"
+# A run that never judged (admission refused, CLI limited, ceiling) must not
+# burn the 48h stamp or mark this finding set as seen: tomorrow retries.
+if [ "$RC" -eq 0 ]; then echo "$HASH" > "$HASH_FILE"; else rm -f "$STAMP"; fi
 [ "$(git -C "$REPO" status --porcelain)" != "$BEFORE" ] && TAMPERED=1 || TAMPERED=0
 
 # The one fix. Deterministic on purpose: the evaluator's Bash cannot block for

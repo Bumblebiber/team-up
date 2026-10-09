@@ -6,7 +6,7 @@
 # Hermes no-agent cron job (no LLM, no cost) delivers it.
 #
 # Usage: ops-run.sh --job NAME [--ceiling-sec N] <cwd> <prompt-file>
-# Exit: 0 done, 1 failed/cancelled/question, 2 still running at the ceiling,
+# Exit: 0 done, 1 failed/cancelled/question/dispatch failed, 2 still running at the ceiling,
 #       3 admission refused, 64 usage.
 set -euo pipefail
 
@@ -51,7 +51,7 @@ if [[ $rc -ne 0 ]]; then
   "${TEAMUP[@]}" runs cancel "$RUN" >/dev/null 2>&1 || true
   "${TEAMUP[@]}" runs collect "$RUN" --note "ops-run: dispatch failed" >/dev/null 2>&1 || true
   echo "ops-run: dispatch failed (exit $rc) for [$JOB] on $MODEL, run $RUN"
-  exit "$rc"
+  exit $(( rc == 3 ? 3 : 1 ))  # dispatch's 2 (quota-blocked pin) is not our 2 (ceiling)
 fi
 
 set +e
