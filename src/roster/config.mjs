@@ -194,6 +194,10 @@ export function validateRoster(roster) {
         (!Array.isArray(cli.cmd) || cli.cmd.some((p) => typeof p !== "string"))) {
         errors.push(`clis.${id}.cmd must be an array of strings`);
       }
+      if (isPlainObject(cli) && cli.headless_cmd !== undefined &&
+        (!Array.isArray(cli.headless_cmd) || cli.headless_cmd.some((p) => typeof p !== "string"))) {
+        errors.push(`clis.${id}.headless_cmd must be an array of strings`);
+      }
     }
   }
 

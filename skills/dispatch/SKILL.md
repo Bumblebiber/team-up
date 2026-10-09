@@ -138,6 +138,10 @@ Optional `--model <name|cli:model>` pins one CLI/model for this dispatch. It
 resolves roster ids and aliases first, then recognizable free text. A pin skips
 the role chain; omit it to use the normal chain and its fallbacks.
 
+When `clis.<cli>.headless_cmd` is configured, a codex or cursor dispatch runs
+non-interactively inside tmux. The pane shows a JSON stream, the wrapper closes
+the mailbox on process exit, and worker questions are not supported.
+
 Minimum mental model:
 
 1. `$RUNS create …` (auto-wraps mailbox protocol into `mailbox/PROMPT.md`).

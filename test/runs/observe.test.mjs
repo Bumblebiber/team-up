@@ -630,6 +630,24 @@ test("runObserver exits when parent dies", withTempRuns(async () => {
   assert.equal(iterations, 1);
 }));
 
+test("runObserver skips capture for headless runs and logs the skip", withTempRuns(async () => {
+  const state = createRunWithTmux();
+  runs.updateState(state.runId, (current) => {
+    current.worker.headless = true;
+    return current;
+  });
+  let captures = 0;
+  await runObserver(state.runId, {
+    capture: () => { captures += 1; return "pane"; },
+    acquireLock: () => ({ ok: true }),
+  });
+  assert.equal(captures, 0);
+  const lines = fs.readFileSync(observationLogPath(state.runId), "utf8").trim().split("\n");
+  assert.equal(lines.length, 1);
+  assert.deepEqual(JSON.parse(lines[0]).kind, "skip");
+  assert.equal(JSON.parse(lines[0]).reason, "headless");
+}));
+
 test("runObserver second instance acquireLock failure exits immediately", withTempRuns(async () => {
   const state = createRunWithTmux();
   const failures = [];

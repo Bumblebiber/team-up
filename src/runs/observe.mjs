@@ -907,6 +907,12 @@ export function handleStallCeilingEscalate({
 }
 
 export async function runObserver(runId, deps = {}) {
+  const initialState = loadState(runId);
+  if (initialState?.worker?.headless) {
+    appendObservationLog(runId, { kind: "skip", reason: "headless" });
+    return;
+  }
+
   const pollSec = (deps.pollSec ?? DEFAULT_POLL_SEC) * 1000;
   const silenceSec = deps.silenceSec ?? DEFAULT_SILENCE_SEC;
   const sleep = deps.sleep ?? defaultSleep;

@@ -2,7 +2,8 @@ import { cliModelFor, aliasFor } from "./config.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { linkDispatchToRun } from "../runs/runs.mjs";
+import { fileURLToPath } from "node:url";
+import { linkDispatchToRun, mailboxDir } from "../runs/runs.mjs";
 import { detectParent } from "../runs/parent.mjs";
 
 /** First non-flag argv token; skips values that belong to --flags. */
@@ -27,15 +28,16 @@ export function resolveEffort({ roster, role, model, entryEffort, cellEffort }) 
   return entryEffort || cellEffort || roster?.roles?.[role]?.effort || roster?.models?.[model]?.effort || null;
 }
 
-export function buildCommand({ roster, model, cli, prompt, effort = null, dir = null }) {
-  const template = roster.clis?.[cli]?.cmd;
-  if (!template) throw new Error(`no cli template for "${cli}" in roster.json clis section`);
+export function buildCommand({ roster, model, cli, prompt, effort = null, dir = null, headless = false, lastMessage = null }) {
+  const field = headless ? "headless_cmd" : "cmd";
+  const template = roster.clis?.[cli]?.[field];
+  if (!template) throw new Error(`no cli template for "${cli}" in roster.json clis section (${field})`);
   // Cursor carries the effort in the model id; the template takes it there.
   const cliModel = cliModelFor(roster, model, cli, effort);
   const inName = aliasFor(roster.models?.[model], model, cli).includes("{effort}");
   const hasSlot = template.some((p) => p.includes("{effort}"));
   if (effort && !hasSlot && !inName) {
-    console.error(`roster: effort "${effort}" set but clis.${cli}.cmd has no {effort} — ignored`);
+    console.error(`roster: effort "${effort}" set but clis.${cli}.${field} has no {effort} — ignored`);
   }
   const argv = [];
   let promptIndex = null;
@@ -49,6 +51,7 @@ export function buildCommand({ roster, model, cli, prompt, effort = null, dir = 
     argv.push(
       part.replaceAll("{model}", cliModel)
         .replaceAll("{prompt}", prompt)
+        .replaceAll("{last_message}", lastMessage ?? "")
         .replaceAll("{effort}", effort ?? "")
     );
   }
@@ -133,13 +136,26 @@ export async function spawnPinnedInTmux({
     });
     effectiveRunId = state.runId;
   }
-  const argv = buildCommand({ roster, model, cli, prompt, effort, dir });
+  const headless = Boolean(roster.clis[cli].headless_cmd);
+  const lastMessage = path.resolve(mailboxDir(effectiveRunId), "LAST_MESSAGE.md");
+  const built = buildCommand({ roster, model, cli, prompt, effort, dir, headless, lastMessage });
+  const argv = headless
+    ? [
+      process.execPath,
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../runs/headless.mjs"),
+      effectiveRunId,
+      cli,
+      "--",
+      ...built,
+    ]
+    : built;
   const session = `${sessionPrefix}-${Date.now().toString(36)}`;
   startInTmux({ session, dir, argv, runId: effectiveRunId });
   linkDispatchToRun(effectiveRunId, session, {
     model,
     cli,
     effort: effort ?? null,
+    headless,
   });
   console.log(`model: ${model} (${cli})`);
   if (effort) console.log(`effort: ${effort}`);
