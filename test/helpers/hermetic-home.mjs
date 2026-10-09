@@ -14,6 +14,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+// Every path override goes too: dispatch hands each worker TEAM_UP_RUNS, so a
+// worker running `npm test` would otherwise write test runs into the live
+// runs dir (seen 2026-10-09).
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("TEAM_UP_") || key.startsWith("O9K_")) delete process.env[key];
+}
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-test-home-"));
 process.env.TEAM_UP_HOME = home;
 process.env.HOME = path.join(home, "home");
