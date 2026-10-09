@@ -86,7 +86,7 @@ function entryLabel(model, cli) {
 }
 
 /** Resolve usage window keys that gate a model spawn. */
-export function resolveLimitWindows(_roster, modelId, model) {
+export function resolveLimitWindows(_roster, modelId, model, usage = null) {
   if (Array.isArray(model?.limit_windows) && model.limit_windows.length) {
     return model.limit_windows;
   }
@@ -94,11 +94,39 @@ export function resolveLimitWindows(_roster, modelId, model) {
   const clis = model?.cli || [];
   if (clis.includes("claude")) {
     out.push("claude:session", "claude:week", "claude:5h");
-    if (modelId.includes("fable")) out.push("claude:fable-week");
   }
   if (clis.includes("codex")) out.push("codex:weekly", "codex:5h");
   if (clis.includes("cursor")) out.push("cursor:included");
+  const modelIdLower = String(modelId).toLowerCase();
+  const modelClis = new Set(clis);
+  for (const [key, window] of Object.entries(usage?.windows || {})) {
+    if (typeof window?.scope !== "string" || !window.scope || !modelClis.has(key.split(":", 1)[0])) continue;
+    if (modelIdLower.includes(window.scope.toLowerCase()) && !out.includes(key)) out.push(key);
+  }
   return out;
+}
+
+/** Shared usage and mark-limited gate for dispatch picks and specialist profiles. */
+export function evaluateUsageAndMarkGate({ roster, usage, modelId, model, cli, now = Date.now() }) {
+  const gate = modelUsageGate({
+    usage,
+    limitWindows: resolveLimitWindows(roster, modelId, model, usage),
+    provider: model.provider,
+    cli,
+    limits: limits(roster),
+    now,
+  });
+  if (gate.blocked) return gate;
+  if (markedUntil(usage, modelId, now)) {
+    return { blocked: true, reason: `marked limited until ${usage.marked[modelId].until}` };
+  }
+  if (markedUntil(usage, model.provider, now)) {
+    return { blocked: true, reason: `provider marked limited until ${usage.marked[model.provider].until}` };
+  }
+  if (markedUntil(usage, cli, now)) {
+    return { blocked: true, reason: `cli marked limited until ${usage.marked[cli].until}` };
+  }
+  return { blocked: false, reason: null };
 }
 
 function hasWindowsData(usage) {
@@ -138,7 +166,6 @@ export function evaluatePickCell({
   entryEffort = null,
   now = Date.now(),
 }) {
-  const roleLimits = limits(roster);
   const skipped = [];
   const model = roster.models?.[name];
   const label = entryLabel(name, cliIn);
@@ -169,35 +196,18 @@ export function evaluatePickCell({
     return { model: null, cli: null, effort: null, skipped };
   }
 
-  const limitWindows = resolveLimitWindows(roster, name, model);
-  const gate = modelUsageGate({
+  const gate = evaluateUsageAndMarkGate({
+    roster,
     usage,
-    limitWindows,
-    provider: model.provider,
+    modelId: name,
+    model,
     cli,
-    limits: roleLimits,
     now,
   });
   if (gate.blocked) {
     skipped.push({ model: label, reason: gate.reason });
     return { model: null, cli: null, effort: null, skipped };
   }
-  if (markedUntil(usage, name, now)) {
-    skipped.push({ model: label, reason: `marked limited until ${usage.marked[name].until}` });
-    return { model: null, cli: null, effort: null, skipped };
-  }
-  if (markedUntil(usage, model.provider, now)) {
-    skipped.push({
-      model: label,
-      reason: `provider marked limited until ${usage.marked[model.provider].until}`,
-    });
-    return { model: null, cli: null, effort: null, skipped };
-  }
-  if (markedUntil(usage, cli, now)) {
-    skipped.push({ model: label, reason: `cli marked limited until ${usage.marked[cli].until}` });
-    return { model: null, cli: null, effort: null, skipped };
-  }
-
   return {
     model: name,
     cli,
@@ -209,7 +219,6 @@ export function evaluatePickCell({
 export function pick({ roster, usage, role, now = Date.now() }) {
   const spec = roster.roles?.[role];
   if (!spec) throw new Error(`unknown role: ${role}`);
-  const roleLimits = limits(roster);
   const skipped = [];
 
   for (const raw of spec.chain) {
@@ -220,66 +229,20 @@ export function pick({ roster, usage, role, now = Date.now() }) {
       skipped.push({ model: String(raw), reason: e.message });
       continue;
     }
-    const { model: name } = parsed;
-    const model = roster.models?.[name];
-    if (!model) {
-      skipped.push({ model: entryLabel(name, parsed.cli), reason: "not in models" });
-      continue;
-    }
-
-    const cli = parsed.cli ?? model.cli?.[0] ?? null;
-    const label = entryLabel(name, parsed.cli);
-
-    const acctReason = accountBlockReason(roster, model.account);
-    if (acctReason) {
-      skipped.push({ model: label, reason: acctReason });
-      continue;
-    }
-
-    if (!cli) {
-      skipped.push({ model: label, reason: "no cli resolved" });
-      continue;
-    }
-    if (!roster.clis?.[cli]?.cmd) {
-      skipped.push({ model: label, reason: `no cli template for "${cli}"` });
-      continue;
-    }
-    if (Array.isArray(model.cli) && model.cli.length > 0 && !model.cli.includes(cli)) {
-      skipped.push({ model: label, reason: `cli "${cli}" not listed for model` });
-      continue;
-    }
-
-    const limitWindows = resolveLimitWindows(roster, name, model);
-    const gate = modelUsageGate({
+    const cell = evaluatePickCell({
+      roster,
       usage,
-      limitWindows,
-      provider: model.provider,
-      cli,
-      limits: roleLimits,
+      role,
+      model: parsed.model,
+      cli: parsed.cli,
+      entryEffort: parsed.effort,
       now,
     });
-    if (gate.blocked) {
-      skipped.push({ model: label, reason: gate.reason });
+    if (cell.skipped.length) {
+      skipped.push(...cell.skipped);
       continue;
     }
-    if (markedUntil(usage, name, now)) {
-      skipped.push({ model: label, reason: `marked limited until ${usage.marked[name].until}` });
-      continue;
-    }
-    if (markedUntil(usage, model.provider, now)) {
-      skipped.push({ model: label, reason: `provider marked limited until ${usage.marked[model.provider].until}` });
-      continue;
-    }
-    if (markedUntil(usage, cli, now)) {
-      skipped.push({ model: label, reason: `cli marked limited until ${usage.marked[cli].until}` });
-      continue;
-    }
-    return {
-      model: name,
-      cli,
-      effort: resolveEffort({ roster, role, model: name, entryEffort: parsed.effort }),
-      skipped,
-    };
+    return { ...cell, skipped };
   }
   return { model: null, cli: null, effort: null, skipped };
 }

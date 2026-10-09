@@ -14,6 +14,7 @@ import { killCollectStrays } from "./usage-procs.mjs";
 import { withPtyLock } from "./usage-pty-lock.mjs";
 import { runPtyCollect, COLLECT_ENV } from "./usage-pty.mjs";
 import { pushSample } from "./usage-windows.mjs";
+import { fetchClaudeUsageJson, fetchCodexUsageJson } from "./usage-json.mjs";
 
 const DEFAULT_SUBSCRIPTIONS = ["claude", "codex", "cursor"];
 
@@ -119,35 +120,91 @@ export async function collectUsageForCli(opts) {
   if (!isSubscriptionCli(cli, roster)) {
     return { cli, ok: false, reason: "not-subscription" };
   }
-  // A collect boots a whole CLI: MCP servers included (the telegram plugin's
+
+  let jsonFallbackReason = null;
+  if (cli === "claude" || cli === "codex") {
+    let jsonResult;
+    try {
+      const collectJson = cli === "claude" ? fetchClaudeUsageJson : fetchCodexUsageJson;
+      jsonResult = await collectJson({
+        env: opts.env,
+        homeDir: opts.homeDir,
+        fileReader: opts.fileReader,
+        fetchImpl: opts.fetchImpl,
+        now: opts.now,
+      });
+    } catch {
+      jsonResult = { ok: false, reason: "JSON usage collection failed" };
+    }
+    if (jsonResult?.ok && jsonResult.windows && Object.keys(jsonResult.windows).length > 0) {
+      if (!dryRun) {
+        const readUsage = opts.readUsage || (() => loadJson(usagePath()));
+        const writeUsage = opts.writeUsage || ((usage) => writeUsageAtomic(usage));
+        writeUsage(mergeUsageWindows(readUsage(), jsonResult.windows));
+      }
+      return { cli, ok: true, windows: jsonResult.windows };
+    }
+    jsonFallbackReason = jsonResult?.reason || "JSON usage produced no supported windows";
+  }
+
+  // A PTY collect boots a whole CLI: MCP servers included (the telegram plugin's
   // `bun`). Those outlive an expect that exits on `/exit` or on a boot
   // timeout, and pile up in the watcher's cgroup. Sweep inside the lock, so a
   // concurrent collect's tree is never the one being killed.
   let lock;
   try {
-    lock = await withPtyLock(async () => {
-      try {
-        return collectCliTranscript(cli);
-      } finally {
-        killCollectStrays();
-      }
-    });
+    if (opts.collectFallback) {
+      lock = { ok: true, value: await opts.collectFallback(cli) };
+    } else {
+      lock = await withPtyLock(async () => {
+        try {
+          return collectCliTranscript(cli);
+        } finally {
+          killCollectStrays();
+        }
+      });
+    }
   } catch (e) {
-    if (loggedOut(cli)) return { cli, ok: false, reason: "not logged in" };
+    if (loggedOut(cli)) {
+      return {
+        cli,
+        ok: false,
+        reason: jsonFallbackReason ? `JSON usage failed (${jsonFallbackReason}); PTY fallback: not logged in` : "not logged in",
+      };
+    }
+    if (jsonFallbackReason) {
+      return { cli, ok: false, reason: `JSON usage failed (${jsonFallbackReason}); PTY fallback failed` };
+    }
     throw e;
   }
   if (!lock.ok) {
-    return { cli, ok: false, reason: "pty-lock-contention" };
+    const reason = "pty-lock-contention";
+    return {
+      cli,
+      ok: false,
+      reason: jsonFallbackReason ? `JSON usage failed (${jsonFallbackReason}); ${reason}` : reason,
+    };
   }
   const parsed = lock.value;
   if (!parsed || !Object.keys(parsed).length) {
-    return { cli, ok: false, reason: loggedOut(cli) ? "not logged in" : "empty-parse" };
+    const reason = loggedOut(cli) ? "not logged in" : "empty-parse";
+    return {
+      cli,
+      ok: false,
+      reason: jsonFallbackReason ? `JSON usage failed (${jsonFallbackReason}); PTY fallback: ${reason}` : reason,
+    };
   }
   if (!dryRun) {
-    const merged = mergeUsageWindows(loadJson(usagePath()), parsed);
-    writeUsageAtomic(merged);
+    const readUsage = opts.readUsage || (() => loadJson(usagePath()));
+    const writeUsage = opts.writeUsage || ((usage) => writeUsageAtomic(usage));
+    writeUsage(mergeUsageWindows(readUsage(), parsed));
   }
-  return { cli, ok: true, windows: parsed };
+  return {
+    cli,
+    ok: true,
+    windows: parsed,
+    ...(jsonFallbackReason ? { reason: `JSON usage failed (${jsonFallbackReason}); used PTY fallback` } : {}),
+  };
 }
 
 /**

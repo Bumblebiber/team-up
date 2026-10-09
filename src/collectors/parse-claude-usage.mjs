@@ -26,7 +26,7 @@ export function parseClaudeUsage(text, opts = {}) {
     const slug = labelToWindowSlug(m[1]);
     const key = `claude:${slug}`;
     const raw = m[3]?.trim() || null;
-    windows[key] = normalizeWindowRecord(
+    const record = normalizeWindowRecord(
       key,
       {
         used: Number(m[2]) / 100,
@@ -34,9 +34,11 @@ export function parseClaudeUsage(text, opts = {}) {
         resets_at: raw,
         source,
         updated_at: updated,
+        ...(slug.endsWith("-week") ? { scope: slug.slice(0, -5) } : {}),
       },
       { now: updated }
     );
+    windows[key] = record;
   }
   return windows;
 }

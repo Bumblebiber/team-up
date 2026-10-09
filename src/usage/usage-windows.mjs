@@ -259,6 +259,7 @@ export function normalizeWindowRecord(windowKey, partial, opts = {}) {
     reset_confidence: confidence,
     updated_at: updatedAt,
     source: partial.source || "unknown",
+    ...(typeof partial.scope === "string" ? { scope: partial.scope } : {}),
     updated: updatedAt,
   };
 }

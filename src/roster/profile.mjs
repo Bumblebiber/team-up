@@ -1,6 +1,5 @@
-import { modelUsageGate } from "../usage/usage-windows.mjs";
 import {
-  limits, accountBlockReason, parseChainEntry, resolveEffort, resolveLimitWindows, markedUntil,
+  accountBlockReason, parseChainEntry, resolveEffort, evaluateUsageAndMarkGate,
 } from "./chain.mjs";
 import { defaultHarnessCapabilities } from "../harness/registry.mjs";
 import { COMMAND_BROKER_CAPABILITY } from "../harness/capabilities.mjs";
@@ -56,7 +55,6 @@ export function resolveProfile({
     return fail(role ? `role ${role} has no chain` : "empty chain");
   }
 
-  const roleLimits = limits(roster || {});
   const chain = [];
   const skipped = [];
   const quota_blocked = [];
@@ -132,39 +130,17 @@ export function resolveProfile({
         effort: resolveEffort({ roster, role, model, entryEffort: entry.effort }),
         priority: index,
       };
-      const gate = modelUsageGate({
+      const gate = evaluateUsageAndMarkGate({
+        roster,
         usage,
-        // Same windows pick() gates on: undeclared ones derive from the CLIs.
-        limitWindows: resolveLimitWindows(roster, model, spec),
-        provider: spec.provider,
+        modelId: model,
+        model: spec,
         cli,
-        limits: roleLimits,
         now,
       });
       if (gate.blocked) {
         skipped.push({ model: `${cli}:${model}`, reason: gate.reason });
         quota_blocked.push({ ...cell, block_reason: gate.reason });
-        continue;
-      }
-      if (markedUntil(usage, model, now)) {
-        const reason = `marked limited until ${usage.marked[model].until}`;
-        skipped.push({ model: `${cli}:${model}`, reason });
-        quota_blocked.push({ ...cell, block_reason: reason });
-        continue;
-      }
-      if (spec.provider && markedUntil(usage, spec.provider, now)) {
-        const reason = `provider marked limited until ${usage.marked[spec.provider].until}`;
-        skipped.push({
-          model: `${cli}:${model}`,
-          reason,
-        });
-        quota_blocked.push({ ...cell, block_reason: reason });
-        continue;
-      }
-      if (markedUntil(usage, cli, now)) {
-        const reason = `cli marked limited until ${usage.marked[cli].until}`;
-        skipped.push({ model: `${cli}:${model}`, reason });
-        quota_blocked.push({ ...cell, block_reason: reason });
         continue;
       }
 

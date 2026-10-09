@@ -389,7 +389,7 @@ test("pick skips fable model when fable-week hot but opus remains", () => {
       "claude:session": { used: 0.1 },
       "claude:week": { used: 0.5 },
       "claude:5h": { used: 0.1 },
-      "claude:fable-week": { used: 0.97 },
+      "claude:fable-week": { used: 0.97, scope: "fable" },
     },
   };
   const r = pick({ roster, usage, role: "reviewer", now: NOW });
@@ -441,9 +441,39 @@ test("pick skips a burst window (claude:5h) at 80% but keeps a week window until
   assert.equal(weekOk.model, "claude-opus");
 });
 
-test("resolveLimitWindows adds fable-week only for fable models", () => {
-  assert.ok(resolveLimitWindows({}, "claude-fable-5", { cli: ["claude"] }).includes("claude:fable-week"));
-  assert.ok(!resolveLimitWindows({}, "claude-opus", { cli: ["claude"] }).includes("claude:fable-week"));
+test("resolveLimitWindows adds scoped windows only when model id contains their scope", () => {
+  const usage = { windows: { "claude:fable-week": { used: 0.99, scope: "fable" } } };
+  const model = { cli: ["claude"] };
+  assert.ok(resolveLimitWindows({}, "claude-fable-5", model, usage).includes("claude:fable-week"));
+  assert.ok(!resolveLimitWindows({}, "claude-opus", model, usage).includes("claude:fable-week"));
+  assert.ok(!resolveLimitWindows({}, "claude-fable-5", model, {
+    windows: { "claude:fable-week": { used: 0.99 } },
+  }).includes("claude:fable-week"));
+});
+
+test("scoped Claude quota blocks matching model id but leaves opus available", () => {
+  const roster = {
+    clis: { claude: { cmd: ["claude", "{model}"] } },
+    models: {
+      "vendor-fable-model": { cli: ["claude"] },
+      "claude-opus": { cli: ["claude"] },
+    },
+    roles: { reviewer: { chain: ["vendor-fable-model", "claude-opus"] } },
+  };
+  const usage = {
+    windows: {
+      "claude:fable-week": {
+        used: 0.99,
+        scope: "fable",
+        updated_at: new Date(NOW).toISOString(),
+        resets_at: "2026-07-20T12:00:00.000Z",
+      },
+    },
+  };
+
+  const result = pick({ roster, usage, role: "reviewer", now: NOW });
+  assert.equal(result.model, "claude-opus");
+  assert.deepEqual(result.skipped, [{ model: "vendor-fable-model", reason: "window claude:fable-week at 99%" }]);
 });
 
 test("checkThresholds warns on hot usage windows", () => {

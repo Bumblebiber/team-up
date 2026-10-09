@@ -15,6 +15,7 @@ test("parseClaudeUsage reads session/week/fable/5h", () => {
   assert.equal(w["claude:session"].used, 0.07);
   assert.equal(w["claude:week"].used, 0.4);
   assert.equal(w["claude:fable-week"].used, 0.57);
+  assert.equal(w["claude:fable-week"].scope, "fable");
   assert.equal(w["claude:5h"].used, 0.12);
   assert.ok(claudeParseComplete(w));
 });

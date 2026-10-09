@@ -99,12 +99,12 @@ test("pick skips a draining codex model through the real window resolution", () 
     roles: { implementer: { chain: ["gpt-5.6-sol", "composer-2.5"] } },
     limits: LIMITS,
   };
+  const usage = climbing({ used: 0.6, perMin: 0.01 });
   assert.ok(
-    resolveLimitWindows(roster, "gpt-5.6-sol", roster.models["gpt-5.6-sol"]).includes("codex:5h"),
+    resolveLimitWindows(roster, "gpt-5.6-sol", roster.models["gpt-5.6-sol"], usage).includes("codex:5h"),
     "a codex model must be gated on its 5h window",
   );
 
-  const usage = climbing({ used: 0.6, perMin: 0.01 });
   const r = pick({ roster, usage, role: "implementer", now: NOW });
   assert.equal(r.model, "composer-2.5", "should fall through to the idle cli");
   assert.match(r.skipped[0].reason, /codex:5h .* burning .*in use elsewhere/);
