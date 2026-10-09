@@ -190,9 +190,9 @@
     },
     "overseer": {
       "chain": [
-        "hermes:deepseek-v4-flash",
         "claude:claude-haiku",
-        "codex:gpt-5.4-mini"
+        "codex:gpt-5.4-mini",
+        "hermes:deepseek-v4-flash"
       ]
     },
     "observer": {
