@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { linkDispatchToRun, mailboxDir, setStatus } from "../runs/runs.mjs";
 import { detectParent } from "../runs/parent.mjs";
+import { runsPath } from "../paths.mjs";
 
 /** First non-flag argv token; skips values that belong to --flags. */
 export function firstPositional(args) {
@@ -103,7 +104,9 @@ export function startInTmux({ session, dir, argv, runId, exec = execFileSync }) 
     session,
     dir,
     argv,
-    env: runId ? { TEAMUP_RUN_ID: runId } : {},
+    // The tmux server's env, not the dispatcher's, reaches the pane: name the
+    // runs dir so the worker (and the headless wrapper) close this mailbox.
+    env: runId ? { TEAMUP_RUN_ID: runId, TEAM_UP_RUNS: runsPath() } : {},
   }), { stdio: "inherit" });
   return { session };
 }

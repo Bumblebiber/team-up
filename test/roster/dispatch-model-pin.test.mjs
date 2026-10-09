@@ -314,6 +314,7 @@ test("dispatch wraps a headless_cmd CLI in the headless wrapper and marks the ru
   const cmd = tmuxCommandFromLog(fx.tmuxLog);
   assert.match(cmd, /src\/runs\/headless\.mjs/);
   assert.match(cmd, /cursor-agent -p/);
+  assert.ok(tmuxSessionLine(fx.tmuxLog).includes(`-e TEAM_UP_RUNS=${fx.runsDir}`));
   const state = onlyRunState(fx.runsDir);
   assert.equal(state.worker.headless, true);
   assert.equal(state.status, "watching");
