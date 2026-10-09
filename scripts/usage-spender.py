@@ -180,7 +180,7 @@ def decide(usage, roster, now):
         elif isinstance(burst_used, (int, float)) and burst_used >= BUSY_BURST_USED:
             verdicts[key] = f"busy ({burst} at {burst_used:.0%})"
         elif gap < cost:
-            verdicts[key] = f"{head}: gap {gap:.0%} < one task ({cost:.1%})"
+            verdicts[key] = f"{head}: gap {gap:.0%} below one task ({cost:.1%})"
         else:
             verdicts[key] = f"{head}: gap {gap:.0%} = {gap / cost:.0f} tasks of {cost:.1%}"
             wanted.append((key, cli, gap, cost))
@@ -621,8 +621,8 @@ def selftest():
                      "cursor:included": win(0.01, "2026-10-26T23:00:00Z")}}
     v, w = decide(u, max20, now)
     assert [x[0] for x in w] == ["claude:week"], (v, w)  # codex gap 16% < a plus-plan task's 30%
-    assert "target 43%" in v["claude:week"] and "< one task" in v["codex:weekly"], v
-    assert "< one task" in v["cursor:included"], v  # hobby: never
+    assert "target 43%" in v["claude:week"] and "below one task" in v["codex:weekly"], v
+    assert "below one task" in v["cursor:included"], v  # hobby: never
     # tier scaling: same gap, bigger plan -> spend
     v, w = decide(u, {"accounts": {"codex": {"plan": "pro"}, "claude": {"plan": "pro"}}}, now)
     assert [x[0] for x in w] == ["codex:weekly"], (v, w)
