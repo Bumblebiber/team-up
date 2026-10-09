@@ -100,8 +100,9 @@ WINDOWS = {
     "claude:week": ("claude", "claude:session", 7),
     "codex:weekly": ("codex", "codex:5h", 7),
     "cursor:included": ("cursor", None, 30),  # ponytail: billing cycle assumed 30d
-    "agy:gemini-weekly": ("agy", "agy:gemini-5h", 7),
-    "agy:3p-weekly": ("agy", "agy:3p-5h", 7),
+    # agy windows held out until Benni decides whether nightly spend may use Google quota (2026-10-09):
+    # "agy:gemini-weekly": ("agy", "agy:gemini-5h", 7),
+    # "agy:3p-weekly": ("agy", "agy:3p-5h", 7),
 }
 TERMINAL = {"done", "failed", "cancelled"}
 
@@ -678,7 +679,7 @@ def selftest():
                      "agy:gemini-5h": win(0.1, "2026-10-09T13:00:00Z")}},
         {"accounts": {"gemini": {"plan": "pro"}}}, now,
     )
-    assert wanted and wanted[0][0] == "agy:gemini-weekly" and wanted[0][1] == "agy", (agy, wanted)
+    assert wanted == [], (agy, wanted)  # agy held out of WINDOWS, see above
     # tier scaling: same gap, bigger plan -> spend
     v, w = decide(u, {"accounts": {"codex": {"plan": "pro"}, "claude": {"plan": "pro"}}}, now)
     assert [x[0] for x in w] == ["codex:weekly"], (v, w)
