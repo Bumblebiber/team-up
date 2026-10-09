@@ -14,7 +14,7 @@ TU = `{teamup}`
 {windows}
 
 ## 1. Intake, per run
-Follow the team-up:intake skill. In short: read ~/.team-up/runs/<run_id>/mailbox/RESULT.json
+Follow the team-up:intake skill if you have it. In short: read ~/.team-up/runs/<run_id>/mailbox/RESULT.json
 (or RESULT.md).
 - review / triage / audit / research: open each finding's file:line in the repo with Read/Grep/Glob.
   Read-only `git log`/`git show` are fine; change nothing. Keep only the findings that hold, and say

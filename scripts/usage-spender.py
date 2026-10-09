@@ -12,7 +12,7 @@ gap worth at least one task on that account's plan, gets ONE team-up worker per 
   2. a finished implement run with a passing verify and new commits -> push its usage-spender/*
      branch and open a DRAFT PR (never merge; no verify command -> local branch only)
   3. finished, uncollected ledger runs -> start one Claude Code intake host in tmux
-     (scripts/usage-spender-host.md): check results, record in TIM, collect, Telegram summary
+     on the CLI from ~/.team-up/cron-jobs.ini [usage-spender-host] (scripts/usage-spender-host.md): check results, record in TIM, collect, Telegram summary
   4. no ledger run active and a window below its curve -> spawn exactly one task
 
 Tasks, in order: review an open PR in our repos (read-only, TIM + Telegram only, no GitHub
@@ -25,9 +25,11 @@ committed repos. Workers never write memory; the host does.
   --any-hour                            ignore SPAWN_HOURS (manual runs and dry runs by day)
   scripts/usage-spender.py --selftest
 """
+import configparser
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -50,6 +52,8 @@ PROJECTS = HOME / "projects"
 # .tim-project -> P0073; the host session binds there. Must be a folder Claude Code already trusts,
 # or the host sits in the trust dialog forever (a test run from a fresh clone sets it).
 HOST_CWD = Path(ENV.get("USAGE_SPENDER_HOST_CWD") or REPO)
+CRON_JOBS = TU_HOME / "cron-jobs.ini"  # [usage-spender-host] model = cli:model picks the host CLI
+HOST_DEFAULT = "claude:claude-opus"
 TELEGRAM = HOME / ".hermes/bin/send-cron-telegram"
 LABEL = ENV.get("USAGE_SPENDER_LABEL") or "usage-spender"  # Telegram headline; a test run sets its own
 CLONES = TU_HOME / "spender" / "clones"
@@ -521,13 +525,47 @@ def host_prompt(runs, verdicts, date, host):
                               windows=windows, telegram=TELEGRAM, label=LABEL)
 
 
-def start_host(runs, verdicts, day_dir, host):
-    """Claude Code in detached tmux, told to follow host.md. Returns an error string or None."""
+def cron_model(job, default, path=CRON_JOBS):
+    """'cli:model' for job from cron-jobs.ini, else default."""
+    ini = configparser.ConfigParser()
+    ini.read(path)
+    value = ini.get(job, "model", fallback="").strip()
+    return value if ":" in value else default
+
+
+def host_argv(built, cli, settings):
+    """Pure. The roster's argv for the host CLI; claude swaps the blanket permission flag for the
+    host's allow-list settings."""
+    if cli != "claude":
+        return built
+    argv = [a for a in built if a != "--dangerously-skip-permissions"]
+    return [argv[0], "--settings", str(settings), *argv[1:]]
+
+
+def build_command(model, prompt):
+    """team-up's own argv builder (roster template, CLI model alias, codex trust) for model 'cli:model'."""
+    cli, mid = model.split(":", 1)
+    js = ("const [p, r, m, c, t, d] = process.argv.slice(1); const { buildCommand } = await import(p);"
+          "const fs = await import('node:fs'); console.log(JSON.stringify(buildCommand("
+          "{ roster: JSON.parse(fs.readFileSync(r, 'utf8')), model: m, cli: c, prompt: t, dir: d })));")
+    r = sh("node", "--input-type=module", "-e", js, str(REPO / "src/roster/command.mjs"),
+           str(ROSTER), mid, cli, prompt, str(HOST_CWD))
+    if r.returncode:
+        raise RuntimeError(f"buildCommand for {model}: {r.stderr.strip()[-300:]}")
+    return json.loads(r.stdout)
+
+
+def start_host(runs, verdicts, day_dir, host, model):
+    """The chosen host CLI in detached tmux, told to follow host.md. The runs are already finished
+    (later ticks reconcile them), so the host waits for nothing. Returns an error string or None."""
     prompt, settings = day_dir / f"{host}.md", day_dir / f"{host}-settings.json"
     prompt.write_text(host_prompt(runs, verdicts, day_dir.name, host))
     settings.write_text(json.dumps({"permissions": {"allow": HOST_ALLOW}}, indent=2) + "\n")
-    r = sh("tmux", "new-session", "-d", "-s", host, "-c", str(HOST_CWD),
-           "claude", "--settings", str(settings), f"Read {prompt} and follow it.")
+    try:
+        argv = host_argv(build_command(model, f"Read {prompt} and follow it."), model.split(":", 1)[0], settings)
+    except (RuntimeError, ValueError) as e:
+        return str(e)
+    r = sh("tmux", "new-session", "-d", "-s", host, "-c", str(HOST_CWD), shlex.join(argv))
     return f"tmux rc={r.returncode}: {r.stderr.strip()[-300:]}" if r.returncode else None
 
 
@@ -564,9 +602,10 @@ def main(argv):
 
     host = f"usage-spender-host-{local.strftime('%Y%m%d-%H%M')}"
     if intake and not any(host_alive(e["intake_host"]) for e in ledger if e.get("intake_host")):
-        tick["intake"] = {"tmux": host, "runs": [e["run_id"] for e in intake]}
+        host_model = cron_model("usage-spender-host", HOST_DEFAULT)
+        tick["intake"] = {"tmux": host, "model": host_model, "runs": [e["run_id"] for e in intake]}
         if not dry:
-            tick["intake"]["error"] = start_host(intake, verdicts, day_dir, host)
+            tick["intake"]["error"] = start_host(intake, verdicts, day_dir, host, host_model)
             for e in intake:
                 e["intake_host"], e["intake_tries"] = host, e.get("intake_tries", 0) + 1
 
@@ -684,6 +723,17 @@ def selftest():
         publish(e, {"verification": {"verdict": "fail"}})
         assert "fail" in e["publish"] and "pr" not in e
     assert slug("pr:o/r#9@abc") == "pr-o-r-9-abc"
+
+    # host CLI from cron-jobs.ini (main 16f0f68)
+    built = ["claude", "--dangerously-skip-permissions", "--model", "opus", "Read x"]
+    assert host_argv(built, "claude", "/s.json") == ["claude", "--settings", "/s.json", "--model", "opus", "Read x"]
+    assert host_argv(["codex", "--model", "m", "Read x"], "codex", "/s.json") == ["codex", "--model", "m", "Read x"]
+    with tempfile.NamedTemporaryFile("w", suffix=".ini") as f:
+        f.write("# c\n[usage-spender-host]\nmodel = codex:gpt-6-luna\n[other]\nmodel = nope\n")
+        f.flush()
+        assert cron_model("usage-spender-host", HOST_DEFAULT, f.name) == "codex:gpt-6-luna"
+        assert cron_model("other", HOST_DEFAULT, f.name) == HOST_DEFAULT
+        assert cron_model("missing", HOST_DEFAULT, f.name) == HOST_DEFAULT
     print("selftest ok")
 
 
