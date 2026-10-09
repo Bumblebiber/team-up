@@ -30,6 +30,7 @@
         <a href="#panel-settings">Settings</a>
         <a href="#panel-providers">Providers</a>
         <a href="#panel-clis">CLIs</a>
+        <a href="#panel-trending">AI Trending</a>
         <span class="column-controls">
           <button type="button" id="column-remove" title="Remove the last column; its panels move left">−</button>
           <span id="column-count">2</span> columns
@@ -161,6 +162,16 @@
         <h2>CLIs</h2>
         <div id="clis-table" class="table-wrap"></div>
         <pre id="cli-log" class="pane hidden"></pre>
+      </section>
+
+      <section id="panel-trending" class="panel">
+        <h2>AI Trending</h2>
+        <div class="toolbar">
+          <select id="trending-section"></select>
+          <span id="trending-date" class="muted"></span>
+        </div>
+        <p id="trending-status" class="muted"></p>
+        <div id="trending-table" class="table-wrap"></div>
       </section>
     </main>
   </div>

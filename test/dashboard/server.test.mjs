@@ -668,6 +668,30 @@ test("creating a command policy and approving go through the audited write path"
     }
   }));
 
+test("trending serves the newest report, 404 while there is none", () =>
+  withHome(async ({ home, token }) => {
+    const dir = path.join(home, "trending");
+    fs.mkdirSync(dir);
+    const { server } = createDashboardServer({ token, env: { ...process.env, TEAM_UP_TRENDING_DIR: dir } });
+    const port = await listen(server);
+    try {
+      assert.equal((await req(port, "/api/trending")).status, 401);
+      const none = await req(port, "/api/trending", { token });
+      assert.equal(none.status, 404);
+      assert.match(none.json.error, /no trending/);
+      fs.writeFileSync(path.join(dir, "trending-2026-10-09.md"),
+        "## 🆕 New\n| [x](https://github.com/a/x) | 1,234 | 2026-10-08 | Go | d |\n");
+      const r = await req(port, "/api/trending", { token });
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.json, {
+        date: "2026-10-09",
+        sections: [{ title: "🆕 New", repos: [{ name: "x", url: "https://github.com/a/x", stars: 1234, created: "2026-10-08", lang: "Go", description: "d" }] }],
+      });
+    } finally {
+      server.close();
+    }
+  }));
+
 test("prefs round-trip through the server so every device shares one layout", () =>
   withHome(async ({ token }) => {
     const { server } = createDashboardServer({ token });

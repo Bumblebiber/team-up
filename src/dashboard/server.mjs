@@ -23,6 +23,7 @@ import {
   approveProjectSpecialists,
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
+import { readTrending, trendingDir } from "./trending.mjs";
 import { buildCatalogueView, applyCatalogueToggle } from "./catalogue.mjs";
 import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView, modelLabel, applySpecialistAssignment } from "./roles.mjs";
 import { bringToLatest } from "../roster/latest.mjs";
@@ -1468,6 +1469,14 @@ export function createDashboardServer({
         );
       });
       jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/trending") {
+      // The newest scraper report; readTrending re-parses only when its mtime moves.
+      const data = readTrending({ env });
+      if (data) jsonResponse(res, 200, data);
+      else jsonResponse(res, 404, { error: `no trending-YYYY-MM-DD.md in ${trendingDir(env)}` });
       return;
     }
 

@@ -68,7 +68,8 @@ $("#active-only").addEventListener("change", () => refreshRuns());
 function esc(s) {
   const d = document.createElement("div");
   d.textContent = s ?? "";
-  return d.innerHTML;
+  // innerHTML leaves `"` alone; templates put this inside title="…" too.
+  return d.innerHTML.replace(/"/g, "&quot;");
 }
 
 function fmtTime(iso) {
@@ -1233,7 +1234,7 @@ const MAX_COLUMNS = 6;
 // What a fresh browser gets: the narrow-content panels left, the wide ones right.
 const DEFAULT_COLUMNS = [
   ["panel-usage", "panel-sessions", "panel-projects", "panel-tim", "panel-specialists"],
-  ["panel-roles", "panel-settings", "panel-providers", "panel-clis"],
+  ["panel-roles", "panel-settings", "panel-providers", "panel-clis", "panel-trending"],
 ];
 const mainEl = $("main");
 const columns = () => [...mainEl.querySelectorAll(".column")];
@@ -1940,6 +1941,57 @@ $("#settings-body").addEventListener("change", async (e) => {
   refreshSettings().catch(() => {});
 });
 
+// ── AI Trending ───────────────────────────────────────────────────────────
+// The newest report the hermes trending scraper wrote. It changes once a day,
+// so it is fetched on login and every ten minutes rather than on the 5s cycle;
+// switching sections redraws from what is already here.
+const TRENDING_SECTION_KEY = "teamup.trendingSection";
+let trendingData = null;
+let trendingTimer = null;
+
+async function refreshTrending() {
+  try {
+    trendingData = await api("/api/trending");
+  } catch (err) {
+    trendingData = null;
+    $("#trending-status").textContent = err.message;
+  }
+  renderTrending();
+}
+
+function renderTrending() {
+  const sections = trendingData?.sections || [];
+  $("#trending-date").textContent = trendingData?.date || "";
+  $("#trending-section").classList.toggle("hidden", !sections.length);
+  if (!trendingData) {
+    $("#trending-table").innerHTML = "";
+    return;
+  }
+  // The stored pick, else the first section that has rows: the scraper's
+  // "Fastest Growing" table has been empty in every report so far.
+  const stored = readStored(TRENDING_SECTION_KEY, null);
+  const section = sections.find((s) => s.title === stored)
+    || sections.find((s) => s.repos.length) || sections[0];
+  fillSelect($("#trending-section"), sections.map((s) => ({ value: s.title, label: `${s.title} (${s.repos.length})` })));
+  if (section) $("#trending-section").value = section.title;
+  $("#trending-status").textContent = !section ? "The report has no sections."
+    : section.repos.length ? "" : "No repos in this section.";
+  $("#trending-table").innerHTML = section?.repos.length ? `<table>
+    <thead><tr><th>Repo</th><th>⭐</th><th>Lang</th><th>Created</th><th>Description</th></tr></thead>
+    <tbody>${section.repos.map((r) => `<tr>
+      <td>${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.name)}</a>` : esc(r.name)}</td>
+      <td>${r.stars == null ? "" : r.stars.toLocaleString()}</td>
+      <td>${esc(r.lang)}</td>
+      <td>${esc(r.created)}</td>
+      <td class="desc" title="${esc(r.description)}">${esc(r.description)}</td>
+    </tr>`).join("")}</tbody></table>` : "";
+}
+
+$("#trending-section").addEventListener("change", (e) => {
+  writeStored(TRENDING_SECTION_KEY, e.target.value);
+  renderTrending();
+});
+
 // ── Widget help, colour and visible columns ───────────────────────────────
 // Every panel gets a tooltip on its title and a pencil. The pencil edits two
 // per-browser preferences: a colour, and which table columns (or rows, where a
@@ -1955,6 +2007,7 @@ const PANEL_HELP = {
   "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions, limits and approvals are under Details.",
   "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
   "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",
+  "panel-trending": "New AI repos on GitHub from the newest daily report of the hermes trending scraper (~/.hermes/cron-outputs/framework-scout). Pick a section; hover a description for all of it.",
   "panel-clis": "Agent CLIs: version, harness verification, update/install/login. CLIs team-up can install but the roster doesn't run yet are rows you switch on in ✎. Hover a CLI name for its path; click a row for the job log.",
 };
 const PANEL_PREFS_KEY = "teamup.panelPrefs";
@@ -2084,6 +2137,9 @@ function startPolling() {
   refreshSpecialists().catch(() => {});
   showRolesTab(readStored(ROLES_TAB_KEY, "roles") === "models" ? "models" : "roles");
   refreshSettings().catch(() => {});
+  refreshTrending();
+  clearInterval(trendingTimer);
+  trendingTimer = setInterval(refreshTrending, 10 * 60_000);
   refreshAll();
   if (listTimer) clearInterval(listTimer);
   listTimer = setInterval(refreshAll, 5000);

@@ -406,6 +406,11 @@ details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 
 /* TIM panel: three tabs, one <details> per project. */
 .tabs { display: inline-flex; gap: 0; }
+#panel-trending a { color: var(--accent); }
+#trending-table td { white-space: nowrap; }
+/* max-width 0 + width 100%: the description takes what the other columns
+   leave and cuts to one line; the title attribute carries the full text. */
+#trending-table td.desc { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .tim-tab.is-active { font-weight: 600; text-decoration: underline; }
 .tim-project > summary { cursor: pointer; padding: 0.2rem 0; }
 .tim-items { list-style: none; margin: 0 0 0.4rem; padding: 0 0 0 1rem; }

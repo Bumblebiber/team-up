@@ -1,0 +1,59 @@
+--- a/github-trending-scraper.py	2026-10-09 11:42:07.852592274 +0200
++++ b/github-trending-scraper.py	2026-10-09 11:42:07.869592185 +0200
+@@ -23,7 +23,11 @@
+     "mcp",
+ ]
+ OUTPUT_DIR = "/home/bbbee/.hermes/cron-outputs/framework-scout"
+-OUTPUT_FILE = f"{OUTPUT_DIR}/trending-{datetime.now().strftime('%Y-%m-%d')}.md"
++OUTPUT_DATE = datetime.now().strftime('%Y-%m-%d')
++OUTPUT_FILE = f"{OUTPUT_DIR}/trending-{OUTPUT_DATE}.md"
++# Same data as the markdown, untruncated, for readers that are not an LLM
++# (the team-up dashboard's AI Trending widget).
++JSON_FILE = f"{OUTPUT_DIR}/trending-{OUTPUT_DATE}.json"
+ MAX_PER_TOPIC = 15
+ 
+ 
+@@ -74,12 +78,25 @@
+     name = r.get("name", "?")
+     url = r.get("url", "").replace("https://api.github.com/repos/", "https://github.com/")
+     stars = r.get("stargazersCount", 0)
+-    desc = (r.get("description") or "")[:120]
++    # A raw `|` or newline in a description splits the table row.
++    desc = (r.get("description") or "")[:120].replace("|", "\\|").replace("\n", " ")
+     lang = r.get("language", "") or ""
+     created = (r.get("createdAt") or "")[:10]
+     return f"| [{name}]({url}) | {stars:,} | {created} | {lang} | {desc} |"
+ 
+ 
++def repo_json(r):
++    """The fields of a table row, as data."""
++    return {
++        "name": r.get("name", "?"),
++        "url": r.get("url", "").replace("https://api.github.com/repos/", "https://github.com/"),
++        "stars": r.get("stargazersCount", 0),
++        "created": (r.get("createdAt") or "")[:10],
++        "lang": r.get("language", "") or "",
++        "description": r.get("description") or "",
++    }
++
++
+ def deduplicate(repos):
+     """Remove duplicates by full_name (url)."""
+     seen = set()
+@@ -166,6 +183,16 @@
+     os.makedirs(OUTPUT_DIR, exist_ok=True)
+     with open(OUTPUT_FILE, "w") as f:
+         f.write(content)
++    sections = [
++        ("🆕 New & Trending — Last 7 Days", new_7d),
++        ("📅 New & Trending — Last 30 Days", new_30d),
++        ("📈 Fastest Growing — Recent Activity (24h)", growing),
++    ]
++    with open(JSON_FILE, "w") as f:
++        json.dump({
++            "date": OUTPUT_DATE,
++            "sections": [{"title": t, "repos": [repo_json(r) for r in rs]} for t, rs in sections],
++        }, f, ensure_ascii=False, indent=1)
+ 
+     print(content)
+     print(f"\n[OK] Written to {OUTPUT_FILE}")
