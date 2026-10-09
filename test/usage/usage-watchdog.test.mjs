@@ -55,6 +55,22 @@ test("detectStalledCollectors flags overdue cli", () => {
   assert.ok(issues.some((i) => i.includes("codex collector stalled")));
 });
 
+test("detectStalledCollectors follows roster subscriptions including agy", () => {
+  const issues = detectStalledCollectors({
+    usage: { windows: { "agy:gemini-weekly": { used: 0.2, updated_at: "2026-09-23T10:00:00.000Z" } } },
+    watcher: {
+      state: "idle",
+      collecting: { agy: false },
+      last_collect: { agy: "2026-09-23T10:00:00.000Z" },
+      next_due: { agy: "2026-09-23T10:05:00.000Z" },
+    },
+    roster: { subscriptions: ["agy"] },
+    now: NOW,
+    cfg: DEFAULT_CONFIG,
+  });
+  assert.ok(issues.some((issue) => issue.includes("agy collector stalled")));
+});
+
 test("detectExpiredHighUsage flags window past reset still hot", () => {
   const issues = detectExpiredHighUsage({
     usage: {

@@ -51,9 +51,10 @@ export function watcherSleepSec(cfg) {
 }
 
 export function computeState(counts) {
-  const sum = counts.claude + counts.codex + counts.cursor;
+  const values = Object.values(counts || {}).filter((count) => Number.isFinite(count));
+  const sum = values.reduce((total, count) => total + count, 0);
   if (sum === 0) return "idle";
-  if (sum >= 2 || counts.claude > 1 || counts.codex > 1 || counts.cursor > 1) return "busy";
+  if (sum >= 2 || values.some((count) => count > 1)) return "busy";
   return "active";
 }
 
@@ -75,7 +76,7 @@ export function planCollect({
   lastCollect,
   nextDue,
   now = Date.now(),
-  subscriptions = ["claude", "codex", "cursor"],
+  subscriptions = ["claude", "codex", "cursor", "agy"],
 }) {
   const collect = new Set();
 
@@ -166,13 +167,13 @@ function loadState() {
   }
   return (
     doc || {
-      counts: { claude: 0, codex: 0, cursor: 0 },
-      prev_counts: { claude: 0, codex: 0, cursor: 0 },
+      counts: { claude: 0, codex: 0, cursor: 0, agy: 0 },
+      prev_counts: { claude: 0, codex: 0, cursor: 0, agy: 0 },
       state: "idle",
-      collecting: { claude: false, codex: false, cursor: false },
-      last_collect: { claude: null, codex: null, cursor: null },
-      next_due: { claude: null, codex: null, cursor: null },
-      collect_failures: { claude: [], codex: [], cursor: [] },
+      collecting: { claude: false, codex: false, cursor: false, agy: false },
+      last_collect: { claude: null, codex: null, cursor: null, agy: null },
+      next_due: { claude: null, codex: null, cursor: null, agy: null },
+      collect_failures: { claude: [], codex: [], cursor: [], agy: [] },
     }
   );
 }
@@ -228,7 +229,7 @@ function saveState(state) {
  * at the claude figure — every cursor collect died on ETIMEDOUT mid-boot, so
  * its windows had not been updated in days.
  */
-const COLLECT_TIMEOUT_MS = { claude: 120_000, codex: 300_000, cursor: 300_000 };
+const COLLECT_TIMEOUT_MS = { claude: 120_000, codex: 300_000, cursor: 300_000, agy: 60_000 };
 
 function runCollect(cli) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "usage-collect.mjs");

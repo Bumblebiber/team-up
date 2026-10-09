@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { collectUsageForCli, mergeUsageWindows } from "../../src/usage/usage-collect.mjs";
-import { fetchClaudeUsageJson, fetchCodexUsageJson } from "../../src/usage/usage-json.mjs";
+import { fetchAgyUsageJson, fetchClaudeUsageJson, fetchCodexUsageJson, parseAgyUsage } from "../../src/usage/usage-json.mjs";
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/usage");
 const NOW = Date.parse("2026-10-09T08:13:46.000Z");
@@ -357,4 +357,38 @@ test("an unusable Claude session window falls back", async () => {
   });
   assert.equal(result.ok, false);
   assert.match(result.reason, /lacked the session or week window/);
+});
+
+test("agy /usage maps all four quota buckets and runs prompt immediately after -p", () => {
+  let call;
+  const result = fetchAgyUsageJson({
+    run: (bin, args, options) => {
+      call = { bin, args, options };
+      return JSON.stringify(fixture("agy-usage.json"));
+    },
+    env: { PATH: "/fixture/bin" },
+    now: NOW,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(Object.keys(result.windows).sort(), [
+    "agy:3p-5h", "agy:3p-weekly", "agy:gemini-5h", "agy:gemini-weekly",
+  ]);
+  assert.deepEqual(call.bin, "agy");
+  assert.deepEqual(call.args, ["-p", "/usage", "--output-format", "json"]);
+  assert.equal(call.options.env.PATH, "/fixture/bin");
+  assert.equal(result.windows["agy:gemini-weekly"].used, 0.25);
+  assert.equal(result.windows["agy:gemini-weekly"].resets_at, "2026-10-16T12:52:05.000Z");
+  assert.equal(result.windows["agy:gemini-5h"].used, 0.4);
+  assert.equal(result.windows["agy:3p-weekly"].source, "agy:usage-command");
+  assert.equal(result.windows["agy:3p-5h"].updated_at, UPDATED);
+});
+
+test("agy rejects partial quota responses and does not accept invalid fractions", () => {
+  const body = fixture("agy-usage.json");
+  body.command.data.groups[0].buckets[0].remaining_fraction = 1.2;
+  const windows = parseAgyUsage(body, UPDATED);
+  assert.equal(windows["agy:gemini-weekly"], undefined);
+  const result = fetchAgyUsageJson({ run: () => JSON.stringify(body), now: NOW });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /lacked agy:gemini-weekly/);
 });

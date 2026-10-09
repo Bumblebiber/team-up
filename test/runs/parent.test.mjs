@@ -44,6 +44,15 @@ test("findCliProcess skips a shell between hook and CLI", (t) => {
   assert.equal(findCliProcess(10, { procRoot: proc, cli: "claude" }).pid, 10);
 });
 
+test("findCliProcess recognizes agy as a parent CLI process", (t) => {
+  const { proc } = setup(t, [
+    { pid: 20, ppid: 1, comm: "agy" },
+    { pid: 30, ppid: 20, comm: "bash" },
+    { pid: 40, ppid: 30, comm: "node" },
+  ]);
+  assert.equal(findCliProcess(40, { procRoot: proc, cli: "agy" }).pid, 20);
+});
+
 test("a registry record at depth 3 names the parent", (t) => {
   const { proc, dir, env } = setup(t);
   const record = writeSessionRecord({

@@ -19,11 +19,12 @@ const slug = (name) => String(name).replace(/[^A-Za-z0-9_-]/g, "-");
 
 /**
  * CLIs whose bare binary takes the initial prompt as its first positional and
- * stays interactive: `claude "…"`, `codex "…"`, `cursor-agent "…"`. opencode
- * reads that position as a project path and hermes as a subcommand, so a Start
- * button for them would open a session that never sees the task.
+ * stays interactive: `claude "…"`, `codex "…"`, `cursor-agent "…"`.
+ * agy needs `-i`. opencode reads that position as a project path and hermes as
+ * a subcommand, so a Start button for them would open a session that never sees
+ * the task.
  */
-const PROMPT_CLIS = new Set(["claude", "codex", "cursor"]);
+const PROMPT_CLIS = new Set(["claude", "codex", "cursor", "agy"]);
 
 export const promptClis = (roster) =>
   Object.keys(roster?.clis || {}).filter((c) => PROMPT_CLIS.has(c)).sort();
@@ -183,12 +184,15 @@ export function startTaskSession({
   // The dialog hands back an edited prompt; an empty one falls back to the
   // default. The directory is never taken from the browser — only the id is.
   const text = String(prompt || "").trim() || defaultPrompt(item);
-  // `--model` is spelled the same by claude, codex and cursor-agent, which are
-  // the three CLIs this panel offers (PROMPT_CLIS). Its value is the CLI's own
+  // `--model` is spelled the same by claude, codex, cursor-agent, and agy, the
+  // model-taking CLIs this panel offers (PROMPT_CLIS). Its value is the CLI's own
   // name for the model, not the roster id: `claude --model claude-sonnet` is
   // refused by the CLI, `--model sonnet` is what it answers to.
+  const promptText = framing ? `${framing}\n${text}` : text;
   const flag = model ? ["--model", cliModelFor(roster, model, cli)] : [];
-  const argv = [cmd, ...flag, framing ? `${framing}\n${text}` : text];
+  const argv = cli === "agy"
+    ? [cmd, ...flag, "-i", promptText]
+    : [cmd, ...flag, promptText];
   exec("tmux", tmuxArgs({ session, dir, argv, env: { TEAMUP_WORKER: "" } }), { stdio: "ignore" });
   return { ok: true, session, existing: false };
 }

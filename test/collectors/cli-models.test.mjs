@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 import {
   parseCursorModels,
   parseOpencodeModels,
+  parseAgyModels,
+  LIST_ARGS,
+  LIST_TIMEOUT_MS,
   collectCliModels,
   scanCliModels,
   scanModels,
@@ -37,6 +40,7 @@ const ROSTER = {
     opencode: { cmd: ["opencode", "run", "--model", "{model}", "{prompt}"] },
     claude: { cmd: ["claude", "--model", "{model}", "{prompt}"] },
     codex: { cmd: ["codex", "--model", "{model}", "{prompt}"] },
+    agy: { cmd: ["agy", "--model", "{model}", "-i", "{prompt}"] },
     hermes: { cmd: ["hermes", "chat", "--model", "{model}", "{prompt}"] },
   },
   models: {
@@ -52,6 +56,7 @@ const ROSTER = {
 const LISTINGS = {
   "cursor-agent": CURSOR_SAMPLE,
   opencode: OPENCODE_SAMPLE,
+  agy: "gemini-3.8-flash\tGemini 3.8 Flash\nclaude-opus-4-6-thinking\tClaude Opus 4.6 Thinking\n",
 };
 const run = (bin, args) => {
   if (bin === "claude" && args[0] === "-p") return CLAUDE_SAMPLE;
@@ -83,6 +88,23 @@ test("parseOpencodeModels takes one id per line", () => {
     "openrouter/x-ai/grok-4.6",
     "openrouter/deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-pro",
+  ]);
+});
+
+test("agy models listing tab-splits ids and labels", () => {
+  assert.deepEqual(parseAgyModels("fetching models...\ngemini-3.8-flash\tGemini 3.8 Flash\n"), [
+    { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash" },
+  ]);
+  assert.deepEqual(LIST_ARGS.agy, ["models"]);
+  assert.ok(LIST_TIMEOUT_MS >= 1_300, "network listing timeout must cover the measured call");
+});
+
+test("agy model listing runs through the regular model collector", () => {
+  const result = collectCliModels("agy", { roster: ROSTER, run });
+  assert.equal(result.supported, true);
+  assert.deepEqual(result.models, [
+    { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash" },
+    { id: "claude-opus-4-6-thinking", display_name: "Claude Opus 4.6 Thinking" },
   ]);
 });
 

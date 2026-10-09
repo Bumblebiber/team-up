@@ -9,6 +9,7 @@ import { limits } from "../src/roster/chain.mjs";
 import { usagePath, usageWatcherStatePath } from "../src/paths.mjs";
 import { effectiveResetAt, resolveHandoffAt } from "../src/usage/usage-windows.mjs";
 import { watcherConfig, DEFAULT_CONFIG, intervalMinForCli } from "../src/usage/usage-watcher.mjs";
+import { subscriptionsFromRoster } from "../src/usage/usage-collect.mjs";
 
 const STALL_MARGIN_MS = 5 * 60_000;
 const JUMP_THRESHOLD = 0.15;
@@ -31,9 +32,9 @@ function dueIntervalMs(watcherState, cli, cfg = DEFAULT_CONFIG) {
 /**
  * Pure detectors — each returns issue strings (empty = ok).
  */
-export function detectStalledCollectors({ usage, watcher, now = Date.now(), cfg = DEFAULT_CONFIG }) {
+export function detectStalledCollectors({ usage, watcher, roster, now = Date.now(), cfg = DEFAULT_CONFIG }) {
   const issues = [];
-  const subs = ["claude", "codex", "cursor"];
+  const subs = subscriptionsFromRoster(roster || {});
   for (const cli of subs) {
     if (watcher?.collecting?.[cli]) continue;
     const due = parseIso(watcher?.next_due?.[cli]);
@@ -127,7 +128,7 @@ export function runWatchdog({
   cfg = DEFAULT_CONFIG,
 } = {}) {
   const issues = [
-    ...detectStalledCollectors({ usage, watcher, now, cfg }),
+    ...detectStalledCollectors({ usage, watcher, roster, now, cfg }),
     ...detectExpiredHighUsage({ usage, roster, now }),
     ...detectUnexplainedUsageJumps({ usage }),
     ...detectCollectFailures({ watcher }),

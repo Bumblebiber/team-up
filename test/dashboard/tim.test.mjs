@@ -159,9 +159,27 @@ test("a title with shell metacharacters stays one quoted argument", (t) => {
   assert.equal(command.endsWith("'"), true);
 });
 
-test("only the CLIs whose bare binary takes a prompt are offered", () => {
-  const roster = { clis: { claude: {}, codex: {}, cursor: {}, opencode: {}, hermes: {} } };
-  assert.deepEqual(promptClis(roster), ["claude", "codex", "cursor"]);
+test("prompt-taking CLIs are offered, including agy's -i form", () => {
+  const roster = { clis: { agy: {}, claude: {}, codex: {}, cursor: {}, opencode: {}, hermes: {} } };
+  assert.deepEqual(promptClis(roster), ["agy", "claude", "codex", "cursor"]);
+});
+
+test("agy task session puts edited prompt after -i", (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const calls = [];
+  const res = startTaskSession({
+    id: "e-1", cli: "agy", model: "gemini-3.8-flash", prompt: "inspect tests",
+    projectsDir: root,
+    roster: {
+      clis: { agy: { cmd: ["agy", "--model", "{model}", "-i", "{prompt}"] } },
+      models: { "gemini-3.8-flash": { cli: ["agy"] } },
+    },
+    exec: execFake(calls), sessions: [],
+  });
+  assert.equal(res.ok, true);
+  const command = calls.find((call) => call.cmd === "tmux").args.at(-1);
+  assert.equal(command, "agy --model gemini-3.8-flash -i 'inspect tests'");
 });
 
 test("a CLI that reads its first argument as something else starts nothing", (t) => {

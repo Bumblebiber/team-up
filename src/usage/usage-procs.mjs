@@ -10,6 +10,7 @@ export const CLI_BINARIES = {
   claude: "claude",
   codex: "codex",
   cursor: "cursor-agent",
+  agy: "agy",
 };
 
 function readProcEnviron(pid) {
@@ -29,6 +30,7 @@ export function isCollectorCmdline(cmdline, envMarker = "O9K_USAGE_COLLECT") {
   if (!cmdline) return false;
   if (cmdline.includes(`${envMarker}=1`)) return true;
   if (/\bclaude\b.*\s-p\s+.*\/usage/.test(cmdline)) return true;
+  if (/(?:^|\/)agy\s+-p\s+\/?usage(?:\s|$)/.test(cmdline)) return true;
   if (cmdline.includes("usage-collect.mjs")) return true;
   if (cmdline.includes("usage-pty.mjs")) return true;
   if (cmdline.includes("usage-watcher.mjs")) return true;
@@ -47,6 +49,7 @@ export function isAgentProcessCmdline(cmdline, cli, envMarker = "O9K_USAGE_COLLE
   }
   if (cli === "codex") return /(?:^|\/)codex(?:\s|$)/.test(cmdline);
   if (cli === "cursor") return /(?:^|\/)cursor-agent(?:\s|$)/.test(cmdline);
+  if (cli === "agy") return /(?:^|\/)agy(?:\s|$)/.test(cmdline);
   return false;
 }
 
@@ -213,7 +216,7 @@ export function countAgentProcesses(opts = {}) {
   readCmdline = readCmdline || readProcCmdline;
   hasEnvMarker = hasEnvMarker || procHasEnvMarker;
 
-  const counts = { claude: 0, codex: 0, cursor: 0 };
+  const counts = Object.fromEntries(Object.keys(CLI_BINARIES).map((cli) => [cli, 0]));
   for (const pid of listPids()) {
     if (exclude.has(pid)) continue;
     if (hasEnvMarker(pid, envMarker)) continue;

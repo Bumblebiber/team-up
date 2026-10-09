@@ -4,7 +4,7 @@
 
 import { cliModelAliases } from "./config.mjs";
 
-const KNOWN_CLIS = new Set(["claude", "codex", "cursor", "opencode", "hermes"]);
+const KNOWN_CLIS = new Set(["claude", "codex", "cursor", "opencode", "hermes", "agy"]);
 
 /** Parse "cli:model" pin; null if not that shape. */
 function parsePin(query) {
@@ -66,6 +66,9 @@ export function heuristicCliModel(query) {
   if (/^gpt/.test(l) || l.includes("codex") || l.includes("o3") || l.includes("o4")) {
     // Never pass "GPT 5.6 Sol" to `codex -m` — ChatGPT auth rejects display names.
     return { cli: "codex", model: slugifyModelId(q) || q };
+  }
+  if (/^gemini/.test(l)) {
+    return { cli: "agy", model: slugifyModelId(q) || q };
   }
   if (/deepseek|qwen|llama|hermes/.test(l)) {
     return { cli: "hermes", model: slugifyModelId(q) || q };

@@ -14,9 +14,9 @@ import { killCollectStrays } from "./usage-procs.mjs";
 import { withPtyLock } from "./usage-pty-lock.mjs";
 import { runPtyCollect, COLLECT_ENV } from "./usage-pty.mjs";
 import { pushSample } from "./usage-windows.mjs";
-import { fetchClaudeUsageJson, fetchCodexUsageJson } from "./usage-json.mjs";
+import { fetchAgyUsageJson, fetchClaudeUsageJson, fetchCodexUsageJson } from "./usage-json.mjs";
 
-const DEFAULT_SUBSCRIPTIONS = ["claude", "codex", "cursor"];
+const DEFAULT_SUBSCRIPTIONS = ["claude", "codex", "cursor", "agy"];
 
 export function subscriptionsFromRoster(roster) {
   if (Array.isArray(roster?.subscriptions) && roster.subscriptions.length) {
@@ -124,17 +124,25 @@ export async function collectUsageForCli(opts) {
   }
 
   let jsonFallbackReason = null;
-  if (cli === "claude" || cli === "codex") {
+  if (cli === "claude" || cli === "codex" || cli === "agy") {
     let jsonResult;
     try {
-      const collectJson = cli === "claude" ? fetchClaudeUsageJson : fetchCodexUsageJson;
-      jsonResult = await collectJson({
-        env: opts.env,
-        homeDir: opts.homeDir,
-        fileReader: opts.fileReader,
-        fetchImpl: opts.fetchImpl,
-        now: opts.now,
-      });
+      if (cli === "agy") {
+        jsonResult = fetchAgyUsageJson({
+          run: opts.runAgy,
+          env: { ...(opts.env || process.env), ...COLLECT_ENV },
+          now: opts.now,
+        });
+      } else {
+        const collectJson = cli === "claude" ? fetchClaudeUsageJson : fetchCodexUsageJson;
+        jsonResult = await collectJson({
+          env: opts.env,
+          homeDir: opts.homeDir,
+          fileReader: opts.fileReader,
+          fetchImpl: opts.fetchImpl,
+          now: opts.now,
+        });
+      }
     } catch {
       jsonResult = { ok: false, reason: "JSON usage collection failed" };
     }
@@ -147,6 +155,7 @@ export async function collectUsageForCli(opts) {
       return { cli, ok: true, windows: jsonResult.windows };
     }
     jsonFallbackReason = jsonResult?.reason || "JSON usage produced no supported windows";
+    if (cli === "agy") return { cli, ok: false, reason: jsonFallbackReason };
   }
 
   // A PTY collect boots a whole CLI: MCP servers included (the telegram plugin's
@@ -233,7 +242,7 @@ async function main() {
   const dryRun = args.includes("--dry-run");
 
   if (!cli && !all) {
-    console.error("usage: usage-collect.mjs --cli <claude|codex|cursor> | --all [--dry-run]");
+    console.error("usage: usage-collect.mjs --cli <claude|codex|cursor|agy> | --all [--dry-run]");
     process.exit(1);
   }
 

@@ -176,7 +176,7 @@ const PROVIDER_TOKENS = {
   deepseek: "deepseek",
   moonshotai: "moonshot", moonshot: "moonshot", kimi: "moonshot",
   openrouter: "openrouter",
-  google: "google", gemini: "google",
+  google: "google", gemini: "google", agy: "google",
   meta: "meta", llama: "meta",
   mistral: "mistral",
   qwen: "qwen", alibaba: "qwen",

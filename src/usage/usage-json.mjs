@@ -7,6 +7,12 @@ import { normalizeWindowRecord } from "./usage-windows.mjs";
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const REQUEST_TIMEOUT_MS = 8_000;
+const AGY_USAGE_WINDOWS = {
+  "gemini-weekly": "weekly",
+  "gemini-5h": "5h",
+  "3p-weekly": "weekly",
+  "3p-5h": "5h",
+};
 
 /** Read credential content and mode together so collectors can enforce permissions. */
 export function readCredentialFile(filePath) {
@@ -151,6 +157,66 @@ function parseCodexUsage(body, updatedAt) {
     );
   }
   return windows;
+}
+
+/** Map agy's `/usage` command buckets into the four quota windows team-up gates. */
+export function parseAgyUsage(body, updatedAt = toNowIso(Date.now())) {
+  const buckets = body?.command?.data?.groups;
+  if (!Array.isArray(buckets)) return {};
+  const windows = {};
+  for (const group of buckets) {
+    if (!Array.isArray(group?.buckets)) continue;
+    for (const bucket of group.buckets) {
+      if (!bucket || typeof bucket.id !== "string") continue;
+      const expectedWindow = AGY_USAGE_WINDOWS[bucket.id];
+      if (!expectedWindow || bucket.window !== expectedWindow) continue;
+      if (typeof bucket.remaining_fraction !== "number" ||
+        !Number.isFinite(bucket.remaining_fraction) ||
+        bucket.remaining_fraction < 0 || bucket.remaining_fraction > 1) continue;
+      const key = `agy:${bucket.id}`;
+      const record = usageRecord(
+        key,
+        (1 - bucket.remaining_fraction) * 100,
+        bucket.reset_time,
+        "agy:usage-command",
+        updatedAt,
+      );
+      if (record) windows[key] = record;
+    }
+  }
+  return windows;
+}
+
+/** Run agy's zero-token `/usage` print command and require all quota buckets. */
+export function fetchAgyUsageJson({
+  run = execFileSync,
+  env = process.env,
+  now = Date.now(),
+} = {}) {
+  let stdout;
+  try {
+    stdout = run("agy", ["-p", "/usage", "--output-format", "json"], {
+      encoding: "utf8",
+      env,
+      timeout: 20_000,
+      maxBuffer: 2 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const detail = String(error?.stderr || error?.message || "").trim();
+    return { ok: false, reason: detail ? `agy /usage command failed: ${detail.slice(-300)}` : "agy /usage command failed" };
+  }
+  let body;
+  try {
+    body = JSON.parse(String(stdout || ""));
+  } catch {
+    return { ok: false, reason: "agy /usage returned invalid JSON" };
+  }
+  const windows = parseAgyUsage(body, toNowIso(now));
+  const required = Object.keys(AGY_USAGE_WINDOWS).map((id) => `agy:${id}`);
+  const missing = required.filter((key) => !windows[key]);
+  if (missing.length) return { ok: false, reason: `agy /usage response lacked ${missing.join(", ")}` };
+  return { ok: true, windows };
 }
 
 function requestFailure(error) {

@@ -16,6 +16,7 @@ test("isCollectorCmdline detects usage probes", () => {
   assert.equal(isCollectorCmdline("claude -p /usage"), true);
   assert.equal(isCollectorCmdline("node usage-collect.mjs --cli claude"), true);
   assert.equal(isCollectorCmdline("claude --model opus"), false);
+  assert.equal(isCollectorCmdline("agy -p /usage --output-format json"), true);
 });
 
 test("isAgentProcessCmdline excludes mcp-server and collectors", () => {
@@ -24,6 +25,8 @@ test("isAgentProcessCmdline excludes mcp-server and collectors", () => {
   assert.equal(isAgentProcessCmdline("claude -p /usage", "claude"), false);
   assert.equal(isAgentProcessCmdline("/usr/bin/codex exec foo", "codex"), true);
   assert.equal(isAgentProcessCmdline("/usr/bin/cursor-agent -p hi", "cursor"), true);
+  assert.equal(isAgentProcessCmdline("/home/user/.local/bin/agy -p task", "agy"), true);
+  assert.equal(isAgentProcessCmdline("agy -p /usage", "agy"), false);
 });
 
 test("countAgentProcesses uses fixture cmdlines", () => {
@@ -33,14 +36,16 @@ test("countAgentProcesses uses fixture cmdlines", () => {
     3: "claude -p /usage",
     4: "/usr/bin/codex",
     5: "/usr/bin/cursor-agent",
+    6: "/usr/bin/agy -p task",
   };
   const counts = countAgentProcesses({
-    listPids: () => [1, 2, 3, 4, 5],
+    listPids: () => [1, 2, 3, 4, 5, 6],
     readCmdline: (pid) => map[pid],
   });
   assert.equal(counts.claude, 1);
   assert.equal(counts.codex, 1);
   assert.equal(counts.cursor, 1);
+  assert.equal(counts.agy, 1);
 });
 
 // macOS/BSD fallback: no /proc — pid→cmdline comes from one `ps -axo` snapshot.

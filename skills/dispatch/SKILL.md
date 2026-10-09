@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: "Cost-gated subagent dispatch for context isolation. Use for broad searches, lookups, log analysis, doc digestion, independent subtasks, OR whenever you spawn an external CLI worker (planner/implementer/reviewer in tmux, cursor-agent/claude/codex/hermes). Path A = in-host RESULT subagents. Path B = mailbox run + team-up dispatch --run-id + cheap in-host watcher (runs wait) — REQUIRED for every external CLI tmux spawn when a team-up roster exists; bare dispatch without a watcher is an incomplete spawn (parent never gets notified)."
+description: "Cost-gated subagent dispatch for context isolation. Use for broad searches, lookups, log analysis, doc digestion, independent subtasks, OR whenever you spawn an external CLI worker (planner/implementer/reviewer in tmux, cursor-agent/claude/codex/agy/hermes). Path A = in-host RESULT subagents. Path B = mailbox run + team-up dispatch --run-id + cheap in-host watcher (runs wait) — REQUIRED for every external CLI tmux spawn when a team-up roster exists; bare dispatch without a watcher is an incomplete spawn (parent never gets notified)."
 metadata:
   team-up-scope: main
 ---
@@ -138,9 +138,9 @@ Optional `--model <name|cli:model>` pins one CLI/model for this dispatch. It
 resolves roster ids and aliases first, then recognizable free text. A pin skips
 the role chain; omit it to use the normal chain and its fallbacks.
 
-When `clis.<cli>.headless_cmd` is configured, a codex or cursor dispatch runs
-non-interactively inside tmux. The pane shows a JSON stream, the wrapper closes
-the mailbox on process exit, and worker questions are not supported.
+When `clis.<cli>.headless_cmd` is configured for codex, cursor, or agy, dispatch
+runs non-interactively inside tmux. The pane shows a JSON stream, the wrapper
+closes the mailbox on process exit, and worker questions are not supported.
 
 Minimum mental model:
 

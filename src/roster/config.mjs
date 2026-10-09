@@ -199,8 +199,8 @@ export function validateRoster(roster) {
         (!Array.isArray(cli.headless_cmd) || cli.headless_cmd.some((p) => typeof p !== "string"))) {
         errors.push(`clis.${id}.headless_cmd must be an array of strings`);
       }
-      if (isPlainObject(cli) && cli.headless_cmd !== undefined && !["codex", "cursor"].includes(id)) {
-        errors.push(`clis.${id}.headless_cmd is only supported for codex and cursor`);
+      if (isPlainObject(cli) && cli.headless_cmd !== undefined && !["codex", "cursor", "agy"].includes(id)) {
+        errors.push(`clis.${id}.headless_cmd is only supported for codex, cursor, and agy`);
       }
     }
   }

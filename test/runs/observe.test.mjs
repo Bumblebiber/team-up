@@ -89,11 +89,13 @@ const TEST_ROSTER = {
   clis: {
     cursor: { cmd: ["cursor-agent", "--yolo", "--model", "{model}", "{prompt}"] },
     codex: { cmd: ["codex", "--model", "{model}", "{prompt}"] },
+    agy: { cmd: ["agy", "--model", "{model}", "--effort", "max", "-i", "{prompt}"] },
     claude: { cmd: ["claude", "--model", "{model}", "{prompt}"] },
   },
   models: {
     "grok-4.5-high": { provider: "xai", cli: ["cursor"] },
     "gpt-5.4-mini": { provider: "openai", cli: ["codex"] },
+    "gemini-3.8-flash": { provider: "google", cli: ["agy"], reasoning: { max: "high" } },
     "claude-opus": { provider: "anthropic", cli: ["claude"] },
   },
   roles: {
@@ -141,6 +143,22 @@ test("buildJudgeArgv throws for claude cli", () => {
     }),
     /must not use claude/,
   );
+});
+
+test("agy observer judge uses headless -p and accepted effort", () => {
+  const argv = buildJudgeArgv({
+    roster: TEST_ROSTER,
+    cli: "agy",
+    model: "gemini-3.8-flash",
+    prompt: "judge this pane",
+    effort: "max",
+  });
+  assert.deepEqual(argv, [
+    "agy", "-p", "judge this pane", "--output-format", "json",
+    "--model", "gemini-3.8-flash", "--effort", "high",
+  ]);
+  assert.equal(argv[1], "-p");
+  assert.equal(argv[2], "judge this pane");
 });
 
 test("buildJudgePrompt includes mailbox age and frozen-screen guidance", () => {
@@ -826,6 +844,16 @@ test("parseJudgeJson unwraps cursor-agent result envelope", () => {
   const r = parseJudgeJson(envelope);
   assert.equal(r.ok, true);
   assert.equal(r.verdict.action, "answer");
+});
+
+test("parseJudgeJson unwraps agy response envelope", () => {
+  const envelope = JSON.stringify({
+    status: "SUCCESS",
+    response: '{"state":"waiting_input","reason":"trust","action":"answer","keys":["Enter"],"evidence":"trust"}',
+  });
+  const parsed = parseJudgeJson(envelope);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.verdict.action, "answer");
 });
 
 test("auto-answer cap enforced", () => {

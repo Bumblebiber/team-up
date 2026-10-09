@@ -127,17 +127,21 @@ export function parseJudgeJson(text) {
     return { ok: false, error: "malformed JSON in judge output" };
   }
 
-  // cursor-agent --output-format json wraps the model text in { type, result }.
-  if (outer.type === "result" && typeof outer.result === "string") {
-    const innerStart = outer.result.indexOf("{");
-    const innerEnd = outer.result.lastIndexOf("}");
+  // Cursor returns { type, result }; agy returns { response }. Both carry the
+  // judge verdict as JSON text inside their outer print-mode envelope.
+  const innerText = outer.type === "result" && typeof outer.result === "string"
+    ? outer.result
+    : typeof outer.response === "string" ? outer.response : null;
+  if (innerText !== null) {
+    const innerStart = innerText.indexOf("{");
+    const innerEnd = innerText.lastIndexOf("}");
     if (innerStart !== -1 && innerEnd > innerStart) {
-      const inner = tryParse(outer.result.slice(innerStart, innerEnd + 1));
+      const inner = tryParse(innerText.slice(innerStart, innerEnd + 1));
       if (inner && typeof inner.state === "string") {
         return { ok: true, verdict: inner };
       }
     }
-    const innerDirect = tryParse(outer.result.trim());
+    const innerDirect = tryParse(innerText.trim());
     if (innerDirect && typeof innerDirect.state === "string") {
       return { ok: true, verdict: innerDirect };
     }
@@ -399,6 +403,12 @@ export function buildJudgeArgv({ roster, cli, model, prompt, effort = null }) {
     const argv = ["codex", "exec", "--model", cliModel];
     if (effort) argv.push("-c", `model_reasoning_effort=${effort}`);
     argv.push(prompt);
+    return argv;
+  }
+  if (cli === "agy") {
+    const argv = ["agy", "-p", prompt, "--output-format", "json", "--model", cliModel];
+    const acceptedEffort = roster.models?.[model]?.reasoning?.[effort];
+    if (acceptedEffort) argv.push("--effort", acceptedEffort);
     return argv;
   }
   const template = roster.clis?.[cli]?.cmd;

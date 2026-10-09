@@ -26,6 +26,22 @@ test("computeState idle/active/busy", () => {
   assert.equal(computeState({ claude: 0, codex: 0, cursor: 0 }), "idle");
   assert.equal(computeState({ claude: 1, codex: 0, cursor: 0 }), "active");
   assert.equal(computeState({ claude: 1, codex: 1, cursor: 0 }), "busy");
+  assert.equal(computeState({ claude: 0, codex: 0, cursor: 0, agy: 1 }), "active");
+  assert.equal(computeState({ agy: 2 }), "busy");
+});
+
+test("planCollect includes a newly subscribed agy CLI", () => {
+  const d = planCollect({
+    counts: { claude: 0, codex: 0, cursor: 0, agy: 1 },
+    prevCounts: { claude: 0, codex: 0, cursor: 0, agy: 0 },
+    state: "active",
+    collecting: { agy: false },
+    lastCollect: { agy: null },
+    nextDue: { agy: null },
+    subscriptions: ["agy"],
+    now: NOW,
+  });
+  assert.deepEqual(d.collect, ["agy"]);
 });
 
 test("planCollect on rise collects risen cli", () => {

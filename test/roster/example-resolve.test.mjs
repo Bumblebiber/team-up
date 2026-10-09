@@ -12,6 +12,12 @@ const examplePath = path.join(root, "roster.example.json");
 test("shipped example roster resolves every starter specialist through its role", () => {
   const example = JSON.parse(fs.readFileSync(examplePath, "utf8"));
   assert.deepEqual(validateRoster(example).errors, []);
+  assert.deepEqual(example.accounts.gemini, { kind: "subscription", enabled: true, plan: "pro" });
+  assert.equal(example.clis.agy.headless_cmd[1], "-p");
+  assert.equal(example.clis.agy.headless_cmd[2], "{prompt}");
+  assert.deepEqual(example.models["gemini-3.8-flash"].limit_windows, ["agy:gemini-weekly", "agy:gemini-5h"]);
+  assert.deepEqual(example.models["claude-opus-4-6-thinking"].limit_windows, ["agy:3p-weekly", "agy:3p-5h"]);
+  assert.equal(example.models["claude-opus-4-6-thinking"].reasoning, undefined);
   for (const [id, { role }] of Object.entries(example.specialists)) {
     const r = resolveProfile({ roster: example, usage: {}, specialistId: id, harnessCapabilities: () => ({}) });
     assert.equal(r.code, "OK", `${id}: ${JSON.stringify(r.skipped.slice(0, 8))}`);

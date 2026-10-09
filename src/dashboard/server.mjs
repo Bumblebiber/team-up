@@ -28,6 +28,7 @@ import { buildCatalogueView, applyCatalogueToggle } from "./catalogue.mjs";
 import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView, modelLabel, applySpecialistAssignment } from "./roles.mjs";
 import { bringToLatest } from "../roster/latest.mjs";
 import { loadModelsStore } from "../collectors/models-store.mjs";
+import { subscriptionsFromRoster } from "../usage/usage-collect.mjs";
 import { atomicWriteText } from "../json-store.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
 import { loadInstalledManifest } from "../specialists/store.mjs";
@@ -860,9 +861,7 @@ export function createDashboardServer({
       if (!requireWriteAccess(req, res)) return;
       const cli = repairMatch[1];
       const roster = loadRoster(env);
-      const subs = Array.isArray(roster?.subscriptions) && roster.subscriptions.length
-        ? roster.subscriptions
-        : ["claude", "codex", "cursor"];
+      const subs = subscriptionsFromRoster(roster);
       if (!subs.includes(cli)) {
         jsonResponse(res, 404, { error: "not a subscription cli" });
         return;

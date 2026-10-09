@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  providerClass,
   validateOpenRouterKey,
   writeOpenRouterKey,
   removeOpenRouterKey,
@@ -14,6 +15,10 @@ import { secretsPath } from "../../src/paths.mjs";
 import { auditLogPath } from "../../src/dashboard/audit.mjs";
 
 const EXAMPLE_KEY = "sk-EXAMPLE-abcdef91f";
+
+test("agy is listed as a subscription CLI provider", () => {
+  assert.equal(providerClass("agy"), "B");
+});
 
 function withHome(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-prov-"));

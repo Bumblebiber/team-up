@@ -119,6 +119,7 @@ test("parentResumeArgv per CLI", () => {
   assert.deepEqual(parentResumeArgv({ cli: "codex", sessionId: "s" }, "m", "/p"), { argv: ["codex", "resume", "s", "-C", "/p", "m"], paste: false });
   assert.deepEqual(parentResumeArgv({ cli: "cursor", sessionId: "s" }, "m"), { argv: ["cursor-agent", "--resume", "s", "m"], paste: false });
   assert.deepEqual(parentResumeArgv({ cli: "hermes", sessionId: "s" }, "m"), { argv: ["hermes", "chat", "--resume", "s", "-q", "m"], paste: false });
+  assert.deepEqual(parentResumeArgv({ cli: "agy", sessionId: "c-1" }, "m"), { argv: ["agy", "--conversation", "c-1", "-i", "m"], paste: false });
   assert.equal(parentResumeArgv({ cli: "manual", sessionId: "s" }, "m"), null);
 });
 

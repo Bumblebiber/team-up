@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { atomicWriteText, createRun as createRunRecord, mailboxDir } from "../../src/runs/runs.mjs";
+import { signalWorker } from "../../src/runs/headless.mjs";
 
 const HEADLESS = fileURLToPath(new URL("../../src/runs/headless.mjs", import.meta.url));
 
@@ -67,6 +68,27 @@ function workerStartLine() {
 function codexSuccessCode(message = "final message") {
   return `const fs = require("node:fs"); fs.writeFileSync(process.argv[1], ${JSON.stringify(message)}); console.log(${JSON.stringify(workerStartLine())});`;
 }
+
+function agyResultCode(result, conversationId = "agy-conversation-1") {
+  const init = { event: "init", conversation_id: conversationId };
+  const final = { event: "result", result: { conversation_id: conversationId, ...result } };
+  return `console.log(${JSON.stringify(JSON.stringify(init))}); console.log(${JSON.stringify(JSON.stringify(final))});`;
+}
+
+function agyFixtureCode() {
+  const fixturePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/agy-stream-json-result.ndjson");
+  const lines = fs.readFileSync(fixturePath, "utf8").trim().split(/\r?\n/);
+  return `for (const line of ${JSON.stringify(lines)}) console.log(line);`;
+}
+
+test("timeout signaling targets detached worker process group", () => {
+  const calls = [];
+  signalWorker({ pid: 123, kill: () => assert.fail("group kill should be used") }, "SIGTERM", {
+    platform: "linux",
+    kill: (pid, signal) => calls.push([pid, signal]),
+  });
+  assert.deepEqual(calls, [[-123, "SIGTERM"]]);
+});
 
 test("headless leaves an already terminal mailbox untouched", withTempRuns(async () => {
   const state = createRun();
@@ -161,4 +183,43 @@ test("headless extracts cursor result text and session id", withTempRuns(async (
   assert.equal(mailboxText(state.runId, "RESULT.md").trim(), "cursor answer");
   assert.equal(mailboxText(state.runId, "SESSION_ID").trim(), "cursor-test-1");
   assert.equal(mailboxText(state.runId, "STATUS").trim(), "done");
+}));
+
+test("headless extracts agy final response and conversation id from stream-json", withTempRuns(async () => {
+  const state = createRun();
+  const result = runHeadless(state.runId, {
+    cli: "agy",
+    code: agyFixtureCode(),
+  });
+  assert.equal(result.status, 0);
+  assert.equal(mailboxText(state.runId, "RESULT.md").trim(), "agy answer");
+  assert.equal(mailboxText(state.runId, "SESSION_ID").trim(), "agy-conversation-1");
+  assert.equal(mailboxText(state.runId, "STATUS").trim(), "done");
+}));
+
+test("headless uses the last agy result event", withTempRuns(async () => {
+  const state = createRun();
+  const early = JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "partial" } });
+  const late = JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "final" } });
+  const result = runHeadless(state.runId, {
+    cli: "agy",
+    code: `console.log(${JSON.stringify(early)}); console.log(${JSON.stringify(late)});`,
+  });
+  assert.equal(result.status, 0);
+  assert.equal(mailboxText(state.runId, "RESULT.md").trim(), "final");
+}));
+
+test("headless fails agy empty responses and names soft-denied actions", withTempRuns(async () => {
+  const empty = createRun();
+  runHeadless(empty.runId, { cli: "agy", code: agyResultCode({ status: "SUCCESS", response: "" }) });
+  assert.equal(mailboxText(empty.runId, "STATUS").trim(), "failed");
+  assert.match(mailboxText(empty.runId, "FAILURE.md"), /agy returned an empty response/);
+
+  const denied = createRun();
+  runHeadless(denied.runId, {
+    cli: "agy",
+    code: agyResultCode({ status: "SUCCESS", response: "partial", denied_actions: [{ action: "command" }] }),
+  });
+  assert.equal(mailboxText(denied.runId, "STATUS").trim(), "failed");
+  assert.match(mailboxText(denied.runId, "FAILURE.md"), /agy denied actions: command/);
 }));

@@ -451,6 +451,17 @@ test("resolveLimitWindows adds scoped windows only when model id contains their 
   }).includes("claude:fable-week"));
 });
 
+test("explicit agy windows stay separate from a third-party model provider subscription", () => {
+  const model = {
+    provider: "anthropic",
+    cli: ["agy"],
+    limit_windows: ["agy:3p-weekly", "agy:3p-5h"],
+  };
+  assert.deepEqual(resolveLimitWindows({}, "claude-opus-4-6-thinking", model, {
+    windows: { "claude:week": { used: 0.99 } },
+  }), ["agy:3p-weekly", "agy:3p-5h"]);
+});
+
 test("scoped Claude quota blocks matching model id but leaves opus available", () => {
   const roster = {
     clis: { claude: { cmd: ["claude", "{model}"] } },

@@ -8,6 +8,41 @@ test("isSubscriptionCli rejects non-subscription clis like hermes", () => {
   assert.equal(isSubscriptionCli("codex", roster), true);
 });
 
+test("agy JSON collector writes subscription windows and never falls back to PTY", async () => {
+  const { collectUsageForCli } = await import("../../src/usage/usage-collect.mjs");
+  const fixture = JSON.parse(await (await import("node:fs/promises")).readFile(
+    new URL("./fixtures/usage/agy-usage.json", import.meta.url), "utf8",
+  ));
+  let written;
+  let args;
+  const result = await collectUsageForCli({
+    cli: "agy",
+    roster: { subscriptions: ["agy"] },
+    now: Date.parse("2026-10-09T08:13:46Z"),
+    runAgy: (bin, argv) => { args = [bin, ...argv]; return JSON.stringify(fixture); },
+    readUsage: () => ({ windows: {}, marked: {} }),
+    writeUsage: (doc) => { written = doc; },
+    collectFallback: async () => assert.fail("agy must not use the PTY fallback"),
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(args, ["agy", "-p", "/usage", "--output-format", "json"]);
+  assert.deepEqual(Object.keys(written.windows).sort(), [
+    "agy:3p-5h", "agy:3p-weekly", "agy:gemini-5h", "agy:gemini-weekly",
+  ]);
+});
+
+test("agy collection failure stays on JSON path", async () => {
+  const { collectUsageForCli } = await import("../../src/usage/usage-collect.mjs");
+  const result = await collectUsageForCli({
+    cli: "agy",
+    roster: { subscriptions: ["agy"] },
+    runAgy: () => { throw new Error("not logged in"); },
+    collectFallback: async () => assert.fail("agy has no PTY fallback"),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /agy \/usage command failed/);
+});
+
 test("loggedOut reads each CLI's own status command, logged in or not", async () => {
   const { loggedOut } = await import("../../src/usage/usage-collect.mjs");
   const reply = (stdout, stderr = "") => () => ({ stdout, stderr });

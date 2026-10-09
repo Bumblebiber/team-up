@@ -47,6 +47,28 @@ test("windowIsBlocking ignores windows past resets_at", () => {
   assert.equal(windowIsBlocking("codex:weekly", usage, 0.95, NOW), false);
 });
 
+test("agy weekly and 5h quota windows use matching stale-reading ceilings", () => {
+  assert.equal(WINDOW_MAX_AGE_MS["agy:gemini-weekly"], 7 * 86_400_000);
+  assert.equal(WINDOW_MAX_AGE_MS["agy:gemini-5h"], 5 * 3_600_000);
+  assert.equal(WINDOW_MAX_AGE_MS["agy:3p-weekly"], 7 * 86_400_000);
+  assert.equal(WINDOW_MAX_AGE_MS["agy:3p-5h"], 5 * 3_600_000);
+});
+
+test("agy explicit quota windows never fall back to Claude provider usage", () => {
+  const gate = modelUsageGate({
+    usage: {
+      windows: { "claude:week": { used: 0.99 } },
+      providers: { anthropic: { used: 0.99 } },
+    },
+    limitWindows: ["agy:3p-weekly", "agy:3p-5h"],
+    provider: "anthropic",
+    cli: "agy",
+    limits: 0.95,
+    now: NOW,
+  });
+  assert.deepEqual(gate, { blocked: false });
+});
+
 test("windowIsBlocking expires hot windows without resets_at after max age from updated", () => {
   const updated = new Date(NOW - WINDOW_MAX_AGE_MS["codex:weekly"] - 60_000).toISOString();
   const usage = {

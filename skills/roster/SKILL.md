@@ -64,6 +64,10 @@ so the same `cmd` serves both.
 "claude": { "cmd": ["claude", "--dangerously-skip-permissions", "--model", "{model}", "{prompt}"] }
 ```
 
+`headless_cmd` is supported for codex, cursor, and agy. For agy, place
+`{prompt}` immediately after `-p`; its stream-json result response and
+conversation id close the worker mailbox when the process exits.
+
 `team-up specialist run` uses same dispatch tmux start with a run capsule. It
 removes roster permission-bypass flags and applies the capsule's tool allowlist.
 Do not cold-start or resume a specialist through roster dispatch: that would
@@ -135,7 +139,7 @@ No config yet → `team-up init`, then tell the user to curate `~/.team-up/roste
      `team-up runs wait <runId>`, return status, exit
   4. Then you may tell the human the tmux attach string — never before step 3
 - **Rate-limit:** `team-up mark-limited <model|provider> --ttl 5h --reason rate-limit`
-- **Limits:** `team-up usage --check` / `team-up usage --refresh [--cli claude|codex|cursor]`
+- **Limits:** `team-up usage --check` / `team-up usage --refresh [--cli claude|codex|cursor|agy]`
 
 `--run-id` is **required** whenever the parent needs a completion signal (always,
 for Overseer / multi-phase pipelines). Omitting it is only for intentional

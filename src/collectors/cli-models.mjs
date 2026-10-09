@@ -23,6 +23,7 @@ export const MODEL_PTY_TIMEOUT_MS = 120_000;
 export const LIST_ARGS = {
   cursor: ["models"],
   opencode: ["models"],
+  agy: ["models"],
 };
 
 /** Documented reasons for CLIs with no listing command. */
@@ -65,9 +66,24 @@ export function parseOpencodeModels(text) {
   return models;
 }
 
+/** Parse agy's `id<TAB>label` listing; its progress banner is on stderr. */
+export function parseAgyModels(text) {
+  const models = [];
+  for (const line of String(text || "").split("\n")) {
+    const tab = line.indexOf("\t");
+    if (tab <= 0) continue;
+    const id = line.slice(0, tab).trim();
+    const display = line.slice(tab + 1).trim();
+    if (!id || !display) continue;
+    models.push({ id, display_name: display });
+  }
+  return models;
+}
+
 const PARSERS = {
   cursor: parseCursorModels,
   opencode: parseOpencodeModels,
+  agy: parseAgyModels,
   claude: parseClaudeModels,
   codex: parseCodexModels,
 };

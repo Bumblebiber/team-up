@@ -51,6 +51,11 @@ export const INSTALLERS = {
     update: { shell: "codex update", confirmed: "2026-09-23" },
     login: { shell: "codex login" },
   },
+  // The CLI's install/update channel is not yet documented here. Keep login
+  // discoverable without offering an unverified bootstrap or update command.
+  agy: {
+    login: { shell: "agy" },
+  },
   hermes: {
     bootstrap: {
       shell: [

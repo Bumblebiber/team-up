@@ -36,7 +36,7 @@ Requirements:
 - Linux. State locking uses `/usr/bin/flock` (util-linux), resource checks read `/proc`.
 - Node.js 18 or newer for the CLI; `npm test` needs Node 21 or newer.
 - tmux and bash: every dispatched worker runs in a detached tmux session.
-- The worker CLIs your roster names (claude, codex, cursor-agent, opencode, hermes), logged in.
+- The worker CLIs your roster names (claude, codex, cursor-agent, agy, opencode, hermes), logged in.
 - `expect`, for the usage collectors that read each CLI's usage screen.
 - Optional: inotify-tools, so `runs wait` wakes on mailbox writes instead of polling every second.
 - Optional: systemd `--user` plus `loginctl enable-linger $USER`, for the gc, resume-at-boot and telemetry timers.

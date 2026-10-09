@@ -4,7 +4,7 @@ import { atomicWriteText } from "../json-store.mjs";
 export const WATCH_CEILING_SEC = 7200;
 // CLIs team-up can restart by session id, and those whose SessionStart hook
 // picks up a pending message (docs/harness-session-identity.md).
-export const RESUMABLE_CLIS = new Set(["claude", "codex", "hermes", "cursor"]);
+export const RESUMABLE_CLIS = new Set(["claude", "codex", "hermes", "cursor", "agy"]);
 export const PENDING_CLIS = new Set(["claude"]);
 const MAX_LISTED = 10;
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
@@ -61,8 +61,9 @@ export function buildParentPlan(states, { tmuxExists, uncollected = [] } = {}) {
  * argv that restarts a parent session, and whether the message still has to
  * be pasted. Every CLI here takes it on the command line, which avoids racing
  * the TUI's startup; `paste` stays for a CLI that cannot.
- * OpenCode and Gemini are left out: OpenCode 1.x ignores --prompt with -s
- * and 2.x continues interrupted turns on its own; Gemini has no detection yet.
+ * OpenCode and the older Gemini CLI are left out: OpenCode 1.x ignores
+ * --prompt with -s and 2.x continues interrupted turns on its own; Gemini has
+ * no session detection yet. Antigravity CLI resumes by conversation id below.
  */
 export function parentResumeArgv({ cli, sessionId }, message, cwd = null) {
   if (cli === "claude") return { argv: ["claude", "--resume", sessionId, message], paste: false };
@@ -75,6 +76,7 @@ export function parentResumeArgv({ cli, sessionId }, message, cwd = null) {
   // Cursor keeps chats per cwd: the pane must start in the parent's own cwd.
   if (cli === "cursor") return { argv: ["cursor-agent", "--resume", sessionId, message], paste: false };
   if (cli === "hermes") return { argv: ["hermes", "chat", "--resume", sessionId, "-q", message], paste: false };
+  if (cli === "agy") return { argv: ["agy", "--conversation", sessionId, "-i", message], paste: false };
   return null;
 }
 

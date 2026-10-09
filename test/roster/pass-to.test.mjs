@@ -144,6 +144,10 @@ test("heuristicCliModel maps common families", () => {
     cli: "hermes",
     model: "deepseek-v4-pro",
   });
+  assert.deepEqual(heuristicCliModel("gemini-3.8-flash"), {
+    cli: "agy",
+    model: "gemini-3.8-flash",
+  });
   assert.equal(heuristicCliModel("weird-unknown-xyz"), null);
 });
 

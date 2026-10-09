@@ -5,6 +5,7 @@
     "claude": { "kind": "subscription", "enabled": true },
     "codex": { "kind": "subscription", "enabled": true },
     "cursor": { "kind": "subscription", "enabled": true },
+    "gemini": { "kind": "subscription", "enabled": true, "plan": "pro" },
     "api": { "kind": "credit", "enabled": true, "remaining": 100 }
   },
   "clis": {
@@ -19,6 +20,10 @@
     "cursor": {
       "cmd": ["cursor-agent", "--yolo", "--model", "{model}", "{prompt}"]
     },
+    "agy": {
+      "cmd": ["agy", "--dangerously-skip-permissions", "--model", "{model}", "--effort", "max", "-i", "{prompt}"],
+      "headless_cmd": ["agy", "-p", "{prompt}", "--output-format", "stream-json", "--print-timeout", "0", "--dangerously-skip-permissions", "--model", "{model}", "--effort", "max"]
+    },
     "opencode": {
       "cmd": ["opencode", "--model", "{model}", "--prompt", "{prompt}"]
     },
@@ -26,7 +31,7 @@
       "cmd": ["hermes", "chat", "-q", "{prompt}", "--model", "{model}"]
     }
   },
-  "subscriptions": ["claude", "codex", "cursor"],
+  "subscriptions": ["claude", "codex", "cursor", "agy"],
   "usage_watcher": {
     "tick_sec": 60,
     "intervals": { "idle_heartbeat_hours": 24, "idle_min": 30, "active_min": 20, "busy_min": 8 }
@@ -95,6 +100,29 @@
       "reasoning": { "max": "high", "high": "high", "medium": null, "low": null },
       "limit_windows": ["cursor:included"],
       "priority": 1
+    },
+    "gemini-3.1-pro": {
+      "provider": "google",
+      "cli": ["agy"],
+      "account": "gemini",
+      "reasoning": { "max": "high", "high": "high", "medium": "high", "low": "low" },
+      "limit_windows": ["agy:gemini-weekly", "agy:gemini-5h"],
+      "priority": 2
+    },
+    "gemini-3.8-flash": {
+      "provider": "google",
+      "cli": ["agy"],
+      "account": "gemini",
+      "reasoning": { "max": "high", "high": "high", "medium": "medium", "low": "low" },
+      "limit_windows": ["agy:gemini-weekly", "agy:gemini-5h"],
+      "priority": 3
+    },
+    "claude-opus-4-6-thinking": {
+      "provider": "anthropic",
+      "cli": ["agy"],
+      "account": "gemini",
+      "limit_windows": ["agy:3p-weekly", "agy:3p-5h"],
+      "priority": 2
     },
     "grok-4.5-high": {
       "provider": "xai",

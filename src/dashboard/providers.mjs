@@ -6,7 +6,7 @@ import { lookupKey, openRouterKeyFiles, keyHint, parseEnvFileLine } from "../key
 const OPENROUTER_KEY = "OPENROUTER_API_KEY";
 const VALIDATE_URL = "https://openrouter.ai/api/v1/key";
 
-const CLASS_B = new Set(["claude", "codex", "cursor"]);
+const CLASS_B = new Set(["claude", "codex", "cursor", "agy"]);
 const CLASS_C = new Set(["opencode", "hermes"]);
 
 export function providerClass(id) {

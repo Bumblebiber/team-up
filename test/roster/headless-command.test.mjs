@@ -12,8 +12,16 @@ const ROSTER = {
         "--json", "-o", "{last_message}", "{prompt}",
       ],
     },
+    agy: {
+      cmd: ["agy", "--dangerously-skip-permissions", "--model", "{model}", "--effort", "max", "-i", "{prompt}"],
+      headless_cmd: ["agy", "-p", "{prompt}", "--output-format", "stream-json", "--print-timeout", "0", "--model", "{model}", "--effort", "max"],
+    },
   },
-  models: { "gpt-5.6-sol": { cli_model: "gpt-5.6-sol" } },
+  models: {
+    "gpt-5.6-sol": { cli_model: "gpt-5.6-sol" },
+    "gemini-3.8-flash": { cli: ["agy"], reasoning: { max: "high", high: "high", medium: "medium", low: "low" } },
+    "claude-opus-4-6-thinking": { cli: ["agy"] },
+  },
 };
 
 test("buildCommand selects headless template and fills its placeholders", () => {
@@ -40,15 +48,39 @@ test("buildCommand keeps interactive cmd when headless is off", () => {
   }), ["codex", "--model", "m", "p"]);
 });
 
+test("buildCommand maps agy effort and keeps headless prompt directly after -p", () => {
+  assert.deepEqual(buildCommand({
+    roster: ROSTER,
+    model: "gemini-3.8-flash",
+    cli: "agy",
+    prompt: "do work",
+    headless: true,
+  }), [
+    "agy", "-p", "do work", "--output-format", "stream-json", "--print-timeout", "0",
+    "--model", "gemini-3.8-flash", "--effort", "high",
+  ]);
+});
+
+test("buildCommand omits agy's unsupported effort for third-party models", () => {
+  assert.deepEqual(buildCommand({
+    roster: ROSTER,
+    model: "claude-opus-4-6-thinking",
+    cli: "agy",
+    prompt: "do work",
+    effort: "max",
+  }), ["agy", "--dangerously-skip-permissions", "--model", "claude-opus-4-6-thinking", "-i", "do work"]);
+});
+
 test("validateRoster requires headless_cmd to be an array of strings", () => {
   assert.ok(validateRoster({ clis: { codex: { headless_cmd: "codex exec" } } })
     .errors.some((error) => error.includes("clis.codex.headless_cmd")));
   assert.deepEqual(validateRoster(ROSTER).errors, []);
 });
 
-test("validateRoster rejects headless_cmd outside codex and cursor", () => {
+test("validateRoster accepts agy and rejects headless_cmd outside codex, cursor, and agy", () => {
   assert.ok(validateRoster({ clis: { hermes: { cmd: ["hermes"], headless_cmd: ["hermes"] } } })
-    .errors.includes("clis.hermes.headless_cmd is only supported for codex and cursor"));
+    .errors.includes("clis.hermes.headless_cmd is only supported for codex, cursor, and agy"));
+  assert.deepEqual(validateRoster({ clis: { agy: { cmd: ["agy"], headless_cmd: ["agy", "-p", "{prompt}"] } } }).errors, []);
 });
 
 test("startInTmux names the runs dir only when it is not the default", async () => {

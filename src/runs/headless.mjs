@@ -31,10 +31,25 @@ function tailLines(text, count = 40) {
 
 function parseArgs(args) {
   const [runId, cli, separator, ...argv] = args;
-  if (!runId || !["codex", "cursor"].includes(cli) || separator !== "--" || !argv.length) {
-    throw new Error("usage: headless.mjs <runId> <codex|cursor> -- <argv…>");
+  if (!runId || !["codex", "cursor", "agy"].includes(cli) || separator !== "--" || !argv.length) {
+    throw new Error("usage: headless.mjs <runId> <codex|cursor|agy> -- <argv…>");
   }
   return { runId, cli, argv };
+}
+
+export function signalWorker(child, signal, { platform = process.platform, kill = process.kill } = {}) {
+  if (platform !== "win32" && Number.isInteger(child.pid)) {
+    try {
+      kill(-child.pid, signal);
+      return;
+    } catch (error) {
+      if (error.code !== "ESRCH") {
+        try { child.kill(signal); } catch { /* already gone */ }
+      }
+      return;
+    }
+  }
+  try { child.kill(signal); } catch { /* already gone */ }
 }
 
 function makeFailureText(mailbox, reason) {
@@ -45,16 +60,30 @@ function makeFailureText(mailbox, reason) {
   return tail ? `${reason}\n\nLast 40 lines of ${logName}:\n${tail}` : reason;
 }
 
-function finalMessageFor(cli, mailbox, cursorResult) {
+function finalMessageFor(cli, mailbox, cursorResult, agyResult) {
   if (cli === "codex") return readMaybe(path.join(mailbox, "LAST_MESSAGE.md"));
   if (cursorResult && cursorResult.is_error !== true && typeof cursorResult.result === "string") return cursorResult.result;
+  if (cli === "agy" && typeof agyResult?.response === "string") return agyResult.response;
   return null;
 }
 
-function finalize({ runId, cli, mailbox, code, signal, cursorResult, timedOut, childError }) {
+function agyFailureReason(result) {
+  if (!result) return "agy stream had no result event";
+  if (Array.isArray(result.denied_actions) && result.denied_actions.length) {
+    const actions = result.denied_actions.map((entry) =>
+      typeof entry === "string" ? entry : entry?.action || JSON.stringify(entry)
+    ).join(", ");
+    return `agy denied actions: ${actions}`;
+  }
+  if (typeof result.response !== "string" || !result.response.trim()) return "agy returned an empty response";
+  if (result.status !== "SUCCESS") return `agy returned status ${result.status || "unknown"}`;
+  return null;
+}
+
+function finalize({ runId, cli, mailbox, code, signal, cursorResult, agyResult, timedOut, childError }) {
   const statusPath = path.join(mailbox, "STATUS");
   const status = (readMaybe(statusPath) || "").trim();
-  const finalMessage = finalMessageFor(cli, mailbox, cursorResult);
+  const finalMessage = finalMessageFor(cli, mailbox, cursorResult, agyResult);
   const resultPath = path.join(mailbox, "RESULT.md");
   if (["done", "failed", "cancelled"].includes(status)) {
     // A worker that set done but forgot RESULT.md would fail after the grace
@@ -80,6 +109,14 @@ function finalize({ runId, cli, mailbox, code, signal, cursorResult, timedOut, c
       reason: makeFailureText(mailbox, "headless timeout after 4h"),
     });
     return;
+  }
+
+  if (cli === "agy" && !childError) {
+    const failure = agyFailureReason(agyResult);
+    if (failure) {
+      setWorkerMailboxStatus(runId, "failed", { reason: makeFailureText(mailbox, failure) });
+      return;
+    }
   }
 
   if (code === 0 && finalMessage?.trim()) {
@@ -112,6 +149,7 @@ async function main() {
   let pendingLine = "";
   let sessionIdWritten = false;
   let cursorResult = null;
+  let agyResult = null;
   let childError = null;
   let timedOut = false;
   let externalSignal = null;
@@ -125,12 +163,20 @@ async function main() {
     }
     const sessionId = event.type === "thread.started" && typeof event.thread_id === "string"
       ? event.thread_id
-      : typeof event.session_id === "string" ? event.session_id : null;
+      : typeof event.session_id === "string" ? event.session_id
+        : typeof event.conversation_id === "string" ? event.conversation_id : null;
     if (!sessionIdWritten && sessionId) {
       atomicWriteText(path.join(mailbox, "SESSION_ID"), sessionId);
       sessionIdWritten = true;
     }
     if (cli === "cursor" && event.type === "result") cursorResult = event;
+    if (cli === "agy" && event.event === "result" && event.result && typeof event.result === "object") {
+      agyResult = event.result;
+      if (!sessionIdWritten && typeof event.result.conversation_id === "string") {
+        atomicWriteText(path.join(mailbox, "SESSION_ID"), event.result.conversation_id);
+        sessionIdWritten = true;
+      }
+    }
   };
 
   const inspectText = (text) => {
@@ -139,7 +185,10 @@ async function main() {
     for (const line of lines) inspectLine(line.trim());
   };
 
-  const child = spawn(argv[0], argv.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(argv[0], argv.slice(1), {
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  });
   child.stdout.on("data", (chunk) => {
     fs.appendFileSync(outputPath, chunk);
     process.stdout.write(chunk);
@@ -158,15 +207,17 @@ async function main() {
   const heartbeat = setInterval(() => touchHeartbeat(mailbox), 60 * 1000);
   const timeout = setTimeout(() => {
     timedOut = true;
-    child.kill("SIGTERM");
-    setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS).unref();
+    signalWorker(child, "SIGTERM");
+    // Keep wrapper alive through the grace period so descendants that ignore
+    // SIGTERM still receive SIGKILL as a process group, even if parent exits.
+    setTimeout(() => signalWorker(child, "SIGKILL"), KILL_GRACE_MS);
   }, HEADLESS_TIMEOUT_MS);
   heartbeat.unref();
   timeout.unref();
 
   const forwardSignal = (signal) => {
     externalSignal = signal;
-    child.kill(signal);
+    signalWorker(child, signal);
   };
   const onSigterm = () => forwardSignal("SIGTERM");
   const onSighup = () => forwardSignal("SIGHUP");
@@ -183,7 +234,7 @@ async function main() {
   process.off("SIGTERM", onSigterm);
   process.off("SIGHUP", onSighup);
 
-  if (!externalSignal) finalize({ runId, cli, mailbox, code, signal, cursorResult, timedOut, childError });
+  if (!externalSignal) finalize({ runId, cli, mailbox, code, signal, cursorResult, agyResult, timedOut, childError });
   process.exitCode = code ?? (signal ? 1 : 0);
 }
 

@@ -13,6 +13,10 @@ export const WINDOW_MAX_AGE_MS = {
   "claude:fable-week": 7 * 86_400_000,
   "codex:weekly": 7 * 86_400_000,
   "codex:5h": 5 * 3_600_000,
+  "agy:gemini-weekly": 7 * 86_400_000,
+  "agy:gemini-5h": 5 * 3_600_000,
+  "agy:3p-weekly": 7 * 86_400_000,
+  "agy:3p-5h": 5 * 3_600_000,
   "cursor:included": 30 * 86_400_000,
   "cursor:auto": 30 * 86_400_000,
   "cursor:api": 30 * 86_400_000,
@@ -24,6 +28,7 @@ export function windowMaxAgeMs(wkey) {
   if (prefix === "claude") return 7 * 86_400_000;
   if (prefix === "codex") return 7 * 86_400_000;
   if (prefix === "cursor") return 30 * 86_400_000;
+  if (prefix === "agy") return wkey.endsWith("-5h") ? 5 * 3_600_000 : 7 * 86_400_000;
   return 7 * 86_400_000;
 }
 
@@ -350,6 +355,12 @@ export function modelUsageGate({ usage, limitWindows, provider, cli, limits, now
         };
       }
     }
+    return { blocked: false };
+  }
+  // agy can host third-party models (for example Claude) under a Google
+  // subscription. Missing agy quota samples must not fall back to that model's
+  // provider scalar, which belongs to a separate subscription.
+  if (cli === "agy" && windows.some((key) => key.startsWith("agy:"))) {
     return { blocked: false };
   }
   const handoffAt = typeof limits === "number" ? limits : limits?.handoff_at ?? 0.95;

@@ -15,6 +15,7 @@ export const CLI_PROCESS_NAMES = Object.freeze({
   codex: ["codex"],
   opencode: ["opencode"],
   gemini: ["gemini"],
+  agy: ["agy"],
   cursor: ["cursor-agent", "agent"],
   hermes: ["hermes"],
 });

@@ -44,6 +44,14 @@ export function buildCommand({ roster, model, cli, prompt, effort = null, dir = 
   let promptIndex = null;
   for (let i = 0; i < template.length; i++) {
     const part = template[i];
+    if (cli === "agy" && part === "--effort") {
+      const templateEffort = template[i + 1];
+      const requested = effort || (templateEffort && !templateEffort.includes("{effort}") ? templateEffort : null);
+      const mapped = roster.models?.[model]?.reasoning?.[requested] || null;
+      if (mapped) argv.push("--effort", mapped);
+      i++;
+      continue;
+    }
     if (part.includes("{effort}") && !effort) {
       if (argv.length && template[i - 1]?.startsWith("-")) argv.pop();
       continue;

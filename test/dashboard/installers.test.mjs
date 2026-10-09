@@ -88,6 +88,8 @@ test("installer table lookup rejects unknown cli id", () => {
   assert.equal(isValidCliId("nope", ROSTER), false);
   assert.equal(isValidCliId("claude", ROSTER), true);
   assert.equal(isValidCliId("gemini", ROSTER), true, "catalogue CLI the roster doesn't run yet");
+  assert.equal(isValidCliId("agy", ROSTER), true, "agy login action is registered");
+  assert.equal(INSTALLERS.agy.login.shell, "agy");
   assert.equal(isValidCliId("__proto__", ROSTER), false);
   assert.ok(INSTALLERS.claude.update.shell.includes("update"));
 });
