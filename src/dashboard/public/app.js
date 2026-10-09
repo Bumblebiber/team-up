@@ -1193,7 +1193,7 @@ const MAX_COLUMNS = 6;
 // What a fresh browser gets: the narrow-content panels left, the wide ones right.
 const DEFAULT_COLUMNS = [
   ["panel-usage", "panel-sessions", "panel-projects", "panel-tim", "panel-specialists"],
-  ["panel-roles", "panel-settings", "panel-providers", "panel-clis", "panel-trending"],
+  ["panel-roles", "panel-settings", "panel-cron-jobs", "panel-providers", "panel-clis", "panel-trending"],
 ];
 const mainEl = $("main");
 const columns = () => [...mainEl.querySelectorAll(".column")];
@@ -1887,6 +1887,60 @@ async function refreshSettings() {
     </dl>`;
 }
 
+async function refreshCronJobs() {
+  const d = await api("/api/cron-jobs");
+  const status = $("#cron-jobs-status");
+  const body = $("#cron-jobs-body");
+  if (!d.exists) {
+    status.textContent = "Missing ~/.team-up/cron-jobs.ini. Create it to configure scheduled LLM jobs.";
+    body.innerHTML = "";
+    return;
+  }
+  if (!d.jobs.length) {
+    status.textContent = "No jobs configured.";
+    body.innerHTML = "";
+    return;
+  }
+  status.textContent = "";
+  const rows = d.jobs.map((job) => {
+    const options = [...d.options];
+    const unknown = job.model !== null && !options.includes(job.model);
+    if (unknown) options.push(job.model);
+    return `<tr>
+      <td><code>${esc(job.name)}</code></td>
+      <td><select data-cron-job="${esc(job.name)}" data-current="${esc(job.model ?? "")}"${d.options.length ? "" : " disabled"}>
+        ${job.model === null ? '<option value="" selected disabled>— choose —</option>' : ""}
+        ${options.map((model) => `<option value="${esc(model)}"${model === job.model ? " selected" : ""}>${esc(model)}${model === job.model && unknown ? " (unknown)" : ""}</option>`).join("")}
+      </select></td>
+    </tr>`;
+  }).join("");
+  body.innerHTML = `<table><thead><tr><th>Job</th><th>CLI:model</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+$("#cron-jobs-body").addEventListener("change", async (event) => {
+  const select = event.target.closest("[data-cron-job]");
+  if (!select) return;
+  const name = select.dataset.cronJob;
+  const model = select.value;
+  const previous = select.dataset.current;
+  const status = $("#cron-jobs-status");
+  select.disabled = true;
+  status.textContent = "saving…";
+  try {
+    await api(`/api/cron-jobs/${encodeURIComponent(name)}`, {
+      method: "POST",
+      body: JSON.stringify({ model }),
+    });
+    select.dataset.current = model;
+    status.textContent = `${name}: saved`;
+  } catch (err) {
+    select.value = previous;
+    status.textContent = err.message;
+  } finally {
+    select.disabled = false;
+  }
+});
+
 $("#settings-body").addEventListener("change", async (e) => {
   const el = e.target;
   let path = el.dataset.path;
@@ -1979,6 +2033,7 @@ const PANEL_HELP = {
   "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. The Roster tab lists every model per provider; a checked one is in the roster and offered in the chains. Specialists run on a role's chain or their own — picked in the Specialists widget.",
   "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions and limits are under Details.",
   "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
+  "panel-cron-jobs": "Which CLI×model runs each scheduled LLM job (~/.team-up/cron-jobs.ini). No fallback: if that CLI is at its limit, the job fails and says so.",
   "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",
   "panel-trending": "New AI repos on GitHub from the newest daily report of the hermes trending scraper (~/.hermes/cron-outputs/framework-scout). Pick a section; hover a description for all of it.",
   "panel-clis": "Agent CLIs: version, harness verification, update/install/login. CLIs team-up can install but the roster doesn't run yet are rows you switch on in ✎. Hover a CLI name for its path; click a row for the job log.",
@@ -2110,6 +2165,7 @@ function startPolling() {
   refreshSpecialists().catch(() => {});
   showRolesTab(readStored(ROLES_TAB_KEY, "roles") === "models" ? "models" : "roles");
   refreshSettings().catch(() => {});
+  refreshCronJobs().catch((err) => { $("#cron-jobs-status").textContent = err.message; });
   refreshTrending();
   clearInterval(trendingTimer);
   trendingTimer = setInterval(refreshTrending, 10 * 60_000);
