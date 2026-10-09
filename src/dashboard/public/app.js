@@ -1500,8 +1500,13 @@ async function trustProject(p) {
   return res;
 }
 
-/** What "Fix all" and auto-fix do to one project: only what needs no judgement. */
-async function fixProject(p) {
+/**
+ * What "Fix all" and auto-fix do to one project: only what needs no judgement.
+ * Trusting a policy is a judgement — a delegate specialist can edit
+ * commands.json, and the broker runs it outside the capsule — so only the
+ * explicit "Fix all" click trusts; auto-fix only writes a missing policy.
+ */
+async function fixProject(p, { trust }) {
   let wrote = false;
   let trusted = false;
   if (p.policy?.state === "missing" && p.policy.proposal?.auto) {
@@ -1511,23 +1516,24 @@ async function fixProject(p) {
     });
     wrote = true;
   }
-  if (wrote || ((p.policy?.state === "valid" || p.policy?.state === "inherited") && p.policy.trusted === false)) {
+  if (trust && (wrote || ((p.policy?.state === "valid" || p.policy?.state === "inherited") && p.policy.trusted === false))) {
     await trustProject(p);
     trusted = true;
   }
   return { wrote, trusted };
 }
 
+const needsWrite = (p) => p.policy?.state === "missing" && p.policy.proposal?.auto;
 const needsFix = (p) =>
-  (p.policy?.state === "missing" && p.policy.proposal?.auto)
+  needsWrite(p)
   || ((p.policy?.state === "valid" || p.policy?.state === "inherited") && p.policy.trusted === false);
 
-async function fixProjects(projects) {
+async function fixProjects(projects, { trust }) {
   const written = [];
   const trusted = [];
   for (const p of projects) {
     try {
-      const result = await fixProject(p);
+      const result = await fixProject(p, { trust });
       if (result.wrote) written.push(p.name);
       if (result.trusted) trusted.push(p.name);
     } catch (err) {
@@ -1545,12 +1551,12 @@ async function fixProjects(projects) {
 let autoFixRunning = false;
 async function autoFixProjects() {
   if (autoFixRunning || !$("#projects-auto").checked) return;
-  const todo = [...projectsByPath.values()].filter((p) => needsFix(p) && !autoFixTried.has(p.path));
+  const todo = [...projectsByPath.values()].filter((p) => needsWrite(p) && !autoFixTried.has(p.path));
   if (!todo.length) return;
   autoFixRunning = true;
   todo.forEach((p) => autoFixTried.add(p.path));
   try {
-    await fixProjects(todo);
+    await fixProjects(todo, { trust: false });
   } finally {
     autoFixRunning = false;
   }
@@ -1560,7 +1566,7 @@ async function autoFixProjects() {
 $("#projects-fix-all").addEventListener("click", async (e) => {
   e.target.disabled = true;
   try {
-    await fixProjects([...projectsByPath.values()].filter(needsFix));
+    await fixProjects([...projectsByPath.values()].filter(needsFix), { trust: true });
     await refreshProjects();
   } finally {
     e.target.disabled = false;

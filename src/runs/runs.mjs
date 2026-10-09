@@ -751,7 +751,7 @@ export function buildResumePlan(state, {
 }
 
 /** New state and legacy descriptor-only runs both require their capsule. */
-function isSpecialistRun(state) {
+export function isSpecialistRun(state) {
   return Boolean(
     state.specialist ||
     String(state.role || "").startsWith("specialist:") ||

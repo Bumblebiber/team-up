@@ -10,6 +10,7 @@ import {
   runDir,
   loadState,
   updateState,
+  isSpecialistRun,
   wrapPromptWithMailboxProtocol,
   promptHasMailboxProtocol,
   atomicWriteText,
@@ -150,6 +151,13 @@ export async function spawnInTmux({
   // async ({ cli }) => { ok, reason }: admission check. Null skips it.
   admit = null,
 }) {
+  // A specialist run starts only in its capsule (`team-up specialist run`).
+  // The roster template would start it with the real HOME, Bash and the
+  // template's permission-bypass flag.
+  if (runId && isSpecialistRun(loadState(runId))) {
+    console.error(`run ${runId} is a specialist run; dispatch never starts it outside its capsule — use \`team-up specialist run\``);
+    process.exit(5);
+  }
   const now = Date.now();
   let usage = usageSnapshot ?? loadJson(usagePath());
   let r;

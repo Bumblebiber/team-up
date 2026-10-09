@@ -141,3 +141,18 @@ test("a record that cannot be written warns and still dispatches", async () => {
   assert.equal(spawned.length, 1);
   assert.ok(lines.some((l) => /routing decision not recorded on run 20991231T235959Z-none/.test(l)), lines.join("\n"));
 });
+
+test("dispatch refuses a specialist run instead of starting it outside its capsule", async () => {
+  const run = createRun({ cwd: RUNS, role: "specialist:coding.codey", parent: PARENT, worker: { cli: "claude" }, prompt: "x" });
+  const exit = process.exit;
+  let code = null;
+  process.exit = (c) => { code = c; throw new Error("exit"); };
+  let spawned;
+  try {
+    ({ spawned } = await dispatch({ runId: run.runId }).catch(() => ({ spawned: [] })));
+  } finally {
+    process.exit = exit;
+  }
+  assert.equal(code, 5);
+  assert.deepEqual(spawned, []);
+});

@@ -412,3 +412,41 @@ test("specialist run maps ADMISSION_REFUSED to exit 3 and passes the admission f
   assert.match(errors[0], /ADMISSION_REFUSED: 3 workers running/);
   assert.match(errors[1], /unsupported admission option/);
 });
+
+test("a dry run takes no admission slot, and a failed tmux start fails the run", async () => {
+  const fixture = await fixtureLaunch();
+  widenRoster(fixture.env);
+  const base = {
+    ...ISOLATED,
+    prepareHarnessLaunch: ({ argv }) => ({ argv, env: {}, files: [] }),
+  };
+  try {
+    let checked = false;
+    const dry = await launch({
+      ...fixture.args,
+      dryRun: true,
+      admission: "check",
+      dependencyOverrides: { ...base, startInTmux: () => {}, checkAdmission: async () => { checked = true; return { ok: false, reason: "full" }; } },
+    });
+    assert.equal(checked, false);
+    const dryState = JSON.parse(fs.readFileSync(path.join(fixture.env.TEAM_UP_RUNS, dry.runId, "STATE.json"), "utf8"));
+    assert.equal(dryState.dry_run, true);
+
+    let runId = null;
+    await assert.rejects(() => launch({
+      ...fixture.args,
+      dryRun: false,
+      admission: "check",
+      dependencyOverrides: {
+        ...base,
+        checkAdmission: async () => ({ ok: true }),
+        startInTmux: ({ runId: id }) => { runId = id; throw new Error("tmux: no server"); },
+      },
+    }), /tmux: no server/);
+    const state = JSON.parse(fs.readFileSync(path.join(fixture.env.TEAM_UP_RUNS, runId, "STATE.json"), "utf8"));
+    assert.equal(state.status, "failed");
+    assert.match(state.failure.error, /tmux start: tmux: no server/);
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});

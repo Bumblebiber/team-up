@@ -260,7 +260,9 @@ export async function launch({
 
   // Match dispatch: admission precedes run creation, so refusal leaves no run.
   let admissionRecord = null;
-  if (admission === "force") {
+  if (dryRun) {
+    admissionRecord = { skipped: "dry_run", at: new Date().toISOString() };
+  } else if (admission === "force") {
     admissionRecord = { forced: true, at: new Date().toISOString() };
   } else {
     const decision = await checkAdmissionFn({ cli: cell.cli, env });
@@ -500,7 +502,12 @@ export async function launch({
 
   if (!dryRun) {
     const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
-    startInTmuxFn({ session, dir: dest, argv, runId: state.runId });
+    try {
+      startInTmuxFn({ session, dir: dest, argv, runId: state.runId });
+    } catch (error) {
+      setStatus(state.runId, "failed", { reason: `tmux start: ${error?.message || error}` });
+      throw error;
+    }
     linkDispatchToRun(state.runId, session);
     recordPick(state.runId, {
       cli: cell.cli,
