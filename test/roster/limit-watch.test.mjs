@@ -162,38 +162,20 @@ function noRecordFixture() {
   fs.writeFileSync(usagePath, JSON.stringify(usage));
   // No session record; this test process is the hook's parent, so its pid
   // stands in for the Claude CLI's.
-  return {
-    TEAM_UP_HOME: dir,
-    TEAM_UP_ROSTER: rosterPath,
-    TEAM_UP_USAGE: usagePath,
-    CLAUDE_PID: String(process.pid),
-    CODEX_SESSION_ID: "",
-  };
+  return { TEAM_UP_HOME: dir, TEAM_UP_ROSTER: rosterPath, TEAM_UP_USAGE: usagePath, CLAUDE_PID: String(process.pid) };
 }
 
-function assertCurrentHostScope(out, fixture) {
-  const hostCli = detectHostCli({ env: { ...process.env, ...fixture } });
-  if (hostCli === "claude") {
-    assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
-    assert.doesNotMatch(out, /⛔|stop working|codex/);
-  } else if (hostCli === "codex" || hostCli == null) {
-    assert.match(out, /⛔ team-up roster: codex:weekly at 100%/);
-    assert.match(out, /stop working in this session/);
-  } else {
-    assert.equal(out, "");
-  }
-}
-
-test("the hook scopes to detected host before a session record exists", () => {
-  const fixture = noRecordFixture();
-  assertCurrentHostScope(run(fixture), fixture);
+test("the hook scopes to claude from CLAUDE_PID before the session record exists", () => {
+  const out = run(noRecordFixture());
+  assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
+  assert.doesNotMatch(out, /⛔|stop working|codex/);
 });
 
-test("usage --check scopes to detected host before a session record exists", () => {
-  const fixture = noRecordFixture();
+test("usage --check scopes to claude from CLAUDE_PID before the session record exists", () => {
   const out = execFileSync(process.execPath, [ROSTER_BIN, "usage", "--check"], {
     encoding: "utf8",
-    env: { ...process.env, ...fixture },
+    env: { ...process.env, ...noRecordFixture() },
   });
-  assertCurrentHostScope(out, fixture);
+  assert.match(out, /⚠️ team-up roster: claude:week at 92%/);
+  assert.doesNotMatch(out, /⛔|stop working|codex/);
 });
