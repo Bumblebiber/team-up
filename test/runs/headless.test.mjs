@@ -79,6 +79,15 @@ test("headless leaves an already terminal mailbox untouched", withTempRuns(async
   assert.equal(mailboxText(state.runId, "RESULT.md").trim(), "parent result");
 }));
 
+test("headless fills RESULT.md for a worker that set done without one", withTempRuns(async () => {
+  const state = createRun();
+  atomicWriteText(mailboxFile(state.runId, "STATUS"), "done");
+  const resultPath = mailboxFile(state.runId, "LAST_MESSAGE.md");
+  runHeadless(state.runId, { code: codexSuccessCode("forgot the file"), args: [resultPath] });
+  assert.equal(mailboxText(state.runId, "STATUS").trim(), "done");
+  assert.equal(mailboxText(state.runId, "RESULT.md").trim(), "forgot the file");
+}));
+
 test("headless copies codex last message, records session id, heartbeat, and done", withTempRuns(async () => {
   const state = createRun();
   const resultPath = mailboxFile(state.runId, "LAST_MESSAGE.md");

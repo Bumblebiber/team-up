@@ -98,8 +98,10 @@ RESULT.json itself, and the wrapper never synthesizes it.
    to the child, then exit without finalizing. A run killed from outside is
    already terminal, or will be classified by the existing paths.
 7. Finalize on child exit with `(code, signal)`, first match wins:
-   1. Mailbox STATUS is already terminal (`done|failed|cancelled`): do nothing.
-      The worker closed its own run.
+   1. Mailbox STATUS is already terminal (`done|failed|cancelled`): the worker
+      closed its own run. Only one exception: on `done` with no RESULT.md
+      (untyped run), write RESULT.md from the final message. Otherwise the run
+      would fail after the grace window as done-without-RESULT.
    2. STATUS is `waiting_human`: write FAILURE.md with "worker exited while
       waiting for an answer; headless runs cannot take answers — re-dispatch
       with the answer in the prompt", followed by the QUESTIONS.md content.

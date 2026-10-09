@@ -45,10 +45,26 @@ function makeFailureText(mailbox, reason) {
   return tail ? `${reason}\n\nLast 40 lines of ${logName}:\n${tail}` : reason;
 }
 
+function finalMessageFor(cli, mailbox, cursorResult) {
+  if (cli === "codex") return readMaybe(path.join(mailbox, "LAST_MESSAGE.md"));
+  if (cursorResult && cursorResult.is_error !== true && typeof cursorResult.result === "string") return cursorResult.result;
+  return null;
+}
+
 function finalize({ runId, cli, mailbox, code, signal, cursorResult, timedOut, childError }) {
   const statusPath = path.join(mailbox, "STATUS");
   const status = (readMaybe(statusPath) || "").trim();
-  if (["done", "failed", "cancelled"].includes(status)) return;
+  const finalMessage = finalMessageFor(cli, mailbox, cursorResult);
+  const resultPath = path.join(mailbox, "RESULT.md");
+  if (["done", "failed", "cancelled"].includes(status)) {
+    // A worker that set done but forgot RESULT.md would fail after the grace
+    // window; its last message is the result it meant to write.
+    const typed = loadState(runId)?.result_protocol === "RESULT.json";
+    if (status === "done" && !typed && !fs.existsSync(resultPath) && finalMessage?.trim()) {
+      atomicWriteText(resultPath, finalMessage);
+    }
+    return;
+  }
 
   if (status === "waiting_human") {
     const questions = readMaybe(path.join(mailbox, "QUESTIONS.md")) || "";
@@ -66,20 +82,12 @@ function finalize({ runId, cli, mailbox, code, signal, cursorResult, timedOut, c
     return;
   }
 
-  let finalMessage = null;
-  if (cli === "codex") {
-    finalMessage = readMaybe(path.join(mailbox, "LAST_MESSAGE.md"));
-  } else if (cursorResult && cursorResult.is_error !== true && typeof cursorResult.result === "string") {
-    finalMessage = cursorResult.result;
-  }
-
   if (code === 0 && finalMessage?.trim()) {
     const state = loadState(runId);
     if (state?.result_protocol === "RESULT.json" && !fs.existsSync(path.join(mailbox, "RESULT.json"))) {
       setWorkerMailboxStatus(runId, "failed", { reason: "typed run exited without RESULT.json" });
       return;
     }
-    const resultPath = path.join(mailbox, "RESULT.md");
     if (!fs.existsSync(resultPath)) atomicWriteText(resultPath, finalMessage);
     setWorkerMailboxStatus(runId, "done");
     return;
