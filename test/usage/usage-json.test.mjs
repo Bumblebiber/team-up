@@ -342,3 +342,19 @@ test("an unusable 5h window falls back instead of leaving the previous value", a
   assert.equal(result.ok, false);
   assert.match(result.reason, /lacked the 5h or weekly window/);
 });
+
+test("an unusable Claude session window falls back", async () => {
+  const result = await fetchClaudeUsageJson({
+    env: { CLAUDE_CONFIG_DIR: "/fixture/claude" },
+    fileReader: credentialReader(claudeCredentials),
+    fetchImpl: async () => jsonResponse({
+      limits: [
+        { kind: "session", percent: null, resets_at: "2026-10-09T12:00:00Z" },
+        { kind: "weekly_all", percent: 40, resets_at: "2026-10-12T08:00:00Z" },
+      ],
+    }),
+    now: NOW,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /lacked the session or week window/);
+});
