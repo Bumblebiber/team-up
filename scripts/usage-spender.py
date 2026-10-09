@@ -4,16 +4,20 @@
 Daily cron (00:00). Reads team-up's live quota windows (usage.json, refreshed every ~5 min by
 the usage watcher), decides whether a weekly window will reset with paid capacity unused, and
 spawns at most MAX_SPAWNS read-only team-up workers on that CLI (runs create + dispatch).
-A cron cannot wait, so on spawn nights it also starts one Claude Code host session in tmux
-(scripts/usage-spender-host.md): the parent of those runs. It records them in TIM, waits,
-does intake, collects, exits. Workers never write memory; the host does.
+A cron cannot wait, so on spawn nights it also starts one host session in tmux: the parent of
+those runs. The tmux shell first waits for the runs (`--await`), then starts the host CLI chosen
+in ~/.team-up/cron-jobs.ini [usage-spender-host] (scripts/usage-spender-host.md): it records the
+runs in TIM, does intake, collects, exits. Workers never write memory; the host does.
 
   scripts/usage-spender.py              cron mode: decide, spawn, write <day>/decision.json
   scripts/usage-spender.py --dry-run    decide only: no spawn, no writes
+  scripts/usage-spender.py --await <run_id>...   (inside the host tmux) wait, answer once, cancel
   scripts/usage-spender.py --selftest
 """
+import configparser
 import json
 import os
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -31,6 +35,8 @@ TEAMUP = ["node", str(REPO / "bin/team-up.mjs")]
 OUT_ROOT = Path(ENV.get("TEAM_UP_REPORT_DIR") or ENV.get("O9K_REPORT_DIR") or TU_HOME / "reports") / "usage-spender"
 PROJECTS = HOME / "projects"
 HOST_CWD = REPO  # .tim-project -> P0073; the host session binds there
+CRON_JOBS = TU_HOME / "cron-jobs.ini"
+HOST_DEFAULT = "claude:claude-opus"
 
 # Tuning knobs.
 HORIZON_H = 30            # a window counts only if it resets within this many hours
@@ -61,6 +67,8 @@ TASKS = {
 HOST_PROMPT = (REPO / "scripts/usage-spender-host.md").read_text()
 HOST_ALLOW = ["Read", "Grep", "Glob", "Skill", "mcp__tim", "Bash(git -C:*)", "Bash(git log:*)", "Bash(git show:*)",
               f"Bash({' '.join(TEAMUP)} runs:*)", "Bash(tmux kill-session -t usage-spender-host-:*)"]
+WAIT_CEILING_S = 7200     # per `runs wait`; two rounds = the 4 h a run gets
+NO_HUMAN = "No human available. Finish with what you have."
 RULES = ("\n\nRead-only: do not edit, commit or push anything in {repo}. Report at most 15 findings, "
          "each with file:line evidence (or a link) and a severity, most severe first.\n")
 
@@ -135,21 +143,29 @@ def plan(wanted, roster, repos):
     return actions
 
 
-def teamup(*args):
+def teamup(*args, timeout=600):
     try:
-        return subprocess.run([*TEAMUP, *args], capture_output=True, text=True, timeout=600)
+        return subprocess.run([*TEAMUP, *args], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(args, 124, "", "team-up timed out after 600s")
+        return subprocess.CompletedProcess(args, 124, "", f"team-up timed out after {timeout}s")
 
 
-def spawn(a, day_dir, host):
+def cron_model(job, default, path=CRON_JOBS):
+    """'cli:model' for job from cron-jobs.ini, else default."""
+    ini = configparser.ConfigParser()
+    ini.read(path)
+    value = ini.get(job, "model", fallback="").strip()
+    return value if ":" in value else default
+
+
+def spawn(a, day_dir, host, host_cli):
     """runs create + dispatch --run-id, parent = the host tmux. Fills a['run_id'] / a['spawned'] / a['error']."""
     prompt = day_dir / f"{a['task_type']}-{Path(a['repo']).name}.md"
     prompt.write_text(TASKS[a["task_type"]].format(repo=a["repo"], days=ACTIVE_DAYS) + RULES.format(repo=a["repo"]))
     model = a["model"].split(":", 1)[1]
     r = teamup("runs", "create", "--cwd", a["repo"], "--role", a["role"], "--worker-cli", a["cli"],
                "--worker-model", model, "--prompt-file", str(prompt),
-               "--parent-cli", "claude", "--parent-attach", "tmux", "--parent-tmux", host)
+               "--parent-cli", host_cli, "--parent-attach", "tmux", "--parent-tmux", host)
     run_id = next((ln.split()[1] for ln in r.stdout.splitlines() if ln.startswith("runId:")), None)
     if r.returncode or not run_id:
         a.update(spawned=False, error=f"runs create rc={r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
@@ -170,13 +186,71 @@ def host_prompt(spawned, date, host):
     return HOST_PROMPT.format(date=date, teamup=" ".join(TEAMUP), runs=runs, host=host)
 
 
-def start_host(spawned, day_dir, host):
-    """Claude Code in detached tmux, told to follow host.md. Returns an error string or None."""
-    prompt, settings = day_dir / "host.md", day_dir / "host-settings.json"
+def next_step(status, answered):
+    """Pure. What --await does after a decided `runs wait`: 'answer' | 'cancel' | 'stop'."""
+    if status == "question":
+        return "cancel" if answered else "answer"
+    return "stop"
+
+
+def await_runs(run_ids):
+    """Wait in the shell, so the host CLI needs no background tool: it starts on finished runs.
+    A question gets one canned answer; a second one cancels. A run still going after two
+    ceilings stays open for the host to record as unfinished."""
+    for run_id in run_ids:
+        answered, ceilings = False, 0
+        while ceilings < 2:
+            r = teamup("runs", "wait", run_id, "--ceiling-sec", str(WAIT_CEILING_S), timeout=WAIT_CEILING_S + 300)
+            status = next((ln.split(":", 1)[1].strip() for ln in r.stdout.splitlines() if ln.startswith("status:")), "")
+            if r.returncode == 2 or status == "watching":
+                ceilings += 1
+                continue
+            step = next_step(status, answered)
+            if step == "answer":
+                teamup("runs", "answer", run_id, "--text", NO_HUMAN)
+                answered = True
+            elif step == "cancel":
+                teamup("runs", "cancel", run_id)
+                break
+            else:
+                break
+
+
+def host_argv(built, cli, settings):
+    """Pure. The roster's argv for the host CLI; claude swaps the blanket permission flag for the
+    host's allow-list settings."""
+    if cli != "claude":
+        return built
+    argv = [a for a in built if a != "--dangerously-skip-permissions"]
+    return [argv[0], "--settings", str(settings), *argv[1:]]
+
+
+def build_command(model, prompt):
+    """team-up's own argv builder (roster template, CLI model alias, codex trust) for model 'cli:model'."""
+    cli, mid = model.split(":", 1)
+    js = ("const [p, r, m, c, t, d] = process.argv.slice(1); const { buildCommand } = await import(p);"
+          "const fs = await import('node:fs'); console.log(JSON.stringify(buildCommand("
+          "{ roster: JSON.parse(fs.readFileSync(r, 'utf8')), model: m, cli: c, prompt: t, dir: d })));")
+    r = subprocess.run(["node", "--input-type=module", "-e", js, str(REPO / "src/roster/command.mjs"),
+                        str(ROSTER), mid, cli, prompt, str(HOST_CWD)], capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError(f"buildCommand for {model}: {r.stderr.strip()[-300:]}")
+    return json.loads(r.stdout)
+
+
+def start_host(spawned, day_dir, host, model):
+    """Host tmux: wait for the runs, then the chosen CLI follows host.md. Returns an error string or None."""
+    prompt, settings, script = day_dir / "host.md", day_dir / "host-settings.json", day_dir / "host.sh"
     prompt.write_text(host_prompt(spawned, day_dir.name, host))
     settings.write_text(json.dumps({"permissions": {"allow": HOST_ALLOW}}, indent=2) + "\n")
-    r = subprocess.run(["tmux", "new-session", "-d", "-s", host, "-c", str(HOST_CWD),
-                        "claude", "--settings", str(settings), f"Read {prompt} and follow it."],
+    try:
+        argv = host_argv(build_command(model, f"Read {prompt} and follow it."), model.split(":", 1)[0], settings)
+    except (RuntimeError, ValueError) as e:
+        return str(e)
+    runs = " ".join(shlex.quote(a["run_id"]) for a in spawned)
+    script.write_text(f"#!/bin/bash\n{shlex.join(['python3', str(Path(__file__).resolve()), '--await'])} {runs}\n"
+                      f"exec {shlex.join(argv)}\n")
+    r = subprocess.run(["tmux", "new-session", "-d", "-s", host, "-c", str(HOST_CWD), "bash", str(script)],
                        capture_output=True, text=True)
     return f"tmux rc={r.returncode}: {r.stderr.strip()[-300:]}" if r.returncode else None
 
@@ -199,15 +273,16 @@ def main(argv):
     actions = plan(wanted, json.loads(ROSTER.read_text()), active_repos(now)) if wanted else []
 
     host = f"usage-spender-host-{day_dir.name}"
+    host_model = cron_model("usage-spender-host", HOST_DEFAULT)
     if not dry:
         day_dir.mkdir(parents=True, exist_ok=True)
         for a in actions:
-            spawn(a, day_dir, host)
+            spawn(a, day_dir, host, host_model.split(":", 1)[0])
     spawned = [a for a in actions if a.get("spawned")]
     decision = {"run_at": now.isoformat(), "dry_run": dry, "source": str(USAGE),
                 "windows": verdicts, "actions": actions}
     if spawned:  # spawned last on purpose: a failed host start leaves the worker runs intact
-        decision["host"] = {"tmux": host, "error": start_host(spawned, day_dir, host)}
+        decision["host"] = {"tmux": host, "model": host_model, "error": start_host(spawned, day_dir, host, host_model)}
     if not dry:
         marker.write_text(json.dumps(decision, indent=2) + "\n")
     print(json.dumps(decision, indent=2))
@@ -248,8 +323,25 @@ def selftest():
     hp = host_prompt([dict(acts[0], run_id="R1")], "2026-10-12", "usage-spender-host-2026-10-12")
     assert "- R1: contrary-review on /r1" in hp and "kill-session -t usage-spender-host-2026-10-12" in hp, hp
     assert '"team_up_run": "<run_id>"' in hp, hp
+    assert next_step("question", False) == "answer" and next_step("question", True) == "cancel"
+    assert next_step("done", False) == "stop" and next_step("failed", True) == "stop"
+    built = ["claude", "--dangerously-skip-permissions", "--model", "opus", "Read x"]
+    assert host_argv(built, "claude", "/s.json") == ["claude", "--settings", "/s.json", "--model", "opus", "Read x"]
+    assert host_argv(["codex", "--model", "m", "Read x"], "codex", "/s.json") == ["codex", "--model", "m", "Read x"]
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".ini") as f:
+        f.write("# c\n[usage-spender-host]\nmodel = codex:gpt-6-luna\n[other]\nmodel = nope\n")
+        f.flush()
+        assert cron_model("usage-spender-host", HOST_DEFAULT, f.name) == "codex:gpt-6-luna"
+        assert cron_model("other", HOST_DEFAULT, f.name) == HOST_DEFAULT
+        assert cron_model("missing", HOST_DEFAULT, f.name) == HOST_DEFAULT
     print("selftest ok")
 
 
 if __name__ == "__main__":
-    selftest() if "--selftest" in sys.argv else main(sys.argv[1:])
+    if "--selftest" in sys.argv:
+        selftest()
+    elif "--await" in sys.argv:
+        await_runs(sys.argv[sys.argv.index("--await") + 1:])
+    else:
+        main(sys.argv[1:])

@@ -15,15 +15,14 @@ title "usage-spender {date}: <task_type> on <repo-name> (<cli>)", tags ["#usage-
 metadata {{"task": {{"status": "in_progress", "priority": "low"}}, "team_up_run": "<run_id>"}},
 content: run id, model, repo, read-only task, result path ~/.team-up/runs/<run_id>/mailbox/. Keep the ids.
 
-## 2. Wait
-Per run, one Bash with run_in_background: `$TU runs wait <run_id> --ceiling-sec 7200`.
-Do nothing else until one returns. `watching` (ceiling hit): wait once more. Still `watching`:
-tim_update its task ("not finished after 4h, left in `team-up runs uncollected`"), skip 3 for it.
-`waiting_human`: `$TU runs answer <run_id> --text "No human available. Finish with what you have."`,
-then wait again. A second `waiting_human`: `$TU runs cancel <run_id>`, task "cancelled", skip 3.
+## 2. Status
+The cron already waited for these runs before starting you (up to 4 h each; a question got
+"No human available. Finish with what you have.", a second one cancelled the run). Per run:
+`$TU runs classify <run_id>`. Still `watching`: tim_update its task ("not finished after 4h, left
+in `team-up runs uncollected`") and skip 3 for it. `cancelled` or `failed`: status "cancelled", skip 3.
 
 ## 3. Intake, per finished run
-Follow the team-up:intake skill. In short: read ~/.team-up/runs/<run_id>/mailbox/RESULT.json
+Follow the team-up:intake skill if you have it. In short: read ~/.team-up/runs/<run_id>/mailbox/RESULT.json
 (or RESULT.md). Open each finding's file:line in the repo (Read/Grep/Glob, read-only git log/show
 are fine; change nothing); keep only findings that hold, say what
 you could not check. tim_update the run's task: content = verified findings, one line each

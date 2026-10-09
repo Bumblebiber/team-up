@@ -3,7 +3,8 @@
 #
 #   1. scripts/run-insights.mjs turns ~/.team-up/runs into findings (free).
 #   2. Unchanged finding set, or nothing above low → silent, no model is paid.
-#   3. Otherwise a headless Claude evaluates (templates/insights-evaluator.md):
+#   3. Otherwise an evaluator runs (templates/insights-evaluator.md) on the CLI×model
+#      in ~/.team-up/cron-jobs.ini [insights], through scripts/ops-run.sh:
 #      TIM entries always, at most one fix. The fix is merged into main only
 #      when the worker finished done AND `npm test` passed in its clone (the
 #      repo has no CI; that parent verification is the gate). Benni chose
@@ -67,27 +68,20 @@ sed -e "s|{{REPORT_MD}}|$MD|g" -e "s|{{REPORT_JSON}}|$JSON|g" \
     -e "s|{{BRANCH}}|$BRANCH|g" -e "s|{{TIM_PROJECT}}|${INSIGHTS_TIM_PROJECT:-P0073}|g" \
     "$REPO/templates/insights-evaluator.md" > "$PROMPT"
 
-# The evaluator's model comes from the roster like every other seat. It needs
-# TIM MCP and a shell, which only the claude CLI gives it headless here.
-MODEL=$(node "$REPO/bin/team-up.mjs" pick --role planner 2>/dev/null | awk '/^cli:/{c=$2} /^model:/{m=$2} END{if (c=="claude") print m}')
-MODEL_ARG=()
-case "$MODEL" in
-  claude-opus) MODEL_ARG=(--model opus) ;;
-  claude-sonnet) MODEL_ARG=(--model sonnet) ;;
-esac
-CMD=(claude -p "${MODEL_ARG[@]}" --permission-mode dontAsk
-     --allowedTools "Read,Grep,Glob,Bash,mcp__tim"
-     --disallowedTools "Edit,Write,NotebookEdit")
+# The evaluator runs as a team-up worker on the CLI×model chosen in
+# ~/.team-up/cron-jobs.ini [insights] (claude, codex and cursor all have TIM
+# MCP and a shell). Its RESULT is the Telegram text.
+CMD=("$REPO/scripts/ops-run.sh" --job insights --ceiling-sec 10800 "$REPO" "$PROMPT")
 
 if [ "$DRY" = "1" ]; then
-  echo "--- would run in $REPO: ${CMD[*]} < $PROMPT"
+  echo "--- would run: ${CMD[*]}"
   cat "$PROMPT"
   exit 0
 fi
 
 BEFORE=$(git -C "$REPO" status --porcelain)
 DECISION="${JSON%.json}.decision.md"
-(cd "$REPO" && timeout 3h "${CMD[@]}" < "$PROMPT") > "$DECISION" 2>> "$LOG_DIR/stderr.log"
+"${CMD[@]}" > "$DECISION" 2>> "$LOG_DIR/stderr.log"
 RC=$?
 echo "$HASH" > "$HASH_FILE"
 [ "$(git -C "$REPO" status --porcelain)" != "$BEFORE" ] && TAMPERED=1 || TAMPERED=0
