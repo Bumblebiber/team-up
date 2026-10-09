@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { collectUsageForCli } from "../../src/usage/usage-collect.mjs";
+import { collectUsageForCli, mergeUsageWindows } from "../../src/usage/usage-collect.mjs";
 import { fetchClaudeUsageJson, fetchCodexUsageJson } from "../../src/usage/usage-json.mjs";
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/usage");
@@ -104,7 +104,7 @@ test("Claude JSON collector ignores unknown and surface-scoped limits", async ()
     now: NOW,
   });
   assert.equal(result.ok, false);
-  assert.match(result.reason, /no supported windows/);
+  assert.match(result.reason, /lacked the/);
 });
 
 test("expired Claude token and unsafe credential mode refuse request", async () => {
@@ -185,7 +185,7 @@ test("Codex omits account header when auth has no account id and skips other dur
     now: NOW,
   });
   assert.equal(result.ok, false);
-  assert.match(result.reason, /no supported windows/);
+  assert.match(result.reason, /lacked the/);
 });
 
 test("JSON source failures fall back and preserve safe reasons", async () => {
@@ -258,4 +258,46 @@ test("token never enters returned results or written usage document", async () =
     fetchImpl: async () => { throw new Error(TOKEN); },
     now: NOW,
   }));
+});
+
+test("an overage reading is clamped to 100 % instead of dropped", async () => {
+  const result = await fetchClaudeUsageJson({
+    env: { CLAUDE_CONFIG_DIR: "/fixture/claude" },
+    fileReader: credentialReader(claudeCredentials),
+    fetchImpl: async () => jsonResponse({
+      limits: [
+        { kind: "session", percent: 30, resets_at: "2026-10-09T12:00:00Z" },
+        { kind: "weekly_all", percent: 101, resets_at: "2026-10-12T08:00:00Z" },
+      ],
+    }),
+    now: NOW,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.windows["claude:week"].used, 1);
+});
+
+test("a response missing a base window falls back to the PTY path with both reasons", async () => {
+  const body = fixture("codex-wham-usage.json");
+  body.rate_limit.secondary_window.limit_window_seconds = 604_799;
+  const result = await collectUsageForCli({
+    roster: { subscriptions: ["codex"] },
+    cli: "codex",
+    dryRun: true,
+    env: { CODEX_HOME: "/fixture/codex" },
+    fileReader: credentialReader(codexCredentials),
+    fetchImpl: async () => jsonResponse(body),
+    now: NOW,
+    collectFallback: async () => { throw new Error("PTY_TIMEOUT codex: tail <pane>"); },
+    loggedOut: () => false,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /lacked the 5h or weekly window/);
+  assert.match(result.reason, /PTY fallback failed: PTY_TIMEOUT codex: tail <pane>/);
+});
+
+test("a record without scope keeps the scope the JSON source recorded", () => {
+  const existing = { windows: { "codex:luna-reserve-weekly": { used: 0.1, scope: "gpt-5.6-luna" } }, marked: {} };
+  const merged = mergeUsageWindows(existing, { "codex:luna-reserve-weekly": { used: 0.2, source: "codex:/status" } });
+  assert.equal(merged.windows["codex:luna-reserve-weekly"].scope, "gpt-5.6-luna");
+  assert.equal(merged.windows["codex:luna-reserve-weekly"].used, 0.2);
 });

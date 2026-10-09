@@ -39,8 +39,10 @@ export function mergeUsageWindows(existing, parsed) {
     const updated = info.updated || now;
     // The collectors rebuild each record from a fixed field list, so the
     // sample ring only survives if the merge carries it across explicitly.
+    const scope = info.scope ?? base.windows[key]?.scope;
     base.windows[key] = {
       ...info,
+      ...(scope ? { scope } : {}),
       updated,
       history: pushSample(base.windows[key]?.history, { used: info.used, at: updated }),
     };
@@ -165,7 +167,7 @@ export async function collectUsageForCli(opts) {
       });
     }
   } catch (e) {
-    if (loggedOut(cli)) {
+    if ((opts.loggedOut || loggedOut)(cli)) {
       return {
         cli,
         ok: false,
@@ -173,7 +175,7 @@ export async function collectUsageForCli(opts) {
       };
     }
     if (jsonFallbackReason) {
-      return { cli, ok: false, reason: `JSON usage failed (${jsonFallbackReason}); PTY fallback failed` };
+      return { cli, ok: false, reason: `JSON usage failed (${jsonFallbackReason}); PTY fallback failed: ${e?.message || e}` };
     }
     throw e;
   }
@@ -187,7 +189,7 @@ export async function collectUsageForCli(opts) {
   }
   const parsed = lock.value;
   if (!parsed || !Object.keys(parsed).length) {
-    const reason = loggedOut(cli) ? "not logged in" : "empty-parse";
+    const reason = (opts.loggedOut || loggedOut)(cli) ? "not logged in" : "empty-parse";
     return {
       cli,
       ok: false,

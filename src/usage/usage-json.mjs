@@ -50,7 +50,10 @@ function toNowIso(now) {
 }
 
 function usageRecord(key, percent, resetAt, source, updatedAt, scope) {
-  if (!Number.isFinite(percent) || percent < 0 || percent > 100) return null;
+  // Above 100 is an overage reading: clamp it, dropping it would leave the
+  // gate on the previous, lower value exactly when the limit is blown.
+  if (!Number.isFinite(percent) || percent < 0) return null;
+  percent = Math.min(percent, 100);
   const resetMs = typeof resetAt === "number" ? resetAt * 1_000 : Date.parse(resetAt);
   if (!Number.isFinite(resetMs)) return null;
   const record = normalizeWindowRecord(
@@ -208,7 +211,9 @@ export async function fetchClaudeUsageJson({
   } catch {
     return { ok: false, reason: "usage API returned an invalid response" };
   }
-  if (!Object.keys(windows).length) return { ok: false, reason: "usage API response contained no supported windows" };
+  if (!windows["claude:session"] || !windows["claude:week"]) {
+    return { ok: false, reason: "usage API response lacked the session or week window" };
+  }
   return { ok: true, windows };
 }
 
@@ -256,6 +261,8 @@ export async function fetchCodexUsageJson({
   } catch {
     return { ok: false, reason: "usage API returned an invalid response" };
   }
-  if (!Object.keys(windows).length) return { ok: false, reason: "usage API response contained no supported windows" };
+  if (!windows["codex:5h"] || !windows["codex:weekly"]) {
+    return { ok: false, reason: "usage API response lacked the 5h or weekly window" };
+  }
   return { ok: true, windows };
 }
