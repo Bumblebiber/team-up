@@ -99,6 +99,17 @@ test("agy models listing tab-splits ids and labels", () => {
   assert.ok(LIST_TIMEOUT_MS >= 1_300, "network listing timeout must cover the measured call");
 });
 
+test("agy models listing adds the bare id that --effort pairs with", () => {
+  const ids = parseAgyModels("gemini-3.1-pro-high\tGemini 3.1 Pro (High)\ngemini-3.1-pro-low\tGemini 3.1 Pro (Low)\n" +
+    "claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n").map((m) => [m.id, m.display_name]);
+  assert.deepEqual(ids, [
+    ["gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"],
+    ["gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)"],
+    ["claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)"],
+    ["gemini-3.1-pro", "Gemini 3.1 Pro"],
+  ]);
+});
+
 test("agy model listing runs through the regular model collector", () => {
   const result = collectCliModels("agy", { roster: ROSTER, run });
   assert.equal(result.supported, true);

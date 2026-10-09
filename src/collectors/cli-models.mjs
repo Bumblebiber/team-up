@@ -77,6 +77,15 @@ export function parseAgyModels(text) {
     if (!id || !display) continue;
     models.push({ id, display_name: display });
   }
+  // agy lists effort-suffixed ids but takes the bare id plus --effort, which
+  // is what the roster sends: list the bare id once too.
+  const ids = new Set(models.map((m) => m.id));
+  for (const m of [...models]) {
+    const base = m.id.match(/^(.+)-(?:low|medium|high)$/)?.[1];
+    if (!base || ids.has(base)) continue;
+    ids.add(base);
+    models.push({ id: base, display_name: m.display_name.replace(/\s*\((?:Low|Medium|High)\)$/, "") });
+  }
   return models;
 }
 
