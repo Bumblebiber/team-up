@@ -2,6 +2,87 @@ const $ = (sel) => document.querySelector(sel);
 
 let adminChallengeId = null;
 
+// The markup is the list of views: a new <section class="view"> routes without
+// touching this file.
+const VIEW_NAMES = new Set([...document.querySelectorAll(".view")].map((view) => view.dataset.view));
+
+function applyRoute() {
+  const match = location.hash.match(/^#\/([^/?#]+)$/);
+  const route = match && VIEW_NAMES.has(match[1]) ? match[1] : "overview";
+  const canonicalHash = `#/${route}`;
+  if (location.hash !== canonicalHash) history.replaceState(null, "", canonicalHash);
+  document.querySelectorAll(".view").forEach((view) => {
+    view.classList.toggle("is-active", view.dataset.view === route);
+  });
+  document.querySelectorAll(".sidebar-nav [data-route]").forEach((link) => {
+    if (link.dataset.route === route) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+}
+
+window.addEventListener("hashchange", applyRoute);
+applyRoute();
+
+const dashboardMetrics = { runs: [], usage: null, tim: null };
+
+function usageLevelName(level) {
+  return ({ red: "Critical", amber: "Warn", ok: "OK" })[level] || "Unknown";
+}
+
+function updateNavBadge(id, text, tone = "", visible = Boolean(text), title = "") {
+  const badge = $(`#${id}`);
+  badge.textContent = text;
+  badge.classList.toggle("hidden", !visible);
+  badge.classList.toggle("is-red", tone === "red");
+  badge.classList.toggle("is-amber", tone === "amber");
+  badge.title = title;
+}
+
+function updateDashboardMetrics() {
+  const runs = dashboardMetrics.runs;
+  const active = runs.filter((run) => run.active).length;
+  const waiting = runs.filter((run) => run.status === "waiting_human").length;
+  const uncollected = runs.filter((run) => run.uncollected).length;
+  // Only failures nobody has looked at yet: every failed run stays on disk forever.
+  const failed = runs.filter((run) => run.uncollected && run.status === "failed").length;
+  $("#kpi-active-runs").textContent = String(active);
+  $("#kpi-waiting-runs").textContent = String(waiting);
+  $("#kpi-uncollected-runs").textContent = String(uncollected);
+
+  const runsTone = waiting || failed ? "red" : "";
+  const runsBadge = active ? String(active) : failed ? "!" : "";
+  updateNavBadge("badge-runs", runsBadge, runsTone, Boolean(runsBadge),
+    [waiting ? `${waiting} waiting on the human` : "", failed ? `${failed} failed` : ""]
+      .filter(Boolean).join("; "));
+
+  const windows = Object.entries(dashboardMetrics.usage?.windows || {})
+    .filter(([, window]) => typeof window.usedPct === "number")
+    .sort(([keyA, a], [keyB, b]) => b.usedPct - a.usedPct || keyA.localeCompare(keyB));
+  const worst = windows[0];
+  $("#kpi-worst-usage").textContent = worst ? `${worst[1].usedPct}%` : "—";
+  $("#kpi-worst-usage-detail").textContent = worst
+    ? `${worst[0]} · ${usageLevelName(worst[1].level)}`
+    : "No usage windows";
+  const usageLevel = Object.values(dashboardMetrics.usage?.windows || {}).some((window) => window.level === "red")
+    ? "red"
+    : Object.values(dashboardMetrics.usage?.windows || {}).some((window) => window.level === "amber")
+      ? "amber"
+      : "";
+  updateNavBadge("badge-overview", usageLevel === "red" ? "Critical" : usageLevel === "amber" ? "Warn" : "",
+    usageLevel, Boolean(usageLevel), usageLevel ? `Usage level: ${usageLevelName(usageLevel)}` : "");
+
+  const tim = dashboardMetrics.tim;
+  const installed = Boolean(tim?.installed);
+  const p1p2 = installed
+    ? (tim.projects || []).flatMap((project) => project.items || [])
+      .filter((item) => item.kind === "task" && ["P0", "P1", "P2"].includes(String(item.priority || "").toUpperCase())).length
+    : 0;
+  $("#kpi-tim-tile").classList.toggle("hidden", !installed);
+  $("#kpi-tim-tasks").textContent = String(p1p2);
+  updateNavBadge("badge-tim", p1p2 ? String(p1p2) : "", "", p1p2 > 0,
+    p1p2 ? `${p1p2} open P0–P2 TIM tasks` : "");
+}
+
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (opts.method && opts.method !== "GET") headers["X-Team-Up-CSRF"] = "1";
@@ -174,9 +255,13 @@ function repairStatusLine(collectors = {}) {
 }
 
 async function refreshRuns() {
-  const active = $("#active-only").checked ? "1" : "0";
-  const data = await api(`/api/runs?active=${active}`);
-  const rows = data.runs.map((r) => `
+  const data = await api("/api/runs");
+  dashboardMetrics.runs = data.runs;
+  updateDashboardMetrics();
+  const visibleRuns = $("#active-only").checked
+    ? data.runs.filter((run) => run.active)
+    : data.runs;
+  const rows = visibleRuns.map((r) => `
     <tr class="clickable" data-run="${esc(r.runId)}"${providerAttr(r.worker)}>
       <td><code>${esc(r.runId.slice(-8))}</code></td>
       <td>${esc(r.role)}</td>
@@ -317,6 +402,8 @@ $("#pane-output").addEventListener("keydown", (e) => {
 
 async function refreshUsage() {
   const data = await api("/api/usage");
+  dashboardMetrics.usage = data;
+  updateDashboardMetrics();
   // Grouped by provider so the windows of one account sit together; the key
   // breaks ties, which keeps the order stable across refreshes.
   const rows = Object.entries(data.windows)
@@ -1135,19 +1222,20 @@ $("#specialist-install").addEventListener("click", async () => {
 });
 
 // ── Synced preferences ────────────────────────────────────────────────────
-// Every `teamup.*` key also lives on the server, so the layout set on one
-// device shows on all of them. localStorage stays the working copy — the page
-// reads it synchronously while it builds — and the server copy replaces it
-// once the login is known. The last device to change something wins.
+// Every `teamup.*` key also lives on the server. localStorage stays the working
+// copy and the server copy replaces it once the login is known. The last device
+// to change something wins.
 const PREF_PREFIX = "teamup.";
+const LEGACY_LAYOUT_KEY = "teamup.layout";
 
 function localPrefs() {
   const out = {};
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key.startsWith(PREF_PREFIX)) out[key] = localStorage.getItem(key);
+      if (key.startsWith(PREF_PREFIX) && key !== LEGACY_LAYOUT_KEY) out[key] = localStorage.getItem(key);
     }
+    localStorage.removeItem(LEGACY_LAYOUT_KEY);
   } catch {
     // storage blocked: nothing local to sync
   }
@@ -1157,231 +1245,35 @@ function localPrefs() {
 const sameKeys = (a, b) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
 
 function pushPrefs() {
-  // keepalive: "Reset layout" reloads right after, and the push must survive it.
+  // Keepalive lets a preference update finish during a page reload.
   api("/api/prefs", { method: "POST", body: JSON.stringify(localPrefs()), keepalive: true }).catch(() => {});
 }
 
 /** Adopt the server's prefs; reloads once when they differ from this browser's. */
 async function pullPrefs() {
   const remote = await api("/api/prefs");
+  const hadLegacyLayout = Object.hasOwn(remote, LEGACY_LAYOUT_KEY);
+  delete remote[LEGACY_LAYOUT_KEY];
   const local = localPrefs();
   if (!Object.keys(remote).length) {
     // First device after the switch to server prefs: seed it from here.
-    if (Object.keys(local).length) pushPrefs();
+    if (Object.keys(local).length || hadLegacyLayout) pushPrefs();
     return;
   }
-  if (sameKeys(remote, local)) return;
+  if (sameKeys(remote, local)) {
+    if (hadLegacyLayout) pushPrefs();
+    return;
+  }
   try {
     for (const key of Object.keys(local)) if (!(key in remote)) localStorage.removeItem(key);
     for (const [key, value] of Object.entries(remote)) localStorage.setItem(key, value);
   } catch {
     return; // storage blocked: keep what is on screen
   }
+  if (hadLegacyLayout) {
+    await api("/api/prefs", { method: "POST", body: JSON.stringify(localPrefs()) }).catch(() => {});
+  }
   location.reload();
-}
-
-// ── Panel layout ──────────────────────────────────────────────────────────
-// Panels live in columns the script builds, not in the markup: the number of
-// columns is the user's choice. Each column is its own flex container, so it
-// stacks independently and a tall panel in one leaves no gap in the next.
-// Order comes from dragging a panel by its <h2>, height from the browser's
-// native resize handle; the width is always the column's. Stored in
-// localStorage and mirrored to the server (see pullPrefs) so every device
-// shows the same layout.
-const LAYOUT_KEY = "teamup.layout";
-const MAX_COLUMNS = 6;
-// What a fresh browser gets: the narrow-content panels left, the wide ones right.
-const DEFAULT_COLUMNS = [
-  ["panel-usage", "panel-sessions", "panel-projects", "panel-tim", "panel-specialists"],
-  ["panel-roles", "panel-settings", "panel-cron-jobs", "panel-providers", "panel-clis", "panel-trending"],
-];
-const mainEl = $("main");
-const columns = () => [...mainEl.querySelectorAll(".column")];
-const panels = () => [...mainEl.querySelectorAll(".panel")];
-
-function readLayout() {
-  try {
-    return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function saveLayout() {
-  const size = {};
-  for (const panel of panels()) {
-    if (panel.style.height) size[panel.id] = { h: panel.style.height };
-  }
-  const order = columns().map((column) =>
-    [...column.querySelectorAll(".panel")].map((p) => p.id));
-  try {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ order, size }));
-    pushPrefs();
-  } catch {
-    // Private mode or a full quota: the layout just stops surviving reloads.
-  }
-}
-
-function setColumnCount(count) {
-  const wanted = Math.max(1, Math.min(MAX_COLUMNS, count));
-  let existing = columns();
-  while (existing.length < wanted) {
-    const column = document.createElement("div");
-    column.className = "column";
-    mainEl.append(column);
-    existing = columns();
-  }
-  // Removing a column must not remove its panels: they move to the last one
-  // that survives, in order.
-  while (existing.length > wanted) {
-    const doomed = existing.pop();
-    for (const panel of [...doomed.querySelectorAll(".panel")]) {
-      existing[existing.length - 1].append(panel);
-    }
-    doomed.remove();
-  }
-  mainEl.style.setProperty("--column-count", String(wanted));
-  $("#column-count").textContent = String(wanted);
-  $("#column-remove").disabled = wanted <= 1;
-  $("#column-add").disabled = wanted >= MAX_COLUMNS;
-}
-
-function applyLayout() {
-  const layout = readLayout();
-  // Older layouts keyed the order by column id, or were a flat array before
-  // there were columns at all. Neither says how many columns the user wanted,
-  // so they fall back to the default rather than being guessed at.
-  const order = Array.isArray(layout.order) && Array.isArray(layout.order[0])
-    ? layout.order
-    : DEFAULT_COLUMNS;
-
-  setColumnCount(order.length);
-  const built = columns();
-  const placed = new Set();
-  order.forEach((ids, index) => {
-    for (const id of ids) {
-      const panel = document.getElementById(id);
-      if (!panel?.classList.contains("panel")) continue;
-      built[index].append(panel);
-      placed.add(id);
-    }
-  });
-  // A panel the stored layout never heard of — a new one shipped since it was
-  // written — would otherwise stay outside every column and vanish from view.
-  // It goes where a fresh browser would have it, so merged or renamed panels
-  // land in a sensible column instead of piling up in the first.
-  for (const panel of [...mainEl.children].filter((el) => el.classList.contains("panel"))) {
-    if (placed.has(panel.id)) continue;
-    const home = DEFAULT_COLUMNS.findIndex((ids) => ids.includes(panel.id));
-    built[Math.min(Math.max(home, 0), built.length - 1)].append(panel);
-  }
-
-  for (const [id, size] of Object.entries(layout.size || {})) {
-    const panel = document.getElementById(id);
-    if (!panel) continue;
-    // Width is the column's; a stored `w` from before widths were fixed is ignored.
-    if (size.h) panel.style.height = size.h;
-  }
-}
-
-function movePanel(panel, place) {
-  place(panel);
-  saveLayout();
-}
-
-let draggedPanel = null;
-
-function enableLayoutEditing() {
-  for (const panel of panels()) {
-    const grip = panel.querySelector("h2");
-    if (!grip) continue;
-    grip.draggable = true;
-    grip.addEventListener("dragstart", (event) => {
-      draggedPanel = panel;
-      panel.classList.add("dragging");
-      event.dataTransfer.effectAllowed = "move";
-      // Firefox only starts a drag once some data is set.
-      event.dataTransfer.setData("text/plain", panel.id);
-    });
-    grip.addEventListener("dragend", () => {
-      panel.classList.remove("dragging");
-      draggedPanel = null;
-      mainEl.querySelectorAll(".drop-target")
-        .forEach((el) => el.classList.remove("drop-target"));
-    });
-  }
-
-  // Delegated to <main>: columns come and go, so per-column listeners would
-  // have to be rewired on every add.
-  mainEl.addEventListener("dragover", (event) => {
-    if (!draggedPanel) return;
-    const panel = event.target.closest?.(".panel");
-    const column = event.target.closest?.(".column");
-    if (!panel && !column) return;
-    if (panel === draggedPanel) return;
-    event.preventDefault();
-    for (const el of mainEl.querySelectorAll(".drop-target")) el.classList.remove("drop-target");
-    (panel || column).classList.add("drop-target");
-  });
-
-  mainEl.addEventListener("dragleave", (event) => {
-    event.target.closest?.(".panel, .column")?.classList.remove("drop-target");
-  });
-
-  mainEl.addEventListener("drop", (event) => {
-    if (!draggedPanel) return;
-    const panel = event.target.closest?.(".panel");
-    const column = event.target.closest?.(".column");
-    if (panel === draggedPanel) return;
-    if (panel) {
-      event.preventDefault();
-      // Which half of the target was hit decides above/below. Document order
-      // cannot answer that once a panel crosses into another column.
-      const box = panel.getBoundingClientRect();
-      const above = event.clientY < box.top + box.height / 2;
-      movePanel(draggedPanel, (moved) => panel[above ? "before" : "after"](moved));
-    } else if (column) {
-      // The blank space below the last panel parks it at the end, which is
-      // also the only way into a column emptied by dragging.
-      event.preventDefault();
-      movePanel(draggedPanel, (moved) => column.append(moved));
-    }
-    for (const el of mainEl.querySelectorAll(".drop-target")) el.classList.remove("drop-target");
-  });
-
-  // The native resize handle sets an inline height and fires no event of its
-  // own; a pointerup anywhere is the cheapest "the drag is over" signal.
-  document.addEventListener("pointerup", () => {
-    const layout = readLayout();
-    const changed = panels().some((panel) => {
-      const saved = layout.size?.[panel.id] || {};
-      return panel.style.height !== (saved.h || "");
-    });
-    if (changed) saveLayout();
-  });
-
-  $("#column-add").addEventListener("click", () => {
-    setColumnCount(columns().length + 1);
-    saveLayout();
-  });
-
-  $("#column-remove").addEventListener("click", () => {
-    setColumnCount(columns().length - 1);
-    saveLayout();
-  });
-
-  $("#reset-layout-btn").addEventListener("click", () => {
-    try {
-      localStorage.removeItem(LAYOUT_KEY);
-      pushPrefs();
-    } catch {
-      // Nothing stored means nothing to clear.
-    }
-    for (const panel of panels()) {
-      panel.style.height = "";
-    }
-    location.reload();
-  });
 }
 
 // ── Projects ──────────────────────────────────────────────────────────────
@@ -1691,6 +1583,8 @@ async function refreshTim() {
     status.textContent = err.message;
     return;
   }
+  dashboardMetrics.tim = data;
+  updateDashboardMetrics();
   // The panel and its nav link exist in the markup but stay hidden until TIM
   // answers, so a dashboard without TIM never shows an empty box. The class,
   // not the attribute: `nav a` sets display and would win over [hidden].
@@ -2038,6 +1932,7 @@ const PANEL_HELP = {
   "panel-trending": "New AI repos on GitHub from the newest daily report of the hermes trending scraper (~/.hermes/cron-outputs/framework-scout). Pick a section; hover a description for all of it.",
   "panel-clis": "Agent CLIs: version, harness verification, update/install/login. CLIs team-up can install but the roster doesn't run yet are rows you switch on in ✎. Hover a CLI name for its path; click a row for the job log.",
 };
+const panels = () => [...document.querySelectorAll("main .panel")];
 const PANEL_PREFS_KEY = "teamup.panelPrefs";
 const prefStyle = document.createElement("style");
 document.head.append(prefStyle);
@@ -2185,11 +2080,6 @@ async function probe() {
   }
 }
 
-// Panels live in the DOM while #app is hidden, so the layout wires up once
-// here rather than in probe() — the login path never runs probe() again, and
-// registering the drop handlers twice would undo every move.
-applyLayout();
-enableLayoutEditing();
 enablePanelChrome();
 
 probe();

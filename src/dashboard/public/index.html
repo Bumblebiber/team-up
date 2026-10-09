@@ -18,56 +18,81 @@
   </div>
 
   <div id="app" class="app hidden">
-    <header>
-      <h1>team-up</h1>
-      <nav>
-        <a href="#panel-usage">Usage</a>
-        <a href="#panel-sessions">Sessions</a>
-        <a href="#panel-projects">Projects</a>
-        <a href="#panel-tim" id="nav-tim" class="hidden">TIM</a>
-        <a href="#panel-roles">Roles &amp; Models</a>
-        <a href="#panel-specialists">Specialists</a>
-        <a href="#panel-settings">Settings</a>
-        <a href="#panel-cron-jobs">Cron-Jobs</a>
-        <a href="#panel-providers">Providers</a>
-        <a href="#panel-clis">CLIs</a>
-        <a href="#panel-trending">AI Trending</a>
-        <span class="column-controls">
-          <button type="button" id="column-remove" title="Remove the last column; its panels move left">−</button>
-          <span id="column-count">2</span> columns
-          <button type="button" id="column-add" title="Add a column">+</button>
-        </span>
-        <button type="button" id="reset-layout-btn" title="Restore the default panel order and size">Reset layout</button>
+    <aside class="sidebar">
+      <header class="sidebar-brand"><h1>team-up</h1></header>
+      <nav class="sidebar-nav" aria-label="Dashboard views">
+        <a href="#/overview" data-route="overview">Overview<span id="badge-overview" class="nav-badge hidden"></span></a>
+        <details class="nav-group" open>
+          <summary>Work</summary>
+          <a href="#/runs" data-route="runs">Sessions &amp; Runs<span id="badge-runs" class="nav-badge hidden"></span></a>
+          <a href="#/tim" data-route="tim" id="nav-tim" class="hidden">TIM<span id="badge-tim" class="nav-badge hidden"></span></a>
+          <a href="#/projects" data-route="projects">Projects</a>
+        </details>
+        <details class="nav-group" open>
+          <summary>Team</summary>
+          <a href="#/roles" data-route="roles">Roles &amp; Models</a>
+        </details>
+        <details class="nav-group" open>
+          <summary>System</summary>
+          <a href="#/providers" data-route="providers">Providers</a>
+          <a href="#/clis" data-route="clis">CLIs</a>
+          <a href="#/settings" data-route="settings">Settings</a>
+          <a href="#/cron" data-route="cron">Cron-Jobs</a>
+        </details>
+        <a href="#/trending" data-route="trending" class="nav-trending">AI Trending</a>
       </nav>
-    </header>
+    </aside>
 
-    <div id="admin-gate" class="admin-gate hidden">
-      <p>Write actions need a confirmation code from the terminal running <code>team-up dashboard</code>.</p>
-      <button type="button" id="admin-challenge-btn">Request code</button>
-      <form id="admin-confirm-form" class="hidden">
-        <input type="text" id="admin-code-input" placeholder="123-456" autocomplete="off">
-        <button type="submit">Confirm</button>
-      </form>
-      <p id="admin-status" class="muted"></p>
-    </div>
+    <div class="workspace">
+      <div id="admin-gate" class="admin-gate hidden">
+        <p>Write actions need a confirmation code from the terminal running <code>team-up dashboard</code>.</p>
+        <button type="button" id="admin-challenge-btn">Request code</button>
+        <form id="admin-confirm-form" class="hidden">
+          <input type="text" id="admin-code-input" placeholder="123-456" autocomplete="off">
+          <button type="submit">Confirm</button>
+        </form>
+        <p id="admin-status" class="muted"></p>
+      </div>
 
-    <main>
-      <section id="panel-usage" class="panel">
-        <h2>Usage</h2>
-        <div id="usage-grid" class="usage-grid"></div>
-        <div id="usage-repair-status" class="repair-status hidden"></div>
-        <div id="marked-list"></div>
-      </section>
+      <main>
+        <section class="view" data-view="overview">
+          <div class="kpi-grid" aria-label="Dashboard overview">
+            <a class="kpi-tile" href="#/runs">
+              <span>Active runs</span><strong id="kpi-active-runs">—</strong><small>Sessions &amp; Runs</small>
+            </a>
+            <a class="kpi-tile" href="#/runs">
+              <span>Waiting on you</span><strong id="kpi-waiting-runs">—</strong><small>Runs waiting on the human</small>
+            </a>
+            <a class="kpi-tile" href="#/runs">
+              <span>Finished, not collected</span><strong id="kpi-uncollected-runs">—</strong><small>Done or failed runs</small>
+            </a>
+            <a class="kpi-tile" href="#/overview">
+              <span>Worst usage window</span><strong id="kpi-worst-usage">—</strong><small id="kpi-worst-usage-detail">No usage windows</small>
+            </a>
+            <a class="kpi-tile hidden" id="kpi-tim-tile" href="#/tim">
+              <span>Open P0–P2 TIM tasks</span><strong id="kpi-tim-tasks">—</strong><small>View TIM work</small>
+            </a>
+          </div>
+          <section id="panel-usage" class="panel">
+            <h2>Usage</h2>
+            <div id="usage-grid" class="usage-grid"></div>
+            <div id="usage-repair-status" class="repair-status hidden"></div>
+            <div id="marked-list"></div>
+          </section>
+        </section>
 
-      <section id="panel-sessions" class="panel">
-        <h2>Sessions</h2>
+        <section class="view" data-view="runs">
+          <section id="panel-sessions" class="panel">
+        <h2>Sessions &amp; Runs</h2>
         <div id="tmux-table" class="table-wrap"></div>
         <h3>Runs <label class="muted"><input type="checkbox" id="active-only" checked> active only</label></h3>
         <div id="runs-table" class="table-wrap"></div>
         <div id="run-detail" class="detail hidden"></div>
-      </section>
+          </section>
+        </section>
 
-      <section id="panel-projects" class="panel">
+        <section class="view" data-view="projects">
+          <section id="panel-projects" class="panel">
         <h2>Projects</h2>
         <div class="toolbar">
           <label>Folder
@@ -81,9 +106,11 @@
         </div>
         <p id="projects-status" class="muted"></p>
         <div id="projects-table" class="table-wrap"></div>
-      </section>
+          </section>
+        </section>
 
-      <section id="panel-tim" class="panel hidden">
+        <section class="view" data-view="tim">
+          <section id="panel-tim" class="panel hidden">
         <h2>TIM</h2>
         <div class="toolbar">
           <span class="tabs" id="tim-tabs">
@@ -94,9 +121,11 @@
         </div>
         <p id="tim-status" class="muted"></p>
         <div id="tim-list" class="table-wrap"></div>
-      </section>
+          </section>
+        </section>
 
-      <section id="panel-roles" class="panel">
+        <section class="view" data-view="roles">
+          <section id="panel-roles" class="panel">
         <h2>Models</h2>
         <div class="toolbar">
           <span class="tabs" id="roles-tabs">
@@ -123,9 +152,9 @@
           <p id="catalogue-status" class="muted"></p>
           <div id="catalogue-list"></div>
         </div>
-      </section>
+          </section>
 
-      <section id="panel-specialists" class="panel">
+          <section id="panel-specialists" class="panel">
         <h2>Specialists</h2>
         <div class="toolbar">
           <select id="specialist-select"></select>
@@ -146,32 +175,42 @@
           </div>
           <p id="specialist-install-status" class="muted"></p>
         </details>
-      </section>
+          </section>
+        </section>
 
-      <section id="panel-settings" class="panel">
+        <section class="view" data-view="settings">
+          <section id="panel-settings" class="panel">
         <h2>Settings</h2>
         <p id="settings-status" class="muted"></p>
         <div id="settings-body"></div>
-      </section>
+          </section>
+        </section>
 
-      <section id="panel-cron-jobs" class="panel">
-        <h2>Cron-Jobs</h2>
-        <p id="cron-jobs-status" class="muted" aria-live="polite"></p>
-        <div id="cron-jobs-body" class="table-wrap"></div>
-      </section>
+        <section class="view" data-view="cron">
+          <section id="panel-cron-jobs" class="panel">
+            <h2>Cron-Jobs</h2>
+            <p id="cron-jobs-status" class="muted" aria-live="polite"></p>
+            <div id="cron-jobs-body" class="table-wrap"></div>
+          </section>
+        </section>
 
-      <section id="panel-providers" class="panel">
+        <section class="view" data-view="providers">
+          <section id="panel-providers" class="panel">
         <h2>Providers</h2>
         <div id="providers-list"></div>
-      </section>
+          </section>
+        </section>
 
-      <section id="panel-clis" class="panel">
+        <section class="view" data-view="clis">
+          <section id="panel-clis" class="panel">
         <h2>CLIs</h2>
         <div id="clis-table" class="table-wrap"></div>
         <pre id="cli-log" class="pane hidden"></pre>
-      </section>
+          </section>
+        </section>
 
-      <section id="panel-trending" class="panel">
+        <section class="view" data-view="trending">
+          <section id="panel-trending" class="panel">
         <h2>AI Trending</h2>
         <div class="toolbar">
           <select id="trending-section"></select>
@@ -179,8 +218,10 @@
         </div>
         <p id="trending-status" class="muted"></p>
         <div id="trending-table" class="table-wrap"></div>
-      </section>
-    </main>
+          </section>
+        </section>
+      </main>
+    </div>
   </div>
 
   <div id="term" class="term-backdrop hidden">

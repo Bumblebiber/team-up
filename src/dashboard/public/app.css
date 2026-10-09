@@ -94,41 +94,107 @@ body {
 }
 .error { color: var(--red); }
 
-.app header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+.app {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  min-height: 100vh;
+}
+.sidebar {
   position: sticky;
   top: 0;
-  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
 }
+.sidebar-brand { padding: 1rem; border-bottom: 1px solid var(--border); }
 .app h1 { margin: 0; font-size: 1.1rem; }
-nav { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-nav a {
-  display: inline-block;
-  text-decoration: none;
-  padding: 0.35rem 0.75rem;
-  border: 1px solid var(--border);
-  background: var(--bg);
+.sidebar-nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem;
+}
+.sidebar-nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 5px;
   color: var(--text);
-  border-radius: 4px;
+  text-decoration: none;
   cursor: pointer;
 }
-main {
-  display: grid;
-  /* stretch, so each column reaches the full height and its blank space below
-     the last panel stays a drop target. Panels do not grow with it: they are
-     flex children along the column axis. The count is the user's, set as an
-     inline custom property; minmax(0,…) lets columns shrink rather than
-     forcing the page to scroll sideways. */
-  grid-template-columns: repeat(var(--column-count, 2), minmax(0, 1fr));
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
+.sidebar-nav a:hover { background: var(--bg); }
+.sidebar-nav a[aria-current="page"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  font-weight: 600;
 }
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+}
+.nav-group:not([open]) > :not(summary) { display: none; }
+.nav-group > summary {
+  cursor: pointer;
+  margin: 0 0 0.15rem;
+  padding: 0 0.6rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.nav-trending { margin-top: auto; }
+.nav-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.nav-badge.is-red { background: var(--red); color: #fff; }
+.nav-badge.is-amber { background: var(--amber); color: #000; }
+.workspace { min-width: 0; min-height: 100vh; }
+main { min-width: 0; padding: 1rem; }
+.view:not(.is-active) { display: none; }
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+.kpi-tile {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+.kpi-tile:hover { border-color: var(--accent); }
+.kpi-tile > span { color: var(--muted); font-size: 0.8rem; }
+.kpi-tile strong { font-size: 1.35rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.kpi-tile small { color: var(--muted); font-size: 0.75rem; overflow-wrap: anywhere; }
 .panel {
   min-width: 0;
   padding: 0.75rem;
@@ -316,57 +382,39 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
 }
 tr.greyed td { opacity: 0.55; }
 
-@media (max-width: 400px) {
-  .app header { flex-direction: column; align-items: flex-start; }
-  nav { width: 100%; }
-  nav a { flex: 1; text-align: center; }
-}
-
-@media (max-width: 800px) {
-  /* One column on a phone whatever the stored count says. */
-  main { grid-template-columns: minmax(0, 1fr); }
-}
-
-/* Panels are user-arrangeable: the column sets the width, the browser's own
-   resize handle the height, the <h2> is the drag grip. */
-.panel {
-  resize: vertical;
-  overflow: auto;
-}
-/* Once the user has sized a panel, the panel is the one scroll box: the inner
-   tables drop their own height cap so a shrunk panel shows one scrollbar, not
-   two. An unsized panel keeps the caps, which stop it growing without end. */
-.panel[style*="height"] :is(.table-wrap, .detail) { max-height: none; }
-.panel > h2 {
-  cursor: grab;
-  user-select: none;
-}
-.panel.dragging { opacity: 0.4; }
-.panel.drop-target { outline: 2px dashed var(--muted); }
-
-/* Each column stacks on its own, so a tall panel on the left leaves no gap on
-   the right — that is the whole reason the panels are not direct grid items. */
-.column {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  min-width: 0;
-  /* A column must stay a drop target once its panels have been dragged away. */
-  min-height: 4rem;
-}
-.column.drop-target { outline: 2px dashed var(--muted); }
-
-#reset-layout-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font: inherit;
-  cursor: pointer;
-  padding: 0;
-}
-
-@media (max-width: 800px) {
-  .panel { resize: none; }
+@media (max-width: 700px) {
+  body { overflow-x: hidden; }
+  .app { display: flex; flex-direction: column; }
+  .sidebar {
+    position: relative;
+    height: auto;
+    overflow: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-brand { padding: 0.6rem 0.75rem; }
+  .sidebar-nav {
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding: 0.5rem 0.6rem;
+    scrollbar-width: thin;
+  }
+  .sidebar-nav > a, .nav-group { flex: 0 0 auto; }
+  .sidebar-nav > a { white-space: nowrap; }
+  .nav-group {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.1rem;
+    padding: 0;
+    border: 0;
+  }
+  .nav-group > summary { padding: 0 0.2rem; white-space: nowrap; }
+  .sidebar-nav .nav-group a { padding: 0.4rem 0.45rem; white-space: nowrap; }
+  .nav-trending { margin-top: 0; }
+  main { padding: 0.75rem; }
 }
 
 /* Specialists: chips for the capability names, a two-column list for the
@@ -393,16 +441,6 @@ details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; }
-
-.column-controls {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-.column-controls button {
-  padding: 0 0.4rem;
-  min-width: 1.6rem;
-}
-.column-controls button:disabled { opacity: 0.4; cursor: default; }
 
 /* TIM panel: three tabs, one <details> per project. */
 .tabs { display: inline-flex; gap: 0; }

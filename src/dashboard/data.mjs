@@ -1,5 +1,6 @@
 import { pick, limits } from "../roster/chain.mjs";
 import { SESSION_PREFIX } from "./projects.mjs";
+import { DEFAULT_UNCOLLECTED_DAYS } from "../runs/collect.mjs";
 
 export { RUN_ID_PATTERN, isValidRunId } from "../runs/runs.mjs";
 
@@ -62,6 +63,10 @@ export function buildRunRow(state, { heartbeatMtimeMs = null, now = Date.now() }
     heartbeatAge: formatAge(heartbeatMs),
     heartbeatAgeMs: heartbeatMs,
     active: !TERMINAL.has(state.status),
+    // Same window as `team-up runs uncollected`: hundreds of runs predate
+    // collection and would otherwise sit in this count forever.
+    uncollected: ["done", "failed"].includes(state.status) && !state.collected
+      && Date.parse(state.finishedAt ?? "") >= now - DEFAULT_UNCOLLECTED_DAYS * 86_400_000,
   };
 }
 

@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   joinTmuxSessions,
+  buildRunRow,
+  buildRunsView,
   buildUsageView,
   buildPickAllView,
   sanitizeForDashboard,
@@ -46,6 +48,31 @@ test("isValidRunId matches createRun format", () => {
   assert.ok(isValidRunId("20260922T100319Z-ri6m"));
   assert.ok(!isValidRunId("../evil"));
   assert.ok(!isValidRunId("not-a-run"));
+});
+
+test("runs view marks finished done or failed runs that have not been collected", () => {
+  const now = Date.parse("2026-10-09T12:00:00Z");
+  const recent = "2026-10-08T12:00:00Z";
+  const states = [
+    { runId: "done-open", status: "done", finishedAt: recent },
+    { runId: "failed-open", status: "failed", collected: false, finishedAt: recent },
+    { runId: "done-collected", status: "done", collected: true, finishedAt: recent },
+    { runId: "done-old", status: "done", finishedAt: "2026-09-01T12:00:00Z" },
+    { runId: "done-no-finish", status: "done" },
+    { runId: "cancelled", status: "cancelled", finishedAt: recent },
+    { runId: "active", status: "watching" },
+  ];
+  const { runs } = buildRunsView(states, { now });
+  assert.deepEqual(Object.fromEntries(runs.map((run) => [run.runId, run.uncollected])), {
+    "done-open": true,
+    "failed-open": true,
+    "done-collected": false,
+    "done-old": false,
+    "done-no-finish": false,
+    cancelled: false,
+    active: false,
+  });
+  assert.equal(buildRunRow(states[0], { now }).uncollected, true);
 });
 
 test("joinTmuxSessions links sessions to runs and flags orphans", () => {
