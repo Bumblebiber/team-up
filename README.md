@@ -55,7 +55,7 @@ installed in, then restart the session.
 ## Quick start
 
 ```bash
-node bin/team-up.mjs version   # 0.6.0
+node bin/team-up.mjs version   # 0.7.0
 node bin/team-up.mjs validate
 node bin/team-up.mjs pick --role <role>
 node bin/team-up.mjs specialist inspect ../team-up-with-tessa
