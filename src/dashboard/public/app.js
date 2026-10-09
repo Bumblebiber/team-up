@@ -38,8 +38,8 @@ function updateNavBadge(id, text, tone = "", visible = Boolean(text), title = ""
   badge.title = title;
 }
 
-// TIM tasks carry P0–P3 or the older low/medium/high/critical.
-const URGENT_PRIORITIES = new Set(["P0", "P1", "P2", "CRITICAL", "HIGH"]);
+// Rank 0–1 on TIM's scale (taskPriorityRank): P0/P1 or the older critical/high.
+const URGENT_PRIORITIES = new Set(["P0", "P1", "0", "1", "CRITICAL", "HIGH"]);
 
 function updateDashboardMetrics() {
   const { active = 0, waiting = 0, uncollected = 0, failedUncollected: failed = 0 } = dashboardMetrics.runCounts || {};
@@ -73,7 +73,7 @@ function updateDashboardMetrics() {
   const installed = Boolean(tim?.installed);
   const p1p2 = installed
     ? (tim.projects || []).flatMap((project) => project.items || [])
-      .filter((item) => item.kind === "task" && URGENT_PRIORITIES.has(String(item.priority || "").toUpperCase())).length
+      .filter((item) => item.kind === "task" && URGENT_PRIORITIES.has(String(item.priority || "").trim().toUpperCase())).length
     : 0;
   $("#kpi-tim-tile").classList.toggle("hidden", !installed);
   $("#kpi-tim-tasks").textContent = String(p1p2);
@@ -1586,7 +1586,6 @@ async function refreshTim() {
   // not the attribute: `nav a` sets display and would win over [hidden].
   $("#panel-tim").classList.toggle("hidden", !data.installed);
   $("#nav-tim").classList.toggle("hidden", !data.installed);
-  if (!data.installed && location.hash === "#/tim") location.hash = "#/overview";
   if (!data.installed) return;
 
   fillSelect($("#tim-launch-cli"), (data.clis || []).map((c) => ({ value: c, label: c })));

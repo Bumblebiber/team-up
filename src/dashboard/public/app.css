@@ -145,7 +145,7 @@ body {
   padding-top: 0.45rem;
   border-top: 1px solid var(--border);
 }
-.nav-group:not([open]) > :not(summary) { display: none; }
+.sidebar-nav .nav-group:not([open]) > :not(summary) { display: none; }
 .nav-group > summary {
   cursor: pointer;
   margin: 0 0 0.15rem;
@@ -231,7 +231,7 @@ tr.orphan td:first-child { color: var(--orphan); }
   font-size: 0.75rem;
   font-weight: 600;
 }
-.badge.red { background: var(--red); color: #fff; }
+.badge.red { background: #dc2626; color: #fff; } /* not var(--red): white on the dark-mode red is 2.8:1 */
 .badge.amber { background: var(--amber); color: #000; }
 .badge.stale { background: var(--muted); color: var(--bg); }
 /* STALE is a <button> in the usage grid; keep it looking like the badge it replaced. */
