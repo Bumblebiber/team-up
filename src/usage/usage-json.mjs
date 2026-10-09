@@ -214,8 +214,11 @@ export async function fetchClaudeUsageJson({
   } catch {
     return { ok: false, reason: "usage API returned an invalid response" };
   }
-  if (!windows["claude:week"]) {
-    return { ok: false, reason: "usage API response lacked the week window" };
+  // Both base windows or the PTY path: a dropped one would leave the gate on
+  // its previous value. A reading without a reset is kept, so an idle session
+  // does not trip this.
+  if (!windows["claude:session"] || !windows["claude:week"]) {
+    return { ok: false, reason: "usage API response lacked the session or week window" };
   }
   return { ok: true, windows };
 }
@@ -264,8 +267,8 @@ export async function fetchCodexUsageJson({
   } catch {
     return { ok: false, reason: "usage API returned an invalid response" };
   }
-  if (!windows["codex:weekly"]) {
-    return { ok: false, reason: "usage API response lacked the weekly window" };
+  if (!windows["codex:5h"] || !windows["codex:weekly"]) {
+    return { ok: false, reason: "usage API response lacked the 5h or weekly window" };
   }
   return { ok: true, windows };
 }
