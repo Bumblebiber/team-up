@@ -49,6 +49,7 @@ LEDGER = OUT_ROOT / "ledger.json"
 PROJECTS = HOME / "projects"
 HOST_CWD = REPO  # .tim-project -> P0073; the host session binds there
 TELEGRAM = HOME / ".hermes/bin/send-cron-telegram"
+LABEL = ENV.get("USAGE_SPENDER_LABEL") or "usage-spender"  # Telegram headline; a test run sets its own
 CLONES = TU_HOME / "spender" / "clones"
 # `tim` command as argv; TIM_CMD overrides until `tim read` ships on PATH.
 TIM = (ENV.get("TIM_CMD") or "tim").split()
@@ -511,7 +512,7 @@ def host_prompt(runs, verdicts, date, host):
                 + "".join(f" — {x}" for x in extra if x))
     windows = "\n".join(f"- {k}: {v}" for k, v in verdicts.items())
     return HOST_PROMPT.format(date=date, teamup=" ".join(TEAMUP), runs="\n".join(map(line, runs)), host=host,
-                              windows=windows, telegram=TELEGRAM)
+                              windows=windows, telegram=TELEGRAM, label=LABEL)
 
 
 def start_host(runs, verdicts, day_dir, host):

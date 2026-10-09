@@ -44,7 +44,7 @@ and `$TU runs collect <run_id> --note "<TIM id>"`.
 
 ## 2. Telegram
 One message for all runs: `{telegram} "<text>"`. Plain text, at most 15 lines:
-- first line: "usage-spender {date}"
+- first line: "{label} {date}"
 - one line per run: kind, repo/ref, model, result (n verified findings · draft PR url · local branch · failed)
 - then the quota windows above, one line each
 
