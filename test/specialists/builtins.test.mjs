@@ -5,7 +5,7 @@ import { builtinsForPermissions } from "../../src/specialists/launcher.mjs";
 // The adapter default is Read/Edit/Write/Glob/Grep for everyone. That handed a
 // `writes: false` researcher Edit, and gave a `network: true` one no way to
 // reach the network at all — the sandbox opened it, the tool list did not.
-test("builtin tools follow the approved permissions", () => {
+test("builtin tools follow package-declared permissions", () => {
   assert.deepEqual(
     builtinsForPermissions({ filesystem: "project_readonly", writes: false, network: true }),
     ["Read", "Glob", "Grep", "ToolSearch", "Skill", "Write", "WebFetch", "WebSearch"]

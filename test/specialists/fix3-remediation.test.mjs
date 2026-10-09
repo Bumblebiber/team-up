@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { installPackage, pinSpecialist } from "../../src/specialists/store.mjs";
-import { approveSpecialist, isApproved } from "../../src/specialists/approvals.mjs";
+import { installPackage } from "../../src/specialists/store.mjs";
+import { trustProjectPolicy } from "../../src/specialists/approvals.mjs";
 import { launch, cliSandboxConfig } from "../../src/specialists/launcher.mjs";
 import { resolveCommandMediation } from "../../src/specialists/adapters.mjs";
 import { normalizeBudget } from "../../src/specialists/budget.mjs";
@@ -126,10 +126,7 @@ test("setting mediated_commands true cannot bypass missing command broker capabi
     );
     assert.equal((await installPackage(pkg, env)).ok, true);
     writeProjectCommands(project);
-    assert.equal(
-      (await approveSpecialist({ idAtVersion: "testing.bypass@0.1.0", project, env })).ok,
-      true
-    );
+    assert.equal(trustProjectPolicy({ project, env }).ok, true);
 
     await assert.rejects(
       () =>
@@ -199,10 +196,6 @@ test("max_tokens is advisory and does not block launch", async () => {
       })
     );
     assert.equal((await installPackage(pkg, env)).ok, true);
-    assert.equal(
-      (await approveSpecialist({ idAtVersion: "testing.tokbypass@0.1.0", project, env })).ok,
-      true
-    );
 
     const result = await launch({
       specialistId: "testing.tokbypass",
@@ -234,45 +227,4 @@ test("max_tokens is advisory and does not block launch", async () => {
     fs.rmSync(project, { recursive: true, force: true });
     fs.rmSync(pkg, { recursive: true, force: true });
   }
-});
-
-test("approve v2 while project pinned to v1 (approve-before-repin)", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-pin-"));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-pp-"));
-  const env = { ...process.env, TEAM_UP_HOME: home };
-  const pkg1 = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-p1-"));
-  const pkg2 = fs.mkdtempSync(path.join(os.tmpdir(), "tu-f3-p2-"));
-  writePkg(pkg1, validManifest({ id: "testing.aprepin", version: "0.1.0" }));
-  writePkg(
-    pkg2,
-    validManifest({ id: "testing.aprepin", version: "0.2.0", display_name: "V2" })
-  );
-  assert.equal((await installPackage(pkg1, env)).ok, true);
-  assert.equal((await installPackage(pkg2, env)).ok, true);
-
-  const pin = pinSpecialist("testing.aprepin", { version: "0.1.0", project, env });
-  assert.equal(pin.ok, true);
-
-  const ap2 = await approveSpecialist({
-    idAtVersion: "testing.aprepin@0.2.0",
-    project,
-    env,
-  });
-  assert.equal(ap2.ok, true, ap2.errors?.join("; "));
-  assert.equal(ap2.approval.version, "0.2.0");
-  assert.ok(
-    isApproved({
-      project,
-      id: "testing.aprepin",
-      version: "0.2.0",
-      checksum: ap2.approval.checksum,
-      permissions: ap2.approval.permissions,
-      env,
-    })
-  );
-
-  fs.rmSync(home, { recursive: true, force: true });
-  fs.rmSync(project, { recursive: true, force: true });
-  fs.rmSync(pkg1, { recursive: true, force: true });
-  fs.rmSync(pkg2, { recursive: true, force: true });
 });

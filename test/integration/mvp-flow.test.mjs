@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installPackage } from "../../src/specialists/store.mjs";
-import { approveSpecialist, isApproved, approvalKey } from "../../src/specialists/approvals.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { normalizeRequest } from "../../src/specialists/request.mjs";
 import { materialize, exists } from "../../src/sandbox/materialize.mjs";
@@ -17,7 +16,7 @@ const REPOS = findSpecialistRepos(path.dirname(fileURLToPath(import.meta.url)));
 const TESSA = path.join(REPOS, "team-up-with-tessa");
 const REANNA = path.join(REPOS, "team-up-with-reanna");
 
-test("mvp flow: install, approve, assigned role, materialize, typed result, reapproval", async () => {
+test("mvp flow: install, assigned role, materialize and typed result", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-mvp-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "proj-"));
   const env = {
@@ -80,31 +79,7 @@ test("mvp flow: install, approve, assigned role, materialize, typed result, reap
     assert.equal(hInstall.ok, true, hInstall.errors?.join("; "));
     assert.equal(uInstall.ok, true);
 
-    fs.mkdirSync(path.join(project, ".team-up"), { recursive: true });
-    fs.writeFileSync(
-      path.join(project, ".team-up", "commands.json"),
-      JSON.stringify({
-        schema_version: 1,
-        commands: {
-          "project-test": {
-            argv: ["npm", "test"],
-            cwd: ".",
-            timeout_seconds: 1800,
-            environment: {},
-          },
-        },
-      })
-    );
-
-    // 3. Approve Tessa for temp project
-    const approval = await approveSpecialist({
-      idAtVersion: "testing.tessa@0.1.0",
-      project,
-      env,
-    });
-    assert.equal(approval.ok, true, approval.errors?.join("; "));
-
-    // 4–5. Resolve Tessa's role chain only
+    // 3. Resolve Tessa's role chain only
     const resolved = resolveProfile({
       roster,
       usage: {},
@@ -116,7 +91,7 @@ test("mvp flow: install, approve, assigned role, materialize, typed result, reap
     assert.equal(resolved.chain[0].effort, "xhigh");
     assert.ok(!resolved.chain.some((c) => ["high-a", "medium-a", "low-a"].includes(c.model)));
 
-    // 6. Create review request
+    // 4. Create review request
     const request = normalizeRequest({
       specialist_id: "testing.tessa",
       specialist_version: "0.1.0",
@@ -126,7 +101,7 @@ test("mvp flow: install, approve, assigned role, materialize, typed result, reap
     });
     assert.equal(request.permissions.writes, false);
 
-    // 7. Materialize only Tessa
+    // 5. Materialize only Tessa
     const out = path.join(home, "context-tessa");
     const tessaManifest = JSON.parse(fs.readFileSync(path.join(TESSA, "specialist.json"), "utf8"));
     await materialize({
@@ -139,7 +114,7 @@ test("mvp flow: install, approve, assigned role, materialize, typed result, reap
     assert.equal(await exists(path.join(out, "instructions.md")), true);
     assert.equal(await exists(path.join(out, "team-up-with-reanna")), false);
 
-    // 8. Typed result success
+    // 6. Typed result success
     process.env.TEAM_UP_RUNS = env.TEAM_UP_RUNS;
     const run = createRun({
       cwd: project,
@@ -156,51 +131,7 @@ test("mvp flow: install, approve, assigned role, materialize, typed result, reap
     });
     assert.equal(classified.status, "done");
 
-    // 9. Checksum change requires reapproval
-    assert.equal(
-      isApproved({
-        project,
-        id: "testing.tessa",
-        version: "0.1.0",
-        checksum: hInstall.checksum,
-        permissions: tessaManifest.permissions,
-        command_policy_checksum: approval.approval.command_policy_checksum,
-        env,
-      }),
-      true
-    );
-    assert.equal(
-      isApproved({
-        project,
-        id: "testing.tessa",
-        version: "0.1.0",
-        checksum: "sha256:deadbeef",
-        permissions: tessaManifest.permissions,
-        command_policy_checksum: approval.approval.command_policy_checksum,
-        env,
-      }),
-      false
-    );
-    assert.notEqual(
-      approvalKey({
-        project,
-        id: "testing.tessa",
-        version: "0.1.0",
-        checksum: hInstall.checksum,
-        permissions: tessaManifest.permissions,
-        command_policy_checksum: approval.approval.command_policy_checksum,
-      }),
-      approvalKey({
-        project,
-        id: "testing.tessa",
-        version: "0.1.0",
-        checksum: "sha256:deadbeef",
-        permissions: tessaManifest.permissions,
-        command_policy_checksum: approval.approval.command_policy_checksum,
-      })
-    );
-
-    // 10. Unavailable assignments
+    // 7. Unavailable assignments
     // Reanna is installed but has no role or chain.
     const unassigned = resolveProfile({ roster, usage: {}, specialistId: "testing.reanna" });
     assert.equal(unassigned.code, "PROFILE_UNAVAILABLE");

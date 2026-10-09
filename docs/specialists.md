@@ -8,53 +8,34 @@ executable install hooks.
 
 ```bash
 team-up specialist inspect <path>
-team-up specialist install <path> [--no-approve]
-team-up specialist approve <id>@<version> --global [--project <abs-path>]
-team-up specialist approve <id>@<version> --project <abs-path> [--clone-root <abs-path>]
-team-up specialist pin <id>@<version> [--project <abs-path>]
+team-up specialist install <path>
+team-up specialist trust-policy --project <absolute-path>
 team-up specialist uninstall <id>@<version>
 team-up specialist list
 team-up specialist run --id <id> --call-type review --objective "..." --project <abs> [--cli <cli>] [--model <model>]
 ```
 
-Every specialist works in every project. `install` therefore writes a global
-grant for the installed version itself — installing is the trust decision.
-`--no-approve` skips it, for the old explicit two-step. A global grant binds
-id + version + checksum + permissions but no path; a specialist that runs
-commands still needs each project's command policy trusted, which
-`approve <id>@<version> --global --project <abs>` does.
+Installing or reinstalling a specialist is the trust decision. Its declared
+files are copied into the content-addressed store and the installed version
+becomes the selected version. Reinstalling another version selects it. Launch
+still verifies the installed checksum every time before the package runs.
 
-A project grant binds project + id + version + checksum + permissions. Any checksum
-or permission change requires reapproval. The project is the directory the
-filesystem reports, not the spelling: a symlink and its target are one project
-and share one grant.
-
-`--clone-root` widens only the path half of that binding. A `pipeline` fan-out
-gives each parallel writer its own full clone, so an exact-path grant means one
-permission prompt per disposable directory. With a root, one grant covers every
-clone under it:
+A specialist with command permissions needs a trusted project policy. Review
+`.team-up/commands.json`, then run:
 
 ```bash
-team-up specialist approve coding.codey@0.1.2 \
-  --project ~/projects/team-up --clone-root ~/projects/tasks
+team-up specialist trust-policy --project /absolute/project/path
 ```
 
-Everything else is still measured at `--project` and still has to match at
-launch: package checksum, permissions, and the project command policy. A clone
-carrying a different policy is refused exactly as an unapproved project is, and
-a path that only looks like it is under the root — a symlink pointing out of it,
-or a `..` — is outside it. The root itself is never covered; it is the container
-the clones sit in, not a project. A root that does not exist, that is `/` or the
-home directory, or that contains `--project` is refused outright. Beyond that,
-name a root that holds nothing but disposable clones: within those limits, a
-root grant does say "anywhere under here".
+Trust is recorded by policy checksum. Editing the policy changes its checksum
+and requires another trust decision. A worktree without its own policy uses its
+main checkout's policy. When no policy exists, launch drops command permissions
+and records `commandsUnavailable`; invalid or incomplete policies fail closed.
 
-Installing a second version never repoints an existing selection — that would
-silently change what runs. `pin` is how the selection moves, and it is a
-separate step on purpose: approve the new version first, then pin it. Without
-`--project` the pin is global; with it, only that project sees the new version
-and everywhere else keeps the old one. `run` has no `--version` flag; the pin
-is the single place a version gets chosen.
+Installing another version selects it immediately. Uninstalling the selected
+version selects the newest remaining version; uninstalling the last version
+drops the specialist id. An unfinished run still blocks removal of the version
+it uses.
 
 `--cli` and `--model` override the cell for one run. A named model replaces the
 specialist's chain with that one cell; `--cli` alone narrows the chain to that
@@ -65,13 +46,11 @@ cell the gates already allowed. A named cell that no gate let through is refused
 with `RUNTIME_OVERRIDE_UNAVAILABLE` and the reason it was dropped, never
 silently swapped for another model.
 
-`uninstall` removes one version: its package tree, its index entry, any pin
-naming it, and any approval bound to it. It refuses while an unfinished run
-still depends on that version — a resume re-verifies the package checksum, so
-removing it early turns into an integrity failure later instead of an error
-now. It also refuses to remove the selected version while siblings remain, for
-the same reason install never repoints a selection: pin the replacement first.
-Removing the last version drops the id entirely.
+`uninstall` removes one version, its package tree, and its index entry. It
+refuses while an unfinished run still depends on that version — a resume
+re-verifies the package checksum, so removing it early turns into an integrity
+failure later instead of an error now. Removing the selected version selects
+the newest remaining version. Removing the last version drops the id entirely.
 
 ## Call types
 
@@ -89,7 +68,7 @@ text mailbox for compatibility. Specialist runs set
 ## Permissions and fail-closed policy
 
 Operating-system isolation via systemd-run `--user` is **best effort** for
-trusted, approved specialists — not a security boundary. The launcher always
+installed specialists — not a security boundary. The launcher always
 requests `enforcement: "best_effort"`: when a live semantic probe confirms
 ProtectHome / NoExecPaths, the worker runs under systemd-run; when the probe
 fails, launch continues without OS isolation and records an audit warning in
@@ -102,10 +81,10 @@ no-exec probe script is created outside `$HOME` so home-hiding alone cannot
 fake executable blocking.
 
 **Command allowlists are hard at the harness/broker boundary.** Project
-actions live in `.team-up/commands.json`, are checksum-bound on specialist
-approval, and are snapshotted under `~/.team-up/policy-snapshots/<runId>/`
-outside every worker-writable path. The MCP broker validates that approval
-checksum before each action and never re-reads a worker-modifiable copy.
+actions live in `.team-up/commands.json`, are trusted by checksum, and are
+snapshotted under `~/.team-up/policy-snapshots/<runId>/` outside every
+worker-writable path. The MCP broker validates that trusted checksum before
+each action and never re-reads a worker-modifiable copy.
 Authoritative launch descriptors live under
 `~/.team-up/launch-descriptors/<runId>/` (checksum sidecar); `STATE.json`
 holds only a `team-up.launch-ref/v1` pointer. Missing/corrupt descriptors or
@@ -136,7 +115,7 @@ verified:
 - non-empty `permissions.commands` or `command.*` / `shell.*` / `exec.*`
   tools → `ALLOWLIST_UNENFORCEABLE` (pre-broker gate)
 
-Starter manifests declare the approved design capabilities (including Tessa
+Starter manifests declare the designed capabilities (including Tessa
 `command.test` / `project-test` and advisory token targets). Only Claude can
 earn the context-isolation grant today (see `docs/capabilities.md`, "Harness
 contract"); Codex declares none, OpenCode has no `harness verify` runner, and

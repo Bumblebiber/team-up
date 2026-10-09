@@ -94,76 +94,6 @@ test("the literal all target is not a specialist id", () => {
   assert.equal(report.findings.some((f) => f.kind === "assignment_unknown_target"), false);
 });
 
-test("a superseded approval row is not a finding when a current one covers it", () => {
-  // Approving a new version leaves the old row behind. That is what an upgrade
-  // looks like, not a problem: the launcher matches on checksum, so the old row
-  // is never selected. Reporting it made every upgrade produce a finding.
-  const report = withHome(
-    {
-      "specialists-index.json": INDEX,
-      "approvals.json": {
-        approvals: {
-          old: { id: "testing.tessa", version: "0.0.9", checksum: "sha256:old", project: "/p" },
-          now: { id: "testing.tessa", version: "0.1.0", checksum: "sha256:aaa", project: "/p" },
-        },
-      },
-    },
-    diagnose
-  );
-  assert.equal(report.findings.some((f) => f.kind === "approval_stale_version"), false);
-});
-
-test("a superseded row for a different project is still reported", () => {
-  const report = withHome(
-    {
-      "specialists-index.json": INDEX,
-      "approvals.json": {
-        approvals: {
-          old: { id: "testing.tessa", version: "0.0.9", checksum: "sha256:old", project: "/other" },
-          now: { id: "testing.tessa", version: "0.1.0", checksum: "sha256:aaa", project: "/p" },
-        },
-      },
-    },
-    diagnose
-  );
-  const finding = report.findings.find((f) => f.kind === "approval_stale_version");
-  assert.ok(finding, "coverage is per project, not per specialist");
-});
-
-test("a stale approval checksum and a vanished project are both reported", () => {
-  const report = withHome(
-    {
-      "specialists-index.json": INDEX,
-      "approvals.json": {
-        approvals: {
-          k1: {
-            id: "testing.tessa",
-            version: "0.0.9",
-            checksum: "sha256:old",
-            project: "/definitely/not/here",
-          },
-        },
-      },
-    },
-    diagnose
-  );
-  assert.ok(report.findings.some((f) => f.kind === "approval_stale_version"));
-  assert.ok(report.findings.some((f) => f.kind === "approval_missing_project"));
-});
-
-test("a pin left behind by a rename is reported", () => {
-  const report = withHome(
-    {
-      "specialists-index.json": INDEX,
-      "specialists-pins.json": {
-        pins: { "testing.hannes": { id: "testing.hannes", version: "0.1.0", checksum: "sha256:aaa" } },
-      },
-    },
-    diagnose
-  );
-  assert.ok(report.findings.some((f) => f.kind === "pin_unknown_specialist"));
-});
-
 function installedPackage(home, manifest) {
   const dir = path.join(home, "specialists", manifest.id, manifest.version, "abc");
   fs.mkdirSync(dir, { recursive: true });
@@ -220,7 +150,7 @@ function installExample(home, id, permissions) {
 }
 
 test("a specialist whose chain no roster cell can reach is reported before launch", () => {
-  // coding.codey was built, published, installed and approved on this host and
+  // coding.codey was built, published and installed on this host and
   // could never have run. Nothing between building it and running it said so.
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-doctor-"));
   try {

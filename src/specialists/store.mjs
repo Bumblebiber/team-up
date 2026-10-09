@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { teamUpHome, runsPath, specialistApprovalsPath } from "../paths.mjs";
+import { teamUpHome, runsPath } from "../paths.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import {
   validateManifest,
@@ -26,10 +26,6 @@ function indexPath(env = process.env) {
   return path.join(teamUpHome(env), "specialists-index.json");
 }
 
-function pinsPath(env = process.env) {
-  return path.join(teamUpHome(env), "specialists-pins.json");
-}
-
 function loadIndex(env = process.env) {
   try {
     return JSON.parse(fs.readFileSync(indexPath(env), "utf8"));
@@ -43,17 +39,34 @@ function saveIndex(index, env = process.env) {
   atomicWriteJson(indexPath(env), index);
 }
 
-function loadPins(env = process.env) {
-  try {
-    return JSON.parse(fs.readFileSync(pinsPath(env), "utf8"));
-  } catch (e) {
-    if (e.code === "ENOENT") return { pins: {} };
-    throw e;
+function compareInstalledVersions(a, b) {
+  const parse = (value) => {
+    const match = String(value).match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
+    if (!match) return null;
+    return { core: match.slice(1, 4).map(Number), prerelease: match[4]?.split(".") ?? null };
+  };
+  const left = parse(a);
+  const right = parse(b);
+  if (!left || !right) return new Intl.Collator("en", { numeric: true, sensitivity: "base" }).compare(a, b);
+  for (let i = 0; i < 3; i++) {
+    if (left.core[i] !== right.core[i]) return left.core[i] - right.core[i];
   }
-}
-
-function savePins(pins, env = process.env) {
-  atomicWriteJson(pinsPath(env), pins);
+  if (left.prerelease === null) return right.prerelease === null ? 0 : 1;
+  if (right.prerelease === null) return -1;
+  for (let i = 0; i < Math.max(left.prerelease.length, right.prerelease.length); i++) {
+    const x = left.prerelease[i];
+    const y = right.prerelease[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    if (x === y) continue;
+    const xn = /^\d+$/.test(x) ? Number(x) : null;
+    const yn = /^\d+$/.test(y) ? Number(y) : null;
+    if (xn !== null && yn !== null) return xn - yn;
+    if (xn !== null) return -1;
+    if (yn !== null) return 1;
+    return x.localeCompare(y);
+  }
+  return 0;
 }
 
 function copyDeclaredFiles(src, dest, files) {
@@ -162,70 +175,21 @@ export async function installPackage(packageDir, env = process.env) {
   if (existingIdx === -1) versions.push(versionEntry);
   else versions[existingIdx] = versionEntry;
 
-  // First install selects; later installs never silently replace selection/pin.
-  if (!index.specialists?.[manifest.id]) {
-    index.specialists[manifest.id] = versionEntry;
-  }
+  // Installing is the selection decision, including when a newer version is
+  // installed beside an existing one.
+  index.specialists[manifest.id] = versionEntry;
 
   saveIndex(index, env);
   return { ok: true, id: manifest.id, version: manifest.version, checksum, path: dest };
-}
-
-export function pinSpecialist(id, { version, checksum, project, env = process.env } = {}) {
-  assertSafeSpecialistSegment(id, "id");
-  if (version) assertSafeSpecialistSegment(version, "version");
-  const index = loadIndex(env);
-  const versions = index.versions?.[id] || [];
-  let entry = versions.find((v) =>
-    (!version || v.version === version) && (!checksum || v.checksum === checksum)
-  );
-  if (!entry && index.specialists?.[id]) {
-    entry = index.specialists[id];
-    if (version && entry.version !== version) entry = null;
-    if (checksum && entry?.checksum !== checksum) entry = null;
-  }
-  if (!entry) return { ok: false, errors: [`no installed version for ${id}`] };
-  const pins = loadPins(env);
-  if (!pins.pins) pins.pins = {};
-  const key = project ? `${id}::${path.resolve(project)}` : id;
-  pins.pins[key] = {
-    id,
-    version: entry.version,
-    checksum: entry.checksum,
-    path: entry.path,
-    project: project ? path.resolve(project) : null,
-    pinned_at: new Date().toISOString(),
-  };
-  // Global pin also updates selected
-  if (!project) {
-    pins.pins[id] = pins.pins[key];
-    index.specialists[id] = entry;
-    saveIndex(index, env);
-  }
-  savePins(pins, env);
-  return { ok: true, pin: pins.pins[key] };
 }
 
 export function listInstalled(env = process.env) {
   return loadIndex(env);
 }
 
-export function resolveInstalled(id, { version, checksum, project, env = process.env } = {}) {
+export function resolveInstalled(id, { version, checksum, env = process.env } = {}) {
   assertSafeSpecialistSegment(id, "id");
   if (version) assertSafeSpecialistSegment(version, "version");
-  const pins = loadPins(env);
-  if (project) {
-    const key = `${id}::${path.resolve(project)}`;
-    const pin = pins.pins?.[key];
-    if (pin) {
-      if (version && pin.version !== version) return null;
-      if (checksum && pin.checksum !== checksum) return null;
-      return pin;
-    }
-  }
-  const globalPin = pins.pins?.[id];
-  if (globalPin && !version && !checksum) return globalPin;
-
   const index = loadIndex(env);
   if (version || checksum) {
     const hit = (index.versions?.[id] || []).find((v) =>
@@ -321,12 +285,10 @@ export function activeRunSpecialistReferences({ env = process.env } = {}) {
 }
 
 /**
- * Remove one installed specialist version: its pool directory, its index
- * entry, and any pin naming it.
+ * Remove one installed specialist version and update the selected entry.
  *
- * Refuses while it is the selected version and siblings remain — install
- * never repoints a selection silently, and neither should removal. Pin
- * another version first. Refuses while an unfinished run depends on it.
+ * Removing the selected version selects the newest remaining version.
+ * Refuses while an unfinished run depends on it.
  */
 export function uninstallSpecialist(id, { version, env = process.env, activeRuns } = {}) {
   assertSafeSpecialistSegment(id, "id");
@@ -348,16 +310,7 @@ export function uninstallSpecialist(id, { version, env = process.env, activeRuns
     };
   }
 
-  const selected = index.specialists?.[id];
   const remaining = versions.filter((v) => v.version !== version);
-  if (selected?.version === version && remaining.length) {
-    return {
-      ok: false,
-      errors: [
-        `${id}@${version} is the selected version; pin another first (team-up specialist pin ${id}@${remaining[0].version})`,
-      ],
-    };
-  }
 
   // Remove the version tree, then the records. Losing the tree while the index
   // still advertises it would be a package that fails integrity on next use.
@@ -372,44 +325,16 @@ export function uninstallSpecialist(id, { version, env = process.env, activeRuns
     // Last version gone: drop the now-empty id directory too.
     fs.rmSync(path.join(specialistsRoot(env), id), { recursive: true, force: true });
   }
+  if (index.specialists?.[id]?.version === version && remaining.length) {
+    const newest = [...remaining].sort((a, b) => compareInstalledVersions(b.version, a.version))[0];
+    index.specialists[id] = newest;
+  }
   saveIndex(index, env);
-
-  const pins = loadPins(env);
-  const dropped = [];
-  for (const [key, pin] of Object.entries(pins.pins || {})) {
-    if (pin?.id === id && pin?.version === version) {
-      delete pins.pins[key];
-      dropped.push(key);
-    }
-  }
-  if (dropped.length) savePins(pins, env);
-
-  // An approval binds project + id + version + checksum. Leaving one behind
-  // for a package that no longer exists is a record nothing can satisfy and
-  // nothing will ever clear.
-  const droppedApprovals = [];
-  let approvals;
-  try {
-    approvals = JSON.parse(fs.readFileSync(specialistApprovalsPath(env), "utf8"));
-  } catch {
-    approvals = null;
-  }
-  if (approvals?.approvals) {
-    for (const [key, record] of Object.entries(approvals.approvals)) {
-      if (record?.id === id && record?.version === version) {
-        delete approvals.approvals[key];
-        droppedApprovals.push(key);
-      }
-    }
-    if (droppedApprovals.length) atomicWriteJson(specialistApprovalsPath(env), approvals);
-  }
 
   return {
     ok: true,
     id,
     version,
     removed_path: dir,
-    dropped_pins: dropped,
-    dropped_approvals: droppedApprovals,
   };
 }

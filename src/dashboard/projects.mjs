@@ -7,10 +7,9 @@ import { listTmuxSessions } from "../runs/tmux.mjs";
 import {
   COMMAND_POLICY_FILE,
   validateCommandPolicy,
-  resolveCommandPolicyForApproval,
+  resolveProjectCommandPolicy,
 } from "../commands/policy.mjs";
-import { listInstalled, loadInstalledManifest } from "../specialists/store.mjs";
-import { approveSpecialist, isApproved } from "../specialists/approvals.mjs";
+import { isPolicyTrusted, trustProjectPolicy } from "../specialists/approvals.mjs";
 
 export const SESSION_PREFIX = "team-up-proj-";
 
@@ -161,7 +160,7 @@ export function projectPolicy(dir) {
 
 /**
  * Create `.team-up/commands.json` — never overwrite it. Replacing a policy
- * silently voids every approval bound to its checksum, so that stays a
+ * silently invalidates the trust record for its checksum, so that stays a
  * deliberate edit in the repo. Nothing is committed: the file shows up as an
  * untracked change in the project's own checkout.
  */
@@ -199,75 +198,33 @@ export function writeProjectPolicy({ dir, projectsDir, policy = null } = {}) {
   return { ok: true, path: file };
 }
 
-// ── approvals ──
-
-/**
- * Every installed specialist, measured against one project the way the
- * launcher measures it: the project's pin, its command policy checksum, the
- * exact grant. `reason` is the policy error that blocks an approval outright.
- */
-function projectSpecialists(dir, ids, env) {
-  return ids.map((id) => {
-    let loaded;
-    try {
-      loaded = loadInstalledManifest(id, { project: dir, env });
-    } catch {
-      return null;
-    }
-    if (!loaded) return null;
-    const permissions = loaded.manifest?.permissions;
-    const row = { id, version: loaded.version, needs_policy: (permissions?.commands || []).length > 0 };
-    try {
-      let checksum = null;
-      try {
-        ({ checksum } = resolveCommandPolicyForApproval({ project: dir, permissions, env }));
-      } catch (e) {
-        // No policy: the launcher starts it without command tools.
-        if (e.code !== "COMMAND_POLICY_MISSING") throw e;
-      }
-      return {
-        ...row,
-        approved: isApproved({
-          project: dir,
-          id,
-          version: loaded.version,
-          checksum: loaded.checksum,
-          permissions,
-          command_policy_checksum: checksum,
-          env,
-        }),
-      };
-    } catch (e) {
-      return { ...row, approved: false, reason: e.code || "COMMAND_POLICY_INVALID" };
-    }
-  }).filter(Boolean);
+/** Policy state plus checksum trust, including an inherited main-checkout policy. */
+function projectPolicyStatus(dir, env) {
+  const own = projectPolicy(dir);
+  try {
+    const loaded = resolveProjectCommandPolicy(dir);
+    const inherited = path.resolve(loaded.path) !== path.resolve(dir, COMMAND_POLICY_FILE);
+    return {
+      ...own,
+      ...(inherited ? { state: "inherited", source: loaded.path } : {}),
+      checksum: loaded.checksum,
+      trusted: isPolicyTrusted({ checksum: loaded.checksum, env }),
+    };
+  } catch {
+    return { ...own, trusted: null };
+  }
 }
 
-const installedIds = (env) => Object.keys(listInstalled(env).specialists || {}).sort();
-
-/** Approve every not-yet-approved specialist (or just `id`) globally, trusting this project's policy. */
-export async function approveProjectSpecialists({ dir, projectsDir, id = null, env = process.env } = {}) {
+/** Trust the policy of one project in the dashboard's collecting folder. */
+export function trustProjectPolicyForProject({ dir, projectsDir, env = process.env } = {}) {
   const target = resolveProjectDir(dir, projectsDir);
   if (!target.ok) return target;
-  const results = [];
-  for (const s of projectSpecialists(target.real, installedIds(env), env)) {
-    if (s.approved || (id && s.id !== id)) continue;
-    // A policy problem fails the approval anyway; say so without trying.
-    if (s.reason) {
-      results.push({ id: s.id, version: s.version, ok: false, error: s.reason });
-      continue;
-    }
-    // Global: a specialist approved once works in every project. The project
-    // only contributes its command policy, which this trusts.
-    const r = await approveSpecialist({ idAtVersion: `${s.id}@${s.version}`, project: target.real, global: true, env });
-    results.push({
-      id: s.id,
-      version: s.version,
-      ok: r.ok,
-      ...(r.ok ? {} : { error: (r.errors || []).join("; ") }),
-    });
-  }
-  return { ok: true, results };
+  const result = trustProjectPolicy({ project: target.real, env });
+  return result.ok ? result : {
+    ...result,
+    status: 400,
+    error: (result.errors || []).join("; "),
+  };
 }
 
 /** Branch and dirtiness in one call — `status --branch` reports both. */
@@ -291,7 +248,6 @@ function gitInfo(dir, exec) {
 export function listProjects(dirInput, { exec = execFileSync, sessions = null, env = process.env } = {}) {
   const dir = resolveCollectingDir(dirInput);
   const live = sessions ?? listTmuxSessions({ exec });
-  const ids = installedIds(env);
   const projects = fs.readdirSync(dir)
     .filter((name) => !name.startsWith("."))
     .map((name) => {
@@ -312,8 +268,7 @@ export function listProjects(dirInput, { exec = execFileSync, sessions = null, e
         git,
         ...(git ? gitInfo(full, exec) : { branch: null, dirty: false }),
         sessions: live.filter((s) => s.startsWith(`${SESSION_PREFIX}${slug(name)}-`)).sort(),
-        policy: projectPolicy(full),
-        specialists: projectSpecialists(full, ids, env),
+        policy: projectPolicyStatus(full, env),
       };
     })
     .filter(Boolean)

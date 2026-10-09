@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { installPackage } from "../../src/specialists/store.mjs";
-import { approveSpecialist, isApproved } from "../../src/specialists/approvals.mjs";
+import { isPolicyTrusted, trustProjectPolicy } from "../../src/specialists/approvals.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { commandPolicyChecksum } from "../../src/commands/policy.mjs";
 import { normalizeBudget } from "../../src/specialists/budget.mjs";
@@ -87,26 +87,12 @@ test("runtime supervision fake-harness integration", async () => {
 
     const inst = await installPackage(TESSA, env);
     assert.equal(inst.ok, true, inst.errors?.join("; "));
-    const ap = await approveSpecialist({
-      idAtVersion: "testing.tessa@0.1.0",
-      project,
-      env,
-    });
-    assert.equal(ap.ok, true, ap.errors?.join("; "));
+    const trusted = trustProjectPolicy({ project, env });
+    assert.equal(trusted.ok, true, trusted.errors?.join("; "));
     const checksum = commandPolicyChecksum(policy);
-    assert.equal(ap.approval.command_policy_checksum, checksum);
-    assert.equal(
-      isApproved({
-        project,
-        id: "testing.tessa",
-        version: "0.1.0",
-        checksum: inst.checksum,
-        permissions: ap.approval.permissions,
-        command_policy_checksum: "sha256:changed",
-        env,
-      }),
-      false
-    );
+    assert.equal(trusted.checksum, checksum);
+    assert.equal(isPolicyTrusted({ checksum, env }), true);
+    assert.equal(isPolicyTrusted({ checksum: "sha256:changed", env }), false);
 
     const resolved = resolveProfile({
       roster,

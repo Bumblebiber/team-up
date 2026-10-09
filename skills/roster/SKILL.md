@@ -57,8 +57,8 @@ tty. **`clis.claude.cmd` must include `--dangerously-skip-permissions`** (before
 `--model`). This is a **config requirement** for tmux workers, not a soft
 optional: without it Claude blocks on permission prompts and the mailbox never
 reaches `done`. Specialist launches (`team-up specialist run`) strip the flag
-themselves and pin a tool allowlist plus the command broker instead, so the
-same `cmd` serves both.
+themselves and enforce a package-derived tool allowlist plus the command broker,
+so the same `cmd` serves both.
 
 ```json
 "claude": { "cmd": ["claude", "--dangerously-skip-permissions", "--model", "{model}", "{prompt}"] }

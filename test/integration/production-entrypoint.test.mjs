@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { installPackage } from "../../src/specialists/store.mjs";
-import { approveSpecialist } from "../../src/specialists/approvals.mjs";
+import { trustProjectPolicy } from "../../src/specialists/approvals.mjs";
 import { launchSpecialist } from "../../src/specialists/launcher.mjs";
 import { loadState, runDir } from "../../src/runs/runs.mjs";
 import { createAttempt } from "../../src/supervisor/attempts.mjs";
@@ -239,10 +239,7 @@ async function withEntrypointEnv(fn) {
   fs.mkdirSync(path.join(pkg, "evals"), { recursive: true });
   fs.writeFileSync(path.join(pkg, "evals", "evals.json"), "[]");
   assert.equal((await installPackage(pkg, env)).ok, true);
-  assert.equal(
-    (await approveSpecialist({ idAtVersion: "testing.entrypoint@0.1.0", project, env })).ok,
-    true
-  );
+  assert.equal(trustProjectPolicy({ project, env }).ok, true);
 
   try {
     return await fn({ home, project, env, tmuxLog, binDir });

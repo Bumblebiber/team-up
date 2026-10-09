@@ -148,8 +148,19 @@ export function policySnapshotRoot(runId, env = process.env) {
   return path.join(teamUpHome(env), "policy-snapshots", runId);
 }
 
+/** Resolve a project's policy, falling back to its main checkout for a worktree. */
+export function resolveProjectCommandPolicy(project) {
+  try {
+    return loadProjectCommandPolicy(project);
+  } catch (e) {
+    const main = e.code === "COMMAND_POLICY_MISSING" ? mainCheckoutOf(project) : null;
+    if (!main) throw e;
+    return loadProjectCommandPolicy(main);
+  }
+}
+
 /**
- * Write the authoritative approved snapshot outside every worker-writable path.
+ * Write the authoritative trusted snapshot outside every worker-writable path.
  * Optionally mirrors a non-authoritative copy under workerVisibleDir for humans.
  */
 export function snapshotCommandPolicy({
@@ -194,13 +205,13 @@ export function snapshotCommandPolicy({
 export function assertPolicyChecksum(policy, expectedChecksum) {
   const actual = commandPolicyChecksum(policy);
   if (!expectedChecksum) {
-    const err = new Error("POLICY_CHECKSUM_REQUIRED: approval-bound checksum missing");
+    const err = new Error("POLICY_CHECKSUM_REQUIRED: trusted checksum missing");
     err.code = "POLICY_CHECKSUM_REQUIRED";
     throw err;
   }
   if (actual !== expectedChecksum) {
     const err = new Error(
-      `POLICY_CHECKSUM_MISMATCH: snapshot ${actual} != approved ${expectedChecksum}`
+      `POLICY_CHECKSUM_MISMATCH: snapshot ${actual} != trusted ${expectedChecksum}`
     );
     err.code = "POLICY_CHECKSUM_MISMATCH";
     err.actual = actual;
@@ -221,7 +232,7 @@ export function actionFor(policy, actionId) {
 }
 
 /**
- * Resolve policy checksum for approval binding.
+ * Resolve policy checksum for a specialist's declared command actions.
  * Specialists with no declared commands bind null (no project policy required).
  */
 export function resolveCommandPolicyForApproval({ project, permissions, env: _env } = {}) {
@@ -229,17 +240,10 @@ export function resolveCommandPolicyForApproval({ project, permissions, env: _en
   if (!commands.length) {
     return { checksum: null, policy: null };
   }
-  let loaded;
-  try {
-    loaded = loadProjectCommandPolicy(project);
-  } catch (e) {
-    // A worktree on a branch older than the policy has no file of its own;
-    // the checkout it belongs to does. A worktree that carries its own file
-    // is measured by that file, so a changed policy still needs approval.
-    const main = e.code === "COMMAND_POLICY_MISSING" ? mainCheckoutOf(project) : null;
-    if (!main) throw e;
-    loaded = loadProjectCommandPolicy(main);
-  }
+  // A worktree on a branch older than the policy has no file of its own;
+  // the checkout it belongs to does. A worktree that carries its own file
+  // is measured by that file, so a changed policy needs a new trust decision.
+  const loaded = resolveProjectCommandPolicy(project);
   for (const actionId of commands) {
     if (!loaded.policy.commands[actionId]) {
       const err = new Error(

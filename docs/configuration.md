@@ -73,9 +73,14 @@ Specialists that declare `permissions.commands` resolve only CLI cells whose
 verified harness advertises `team-up.command-broker/v1`. Otherwise the
 profile fails with `PROFILE_UNAVAILABLE` before a run is created.
 
-Trusted specialist launches use **best-effort** OS isolation. Missing home
+Installed specialist launches use **best-effort** OS isolation. Missing home
 CLI runtime paths still fail with `SANDBOX_RUNTIME_UNAVAILABLE` when
 isolation is applied. See `docs/command-broker.md`.
+
+Specialists with `permissions.commands` need a project `.team-up/commands.json`
+whose checksum has been trusted with
+`team-up specialist trust-policy --project <absolute-path>`. A missing policy
+removes command permissions for that launch; an untrusted policy blocks launch.
 
 ## Limits
 

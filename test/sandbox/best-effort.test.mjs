@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 import { wrapWithSandbox, createProbeArtifacts, evaluateProbeOutput } from "../../src/sandbox/systemd.mjs";
 import { installPackage } from "../../src/specialists/store.mjs";
-import { approveSpecialist } from "../../src/specialists/approvals.mjs";
 import { launch } from "../../src/specialists/launcher.mjs";
 
 test("ineffective host sandbox falls back with an audit warning", () => {
@@ -128,10 +127,6 @@ test("specialist launch proceeds with best-effort when probe fails", async () =>
     fs.mkdirSync(path.join(pkg, "evals"), { recursive: true });
     fs.writeFileSync(path.join(pkg, "evals", "evals.json"), "[]");
     assert.equal((await installPackage(pkg, env)).ok, true);
-    assert.equal(
-      (await approveSpecialist({ idAtVersion: "testing.beste@0.1.0", project, env })).ok,
-      true
-    );
     const result = await launch({
       specialistId: "testing.beste",
       callType: "consult",

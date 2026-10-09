@@ -130,7 +130,7 @@ test("an assignment pointing at a package the pool lacks is reported, not thrown
     assert.deepEqual(codey.assigned, []);
   }));
 
-test("only approvals matching the installed checksum count", () =>
+test("legacy specialist rows do not appear in the Specialists panel", () =>
   withHome((home) => {
     fs.writeFileSync(
       path.join(home, "approvals.json"),
@@ -142,7 +142,8 @@ test("only approvals matching the installed checksum count", () =>
       }),
     );
     const [codey] = buildSpecialistsView().specialists;
-    assert.deepEqual(codey.approved_for, ["/home/bbbee/projects/team-up"]);
+    assert.equal(Object.hasOwn(codey, "approved_for"), false);
+    assert.equal(Object.hasOwn(codey, "approved_everywhere"), false);
   }));
 
 test("only https github URLs are accepted as an install source", () => {

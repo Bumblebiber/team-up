@@ -20,7 +20,7 @@ import {
   listProjects,
   startProjectSession,
   writeProjectPolicy,
-  approveProjectSpecialists,
+  trustProjectPolicyForProject,
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
 import { readTrending, trendingDir } from "./trending.mjs";
@@ -30,8 +30,7 @@ import { bringToLatest } from "../roster/latest.mjs";
 import { loadModelsStore } from "../collectors/models-store.mjs";
 import { atomicWriteText } from "../json-store.mjs";
 import { enableCapability, disableCapability } from "../capabilities/assignments.mjs";
-import { pinSpecialist, loadInstalledManifest } from "../specialists/store.mjs";
-import { approveSpecialist } from "../specialists/approvals.mjs";
+import { loadInstalledManifest } from "../specialists/store.mjs";
 import { assertSafeSpecialistSegment } from "../specialists/safe-id.mjs";
 import {
   isValidRunId,
@@ -931,40 +930,6 @@ export function createDashboardServer({
       return;
     }
 
-    const pinMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/pin$/);
-    if (req.method === "POST" && pinMatch) {
-      if (!requireWriteAccess(req, res)) return;
-      const specialistId = decodeURIComponent(pinMatch[1]);
-      try {
-        assertSafeSpecialistSegment(specialistId, "id");
-        const body = JSON.parse(await readBody(req) || "{}");
-        // installPackage leaves a newer version installed but unselected; this
-        // is the only way in from the panel, as `specialist pin` is from the CLI.
-        const result = pinSpecialist(specialistId, {
-          version: String(body.version || ""),
-          env,
-        });
-        appendAudit(
-          {
-            actor: "127.0.0.1",
-            action: "specialist.pin",
-            target: `${specialistId}@${body.version}`,
-            result: "ok",
-          },
-          { env },
-        );
-        clisMemo.invalidate("specialists");
-        jsonResponse(res, 200, { ok: true, ...result });
-      } catch (e) {
-        appendAudit(
-          { actor: "127.0.0.1", action: "specialist.pin", target: specialistId, result: "fail" },
-          { env },
-        );
-        jsonResponse(res, 400, { error: String(e.message || e) });
-      }
-      return;
-    }
-
     const specialistAssignMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/assign$/);
     if (req.method === "POST" && specialistAssignMatch) {
       if (!requireWriteAccess(req, res)) return;
@@ -981,36 +946,6 @@ export function createDashboardServer({
         jsonResponse(res, 200, { ok: true, backup: path.basename(written.backup) });
       } catch (e) {
         appendAudit({ actor: "127.0.0.1", action: "specialist.assign", target: specialistId, result: "fail" }, { env });
-        jsonResponse(res, 400, { error: String(e.message || e) });
-      }
-      return;
-    }
-
-    const approveMatch = pathname.match(/^\/api\/specialists\/([^/]+)\/approve$/);
-    if (req.method === "POST" && approveMatch) {
-      if (!requireWriteAccess(req, res)) return;
-      const specialistId = decodeURIComponent(approveMatch[1]);
-      try {
-        assertSafeSpecialistSegment(specialistId, "id");
-        const body = JSON.parse(await readBody(req) || "{}");
-        const result = await approveSpecialist({
-          idAtVersion: `${specialistId}@${String(body.version || "")}`,
-          global: true,
-          env,
-        });
-        appendAudit(
-          {
-            actor: "127.0.0.1",
-            action: "specialist.approve",
-            target: `${specialistId}@${body.version} (global)`,
-            result: result.ok ? "ok" : "fail",
-          },
-          { env },
-        );
-        clisMemo.invalidate("specialists");
-        if (!result.ok) jsonResponse(res, 400, { error: (result.errors || []).join("; ") });
-        else jsonResponse(res, 200, result);
-      } catch (e) {
         jsonResponse(res, 400, { error: String(e.message || e) });
       }
       return;
@@ -1255,13 +1190,12 @@ export function createDashboardServer({
       return;
     }
 
-    // Both write into a project on Benni's behalf: the policy file into the
-    // checkout (never committed, never overwritten), the grant into approvals.
+    // Policy creation writes into a project; policy trust records its checksum.
     const projectWrite = {
       "/api/projects/policy": ["project.policy", (body) =>
         writeProjectPolicy({ dir: body.dir, projectsDir: body.projects_dir, policy: body.policy ?? null })],
-      "/api/projects/approve": ["project.approve", (body) =>
-        approveProjectSpecialists({ dir: body.dir, projectsDir: body.projects_dir, id: body.id ?? null, env })],
+      "/api/projects/trust-policy": ["project.trust_policy", (body) =>
+        trustProjectPolicyForProject({ dir: body.dir, projectsDir: body.projects_dir, env })],
     }[pathname];
     if (req.method === "POST" && projectWrite) {
       if (!requireWriteAccess(req, res)) return;
@@ -1274,10 +1208,7 @@ export function createDashboardServer({
       } catch (e) {
         result = { ok: false, status: 400, error: String(e.message || e) };
       }
-      const refused = (result.results || []).filter((r) => !r.ok).map((r) => r.id);
-      const detail = result.ok
-        ? (refused.length ? `not approved: ${refused.join(", ")}` : null)
-        : result.error;
+      const detail = result.ok ? null : result.error || result.errors?.join("; ");
       appendAudit(
         {
           actor: "127.0.0.1",

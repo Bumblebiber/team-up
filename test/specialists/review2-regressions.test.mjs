@@ -6,8 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { validateManifest, sha256Declared, declaredPackageFiles, loadManifestFromDir } from "../../src/specialists/manifest.mjs";
-import { installPackage, pinSpecialist, resolveInstalled, loadInstalledManifest } from "../../src/specialists/store.mjs";
-import { approveSpecialist, isApproved } from "../../src/specialists/approvals.mjs";
+import { installPackage } from "../../src/specialists/store.mjs";
+import { trustProjectPolicy } from "../../src/specialists/approvals.mjs";
 import { launch } from "../../src/specialists/launcher.mjs";
 import { materialize } from "../../src/sandbox/materialize.mjs";
 import { systemdSandboxArgv, wrapWithSandbox, systemdAvailable } from "../../src/sandbox/systemd.mjs";
@@ -115,7 +115,7 @@ test("install rejects malicious skill path segments", async () => {
 
 // --- 2. package integrity after mutation ---
 
-test("post-approval mutation fails PACKAGE_INTEGRITY_FAILED and does not launch", async () => {
+test("tampered installed file fails PACKAGE_INTEGRITY_FAILED and does not launch", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-int-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-proj-"));
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-ipkg-"));
@@ -132,10 +132,7 @@ test("post-approval mutation fails PACKAGE_INTEGRITY_FAILED and does not launch"
     writePkg(pkg, validManifest({ id: "testing.integrity" }));
     const inst = await installPackage(pkg, env);
     assert.equal(inst.ok, true, inst.errors?.join("; "));
-    const ap = await approveSpecialist({ idAtVersion: "testing.integrity@0.1.0", project, env });
-    assert.equal(ap.ok, true);
-
-    // Mutate installed instructions after approval
+    // Mutate installed instructions after install.
     fs.writeFileSync(path.join(inst.path, "instructions.md"), "MUTATED\n");
 
     await assert.rejects(
@@ -208,7 +205,7 @@ test("non-empty commands without verified command broker → PROFILE_UNAVAILABLE
     writeProjectCommands(project);
     const inst = await installPackage(pkg, env);
     assert.equal(inst.ok, true, inst.errors?.join("; "));
-    assert.equal((await approveSpecialist({ idAtVersion: "testing.cmds@0.1.0", project, env })).ok, true);
+    assert.equal(trustProjectPolicy({ project, env }).ok, true);
 
     await assert.rejects(
       () => launch({
@@ -246,57 +243,7 @@ test("sandbox argv includes NoExecPaths=/ and ExecPaths=", () => {
   assert.match(joined, /ExecPaths=/);
 });
 
-// --- 4. project pins ---
-
-test("project pin is authoritative across two installed versions", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-pin-"));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-pp-"));
-  const env = { ...process.env, TEAM_UP_HOME: home };
-  const pkg1 = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-p1-"));
-  const pkg2 = fs.mkdtempSync(path.join(os.tmpdir(), "tu-r2-p2-"));
-  writePkg(pkg1, validManifest({ id: "testing.twopin", version: "0.1.0" }));
-  writePkg(pkg2, validManifest({ id: "testing.twopin", version: "0.2.0", display_name: "Reg2" }));
-  assert.equal((await installPackage(pkg1, env)).ok, true);
-  const r2 = await installPackage(pkg2, env);
-  assert.equal(r2.ok, true);
-
-  const pin = pinSpecialist("testing.twopin", { version: "0.1.0", project, env });
-  assert.equal(pin.ok, true);
-
-  // Global pin / selection to 0.2.0 must not affect project pin
-  pinSpecialist("testing.twopin", { version: "0.2.0", env });
-  const resolved = resolveInstalled("testing.twopin", { project, env });
-  assert.equal(resolved.version, "0.1.0");
-  assert.equal(resolved.checksum, pin.pin.checksum);
-
-  const loaded = loadInstalledManifest("testing.twopin", { project, env });
-  assert.equal(loaded.version, "0.1.0");
-  assert.equal(loaded.manifest.version, "0.1.0");
-
-  const ap = await approveSpecialist({
-    idAtVersion: "testing.twopin@0.1.0",
-    project,
-    env,
-  });
-  assert.equal(ap.ok, true);
-  assert.equal(ap.approval.version, "0.1.0");
-  assert.equal(ap.approval.checksum, pin.pin.checksum);
-  assert.ok(isApproved({
-    project,
-    id: "testing.twopin",
-    version: "0.1.0",
-    checksum: pin.pin.checksum,
-    permissions: loaded.manifest.permissions,
-    env,
-  }));
-
-  fs.rmSync(home, { recursive: true, force: true });
-  fs.rmSync(project, { recursive: true, force: true });
-  fs.rmSync(pkg1, { recursive: true, force: true });
-  fs.rmSync(pkg2, { recursive: true, force: true });
-});
-
-// --- 5. generic vs typed mailbox ---
+// --- 4. generic vs typed mailbox ---
 
 test("generic run + RESULT.md → done", withTempRuns(async () => {
   const s = createRun({
@@ -500,7 +447,6 @@ test("max_tokens is advisory and does not block launch", async () => {
       budget: { timeout_seconds: 60, max_tokens: 80000 },
     }));
     assert.equal((await installPackage(pkg, env)).ok, true);
-    assert.equal((await approveSpecialist({ idAtVersion: "testing.tokens@0.1.0", project, env })).ok, true);
 
     const result = await launch({
       specialistId: "testing.tokens",
@@ -609,7 +555,6 @@ test("a project without a command policy launches the specialist without its com
       permissions: { filesystem: "project_readonly", writes: false, network: false, commands: ["project-test"] },
     }));
     assert.equal((await installPackage(pkg, env)).ok, true);
-    assert.equal((await approveSpecialist({ idAtVersion: "testing.nopol@0.1.0", global: true, env })).ok, true);
     const args = {
       specialistId: "testing.nopol",
       callType: "consult",
@@ -628,15 +573,13 @@ test("a project without a command policy launches the specialist without its com
         }),
       },
     };
-    // No commands.json: the policy gate and the broker requirement both let
-    // it through; it only stops at the later harness check this fixture
-    // cannot satisfy (before the fix: COMMAND_POLICY_MISSING, then
-    // PROFILE_UNAVAILABLE for want of a broker).
+    // No commands.json drops command permissions; this fixture then stops at
+    // the later harness isolation check.
     await assert.rejects(() => launch(args), (e) => e.code === "HARNESS_CONTEXT_ISOLATION_UNVERIFIED");
 
-    // A policy that was never trusted is still refused.
+    // A present policy needs its own trust action.
     writeProjectCommands(project);
-    await assert.rejects(() => launch(args), (e) => e.code === "NOT_APPROVED");
+    await assert.rejects(() => launch(args), (e) => e.code === "COMMAND_POLICY_UNTRUSTED");
   } finally {
     for (const k of Object.keys(process.env)) {
       if (!(k in prev)) delete process.env[k];

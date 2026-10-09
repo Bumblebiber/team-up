@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { teamUpHome, specialistApprovalsPath } from "./paths.mjs";
 import { listInstalled } from "./specialists/store.mjs";
 import { listInstalledCapabilities } from "./capabilities/store.mjs";
 import { loadAssignments } from "./capabilities/assignments.mjs";
@@ -89,7 +88,7 @@ export function diagnose(env = process.env, {
   }
 
   // A specialist with no role or chain, or whose chain no roster cell can
-  // satisfy, installs, approves and pins without complaint, then fails at
+  // satisfy, installs without complaint, then fails at
   // launch with PROFILE_UNAVAILABLE. Nothing between building it and running
   // it says so. Asking the real resolver is the only honest check: the reason
   // is often not the chain itself but an adapter with no verified context
@@ -149,80 +148,6 @@ export function diagnose(env = process.env, {
             : "no role or chain assigned; every launch fails with PROFILE_UNAVAILABLE",
         });
       }
-    }
-  }
-
-  const approvals = readJson(specialistApprovalsPath(env))?.approvals ?? {};
-  // Approving a new version leaves the old row in place, which is normal and
-  // harmless: the launcher matches on checksum, so a superseded row is simply
-  // never selected. Only report a mismatch when nothing else covers that
-  // specialist for that project — otherwise every upgrade produces a finding.
-  // A root grant is about the root, not the project its policy was measured
-  // at, so it must not be masked by an exact grant for that same project.
-  const scopeOf = (a) => (a.scope === "global" ? "*" : a.scope === "clone_root" ? a.clone_root : a.project);
-  const covered = new Set();
-  for (const a of Object.values(approvals)) {
-    if (ids.has(a.id) && installed[a.id].checksum === a.checksum) {
-      covered.add(`${a.id}\u0000${scopeOf(a)}`);
-    }
-  }
-  for (const [key, a] of Object.entries(approvals)) {
-    if (!ids.has(a.id)) {
-      findings.push({
-        kind: "approval_unknown_specialist",
-        severity: "medium",
-        id: a.id,
-        approval: String(key).slice(0, 12),
-        detail: "approval names no installed specialist",
-      });
-    } else if (
-      a.checksum &&
-      installed[a.id].checksum !== a.checksum &&
-      !covered.has(`${a.id}\u0000${scopeOf(a)}`)
-    ) {
-      findings.push({
-        kind: "approval_stale_version",
-        severity: "medium",
-        id: a.id,
-        approved: a.version,
-        installed: installed[a.id].version,
-        detail: "approval is bound to a checksum that is no longer the installed one",
-      });
-    }
-    // A clone-root grant outlives the project it was measured at on purpose —
-    // what has to still exist is the root, not that reference directory.
-    const dir = a.scope === "clone_root" ? a.clone_root : a.project;
-    if (dir && !fs.existsSync(dir)) {
-      findings.push({
-        kind: "approval_missing_project",
-        severity: "low",
-        id: a.id,
-        project: dir,
-        detail: a.scope === "clone_root"
-          ? "approved clone root no longer exists"
-          : "approved project directory no longer exists",
-      });
-    }
-  }
-
-  const pins = readJson(path.join(teamUpHome(env), "specialists-pins.json"))?.pins ?? {};
-  for (const [id, pin] of Object.entries(pins)) {
-    if (!ids.has(id)) {
-      findings.push({
-        kind: "pin_unknown_specialist",
-        severity: "medium",
-        id,
-        detail: "pin names no installed specialist",
-      });
-    } else if (pin.checksum && installed[id].checksum !== pin.checksum) {
-      findings.push({
-        kind: "pin_stale_checksum",
-        severity: "medium",
-        id,
-        pinned: pin.version,
-        installed: installed[id].version,
-        detail: "pinned checksum is not the installed one",
-      });
     }
   }
 
@@ -456,8 +381,6 @@ export function diagnose(env = process.env, {
     checked: {
       specialists: ids.size,
       assignments: assignments.length,
-      approvals: Object.keys(approvals).length,
-      pins: Object.keys(pins).length,
       memory_ceiling_possible: memoryDelegated.delegated,
     },
     counts: { high: count("high"), medium: count("medium"), low: count("low") },

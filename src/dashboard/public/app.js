@@ -948,8 +948,7 @@ function chips(items) {
 let capabilityPool = null;
 
 
-// What the specialist is for stays visible; everything that only matters when
-// something goes wrong (limits, permissions, where it is approved) folds away.
+// What the specialist is for stays visible; limits and permissions fold away.
 function renderSpecialist() {
   const body = $("#specialist-detail");
   const id = $("#specialist-select").value;
@@ -961,7 +960,6 @@ function renderSpecialist() {
   }
   const perms = s.permissions || {};
   const budget = s.budget || {};
-  const approved = s.approved_for || [];
   // Which chain it runs on: a role's, or its own. Unassigned does not launch.
   const a = s.assignment;
   const current = a?.role ? `role:${a.role}` : a?.chain ? "chain" : "";
@@ -972,11 +970,7 @@ function renderSpecialist() {
     <option value="chain"${current === "chain" ? " selected" : ""}>own chain…</option></select>${a?.chain
     ? ` <span class="muted">${a.chain.map((e) => esc(typeof e === "string" ? e : `${e.cli ? `${e.cli}:` : ""}${e.model}`)).join(" → ")}</span>
        <button type="button" class="specialist-chain-edit" title="Edit its chain">✎</button>` : ""}`;
-  $("#specialist-meta").innerHTML = [`v${esc(s.version)}`, assign, s.approved_everywhere
-    ? '<span title="Approved for every project; a new version or new permissions need one more approval">approved everywhere ✓</span>'
-    : `<button type="button" class="specialist-approve" data-version="${esc(s.version)}"
-        title="Approve this version for every project">Approve everywhere</button>`]
-    .filter(Boolean).join(" · ");
+  $("#specialist-meta").innerHTML = [`v${esc(s.version)}`, assign].join(" · ");
   const bundled = [...(s.bundled?.skills || []), ...(s.bundled?.mcps || []).map((m) => `mcp:${m}`)];
   body.innerHTML = `
     ${s.error ? `<p class="error">${esc(s.error)}</p>` : ""}
@@ -988,9 +982,8 @@ function renderSpecialist() {
     <details>
       <summary>Details</summary>
       ${(s.versions || []).length > 1
-        ? `<p class="muted">Version: ${s.versions.map((v) => `
-            <button type="button" class="version-pin" data-version="${esc(v.version)}"
-              ${v.selected ? "disabled" : ""}>${esc(v.version)}${v.selected ? " ✓" : ""}</button>`).join(" ")}</p>`
+        ? `<p class="muted">Installed versions: ${s.versions.map((v) =>
+            `${esc(v.version)}${v.selected ? " ✓" : ""}`).join(", ")}</p>`
         : ""}
       <dl class="kv">
         <dt>Never</dt><dd>${(s.anti_remit || []).map(esc).join("; ") || "—"}</dd>
@@ -1002,7 +995,6 @@ function renderSpecialist() {
         <dt>Checksum</dt><dd class="mono">${esc(s.checksum)}</dd>
         ${s.exclusions?.length ? `<dt>Excluded</dt><dd>${s.exclusions.map((e) => esc(`${e.package} (${e.reason})`)).join(", ")}</dd>` : ""}
       </dl>
-      ${approved.length ? `<p class="muted">Older per-project grants: ${approved.map((p) => esc(p.replace(/^\/home\/[^/]+\//, "~/"))).join(", ")}</p>` : ""}
     </details>`;
 }
 
@@ -1068,45 +1060,12 @@ $("#capability-assign").addEventListener("click", () => {
   assignCapability(option.value, option.dataset.checksum, "enable");
 });
 
-$("#specialist-meta").addEventListener("click", async (event) => {
-  const btn = event.target.closest(".specialist-approve");
-  if (!btn) return;
-  const id = $("#specialist-select").value;
-  const status = $("#capability-status");
-  btn.disabled = true;
-  try {
-    await api(`/api/specialists/${encodeURIComponent(id)}/approve`, {
-      method: "POST",
-      body: JSON.stringify({ version: btn.dataset.version }),
-    });
-    status.textContent = `${id} approved for every project`;
-    await refreshSpecialists();
-  } catch (err) {
-    status.textContent = `refused: ${err.message}`;
-    btn.disabled = false;
-  }
-});
-
 // Delegated, because renderSpecialist replaces the body on every change.
 $("#specialist-detail").addEventListener("click", async (event) => {
   const remove = event.target.closest(".capability-remove");
   if (remove) {
     assignCapability(remove.dataset.package, remove.dataset.checksum, "disable");
     return;
-  }
-  const pin = event.target.closest(".version-pin");
-  if (!pin) return;
-  const id = $("#specialist-select").value;
-  const status = $("#capability-status");
-  try {
-    await api(`/api/specialists/${encodeURIComponent(id)}/pin`, {
-      method: "POST",
-      body: JSON.stringify({ version: pin.dataset.version }),
-    });
-    await refreshSpecialists();
-    status.textContent = `${id} now runs ${pin.dataset.version}`;
-  } catch (err) {
-    status.textContent = err.message;
   }
 });
 
@@ -1506,21 +1465,23 @@ async function refreshProjects() {
   autoFixProjects().catch(() => {});
 }
 
-// ── command policy and approvals ──
-// A specialist that runs commands needs `.team-up/commands.json` before it
-// can be approved: the grant binds the policy's checksum. So a fix is always
-// policy first, then approve.
+// ── command policy trust ──
 let projectsByPath = new Map();
 let projectsNote = "";
 const PROJECTS_AUTO_KEY = "teamup.projectsAutoFix";
-// Auto-fix tries each project once per page load: a failing approval would
-// otherwise be retried, and audited, on every poll.
+// Auto-fix tries each project once per page load so failures do not repeat on every poll.
 const autoFixTried = new Set();
 
 function policyCell(p) {
   const pol = p.policy || { state: "none" };
   const create = `<button type="button" class="policy-create" data-dir="${esc(p.path)}">Create…</button>`;
-  if (pol.state === "valid") return '<span class="badge ok">valid</span>';
+  const trust = pol.trusted === true
+    ? '<span class="badge ok">trusted</span>'
+    : pol.trusted === false
+      ? '<span class="badge amber">untrusted</span>'
+      : "";
+  if (pol.state === "valid") return `<span class="badge ok">valid</span> ${trust}`;
+  if (pol.state === "inherited") return `<span class="badge ok">inherited policy</span> ${trust}`;
   if (pol.state === "invalid") {
     return `<span class="badge red" title="${esc((pol.errors || []).join("\n"))}">invalid</span>`;
   }
@@ -1531,22 +1492,18 @@ function policyCell(p) {
   return `<span class="muted" title="no test command detected">no tests</span> ${create}`;
 }
 
-async function approveProject(p) {
-  const res = await api("/api/projects/approve", {
+async function trustProject(p) {
+  const res = await api("/api/projects/trust-policy", {
     method: "POST",
     body: JSON.stringify({ dir: p.path, projects_dir: readProjectsDir() }),
   });
-  // Blocked on a missing policy is what the Policy column already says.
-  const refused = res.results.filter((r) => !r.ok && !/^COMMAND_POLICY_/.test(r.error));
-  if (refused.length) {
-    projectsNote = `${p.name}: not approved — ${refused.map((r) => `${r.id}: ${r.error}`).join("; ")}`;
-  }
   return res;
 }
 
 /** What "Fix all" and auto-fix do to one project: only what needs no judgement. */
 async function fixProject(p) {
   let wrote = false;
+  let trusted = false;
   if (p.policy?.state === "missing" && p.policy.proposal?.auto) {
     await api("/api/projects/policy", {
       method: "POST",
@@ -1554,30 +1511,35 @@ async function fixProject(p) {
     });
     wrote = true;
   }
-  const approvable = (p.specialists || []).some(
-    (s) => !s.approved && (!s.reason || (wrote && s.reason === "COMMAND_POLICY_MISSING")),
-  );
-  if (approvable) await approveProject(p);
-  return wrote;
+  if (wrote || ((p.policy?.state === "valid" || p.policy?.state === "inherited") && p.policy.trusted === false)) {
+    await trustProject(p);
+    trusted = true;
+  }
+  return { wrote, trusted };
 }
 
 const needsFix = (p) =>
   (p.policy?.state === "missing" && p.policy.proposal?.auto)
-  || (p.specialists || []).some((s) => !s.approved && !s.reason);
+  || ((p.policy?.state === "valid" || p.policy?.state === "inherited") && p.policy.trusted === false);
 
 async function fixProjects(projects) {
   const written = [];
+  const trusted = [];
   for (const p of projects) {
     try {
-      if (await fixProject(p)) written.push(p.name);
+      const result = await fixProject(p);
+      if (result.wrote) written.push(p.name);
+      if (result.trusted) trusted.push(p.name);
     } catch (err) {
       projectsNote = `${p.name}: ${err.message}`;
     }
   }
   if (written.length) {
     projectsNote = `wrote .team-up/commands.json (uncommitted) in: ${written.join(", ")}`;
+  } else if (trusted.length) {
+    projectsNote = `trusted command policy in: ${trusted.join(", ")}`;
   }
-  return written;
+  return { written, trusted };
 }
 
 let autoFixRunning = false;
@@ -2001,10 +1963,10 @@ $("#trending-section").addEventListener("change", (e) => {
 const PANEL_HELP = {
   "panel-usage": "Usage windows of every subscription: share used, warn level and when it resets. STALE means the collector stopped reading — one click sends an agent to fix it.",
   "panel-sessions": "Live tmux sessions (click one to open its terminal) and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
-  "panel-projects": "Repos in the collecting folder: branch, command policy, open sessions. Start opens a CLI session in the repo; Fix all / auto-fix write missing policies and approve the specialists there.",
+  "panel-projects": "Repos in the collecting folder: branch, command policy trust, open sessions. Start opens a CLI session in the repo; Fix all / auto-fix write unambiguous policies and trust their checksums.",
   "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
   "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. The Roster tab lists every model per provider; a checked one is in the roster and offered in the chains. Specialists run on a role's chain or their own — picked in the Specialists widget.",
-  "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions, limits and approvals are under Details.",
+  "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions and limits are under Details.",
   "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
   "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",
   "panel-trending": "New AI repos on GitHub from the newest daily report of the hermes trending scraper (~/.hermes/cron-outputs/framework-scout). Pick a section; hover a description for all of it.",

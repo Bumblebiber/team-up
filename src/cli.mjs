@@ -1,6 +1,7 @@
 export const VERSION = "0.7.0";
 
 import { execFileSync } from "node:child_process";
+import path from "node:path";
 import { pick } from "./roster/chain.mjs";
 import { loadJson, configPath, usagePath, requireRoster, validateRoster, saveRoster } from "./roster/config.mjs";
 import { runRosterCli } from "./roster/roster.mjs";
@@ -10,10 +11,9 @@ import {
   installPackage,
   listInstalled,
   loadInstalledManifest,
-  pinSpecialist,
   uninstallSpecialist,
 } from "./specialists/store.mjs";
-import { approveSpecialist, listApprovals } from "./specialists/approvals.mjs";
+import { trustProjectPolicy } from "./specialists/approvals.mjs";
 import { runSpecialist } from "./specialists/launcher.mjs";
 import { loadEvalSuite, runEvalSuite } from "./specialists/evals.mjs";
 import { runHarnessVerify } from "./harness/cli-verify.mjs";
@@ -148,58 +148,21 @@ async function cmdSpecialist(args, io) {
   }
   if (sub === "install") {
     const pathArg = rest[0];
-    if (!pathArg) {
-      io.err("usage: team-up specialist install <path> [--no-approve]");
+    if (!pathArg || rest.length !== 1) {
+      io.err("usage: team-up specialist install <path>");
       return 1;
     }
     const result = await installPackage(pathArg);
-    // Every specialist works in every project: installing is the trust
-    // decision, so the global grant comes with it. It still binds checksum and
-    // permissions, and a specialist that runs commands still needs each
-    // project's command policy trusted.
-    if (result.ok && !rest.includes("--no-approve")) {
-      const grant = await approveSpecialist({ idAtVersion: `${result.id}@${result.version}`, global: true });
-      result.approved = grant.ok ? "global" : grant.errors;
-      if (!grant.ok) result.ok = false;
-    }
     io.out(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }
-  if (sub === "approve") {
-    const idVer = rest[0];
+  if (sub === "trust-policy") {
     const project = argValue(rest, "--project");
-    // --clone-root widens one grant to every clone under a root, for the
-    // one-clone-per-writer fan-out. Package, permissions and command policy
-    // are still measured at --project and still have to match at launch.
-    const cloneRoot = argValue(rest, "--clone-root");
-    // --global covers every project; --project then also trusts that
-    // project's command policy.
-    const global = rest.includes("--global");
-    if (!idVer || (!project && !global)) {
-      io.err(
-        "usage: team-up specialist approve <id>@<version> --project <absolute-path> "
-        + "[--clone-root <absolute-path>]\n"
-        + "       team-up specialist approve <id>@<version> --global [--project <absolute-path>]"
-      );
+    if (!project || !path.isAbsolute(project)) {
+      io.err("usage: team-up specialist trust-policy --project <absolute-path>");
       return 1;
     }
-    const result = await approveSpecialist({ idAtVersion: idVer, project, cloneRoot, global });
-    io.out(JSON.stringify(result, null, 2));
-    return result.ok ? 0 : 1;
-  }
-  if (sub === "pin") {
-    // Install deliberately never repoints an existing selection, so a second
-    // version sits installed-but-unreachable until something selects it. That
-    // something is this: pinSpecialist already resolved by version and wrote
-    // the selection; it just had no way in from the CLI.
-    const idVer = rest[0];
-    const project = argValue(rest, "--project");
-    const [id, version] = String(idVer ?? "").split("@");
-    if (!id || !version) {
-      io.err("usage: team-up specialist pin <id>@<version> [--project <absolute-path>]");
-      return 1;
-    }
-    const result = pinSpecialist(id, { version, project });
+    const result = trustProjectPolicy({ project });
     io.out(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   }
@@ -251,7 +214,7 @@ async function cmdSpecialist(args, io) {
     const result = await runSpecialist(rest, io);
     return result.code;
   }
-  io.err("usage: team-up specialist <inspect|install|approve|pin|uninstall|list|evals|run>");
+  io.err("usage: team-up specialist <inspect|install|trust-policy|uninstall|list|evals|run>");
   return 1;
 }
 

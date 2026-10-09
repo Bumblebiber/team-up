@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 
 /**
- * Permission intersection: request may only reduce the approved manifest permissions.
+ * Permission intersection: request may only reduce the package-declared permissions.
  */
 
 const FS_RANK = {
@@ -29,8 +29,8 @@ function rankWrites(v) {
   return WRITES_RANK[v] ?? -1;
 }
 
-function intersectAllowlist(approved, requested) {
-  const a = Array.isArray(approved) ? approved : [];
+function intersectAllowlist(declared, requested) {
+  const a = Array.isArray(declared) ? declared : [];
   if (requested == null) return [...a];
   if (!Array.isArray(requested)) {
     throw new Error("permission allowlist must be an array");
@@ -47,29 +47,29 @@ function intersectAllowlist(approved, requested) {
 }
 
 /**
- * @param {object} approved - manifest.permissions (+ optional capabilities allowlists)
+ * @param {object} declared - manifest.permissions (+ optional capabilities allowlists)
  * @param {object|null} requested - caller permissions overlay
  * @param {{ capabilities?: object }} [ctx]
  */
-export function intersectPermissions(approved, requested, ctx = {}) {
-  if (!approved || typeof approved !== "object") {
-    throw new Error("approved permissions required");
+export function intersectPermissions(declared, requested, ctx = {}) {
+  if (!declared || typeof declared !== "object") {
+    throw new Error("declared manifest permissions required");
   }
   const req = requested && typeof requested === "object" ? requested : {};
 
-  // Network: may only stay false or become false; never enable if approved false
-  let network = approved.network === true;
+  // Network: may only stay false or become false; never enable if declared false
+  let network = declared.network === true;
   if (Object.prototype.hasOwnProperty.call(req, "network")) {
-    if (req.network === true && approved.network !== true) {
+    if (req.network === true && declared.network !== true) {
       throw new Error("permission escalation: network");
     }
-    network = Boolean(req.network) && approved.network === true;
+    network = Boolean(req.network) && declared.network === true;
   }
 
   // Filesystem scope: may only shrink
-  let filesystem = approved.filesystem;
+  let filesystem = declared.filesystem;
   if (Object.prototype.hasOwnProperty.call(req, "filesystem")) {
-    const ar = rankFs(approved.filesystem);
+    const ar = rankFs(declared.filesystem);
     const rr = rankFs(req.filesystem);
     if (rr < 0 || ar < 0) throw new Error("invalid filesystem permission");
     if (rr > ar) throw new Error("permission escalation: filesystem scope");
@@ -77,27 +77,27 @@ export function intersectPermissions(approved, requested, ctx = {}) {
   }
 
   // Writes: may only shrink
-  let writes = approved.writes;
+  let writes = declared.writes;
   if (Object.prototype.hasOwnProperty.call(req, "writes")) {
-    const ar = rankWrites(approved.writes);
+    const ar = rankWrites(declared.writes);
     const rr = rankWrites(req.writes);
     if (rr < 0 || ar < 0) throw new Error("invalid writes permission");
     if (rr > ar) throw new Error("permission escalation: writes");
     writes = req.writes;
   }
 
-  const commands = intersectAllowlist(approved.commands, req.commands);
+  const commands = intersectAllowlist(declared.commands, req.commands);
 
   const caps = ctx.capabilities || {};
   const tools = intersectAllowlist(caps.tools, req.tools);
   const mcps = intersectAllowlist(caps.mcps, req.mcps);
   const frameworks = intersectAllowlist(caps.frameworks, req.frameworks);
 
-  // Reject unknown escalation keys that expand beyond approved
+  // Reject unknown escalation keys that expand beyond declared permissions.
   for (const key of Object.keys(req)) {
     if (!["network", "filesystem", "writes", "commands", "tools", "mcps", "frameworks"].includes(key)) {
       // ignore unknown for forward compat unless they look like expansions
-      if (req[key] === true && approved[key] !== true) {
+      if (req[key] === true && declared[key] !== true) {
         throw new Error(`permission escalation: ${key}`);
       }
     }
@@ -122,7 +122,7 @@ export function assertCallTypeAllowed(callType, manifest) {
 }
 
 /**
- * Builtin tools a specialist may hold, derived from its approved permissions.
+ * Builtin tools a specialist may hold, derived from its declared permissions.
  * Without this every specialist gets the adapter default — including `Write`
  * for a read-only researcher, and no web tool for one whose manifest asks for
  * the network. The sandbox still enforces the filesystem side; this keeps the

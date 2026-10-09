@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { intersectPermissions, assertCallTypeAllowed, credentialDenyRules } from "../../src/specialists/permissions.mjs";
 
-const approved = {
+const declared = {
   filesystem: "project",
   writes: "delegated_only",
   network: false,
@@ -10,7 +10,7 @@ const approved = {
 };
 
 test("request may reduce permissions but not expand", () => {
-  const reduced = intersectPermissions(approved, {
+  const reduced = intersectPermissions(declared, {
     network: false,
     writes: false,
     filesystem: "project_readonly",
@@ -24,7 +24,7 @@ test("request may reduce permissions but not expand", () => {
 
 test("rejects network enable", () => {
   assert.throws(
-    () => intersectPermissions(approved, { network: true }),
+    () => intersectPermissions(declared, { network: true }),
     /escalation: network/
   );
 });
@@ -32,7 +32,7 @@ test("rejects network enable", () => {
 test("rejects filesystem expansion", () => {
   assert.throws(
     () => intersectPermissions(
-      { ...approved, filesystem: "project_readonly" },
+      { ...declared, filesystem: "project_readonly" },
       { filesystem: "project" }
     ),
     /escalation: filesystem/
@@ -41,18 +41,18 @@ test("rejects filesystem expansion", () => {
 
 test("rejects writable escalation and undeclared commands", () => {
   assert.throws(
-    () => intersectPermissions(approved, { writes: true }),
+    () => intersectPermissions(declared, { writes: true }),
     /escalation: writes/
   );
   assert.throws(
-    () => intersectPermissions(approved, { commands: ["project-test", "rm"] }),
+    () => intersectPermissions(declared, { commands: ["project-test", "rm"] }),
     /undeclared|escalation/
   );
 });
 
 test("rejects tools/mcps/frameworks beyond capabilities", () => {
   assert.throws(
-    () => intersectPermissions(approved, { tools: ["shell"] }, { capabilities: { tools: [] } }),
+    () => intersectPermissions(declared, { tools: ["shell"] }, { capabilities: { tools: [] } }),
     /undeclared|escalation/
   );
 });

@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { installPackage, pinSpecialist, resolveInstalled, listInstalled } from "../../src/specialists/store.mjs";
+import { installPackage, resolveInstalled, listInstalled } from "../../src/specialists/store.mjs";
 import { validateManifest } from "../../src/specialists/manifest.mjs";
 
 function validManifest(overrides = {}) {
   return {
     schema_version: 1,
-    id: "testing.pin",
-    display_name: "Pin",
+    id: "testing.select",
+    display_name: "Selection",
     version: "0.1.0",
     remit: ["x"],
     anti_remit: ["y"],
@@ -50,7 +50,7 @@ test("rejects preferred_model and package lifecycle scripts", () => {
   fs.rmSync(pkg, { recursive: true, force: true });
 });
 
-test("atomic install + pin keeps prior selection", async () => {
+test("atomic reinstall selects the newly installed version", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-inst-"));
   const env = { ...process.env, TEAM_UP_HOME: home };
   const pkg1 = fs.mkdtempSync(path.join(os.tmpdir(), "tu-p1-"));
@@ -63,15 +63,11 @@ test("atomic install + pin keeps prior selection", async () => {
   const r2 = await installPackage(pkg2, env);
   assert.equal(r2.ok, true, r2.errors?.join("; "));
 
-  const selected = resolveInstalled("testing.pin", { env });
-  assert.equal(selected.version, "0.1.0", "new version must not silently replace selection");
+  const selected = resolveInstalled("testing.select", { env });
+  assert.equal(selected.version, "0.2.0", "install selects the version it adds");
 
   const index = listInstalled(env);
-  assert.ok(index.versions["testing.pin"].length >= 2);
-
-  const pin = pinSpecialist("testing.pin", { version: "0.2.0", env });
-  assert.equal(pin.ok, true);
-  assert.equal(resolveInstalled("testing.pin", { env }).version, "0.2.0");
+  assert.ok(index.versions["testing.select"].length >= 2);
 
   fs.rmSync(home, { recursive: true, force: true });
   fs.rmSync(pkg1, { recursive: true, force: true });

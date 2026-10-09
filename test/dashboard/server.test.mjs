@@ -626,7 +626,7 @@ test("a scrolled pane leaves copy-mode before the key is sent", () => {
   assert.deepEqual(calls, ["tmux copy-mode -q -t s1", "tmux send-keys -t s1 -l q"]);
 });
 
-test("creating a command policy and approving go through the audited write path", () =>
+test("creating and trusting a command policy go through the audited write path", () =>
   withHome(async ({ home, token }) => {
     const root = fs.mkdtempSync(path.join(os.homedir(), ".teamup-test-projects-"));
     const project = path.join(root, "alpha");
@@ -652,15 +652,17 @@ test("creating a command policy and approving go through the audited write path"
       const after = await req(port, `/api/projects?dir=${encodeURIComponent(root)}`, { cookie });
       assert.equal(after.json.projects[0].policy.state, "valid");
 
-      const approved = await req(port, "/api/projects/approve", { method: "POST", cookie, csrf: true, body });
-      assert.equal(approved.status, 200, approved.text);
-      assert.deepEqual(approved.json.results, []);
+      const trusted = await req(port, "/api/projects/trust-policy", { method: "POST", cookie, csrf: true, body });
+      assert.equal(trusted.status, 200, trusted.text);
+      assert.equal(trusted.json.ok, true);
+      const trustedList = await req(port, `/api/projects?dir=${encodeURIComponent(root)}`, { cookie });
+      assert.equal(trustedList.json.projects[0].policy.trusted, true);
 
       const lines = fs.readFileSync(path.join(home, "dashboard-audit.log"), "utf8")
         .trim().split("\n").map((l) => JSON.parse(l));
       assert.deepEqual(
         lines.filter((l) => l.action.startsWith("project.")).map((l) => [l.action, l.result]),
-        [["project.policy", "ok"], ["project.policy", "fail"], ["project.approve", "ok"]],
+        [["project.policy", "ok"], ["project.policy", "fail"], ["project.trust_policy", "ok"]],
       );
     } finally {
       server.close();

@@ -7,7 +7,6 @@ import path from "node:path";
 import { launch, resolveRuntimeOverride, runSpecialist } from "../../src/specialists/launcher.mjs";
 import { wrapWithSandbox } from "../../src/sandbox/systemd.mjs";
 import { installPackage } from "../../src/specialists/store.mjs";
-import { approveSpecialist } from "../../src/specialists/approvals.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY } from "../../src/harness/capabilities.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { createRun, loadState } from "../../src/runs/runs.mjs";
@@ -90,9 +89,6 @@ async function fixtureLaunch(overrides = {}) {
     eval_suite: "evals/evals.json",
   });
   assert.equal((await installPackage(pkg, env)).ok, true);
-  assert.equal((await approveSpecialist({
-    idAtVersion: "testing.capsule@0.1.0", project, env,
-  })).ok, true);
   const prev = { ...process.env };
   Object.assign(process.env, env);
   return {
@@ -117,6 +113,31 @@ function restoreEnv(prev, paths) {
   Object.assign(process.env, prev);
   for (const p of paths) fs.rmSync(p, { recursive: true, force: true });
 }
+
+test("install then specialist run --dry-run works without a separate trust step", async () => {
+  const fixture = await fixtureLaunch();
+  const output = [];
+  try {
+    const result = await runSpecialist([
+      "--id", "testing.capsule",
+      "--call-type", "consult",
+      "--objective", "dry-run acceptance",
+      "--project", fixture.project,
+      "--dry-run",
+    ], { out: (line) => output.push(line), err: (line) => output.push(line) }, {
+      launchFn: (args) => launch({
+        ...args,
+        env: fixture.env,
+        sandbox: { available: true, probe: () => true },
+        dependencyOverrides: ISOLATED,
+      }),
+    });
+    assert.equal(result.code, 0, output.join("\n"));
+    assert.ok(output.includes("dry_run: true"));
+  } finally {
+    restoreEnv(fixture.prev, [fixture.home, fixture.project, fixture.pkg]);
+  }
+});
 
 test("capsule failure prevents worker creation and requires isolation", async () => {
   const fixture = await fixtureLaunch();

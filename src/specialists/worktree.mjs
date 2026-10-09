@@ -12,7 +12,7 @@ const real = (p) => {
 /**
  * The main checkout a git worktree belongs to, or null when `dir` is not one.
  *
- * A worktree runs under its main checkout's command policy and approval, so
+ * A worktree runs under its main checkout's command policy trust, so
  * this answer is a grant — and the `.git` file it starts from sits in the
  * worktree, where a worker can write. The claim alone therefore proves
  * nothing. What proves it is the back-link git keeps inside the main repo,

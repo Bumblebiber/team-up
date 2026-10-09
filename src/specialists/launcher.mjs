@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { loadInstalledManifest, verifyInstalledIntegrity } from "./store.mjs";
-import { isApproved } from "./approvals.mjs";
+import { isPolicyTrusted } from "./approvals.mjs";
 import { normalizeRequest } from "./request.mjs";
 import {
   intersectPermissions,
@@ -191,7 +191,9 @@ export async function launch({
   const checkAdmissionFn = dependencyOverrides.checkAdmission ?? defaultCheckAdmission;
   const deferForResourcesFn = dependencyOverrides.deferForResources ?? defaultDeferForResources;
   const memoryCeilingFn = dependencyOverrides.memoryCeiling ?? defaultMemoryCeiling;
-  const installed = loadInstalledManifest(specialistId, { project, env });
+
+  // Install trust and permission gates stay ordered before launch setup below.
+  const installed = loadInstalledManifest(specialistId, { env });
   if (!installed) {
     const err = new Error(`specialist not installed: ${specialistId}`);
     err.code = "NOT_INSTALLED";
@@ -234,17 +236,11 @@ export async function launch({
     }
   }
 
-  if (!isApproved({
-    project,
-    id: specialistId,
-    version: installed.version,
-    checksum: installed.checksum,
-    permissions: manifest.permissions,
-    command_policy_checksum: commandPolicyChecksum,
-    env,
-  })) {
-    const err = new Error(`specialist not approved for project (checksum/permissions binding)`);
-    err.code = "NOT_APPROVED";
+  if (commandPolicyChecksum && !isPolicyTrusted({ checksum: commandPolicyChecksum, env })) {
+    const err = new Error(
+      `project command policy is not trusted; run team-up specialist trust-policy --project ${path.resolve(project)}`
+    );
+    err.code = "COMMAND_POLICY_UNTRUSTED";
     throw err;
   }
 

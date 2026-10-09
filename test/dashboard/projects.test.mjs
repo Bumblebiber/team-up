@@ -10,9 +10,8 @@ import {
   proposePolicy,
   projectPolicy,
   writeProjectPolicy,
-  approveProjectSpecialists,
+  trustProjectPolicyForProject,
 } from "../../src/dashboard/projects.mjs";
-import { installPackage } from "../../src/specialists/store.mjs";
 import { validateCommandPolicy } from "../../src/commands/policy.mjs";
 
 const ROSTER = { clis: { claude: { cmd: ["claude", "--model", "{model}", "{prompt}"] } } };
@@ -130,7 +129,7 @@ test("a dot in a project name survives into the session name as tmux writes it",
   assert.equal(projectSessionName("foo.bar", "claude"), "team-up-proj-foo-bar-claude");
 });
 
-// ── command policy and approvals ─────────────────────────────────────────
+// ── command policy and trust ─────────────────────────────────────────────
 
 function write(file, body) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -303,85 +302,48 @@ test("writeProjectPolicy refuses a folder outside the collecting folder", (t) =>
   assert.equal(res.ok, false);
 });
 
-// ── approvals ──
+// ── command-policy trust ──
 
-async function installSpecialist(env, id, commands) {
-  const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "tu-pkg-"));
-  write(path.join(pkg, "specialist.json"), {
-    schema_version: 1,
-    id,
-    display_name: id,
-    version: "0.1.0",
-    remit: ["x"],
-    anti_remit: ["y"],
-    call_types: ["consult"],
-    accepted_inputs: ["task_description"],
-    output_contract: "team-up.result/v1",
-    capabilities: { skills: [], tools: commands.length ? ["command.test"] : [], mcps: [], frameworks: [] },
-    permissions: { filesystem: "project_readonly", writes: false, network: false, commands },
-    budget: { timeout_seconds: 60 },
-    model_profile: { tier: "medium", reasoning: "low" },
-    eval_suite: "evals/evals.json",
-  });
-  write(path.join(pkg, "instructions.md"), "hi\n");
-  write(path.join(pkg, "evals", "evals.json"), "[]");
-  const res = await installPackage(pkg, env);
-  fs.rmSync(pkg, { recursive: true, force: true });
-  assert.equal(res.ok, true, JSON.stringify(res));
-}
-
-async function approvalFixture(t) {
+test("listProjects shows whether a valid project policy checksum is trusted", (t) => {
   const root = fixture();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-home-"));
   t.after(() => {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(home, { recursive: true, force: true });
   });
-  const env = { ...process.env, TEAM_UP_HOME: home, TEAM_UP_RUNS: path.join(home, "runs") };
-  await installSpecialist(env, "review.plain", []);
-  await installSpecialist(env, "testing.cmd", ["project-test"]);
-  return { root, env };
-}
-
-test("listProjects shows policy state and which specialists are approved", async (t) => {
-  const { root, env } = await approvalFixture(t);
-  write(path.join(root, "alpha", "package.json"), { scripts: { test: "node --test" } });
-  const { projects } = listProjects(root, { exec: () => "", sessions: [], env });
-  const alpha = projects.find((p) => p.name === "alpha");
-  assert.equal(alpha.policy.state, "missing");
-  const byId = Object.fromEntries(alpha.specialists.map((s) => [s.id, s]));
-  assert.equal(byId["review.plain"].approved, false);
-  assert.equal(byId["review.plain"].needs_policy, false);
-  assert.equal(byId["testing.cmd"].approved, false);
-  assert.equal(byId["testing.cmd"].needs_policy, true);
-  // No policy is no longer a blocker: the launcher starts it without command tools.
-  assert.equal(byId["testing.cmd"].reason, undefined);
-});
-
-test("approveProjectSpecialists approves what it can and reports the rest", async (t) => {
-  const { root, env } = await approvalFixture(t);
+  const env = { ...process.env, TEAM_UP_HOME: home };
   const dir = path.join(root, "alpha");
-  const first = await approveProjectSpecialists({ dir, projectsDir: root, env });
-  assert.equal(first.ok, true);
-  const byId = Object.fromEntries(first.results.map((r) => [r.id, r]));
-  assert.equal(byId["review.plain"].ok, true);
-  // Global grant: no policy yet means nothing to trust, not a refusal.
-  assert.equal(byId["testing.cmd"].ok, true);
-
   write(path.join(dir, "package.json"), { scripts: { test: "node --test" } });
   assert.equal(writeProjectPolicy({ dir, projectsDir: root }).ok, true);
-  const second = await approveProjectSpecialists({ dir, projectsDir: root, env });
-  // Already approved specialists are not approved twice.
-  assert.deepEqual(second.results.map((r) => [r.id, r.ok]), [["testing.cmd", true]]);
 
-  const { projects } = listProjects(root, { exec: () => "", sessions: [], env });
-  const alpha = projects.find((p) => p.name === "alpha");
-  assert.equal(alpha.policy.state, "valid");
-  assert.ok(alpha.specialists.every((s) => s.approved));
+  const before = listProjects(root, { exec: () => "", sessions: [], env }).projects
+    .find((p) => p.name === "alpha");
+  assert.equal(before.policy.state, "valid");
+  assert.equal(before.policy.trusted, false);
+
+  const trusted = trustProjectPolicyForProject({ dir, projectsDir: root, env });
+  assert.equal(trusted.ok, true, trusted.error);
+  const after = listProjects(root, { exec: () => "", sessions: [], env }).projects
+    .find((p) => p.name === "alpha");
+  assert.equal(after.policy.trusted, true);
+
+  const changed = JSON.parse(fs.readFileSync(path.join(dir, ".team-up", "commands.json"), "utf8"));
+  changed.commands["project-test"].timeout_seconds += 1;
+  write(path.join(dir, ".team-up", "commands.json"), changed);
+  const edited = listProjects(root, { exec: () => "", sessions: [], env }).projects
+    .find((p) => p.name === "alpha");
+  assert.equal(edited.policy.trusted, false);
 });
 
-test("approveProjectSpecialists refuses a folder outside the collecting folder", async (t) => {
-  const { root, env } = await approvalFixture(t);
-  const res = await approveProjectSpecialists({ dir: os.homedir(), projectsDir: root, env });
+test("dashboard policy trust refuses a project outside the collecting folder", (t) => {
+  const root = fixture();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-home-"));
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  const res = trustProjectPolicyForProject({
+    dir: os.homedir(), projectsDir: root, env: { ...process.env, TEAM_UP_HOME: home },
+  });
   assert.equal(res.ok, false);
 });

@@ -71,7 +71,7 @@ export function projectDirs(collectingDir) {
 /**
  * The specialist's own contract, prepended to the prompt. An interactive
  * session can carry its remit as text and nothing else: the sandbox, the
- * project approval and the RESULT.json contract belong to a real specialist
+ * project policy trust and the RESULT.json contract belong to a real specialist
  * launch (`team-up specialist run`), which this deliberately is not.
  */
 export function specialistFraming(id, { env = process.env } = {}) {

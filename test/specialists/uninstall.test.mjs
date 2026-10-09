@@ -1,5 +1,4 @@
-// Removal has to refuse the same things install refuses to do silently: it
-// must not repoint a selection on its own, and it must not pull a package out
+// Removal picks newest remaining version and refuses to pull a package out
 // from under a run that will re-verify its checksum on resume.
 
 import test from "node:test";
@@ -10,7 +9,6 @@ import path from "node:path";
 import { runCli } from "../../src/cli.mjs";
 import {
   installPackage,
-  pinSpecialist,
   resolveInstalled,
   listInstalled,
   uninstallSpecialist,
@@ -61,40 +59,32 @@ function withHome(fn) {
     .finally(() => fs.rmSync(home, { recursive: true, force: true }));
 }
 
-test("uninstall removes one version and leaves its siblings alone", async () => {
+test("uninstall removes an unselected version and leaves selected sibling alone", async () => {
   await withHome(async ({ env }) => {
     await installVersions(env, ["0.1.0", "0.2.0"]);
     const removed = listInstalled(env).versions["testing.gone"].find(
-      (v) => v.version === "0.2.0"
+      (v) => v.version === "0.1.0"
     );
 
-    const result = uninstallSpecialist("testing.gone", { version: "0.2.0", env });
+    const result = uninstallSpecialist("testing.gone", { version: "0.1.0", env });
     assert.equal(result.ok, true, result.errors?.join("; "));
     assert.equal(fs.existsSync(removed.path), false, "package tree must be gone");
 
     const index = listInstalled(env);
     assert.deepEqual(
       index.versions["testing.gone"].map((v) => v.version),
-      ["0.1.0"]
+      ["0.2.0"]
     );
-    assert.equal(resolveInstalled("testing.gone", { env }).version, "0.1.0");
+    assert.equal(resolveInstalled("testing.gone", { env }).version, "0.2.0");
   });
 });
 
-test("uninstall refuses the selected version while siblings remain", async () => {
+test("uninstalling selected version falls back to newest remaining", async () => {
   await withHome(async ({ env }) => {
-    await installVersions(env, ["0.1.0", "0.2.0"]);
-    const result = uninstallSpecialist("testing.gone", { version: "0.1.0", env });
-    assert.equal(result.ok, false);
-    assert.match(result.errors.join("\n"), /selected version; pin another first/);
-    assert.equal(resolveInstalled("testing.gone", { env }).version, "0.1.0");
-
-    // Repointing first is what makes it removable.
-    assert.equal(pinSpecialist("testing.gone", { version: "0.2.0", env }).ok, true);
-    assert.equal(
-      uninstallSpecialist("testing.gone", { version: "0.1.0", env }).ok,
-      true
-    );
+    await installVersions(env, ["0.1.0", "0.2.0", "0.3.0"]);
+    const result = uninstallSpecialist("testing.gone", { version: "0.3.0", env });
+    assert.equal(result.ok, true, result.errors?.join("; "));
+    assert.equal(resolveInstalled("testing.gone", { env }).version, "0.2.0");
   });
 });
 
@@ -129,40 +119,18 @@ test("uninstall refuses while an unfinished run depends on the version", async (
   });
 });
 
-test("uninstall clears approvals bound to the removed version", async () => {
+test("uninstall leaves legacy rows and policy trust records untouched", async () => {
   await withHome(async ({ home, env }) => {
     await installVersions(env, ["0.1.0", "0.2.0"]);
-    fs.writeFileSync(
-      path.join(home, "approvals.json"),
-      JSON.stringify({
-        approvals: {
-          stale: { project: "/tmp/p", id: "testing.gone", version: "0.2.0" },
-          keep: { project: "/tmp/p", id: "testing.gone", version: "0.1.0" },
-          other: { project: "/tmp/p", id: "testing.other", version: "0.2.0" },
-        },
-      })
-    );
+    const legacy = {
+      approvals: { stale: { project: "/tmp/p", id: "testing.gone", version: "0.2.0" } },
+      trusted_policies: { "sha256:policy": { project: "/tmp/p", trusted_at: "2026-01-01T00:00:00Z" } },
+    };
+    fs.writeFileSync(path.join(home, "approvals.json"), JSON.stringify(legacy));
     const result = uninstallSpecialist("testing.gone", { version: "0.2.0", env });
     assert.equal(result.ok, true, result.errors?.join("; "));
-    assert.deepEqual(result.dropped_approvals, ["stale"]);
     const after = JSON.parse(fs.readFileSync(path.join(home, "approvals.json"), "utf8"));
-    assert.deepEqual(Object.keys(after.approvals).sort(), ["keep", "other"]);
-  });
-});
-
-test("uninstall drops pins that named the removed version", async () => {
-  await withHome(async ({ env }) => {
-    await installVersions(env, ["0.1.0", "0.2.0"]);
-    const project = fs.mkdtempSync(path.join(os.tmpdir(), "tu-proj-"));
-    assert.equal(
-      pinSpecialist("testing.gone", { version: "0.2.0", project, env }).ok,
-      true
-    );
-    const result = uninstallSpecialist("testing.gone", { version: "0.2.0", env });
-    assert.equal(result.ok, true, result.errors?.join("; "));
-    assert.ok(result.dropped_pins.length >= 1, "project pin must not survive its package");
-    assert.equal(resolveInstalled("testing.gone", { project, env }).version, "0.1.0");
-    fs.rmSync(project, { recursive: true, force: true });
+    assert.deepEqual(after, legacy);
   });
 });
 

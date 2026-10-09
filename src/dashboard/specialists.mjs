@@ -5,7 +5,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { listInstalled, loadInstalledManifest, installPackage } from "../specialists/store.mjs";
 import { assertSafeRelPath, assertPathInsideRoot } from "../specialists/safe-id.mjs";
-import { listApprovals } from "../specialists/approvals.mjs";
 import { loadAssignments } from "../capabilities/assignments.mjs";
 import { listInstalledCapabilities } from "../capabilities/store.mjs";
 import { resolveCapabilities } from "../capabilities/resolve.mjs";
@@ -30,7 +29,7 @@ function bundled(manifest) {
  * resolveCapabilities() the launcher uses — reimplementing "all minus exclude"
  * here would let the dashboard drift from what a run really materialises.
  */
-function describe(id, { env, assignments, installedCaps, approvals, versions }) {
+function describe(id, { env, assignments, installedCaps, versions }) {
   const loaded = loadInstalledManifest(id, { env });
   if (!loaded) return { id, error: "not installed" };
   const manifest = loaded.manifest || {};
@@ -69,8 +68,6 @@ function describe(id, { env, assignments, installedCaps, approvals, versions }) 
     version: loaded.version,
     checksum: short(loaded.checksum),
     installed_at: loaded.installed_at || null,
-    // installPackage never repoints an existing selection, so a freshly
-    // installed newer version sits here unreachable until something pins it.
     versions: versions.map((v) => ({
       version: v.version,
       checksum: v.checksum,
@@ -84,14 +81,6 @@ function describe(id, { env, assignments, installedCaps, approvals, versions }) 
     budget: manifest.budget || {},
     assigned,
     exclusions,
-    // Approvals are bound to a checksum; only the ones that match the version
-    // now selected say anything about a run started today.
-    approved_everywhere: approvals.some((row) => row.scope === "global" && row.id === id
-      && row.checksum === loaded.checksum),
-    approved_for: approvals
-      .filter((row) => row.id === id && row.checksum === loaded.checksum && row.scope !== "global")
-      .map((row) => (row.scope === "clone_root" ? `${row.clone_root}/*` : row.project))
-      .sort(),
     error,
   };
 }
@@ -100,7 +89,6 @@ export function buildSpecialistsView({ env = process.env } = {}) {
   const index = listInstalled(env) || {};
   const assignments = loadAssignments({ env }).assignments ?? [];
   const installedCaps = listInstalledCapabilities({ env });
-  const approvals = Object.values(listApprovals(env)?.approvals ?? {});
   const specialists = Object.keys(index.specialists ?? {})
     .sort()
     .map((id) =>
@@ -108,7 +96,6 @@ export function buildSpecialistsView({ env = process.env } = {}) {
         env,
         assignments,
         installedCaps,
-        approvals,
         versions: index.versions?.[id] || [],
       }),
     );
