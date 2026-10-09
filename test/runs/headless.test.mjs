@@ -222,4 +222,12 @@ test("headless fails agy empty responses and names soft-denied actions", withTem
   });
   assert.equal(mailboxText(denied.runId, "STATUS").trim(), "failed");
   assert.match(mailboxText(denied.runId, "FAILURE.md"), /agy denied actions: command/);
+
+  const errored = createRun();
+  runHeadless(errored.runId, {
+    cli: "agy",
+    code: agyResultCode({ status: "ERROR", response: "", error: "invalid model selection" }),
+  });
+  assert.equal(mailboxText(errored.runId, "STATUS").trim(), "failed");
+  assert.match(mailboxText(errored.runId, "FAILURE.md"), /agy error: invalid model selection/);
 }));

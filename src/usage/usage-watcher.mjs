@@ -76,7 +76,7 @@ export function planCollect({
   lastCollect,
   nextDue,
   now = Date.now(),
-  subscriptions = ["claude", "codex", "cursor", "agy"],
+  subscriptions = ["claude", "codex", "cursor"],
 }) {
   const collect = new Set();
 

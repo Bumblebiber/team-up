@@ -69,6 +69,7 @@ function finalMessageFor(cli, mailbox, cursorResult, agyResult) {
 
 function agyFailureReason(result) {
   if (!result) return "agy stream had no result event";
+  if (typeof result.error === "string" && result.error.trim()) return `agy error: ${result.error.trim()}`;
   if (Array.isArray(result.denied_actions) && result.denied_actions.length) {
     const actions = result.denied_actions.map((entry) =>
       typeof entry === "string" ? entry : entry?.action || JSON.stringify(entry)

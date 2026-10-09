@@ -16,7 +16,8 @@ import { runPtyCollect, COLLECT_ENV } from "./usage-pty.mjs";
 import { pushSample } from "./usage-windows.mjs";
 import { fetchAgyUsageJson, fetchClaudeUsageJson, fetchCodexUsageJson } from "./usage-json.mjs";
 
-const DEFAULT_SUBSCRIPTIONS = ["claude", "codex", "cursor", "agy"];
+// agy is opt-in through roster.subscriptions: a machine without it would log a failed collect every tick.
+const DEFAULT_SUBSCRIPTIONS = ["claude", "codex", "cursor"];
 
 export function subscriptionsFromRoster(roster) {
   if (Array.isArray(roster?.subscriptions) && roster.subscriptions.length) {
