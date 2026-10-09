@@ -1,35 +1,51 @@
 # usage-spender intake host, {date}
 
 Started by the usage-spender cron (team-up scripts/usage-spender.py). No human is watching: never ask a
-question, never wait for input. You are the host (parent) of the team-up runs below, not a worker.
-The interface rules about Benni do not apply here, and you dispatch nothing.
+question, never wait for input. You do intake for the finished team-up runs below, which the spender
+started and already reconciled. You are not a worker. The interface rules about Benni don't apply here.
+You dispatch nothing, and you change no code: push and draft PR are already done by the script.
 
 TU = `{teamup}`
 
 ## Runs
 {runs}
 
-## 1. Record
-Per run, one TIM task with tim_write: where "P0073/Tasks",
-title "usage-spender {date}: <task_type> on <repo-name> (<cli>)", tags ["#usage-spender", "#team-up"],
-metadata {{"task": {{"status": "in_progress", "priority": "low"}}, "team_up_run": "<run_id>"}},
-content: run id, model, repo, read-only task, result path ~/.team-up/runs/<run_id>/mailbox/. Keep the ids.
+## Quota windows at this tick
+{windows}
 
-## 2. Status
-The cron already waited for these runs before starting you (up to 4 h each; a question got
-"No human available. Finish with what you have.", a second one cancelled the run). Per run:
-`$TU runs classify <run_id>`. Still `watching`: tim_update its task ("not finished after 4h, left
-in `team-up runs uncollected`") and skip 3 for it. `cancelled` or `failed`: status "cancelled", skip 3.
+## 1. Intake, per run
+Follow the team-up:intake skill. In short: read ~/.team-up/runs/<run_id>/mailbox/RESULT.json
+(or RESULT.md).
+- review / triage / audit / research: open each finding's file:line in the repo with Read/Grep/Glob.
+  Read-only `git log`/`git show` are fine; change nothing. Keep only the findings that hold, and say
+  what you could not check.
+- implement: read the branch's diff (`git -C <clone> log -p origin/HEAD..HEAD`) and check that it
+  does what the task asked. Draft PR or local branch as listed above.
 
-## 3. Intake, per finished run
-Follow the team-up:intake skill if you have it. In short: read ~/.team-up/runs/<run_id>/mailbox/RESULT.json
-(or RESULT.md). Open each finding's file:line in the repo (Read/Grep/Glob, read-only git log/show
-are fine; change nothing); keep only findings that hold, say what
-you could not check. tim_update the run's task: content = verified findings, one line each
-(severity, file:line, claim), then dropped ones with the reason; status "todo" if a verified
-finding needs a fix, else "done"; "cancelled" if the run failed.
-Then `$TU runs outcome <run_id> merged` (findings kept) or `discarded`,
+Record one TIM task per run with tim_write:
+- where: "P0073/Tasks"
+- title: "usage-spender {date}: <kind> on <repo-name> (<cli>)"
+- tags: ["#usage-spender", "#team-up"]
+- metadata: {{"task": {{"status": "<status>", "priority": "low"}}, "team_up_run": "<run_id>"}}
+- content: run id, model, repo, task ref, result path, and the draft PR or branch.
+  Then the verified findings, one line each (severity, file:line, claim), then the dropped ones,
+  each with the reason.
+- status:
+  - "todo" if a verified finding needs a fix, or a draft PR needs Benni's review
+  - "done" otherwise
+  - "cancelled" if the run failed or was cancelled
+
+If the run came from a TIM task, add a short note there with tim_update: the PR, branch or
+triage result, and the run id. Do not change that task's status.
+
+Then `$TU runs outcome <run_id> merged` (findings kept or a PR opened) or `discarded`,
 and `$TU runs collect <run_id> --note "<TIM id>"`.
 
-## 4. Exit
-Every run handled: `tmux kill-session -t {host}`.
+## 2. Telegram
+One message for all runs: `{telegram} "<text>"`. Plain text, at most 15 lines:
+- first line: "usage-spender {date}"
+- one line per run: kind, repo/ref, model, result (n verified findings · draft PR url · local branch · failed)
+- then the quota windows above, one line each
+
+## 3. Exit
+`tmux kill-session -t {host}`.

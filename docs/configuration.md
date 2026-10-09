@@ -57,6 +57,11 @@ A model's `account` keys into top-level `accounts` (`subscription` or
 `credit`). A declared account that is disabled or out of credit bars the model;
 a model without one is not gated by account.
 
+A subscription account may name its `plan` (`claude`: pro|max5x|max20x,
+`codex`: plus|pro|business|enterprise, `cursor`: hobby|pro|pro_plus|ultra|teams,
+`gemini`: free|plus|pro|ultra). No gate reads it; `scripts/usage-spender.py`
+uses it to size how much spare quota one task is worth.
+
 ## Harness support
 
 Specialist capability support comes from the installed harness adapter's

@@ -15,9 +15,10 @@ export function usagePath() {
 export { rosterWritePath, usageWritePath };
 
 /**
- * The plans a subscription account may name, keyed by account id. Information
- * only: the CLIs report usage as a share of their own plan, and admission
- * sizes by host memory, so no threshold reads the plan.
+ * The plans a subscription account may name, keyed by account id. The CLIs
+ * report usage as a share of their own plan and admission sizes by host
+ * memory, so no gate reads the plan. Only scripts/usage-spender.py does: a
+ * bigger plan makes one task a smaller share of the window (PLAN_WEIGHT).
  */
 export const PLAN_TIERS = {
   claude: ["pro", "max5x", "max20x"],
