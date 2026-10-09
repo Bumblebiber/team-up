@@ -317,7 +317,9 @@ export async function launch({
     result_protocol: "RESULT.json",
   });
 
-  // Anything that throws once the run exists leaves it failed, not starting.
+  // Anything that throws once the run exists leaves it failed, not starting —
+  // unless the worker already runs in tmux; then the run is its, not ours.
+  let workerStarted = false;
   try {
     const st = loadState(state.runId);
     st.specialist = {
@@ -506,6 +508,7 @@ export async function launch({
       const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
       try {
         startInTmuxFn({ session, dir: dest, argv, runId: state.runId });
+        workerStarted = true;
       } catch (error) {
         setStatus(state.runId, "failed", { reason: `tmux start: ${error?.message || error}` });
         throw error;
@@ -542,7 +545,7 @@ export async function launch({
     };
   } catch (error) {
     const current = loadState(state.runId);
-    if (current && current.status !== "failed" && current.status !== "cancelled") {
+    if (!workerStarted && current && current.status !== "failed" && current.status !== "cancelled") {
       setStatus(state.runId, "failed", { reason: `launch: ${error?.message || error}` });
     }
     throw error;

@@ -455,7 +455,6 @@ test("any failure after the run exists fails it instead of leaving it starting",
   const fixture = await fixtureLaunch();
   widenRoster(fixture.env);
   try {
-    let runId = null;
     await assert.rejects(() => launch({
       ...fixture.args,
       dryRun: false,
@@ -463,7 +462,7 @@ test("any failure after the run exists fails it instead of leaving it starting",
       dependencyOverrides: {
         ...ISOLATED,
         startInTmux: () => {},
-        prepareHarnessLaunch: ({ runId: id }) => { runId = id; throw new Error("HARNESS_UNSUPPORTED: x"); },
+        prepareHarnessLaunch: () => { throw new Error("HARNESS_UNSUPPORTED: x"); },
       },
     }), /HARNESS_UNSUPPORTED/);
     const runs = fs.readdirSync(fixture.env.TEAM_UP_RUNS);
