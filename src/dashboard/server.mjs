@@ -52,6 +52,7 @@ import {
   removeOpenRouterKey,
 } from "./providers.mjs";
 import { buildClisView, commandExists } from "./clis.mjs";
+import { cronJobsPath, cronModelOptions, parseCronJobs, setCronJobModel } from "./cron-jobs.mjs";
 import {
   isValidCliId,
   bootstrapAvailable,
@@ -1004,6 +1005,39 @@ export function createDashboardServer({
 
     // Roles, chains and roster settings: one edit per request, validated,
     // backed up, audited.
+    const cronJobMatch = pathname.match(/^\/api\/cron-jobs\/([^/]+)$/);
+    if (req.method === "POST" && cronJobMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const name = cronJobMatch[1];
+      const action = "cron.job.model";
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        const roster = loadRoster(env);
+        if (!cronModelOptions(roster).includes(body.model)) {
+          appendAudit({ actor: "127.0.0.1", action, target: name, result: "fail" }, { env });
+          jsonResponse(res, 400, { error: "model is not an available CLI:model option" });
+          return;
+        }
+        const file = cronJobsPath(env);
+        if (!fs.existsSync(file)) {
+          appendAudit({ actor: "127.0.0.1", action, target: name, result: "fail" }, { env });
+          jsonResponse(res, 404, { error: "cron-jobs.ini does not exist" });
+          return;
+        }
+        const text = fs.readFileSync(file, "utf8");
+        const next = setCronJobModel(text, name, body.model);
+        const backup = `${file}.bak`;
+        fs.copyFileSync(file, backup);
+        atomicWriteText(file, next);
+        appendAudit({ actor: "127.0.0.1", action, target: name, result: "ok" }, { env });
+        jsonResponse(res, 200, { ok: true, backup: path.basename(backup) });
+      } catch (e) {
+        appendAudit({ actor: "127.0.0.1", action, target: name, result: "fail" }, { env });
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     const roleMatch = pathname.match(/^\/api\/roles\/([^/]+)$/);
     const isSettings = pathname === "/api/settings";
     const isUpgrade = pathname === "/api/roles-upgrade";
@@ -1374,6 +1408,18 @@ export function createDashboardServer({
       // accounts here are the on/off switches the panel edits; nothing secret
       // lives in them, and the sanitizer still drops anything key-shaped.
       jsonResponse(res, 200, sanitizeForDashboard(buildSettingsView(loadRoster(env))));
+      return;
+    }
+
+    if (pathname === "/api/cron-jobs") {
+      const file = cronJobsPath(env);
+      const exists = fs.existsSync(file);
+      jsonResponse(res, 200, {
+        path: file,
+        exists,
+        jobs: exists ? parseCronJobs(fs.readFileSync(file, "utf8")) : [],
+        options: cronModelOptions(loadRoster(env)),
+      });
       return;
     }
 

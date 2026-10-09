@@ -104,6 +104,103 @@ test("valid bearer returns 200", () =>
     server.close();
   }));
 
+test("GET /api/cron-jobs reports a missing file and available model options", () =>
+  withHome(async ({ home, token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const r = await req(port, "/api/cron-jobs", { token });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.path, path.join(home, "cron-jobs.ini"));
+    assert.equal(r.json.exists, false);
+    assert.deepEqual(r.json.jobs, []);
+    assert.deepEqual(r.json.options, ["claude:m"]);
+    server.close();
+  }));
+
+test("GET /api/cron-jobs parses the configured file", () =>
+  withHome(async ({ home, token }) => {
+    fs.writeFileSync(path.join(home, "cron-jobs.ini"), "# jobs\n[golden-task]\nmodel = claude:m\n[insights]\n");
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const r = await req(port, "/api/cron-jobs", { token });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.exists, true);
+    assert.deepEqual(r.json.jobs, [
+      { name: "golden-task", model: "claude:m" },
+      { name: "insights", model: null },
+    ]);
+    server.close();
+  }));
+
+test("POST /api/cron-jobs writes selected model and copies backup first", () =>
+  withHome(async ({ home, token }) => {
+    const file = path.join(home, "cron-jobs.ini");
+    const original = "# keep\n[golden-task]\nmodel = old\n\n[insights]\nmodel = claude:m\n";
+    fs.writeFileSync(file, original);
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/cron-jobs/golden-task", {
+      method: "POST", cookie, csrf: true, body: { model: "claude:m" },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.backup, "cron-jobs.ini.bak");
+    assert.equal(fs.readFileSync(file, "utf8"), original.replace("model = old", "model = claude:m"));
+    assert.equal(fs.readFileSync(`${file}.bak`, "utf8"), original);
+    server.close();
+  }));
+
+test("POST /api/cron-jobs requires auth token and CSRF header", () =>
+  withHome(async ({ home, token }) => {
+    fs.writeFileSync(path.join(home, "cron-jobs.ini"), "[golden-task]\nmodel = claude:m\n");
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const noCsrf = await req(port, "/api/cron-jobs/golden-task", {
+      method: "POST", cookie, body: { model: "claude:m" },
+    });
+    assert.equal(noCsrf.status, 403);
+    const noToken = await req(port, "/api/cron-jobs/golden-task", {
+      method: "POST", csrf: true, body: { model: "claude:m" },
+    });
+    assert.equal(noToken.status, 401);
+    server.close();
+  }));
+
+test("POST /api/cron-jobs rejects an unavailable model without changing file", () =>
+  withHome(async ({ home, token }) => {
+    const file = path.join(home, "cron-jobs.ini");
+    const original = "[golden-task]\nmodel = claude:m\n";
+    fs.writeFileSync(file, original);
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/cron-jobs/golden-task", {
+      method: "POST", cookie, csrf: true, body: { model: "missing:model" },
+    });
+    assert.equal(r.status, 400);
+    assert.equal(fs.readFileSync(file, "utf8"), original);
+    server.close();
+  }));
+
+test("POST /api/cron-jobs never creates a missing section", () =>
+  withHome(async ({ home, token }) => {
+    const file = path.join(home, "cron-jobs.ini");
+    const original = "[known]\nmodel = claude:m\n";
+    fs.writeFileSync(file, original);
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const r = await req(port, "/api/cron-jobs/missing", {
+      method: "POST", cookie, csrf: true, body: { model: "claude:m" },
+    });
+    assert.equal(r.status, 400);
+    assert.match(r.json.error, /unknown cron job/);
+    assert.equal(fs.readFileSync(file, "utf8"), original);
+    assert.equal(fs.existsSync(`${file}.bak`), false);
+    server.close();
+  }));
+
 test("login POST sets HttpOnly cookie", () =>
   withHome(async ({ token }) => {
     const { server } = createDashboardServer({ token });

@@ -477,6 +477,8 @@ details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 #settings-body table td { padding: 0.15rem 0.5rem; }
 #settings-body input[type="number"] { width: 6rem; }
 #settings-body label { margin-right: 0.6rem; white-space: nowrap; }
+#cron-jobs-body select { min-width: 14rem; max-width: 100%; }
+#cron-jobs-status { min-height: 1.2em; }
 
 #admin-gate { margin: 0.75rem 1rem 0; background: var(--surface); }
 .nowrap { white-space: nowrap; }
