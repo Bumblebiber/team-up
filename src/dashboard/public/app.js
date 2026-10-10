@@ -1764,6 +1764,9 @@ async function refreshSettings() {
     <h3 title="Which CLIs run on a subscription with usage windows (the Usage panel)">Subscriptions</h3>
     <p>${d.clis.map((c) => `<label><input type="checkbox" data-list="subscriptions" value="${esc(c)}"${
       d.subscriptions.includes(c) ? " checked" : ""}> ${esc(c)}</label>`).join(" ")}</p>
+    <h3 title="Whose spare quota the nightly usage-spender may spend on reviews and audits">Usage spender</h3>
+    <p>${d.subscriptions.map((c) => `<label><input type="checkbox" data-list="usage_spender.subscriptions" value="${esc(c)}"${
+      d.usage_spender.subscriptions.includes(c) ? " checked" : ""}> ${esc(c)}</label>`).join(" ")}</p>
     <h3>Limits</h3>
     <dl class="kv">
       <dt title="Usage share at which a window counts as amber">Warn at</dt><dd>${num("limits.warn_at", d.limits.warn_at, "0.01", "0–1")}</dd>
@@ -1922,7 +1925,7 @@ const PANEL_HELP = {
   "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
   "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. The Roster tab lists every model per provider; a checked one is in the roster and offered in the chains. Specialists run on a role's chain or their own — picked in the Specialists widget.",
   "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions and limits are under Details.",
-  "panel-settings": "Roster switches: accounts on/off, subscriptions, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
+  "panel-settings": "Roster switches: accounts on/off, subscriptions, usage-spender quota, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
   "panel-cron-jobs": "Which CLI×model runs each scheduled LLM job (~/.team-up/cron-jobs.ini). No fallback: if that CLI is at its limit, the job fails and says so.",
   "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",
   "panel-trending": "New AI repos on GitHub from the newest daily report of the hermes trending scraper (~/.hermes/cron-outputs/framework-scout). Pick a section; hover a description for all of it.",

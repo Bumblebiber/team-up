@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validateRoster } from "../../src/roster/config.mjs";
-import { applyRoleEdit, applySettingsEdit, buildRolesView, modelLabel } from "../../src/dashboard/roles.mjs";
+import { applyRoleEdit, applySettingsEdit, buildRolesView, buildSettingsView, modelLabel } from "../../src/dashboard/roles.mjs";
 
 const roster = {
   clis: { claude: { cmd: ["claude"] }, codex: { cmd: ["codex"] } },
@@ -51,6 +51,15 @@ test("settings: only whitelisted paths, typed", () => {
   assert.throws(() => applySettingsEdit(roster, { path: "triage.enabled", value: true }), /not editable/);
   assert.throws(() => applyRoleEdit(roster, { role: "planner", pin_head: true }), /expected chain or delete/);
   assert.throws(() => applySettingsEdit(roster, { path: "accounts.claude.remaining", value: 3 }), /invalid/);
+});
+
+test("settings: usage-spender quota list is editable and defaults to claude, codex, cursor", () => {
+  assert.deepEqual(buildSettingsView(roster).usage_spender.subscriptions, ["claude", "codex", "cursor"]);
+  const next = applySettingsEdit(roster, { path: "usage_spender.subscriptions", value: ["claude"] });
+  assert.deepEqual(next.usage_spender.subscriptions, ["claude"]);
+  assert.deepEqual(buildSettingsView(next).usage_spender.subscriptions, ["claude"]);
+  assert.deepEqual(applySettingsEdit(roster, { path: "usage_spender.subscriptions", value: [] }).usage_spender.subscriptions, []);
+  assert.throws(() => applySettingsEdit(roster, { path: "usage_spender.subscriptions", value: ["ghost"] }), /invalid/);
 });
 
 test("settings: a subscription names its plan from its own list, a credit account none", () => {

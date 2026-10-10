@@ -152,6 +152,10 @@ export function applySpecialistAssignment(roster, { id, role, chain } = {}) {
 }
 
 // ── Settings ───────────────────────────────────────────────────────────────
+// Whose quota scripts/usage-spender.py may spend when the roster has no
+// usage_spender.subscriptions. Keep in sync with SPEND_DEFAULT there.
+const SPENDER_DEFAULT = ["claude", "codex", "cursor"];
+
 // Whitelisted paths only. `clis[*].cmd` is deliberately absent: a command
 // template edited from a browser is an arbitrary-execution lever.
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -167,6 +171,7 @@ const SETTINGS = [
     (r, [, id], v) => own(r.accounts, id) && r.accounts[id].kind === "subscription" && !!PLAN_TIERS[id]?.includes(v)],
   [/^limits\.(warn_at|handoff_at)$/, (v) => isUnit(v) && v > 0],
   [/^subscriptions$/, isStrList, (r, _m, v) => v.every((cli) => own(r.clis, cli))],
+  [/^usage_spender\.subscriptions$/, isStrList, (r, _m, v) => v.every((cli) => own(r.clis, cli))],
   [/^usage_watcher\.tick_sec$/, isPosInt],
   [/^usage_watcher\.intervals\.(idle_min|active_min|busy_min|idle_heartbeat_hours)$/, isPosInt],
 ];
@@ -196,6 +201,7 @@ export function buildSettingsView(roster) {
     accounts,
     limits: { warn_at: roster?.limits?.warn_at ?? null, handoff_at: roster?.limits?.handoff_at ?? null },
     subscriptions: roster?.subscriptions || [],
+    usage_spender: { subscriptions: roster?.usage_spender?.subscriptions ?? SPENDER_DEFAULT },
     usage_watcher: { tick_sec: roster?.usage_watcher?.tick_sec ?? null,
       intervals: roster?.usage_watcher?.intervals || {} },
     clis: Object.keys(roster?.clis || {}).sort(),
