@@ -551,6 +551,9 @@ $("#usage-grid").addEventListener("click", async (e) => {
 let rolesData = null;
 let rolesDrag = null;
 let rolesKeyDrawn = "";
+// Until a save and its redraw land, the chips show the old chain; a second
+// edit built on them would overwrite the first.
+let rolesSaving = false;
 
 const CELL_STATE = {
   gone: ["red", "gone — the CLI no longer offers it"],
@@ -674,6 +677,7 @@ const chainEntryLabel = (c) => `${c.cli}:${c.model}`;
 
 /** Apply `edit` (returns the status note) to a copy of the role's chain and save it, unless nothing changed. */
 function saveChain(role, edit) {
+  if (rolesSaving) return;
   const current = rolesData?.roles.find((r) => r.role === role)?.chain || [];
   if (current.some((c) => c.invalid)) return;
   const chain = current.map(chainEntry);
@@ -684,7 +688,8 @@ function saveChain(role, edit) {
     $("#roles-status").textContent = `${role} needs at least one model — delete the role instead`;
     return;
   }
-  roleWrite(role, { chain }, `${role}: ${note}`);
+  rolesSaving = true;
+  roleWrite(role, { chain }, `${role}: ${note}`).finally(() => { rolesSaving = false; });
 }
 
 /** Where a drop at (x, y) lands among the zone's chips: before the first chip after the pointer. */
@@ -718,9 +723,16 @@ function endRolesDrag() {
 }
 
 const board = $(".roles-board");
+// Drag events may target a text node; every lookup starts from its element.
+const dragEl = (e) => (e.target instanceof Element ? e.target : e.target?.parentElement) || board;
 board.addEventListener("dragstart", (e) => {
-  const chip = e.target.closest?.(".chain-chip[draggable], .palette-chip");
+  const chip = dragEl(e).closest(".chain-chip[draggable], .palette-chip");
   if (!chip) return;
+  if (rolesSaving) {
+    e.preventDefault();
+    $("#roles-status").textContent = "still saving the last change…";
+    return;
+  }
   if (chip.classList.contains("palette-chip")) {
     rolesDrag = { entry: { cli: chip.dataset.cli, model: chip.dataset.model, effort: null, pinned: false } };
   } else {
@@ -734,8 +746,8 @@ board.addEventListener("dragstart", (e) => {
 });
 board.addEventListener("dragover", (e) => {
   if (!rolesDrag) return;
-  const zone = e.target.closest(".chain-drop:not([data-locked])");
-  const back = rolesDrag.from && e.target.closest("#panel-roster");
+  const zone = dragEl(e).closest(".chain-drop:not([data-locked])");
+  const back = rolesDrag.from && dragEl(e).closest("#panel-roster");
   for (const el of board.querySelectorAll(".is-over")) if (el !== zone && el !== back) el.classList.remove("is-over");
   if (!zone && !back) {
     clearDropMark();
@@ -757,7 +769,7 @@ board.addEventListener("drop", (e) => {
   const drag = rolesDrag;
   if (!drag) return;
   e.preventDefault();
-  const zone = e.target.closest(".chain-drop:not([data-locked])");
+  const zone = dragEl(e).closest(".chain-drop:not([data-locked])");
   if (zone?.dataset.new) {
     createRole(drag.entry);
   } else if (zone) {
@@ -774,7 +786,7 @@ board.addEventListener("drop", (e) => {
       chain.splice(at, 0, entry);
       return `${chainEntryLabel(entry)} at ${at + 1}`;
     });
-  } else if (drag.from && e.target.closest("#panel-roster")) {
+  } else if (drag.from && dragEl(e).closest("#panel-roster")) {
     saveChain(drag.from, (chain) => `${chainEntryLabel(chain.splice(drag.index, 1)[0])} removed`);
   }
   endRolesDrag();
@@ -796,9 +808,10 @@ function createRole(entry) {
     $("#roles-status").textContent = `${role} already exists — drop the model on its row instead`;
     return;
   }
+  rolesSaving = true;
   roleWrite(role, { chain: [entry] }, `${role} created`).then((ok) => {
     if (ok) $("#role-new").classList.add("hidden");
-  });
+  }).finally(() => { rolesSaving = false; });
 }
 
 $("#role-add").addEventListener("click", () => {
