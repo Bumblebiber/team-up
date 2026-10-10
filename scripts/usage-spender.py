@@ -74,7 +74,6 @@ PLAN_WEIGHT = {
     "codex": {"plus": 1, "pro": 6, "business": 1, "enterprise": 6},
     "cursor": {"hobby": 0, "pro": 1, "pro_plus": 3, "ultra": 20, "teams": 1},
 }
-ACCOUNT_FOR_CLI = {"agy": "gemini"}
 BUSY_BURST_USED = 0.8     # burst window this full -> someone is working on that CLI, leave it alone
 MAX_AGE_H = 6             # older usage reading counts as unknown -> no spawn
 ACTIVE_DAYS = 7           # fallback target repos: committed to within this many days
@@ -100,9 +99,7 @@ WINDOWS = {
     "claude:week": ("claude", "claude:session", 7),
     "codex:weekly": ("codex", "codex:5h", 7),
     "cursor:included": ("cursor", None, 30),  # ponytail: billing cycle assumed 30d
-    # agy windows held out until Benni decides whether nightly spend may use Google quota (2026-10-09):
-    # "agy:gemini-weekly": ("agy", "agy:gemini-5h", 7),
-    # "agy:3p-weekly": ("agy", "agy:3p-5h", 7),
+    # agy (Google quota) is absent on purpose: Benni 2026-10-10, used only deliberately, never for spend.
 }
 TERMINAL = {"done", "failed", "cancelled"}
 
@@ -111,7 +108,6 @@ FALLBACK = {
     "claude": [("contrary-review", "reviewer"), ("framework-research", "researcher")],
     "codex": [("code-audit", "reviewer"), ("framework-research", "researcher")],
     "cursor": [("code-audit", "reviewer")],
-    "agy": [("code-audit", "reviewer")],
 }
 TASKS = {
     "contrary-review": "Contrary review of the last {days} days of commits in {repo} "
@@ -162,9 +158,8 @@ def target(days_left, cycle_days):
 
 
 def task_cost(roster, cli):
-    account = ACCOUNT_FOR_CLI.get(cli, cli)
-    plan = ((roster.get("accounts") or {}).get(account) or {}).get("plan")
-    w = PLAN_WEIGHT.get(account, {}).get(plan, 1)
+    plan = ((roster.get("accounts") or {}).get(cli) or {}).get("plan")
+    w = PLAN_WEIGHT.get(cli, {}).get(plan, 1)
     return TASK_COST / w if w else float("inf")
 
 
@@ -665,7 +660,6 @@ def selftest():
     max20 = {"accounts": {"claude": {"plan": "max20x"}, "cursor": {"plan": "hobby"}}}
     assert task_cost(pro, "claude") == TASK_COST and task_cost(max20, "claude") == TASK_COST / 20
     assert task_cost(max20, "cursor") == float("inf")
-    assert task_cost({"accounts": {"gemini": {"plan": "pro"}}}, "agy") == TASK_COST
 
     u = {"windows": {"claude:week": win(0.14, "2026-10-12T07:59:59Z"), "claude:session": win(0.1, fresh),
                      "codex:weekly": win(0.04, "2026-10-14T09:29:04Z"), "codex:5h": win(0.1, fresh),
@@ -674,12 +668,6 @@ def selftest():
     assert [x[0] for x in w] == ["claude:week"], (v, w)  # codex gap 16% < a plus-plan task's 30%
     assert "target 43%" in v["claude:week"] and "below one task" in v["codex:weekly"], v
     assert "below one task" in v["cursor:included"], v  # hobby: never
-    agy, wanted = decide(
-        {"windows": {"agy:gemini-weekly": win(0.1, "2026-10-12T12:00:00Z"),
-                     "agy:gemini-5h": win(0.1, "2026-10-09T13:00:00Z")}},
-        {"accounts": {"gemini": {"plan": "pro"}}}, now,
-    )
-    assert wanted == [], (agy, wanted)  # agy held out of WINDOWS, see above
     # tier scaling: same gap, bigger plan -> spend
     v, w = decide(u, {"accounts": {"codex": {"plan": "pro"}, "claude": {"plan": "pro"}}}, now)
     assert [x[0] for x in w] == ["codex:weekly"], (v, w)
