@@ -19,27 +19,31 @@
 
   <div id="app" class="app hidden">
     <aside class="sidebar">
-      <header class="sidebar-brand"><h1>team-up</h1></header>
+      <header class="sidebar-brand"><h1>team-up</h1><small>agent roster</small></header>
       <nav class="sidebar-nav" aria-label="Dashboard views">
-        <a href="#/overview" data-route="overview">Overview<span id="badge-overview" class="nav-badge hidden"></span></a>
+        <a href="#/overview" data-route="overview"><span class="nav-ico" aria-hidden="true">◎</span>Overview<span id="badge-overview" class="nav-badge hidden"></span></a>
         <details class="nav-group" open>
           <summary>Work</summary>
-          <a href="#/runs" data-route="runs">Sessions &amp; Runs<span id="badge-runs" class="nav-badge hidden"></span></a>
-          <a href="#/tim" data-route="tim" id="nav-tim" class="hidden">TIM<span id="badge-tim" class="nav-badge hidden"></span></a>
-          <a href="#/projects" data-route="projects">Projects</a>
+          <a href="#/runs" data-route="runs"><span class="nav-ico" aria-hidden="true">▶</span>Sessions &amp; Runs<span id="badge-runs" class="nav-badge hidden"></span></a>
+          <a href="#/projects" data-route="projects"><span class="nav-ico" aria-hidden="true">▤</span>Projects</a>
+          <a href="#/tim" data-route="tim" id="nav-tim" class="hidden"><span class="nav-ico" aria-hidden="true">✦</span>TIM memory<span id="badge-tim" class="nav-badge hidden"></span></a>
         </details>
         <details class="nav-group" open>
           <summary>Team</summary>
-          <a href="#/roles" data-route="roles">Roles &amp; Models</a>
+          <a href="#/roles" data-route="roles"><span class="nav-ico" aria-hidden="true">⇄</span>Roles &amp; Models</a>
+          <a href="#/specialists" data-route="specialists"><span class="nav-ico" aria-hidden="true">☰</span>Specialists</a>
+        </details>
+        <details class="nav-group" open>
+          <summary>Automation</summary>
+          <a href="#/automation" data-route="automation"><span class="nav-ico" aria-hidden="true">⏱</span>Scheduled jobs<span id="badge-automation" class="nav-badge hidden"></span></a>
         </details>
         <details class="nav-group" open>
           <summary>System</summary>
-          <a href="#/providers" data-route="providers">Providers</a>
-          <a href="#/clis" data-route="clis">CLIs</a>
-          <a href="#/settings" data-route="settings">Settings</a>
-          <a href="#/cron" data-route="cron">Cron-Jobs</a>
+          <a href="#/settings" data-route="settings"><span class="nav-ico" aria-hidden="true">⚙</span>Settings</a>
+          <a href="#/providers" data-route="providers"><span class="nav-ico" aria-hidden="true">⚿</span>Providers</a>
+          <a href="#/clis" data-route="clis"><span class="nav-ico" aria-hidden="true">⌘</span>CLIs</a>
         </details>
-        <a href="#/trending" data-route="trending" class="nav-trending">AI Trending</a>
+        <a href="#/trending" data-route="trending" class="nav-trending"><span class="nav-ico" aria-hidden="true">↗</span>AI Trending</a>
       </nav>
     </aside>
 
@@ -56,6 +60,10 @@
 
       <main>
         <section class="view" data-view="overview">
+          <header class="page-head">
+            <h1>Overview</h1>
+            <p>What needs you right now, and how much of each subscription is left.</p>
+          </header>
           <div class="kpi-grid" aria-label="Dashboard overview">
             <a class="kpi-tile" href="#/runs">
               <span>Active runs</span><strong id="kpi-active-runs">—</strong><small>Sessions &amp; Runs</small>
@@ -73,32 +81,56 @@
               <span>High-priority TIM tasks</span><strong id="kpi-tim-tasks">—</strong><small>View TIM work</small>
             </a>
           </div>
+          <section id="panel-attention" class="panel hidden">
+            <h2>Needs attention</h2>
+            <ul id="attention-list" class="attention"></ul>
+          </section>
           <section id="panel-usage" class="panel">
             <h2>Usage</h2>
             <div id="usage-grid" class="usage-grid"></div>
             <div id="usage-repair-status" class="repair-status hidden"></div>
             <div id="marked-list"></div>
+            <details class="inline-form" id="mark-details">
+              <summary>Mark a model, provider or CLI as limited…</summary>
+              <p class="muted">Takes it out of every chain until the time runs out — for a limit team-up cannot see (an API error, a provider outage).</p>
+              <form id="mark-form" class="form-row">
+                <select id="mark-target" required aria-label="Model, provider or CLI"></select>
+                <label class="inline">for <input type="number" id="mark-hours" value="5" min="0.25" max="336" step="0.25" required> h</label>
+                <input type="text" id="mark-reason" placeholder="Reason (optional)" maxlength="200">
+                <button type="submit" class="primary">Mark limited</button>
+              </form>
+              <p id="mark-status" class="muted" aria-live="polite"></p>
+            </details>
           </section>
         </section>
 
         <section class="view" data-view="runs">
+          <header class="page-head">
+            <h1>Sessions &amp; Runs</h1>
+            <p>Live worker terminals, and the mailbox runs behind them. Click a run to read its prompt and result and to close it out.</p>
+          </header>
           <section id="panel-sessions" class="panel">
-        <h2>Sessions &amp; Runs</h2>
+        <h2>Terminals</h2>
         <div id="tmux-table" class="table-wrap"></div>
         <h3>Runs <label class="muted" title="Running, or finished in the last 7 days and not yet collected"><input type="checkbox" id="active-only" checked> open only</label></h3>
         <div id="runs-table" class="table-wrap"></div>
+        <div id="run-actions" class="run-actions hidden"></div>
         <div id="run-detail" class="detail hidden"></div>
           </section>
         </section>
 
         <section class="view" data-view="projects">
+          <header class="page-head">
+            <h1>Projects</h1>
+            <p>Every repo in your projects folder: open a session in it, and give specialists a command policy they may run.</p>
+          </header>
           <section id="panel-projects" class="panel">
-        <h2>Projects</h2>
+        <h2>Repositories</h2>
         <div class="toolbar">
           <label>Folder
             <input type="text" id="projects-dir" placeholder="~/projects" autocomplete="off">
           </label>
-          <select id="projects-cli"></select>
+          <select id="projects-cli" aria-label="CLI for new sessions"></select>
           <button type="button" id="projects-fix-all" title="Write unambiguous missing command policies and trust the ones it wrote">Fix all</button>
           <label title="On every refresh: write unambiguous missing .team-up/commands.json files (uncommitted); trusts nothing">
             <input type="checkbox" id="projects-auto"> auto-fix
@@ -110,10 +142,18 @@
         </section>
 
         <section class="view" data-view="tim">
-          <section id="panel-tim" class="panel hidden">
-        <h2>TIM</h2>
+          <header class="page-head">
+            <h1>TIM memory</h1>
+            <p>What every project remembers. <em>Open work</em> lists tasks, bugs and ideas — start a session on one. <em>Explorer</em> browses the whole memory as a tree or a graph.</p>
+          </header>
+          <div class="segmented" id="tim-views" role="tablist">
+            <button type="button" role="tab" class="is-active" data-tim-view="work">Open work</button>
+            <button type="button" role="tab" data-tim-view="explorer">Explorer</button>
+          </div>
+          <section id="panel-tim" class="panel hidden" data-tim-pane="work">
+        <h2>Open work</h2>
         <div class="toolbar">
-          <span class="tabs" id="tim-tabs">
+          <span class="segmented small" id="tim-tabs">
             <button type="button" class="tim-tab is-active" data-kind="task">Tasks</button>
             <button type="button" class="tim-tab" data-kind="idea">Ideas</button>
             <button type="button" class="tim-tab" data-kind="bug">Bugs</button>
@@ -122,20 +162,28 @@
         <p id="tim-status" class="muted"></p>
         <div id="tim-list" class="table-wrap"></div>
           </section>
+          <section id="panel-tim-explorer" class="panel explorer hidden" data-tim-pane="explorer">
+            <p id="tim-explorer-status" class="muted" aria-live="polite"></p>
+            <iframe id="tim-frame" title="TIM explorer" class="hidden"></iframe>
+          </section>
         </section>
 
         <section class="view" data-view="roles">
+          <header class="page-head">
+            <h1>Roles &amp; Models</h1>
+            <p>A role is a job description with a fallback chain of models: the first one with quota left does the work. The roster lists every model team-up may use.</p>
+          </header>
           <section id="panel-roles" class="panel">
         <h2>Models</h2>
         <div class="toolbar">
-          <span class="tabs" id="roles-tabs">
+          <span class="segmented" id="roles-tabs">
             <button type="button" class="tim-tab is-active" data-tab="roles">Roles</button>
             <button type="button" class="tim-tab" data-tab="models">Roster</button>
           </span>
         </div>
         <div data-tab-body="roles">
           <div class="toolbar">
-            <button type="button" id="role-add">+ Role</button>
+            <button type="button" id="role-add" class="primary">+ Role</button>
             <button type="button" id="roles-upgrade" class="hidden"></button>
           </div>
           <p id="roles-status" class="muted"></p>
@@ -143,26 +191,33 @@
         </div>
         <div data-tab-body="models" class="hidden">
           <div class="toolbar">
-            <span class="tabs" id="catalogue-tabs">
+            <span class="segmented small" id="catalogue-tabs">
               <button type="button" class="tim-tab is-active" data-kind="subscription">Subscription</button>
               <button type="button" class="tim-tab" data-kind="api">API key</button>
             </span>
             <input type="search" id="catalogue-search" placeholder="Filter models…">
+            <button type="button" id="models-scan" title="Ask every CLI which models it offers now (takes a minute or two)">Rescan CLIs</button>
           </div>
           <p id="catalogue-status" class="muted"></p>
           <div id="catalogue-list"></div>
         </div>
           </section>
+        </section>
 
+        <section class="view" data-view="specialists">
+          <header class="page-head">
+            <h1>Specialists</h1>
+            <p>Installed specialist bundles: what each is for, which role or chain it runs on, and which capability packages it may use.</p>
+          </header>
           <section id="panel-specialists" class="panel">
-        <h2>Specialists</h2>
+        <h2>Specialist</h2>
         <div class="toolbar">
-          <select id="specialist-select"></select>
+          <select id="specialist-select" aria-label="Specialist"></select>
           <span id="specialist-meta" class="muted"></span>
         </div>
         <div id="specialist-detail"></div>
         <div class="toolbar">
-          <select id="capability-select"></select>
+          <select id="capability-select" aria-label="Capability package"></select>
           <button type="button" id="capability-assign">Assign capability</button>
         </div>
         <p id="capability-status" class="muted"></p>
@@ -178,23 +233,50 @@
           </section>
         </section>
 
-        <section class="view" data-view="settings">
-          <section id="panel-settings" class="panel">
-        <h2>Settings</h2>
-        <p id="settings-status" class="muted"></p>
-        <div id="settings-body"></div>
+        <section class="view" data-view="automation">
+          <header class="page-head">
+            <h1>Scheduled jobs</h1>
+            <p>Everything team-up runs on a schedule — what it does, when it runs next, what it costs — and jobs of your own: a prompt, a project folder, a model and a schedule.</p>
+          </header>
+          <p id="automation-status" class="status-line" aria-live="polite"></p>
+          <section id="panel-custom-jobs" class="panel">
+            <h2>Your jobs</h2>
+            <div class="toolbar"><button type="button" id="job-new" class="primary">+ New job</button></div>
+            <div id="custom-jobs"></div>
+          </section>
+          <section id="panel-builtin-jobs" class="panel">
+            <h2>Built-in jobs</h2>
+            <div id="builtin-jobs" class="job-list"></div>
+          </section>
+          <section id="panel-services" class="panel">
+            <h2>Background services</h2>
+            <p class="muted">Always-on parts of team-up (systemd user units). Shown for information; manage them with <code>systemctl --user</code>.</p>
+            <div id="services" class="table-wrap"></div>
           </section>
         </section>
 
-        <section class="view" data-view="cron">
-          <section id="panel-cron-jobs" class="panel">
-            <h2>Cron-Jobs</h2>
-            <p id="cron-jobs-status" class="muted" aria-live="polite"></p>
-            <div id="cron-jobs-body" class="table-wrap"></div>
+        <section class="view" data-view="settings">
+          <header class="page-head">
+            <h1>Settings</h1>
+            <p>Every roster setting, explained. A change is checked, saved to <code>~/.team-up/roster.json</code> with a backup, and takes effect as noted under it.</p>
+          </header>
+          <div class="toolbar settings-toolbar">
+            <input type="search" id="settings-search" placeholder="Search settings…" aria-label="Search settings">
+            <label class="inline"><input type="checkbox" id="settings-advanced"> Show advanced</label>
+          </div>
+          <p id="settings-status" class="status-line" aria-live="polite"></p>
+          <div id="settings-body" class="settings"></div>
+          <section id="panel-excluded" class="panel subtle">
+            <h2>Not editable here</h2>
+            <ul id="settings-excluded" class="excluded"></ul>
           </section>
         </section>
 
         <section class="view" data-view="providers">
+          <header class="page-head">
+            <h1>Providers</h1>
+            <p>How each model provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.</p>
+          </header>
           <section id="panel-providers" class="panel">
         <h2>Providers</h2>
         <div id="providers-list"></div>
@@ -202,18 +284,26 @@
         </section>
 
         <section class="view" data-view="clis">
+          <header class="page-head">
+            <h1>CLIs</h1>
+            <p>The agent CLIs team-up drives: version, harness check, install, update and login. Click a row for its job log.</p>
+          </header>
           <section id="panel-clis" class="panel">
-        <h2>CLIs</h2>
+        <h2>Agent CLIs</h2>
         <div id="clis-table" class="table-wrap"></div>
         <pre id="cli-log" class="pane hidden"></pre>
           </section>
         </section>
 
         <section class="view" data-view="trending">
+          <header class="page-head">
+            <h1>AI Trending</h1>
+            <p>New AI repositories on GitHub, from the newest daily report of the trending scraper.</p>
+          </header>
           <section id="panel-trending" class="panel">
-        <h2>AI Trending</h2>
+        <h2>Repositories</h2>
         <div class="toolbar">
-          <select id="trending-section"></select>
+          <select id="trending-section" aria-label="Section"></select>
           <span id="trending-date" class="muted"></span>
         </div>
         <p id="trending-status" class="muted"></p>
@@ -287,7 +377,9 @@
     <form id="role-editor-form">
       <h2 id="role-editor-title">Role</h2>
       <label for="role-editor-name">Name</label>
-      <input type="text" id="role-editor-name" pattern="[a-z0-9][a-z0-9._-]*" required autocomplete="off">
+      <input type="text" id="role-editor-name" pattern="[a-z0-9][a-z0-9._\-]*" required autocomplete="off">
+      <label for="role-editor-effort">Effort for the whole role</label>
+      <select id="role-editor-effort"></select>
       <label>Chain — tried top to bottom; the first model with budget left wins</label>
       <div id="role-editor-chain"></div>
       <button type="button" id="role-editor-add">+ Model</button>
@@ -311,6 +403,62 @@
         <button type="button" id="model-replace-strike">Remove from chains</button>
         <button type="submit">Replace</button>
       </menu>
+    </form>
+  </dialog>
+
+  <dialog id="job-editor" class="launch-dialog wide">
+    <form id="job-editor-form">
+      <h2 id="job-editor-title">New job</h2>
+      <p class="muted">A worker starts in the project folder on schedule and does what the prompt says, on the model you pick. Its output lands in the job's log; optionally also on Telegram.</p>
+      <div class="form-grid">
+        <label for="job-name">Name</label>
+        <div><input type="text" id="job-name" required pattern="[a-z0-9][a-z0-9\-]{0,62}" placeholder="weekly-dependency-check" autocomplete="off">
+          <small class="muted">Lowercase letters, digits and dashes.</small></div>
+        <label for="job-description">What it is for</label>
+        <input type="text" id="job-description" maxlength="200" placeholder="One line, shown in the list">
+        <label for="job-schedule-preset">When</label>
+        <div>
+          <div class="form-row">
+            <select id="job-schedule-preset" aria-label="Schedule preset">
+              <option value="0 * * * *">Every hour</option>
+              <option value="0 */6 * * *">Every 6 hours</option>
+              <option value="0 6 * * *" selected>Daily at 06:00</option>
+              <option value="0 2 * * *">Nightly at 02:00</option>
+              <option value="0 9 * * 1-5">Weekdays at 09:00</option>
+              <option value="0 6 * * 1">Mondays at 06:00</option>
+              <option value="0 6 1 * *">Monthly on the 1st at 06:00</option>
+              <option value="">Custom (cron)…</option>
+            </select>
+            <input type="text" id="job-schedule" class="mono" required placeholder="m h dom mon dow" autocomplete="off" aria-label="Cron schedule">
+          </div>
+          <small id="job-schedule-preview" class="muted" aria-live="polite"></small>
+        </div>
+        <label for="job-cwd">Project folder</label>
+        <div><input type="text" id="job-cwd" list="job-cwd-options" required placeholder="~/projects/my-repo" autocomplete="off">
+          <datalist id="job-cwd-options"></datalist></div>
+        <label for="job-model">Model</label>
+        <select id="job-model" required></select>
+        <label for="job-prompt">Prompt</label>
+        <textarea id="job-prompt" rows="9" required placeholder="What should the worker do each time? Be specific: where to look, what to change or report, when to stop."></textarea>
+        <span></span>
+        <div class="checks">
+          <label class="inline"><input type="checkbox" id="job-notify"> Send the result to Telegram</label>
+          <label class="inline"><input type="checkbox" id="job-enabled" checked> Enabled</label>
+        </div>
+      </div>
+      <p id="job-editor-status" class="muted" aria-live="polite"></p>
+      <menu>
+        <button type="button" id="job-editor-cancel">Cancel</button>
+        <button type="submit" class="primary">Save job</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="job-log" class="launch-dialog wide">
+    <form method="dialog">
+      <h2 id="job-log-title">Log</h2>
+      <pre id="job-log-body" class="pane"></pre>
+      <menu><button type="submit">Close</button></menu>
     </form>
   </dialog>
 

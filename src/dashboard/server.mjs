@@ -44,6 +44,8 @@ import {
   sanitizeForDashboard,
 } from "./data.mjs";
 import { createAdminGate } from "./admin.mjs";
+import { createTimViewerProxy, PREFIX as TIM_VIEWER_PREFIX } from "./tim-viewer.mjs";
+import { describeSchedule, nextRun, parseSchedule } from "./cron-schedule.mjs";
 import {
   admissionResetAction,
   clearMarkAction,
@@ -325,6 +327,7 @@ export function createDashboardServer({
   publicOrigin = env.TEAMUP_DASHBOARD_ORIGIN || "",
   sessionExists = (session) => tmuxSessionExists(session, { exec }),
   sendKeys = sendPaneKeys,
+  timViewer = createTimViewerProxy({ env }),
 } = {}) {
   const expectedToken = token ?? ensureDashboardToken(env);
   // A tailnet or proxy reaches the same dashboard under more than one name
@@ -1073,6 +1076,7 @@ export function createDashboardServer({
         if (runActionMatch) {
           target = `${target} ${body.action}`;
           result = runAction(decodeURIComponent(runActionMatch[1]), String(body.action || ""), { reason: body.reason });
+          memo.invalidate(`run:${decodeURIComponent(runActionMatch[1])}`);
         } else if (pathname === "/api/actions/mark-limited") {
           target = String(body.target || "");
           result = markLimitedAction(body, { roster: loadRoster(env), env, now: now() });
@@ -1372,6 +1376,18 @@ export function createDashboardServer({
       return;
     }
 
+    if (pathname === TIM_VIEWER_PREFIX || pathname.startsWith(`${TIM_VIEWER_PREFIX}/`)) {
+      if (!requireAuth(req, res)) return;
+      if (pathname === TIM_VIEWER_PREFIX) {
+        // The viewer's requests are relative: they need the trailing slash.
+        res.writeHead(302, { Location: `${TIM_VIEWER_PREFIX}/${url.search}` });
+        res.end();
+        return;
+      }
+      await timViewer.handle(req, res, pathname.slice(TIM_VIEWER_PREFIX.length), url.search);
+      return;
+    }
+
     if (!isApi) {
       jsonResponse(res, 404, { error: "not found" });
       return;
@@ -1505,6 +1521,17 @@ export function createDashboardServer({
       return;
     }
 
+    if (pathname === "/api/automation/preview") {
+      const schedule = url.searchParams.get("schedule") || "";
+      try {
+        parseSchedule(schedule);
+        jsonResponse(res, 200, { text: describeSchedule(schedule), next: nextRun(schedule)?.toISOString() ?? null });
+      } catch (e) {
+        jsonResponse(res, 200, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     if (pathname === "/api/automation") {
       jsonResponse(res, 200, buildAutomationView({ env, exec, modelOptions: cronModelOptions(loadRoster(env)) }));
       return;
@@ -1627,7 +1654,8 @@ export function createDashboardServer({
     });
   });
 
-  return { server, token: expectedToken, adminGate };
+  server.on("close", () => timViewer.stop());
+  return { server, token: expectedToken, adminGate, timViewer };
 }
 
 export function startDashboard({
@@ -1644,9 +1672,10 @@ export function startDashboard({
     io.err(`warning: dashboard binding to ${host} — use ssh -L for remote access`);
   }
   const token = ensureDashboardToken(env, { rotate: rotateToken });
-  const { server } = createDashboardServer({
+  const { server, timViewer } = createDashboardServer({
     env, host, token, io, allowInstall, requireAdminConfirm, publicOrigin,
   });
+  process.once("exit", () => timViewer.stop());
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {

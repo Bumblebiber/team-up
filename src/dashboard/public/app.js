@@ -6,9 +6,15 @@ let adminChallengeId = null;
 // touching this file.
 const VIEW_NAMES = new Set([...document.querySelectorAll(".view")].map((view) => view.dataset.view));
 
+// Old links keep working after a view was renamed or split.
+const ROUTE_ALIASES = { cron: "automation" };
+// Views that load on entry rather than on the five-second cycle.
+const onEnter = {};
+
 function applyRoute() {
   const match = location.hash.match(/^#\/([^/?#]+)$/);
-  const route = match && VIEW_NAMES.has(match[1]) ? match[1] : "overview";
+  const wanted = match ? ROUTE_ALIASES[match[1]] || match[1] : null;
+  const route = wanted && VIEW_NAMES.has(wanted) ? wanted : "overview";
   const canonicalHash = `#/${route}`;
   if (location.hash !== canonicalHash) history.replaceState(null, "", canonicalHash);
   document.querySelectorAll(".view").forEach((view) => {
@@ -18,6 +24,8 @@ function applyRoute() {
     if (link.dataset.route === route) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
+  if (!$("#app").classList.contains("hidden")) onEnter[route]?.();
+  document.title = `${document.querySelector(`.view[data-view="${route}"] .page-head h1`)?.textContent || "team-up"} · team-up`;
 }
 
 window.addEventListener("hashchange", applyRoute);
@@ -256,6 +264,7 @@ async function refreshRuns() {
   const data = await api(`/api/runs?active=${$("#active-only").checked ? "1" : "0"}`);
   dashboardMetrics.runCounts = data.counts;
   updateDashboardMetrics();
+  updateAttention();
   const visibleRuns = data.runs;
   const rows = visibleRuns.map((r) => `
     <tr class="clickable" data-run="${esc(r.runId)}"${providerAttr(r.worker)}>
@@ -277,9 +286,52 @@ async function refreshRuns() {
   if (selectedRun) selectRun(selectedRun);
 }
 
+const RUN_BUTTONS = [
+  { action: "cancel", label: "Cancel", when: (s) => !TERMINAL_RUN.has(s), title: "Mark cancelled and stop the worker's terminal" },
+  { action: "fail", label: "Mark failed…", when: (s) => !TERMINAL_RUN.has(s), title: "With a reason — the insights job counts failures by reason" },
+  { action: "collect", label: "Mark collected", when: (s, r) => TERMINAL_RUN.has(s) && !r.collected, title: "You have read the result; it leaves the open list" },
+  { action: "merged", label: "Outcome: merged", when: (s, r) => TERMINAL_RUN.has(s) && !r.outcome, title: "The work landed" },
+  { action: "discarded", label: "Outcome: discarded", when: (s, r) => TERMINAL_RUN.has(s) && !r.outcome, title: "The work was not kept" },
+];
+const TERMINAL_RUN = new Set(["done", "failed", "cancelled"]);
+
+function renderRunActions(runId, state) {
+  const el = $("#run-actions");
+  const status = state?.status || "unknown";
+  const buttons = RUN_BUTTONS.filter((b) => b.when(status, state || {}));
+  el.innerHTML = `<strong><code>${esc(runId.slice(-8))}</code> · ${esc(status)}${state?.collected ? " · collected" : ""}${
+    state?.outcome?.value ? ` · ${esc(state.outcome.value)}` : ""}</strong>${buttons.map((b) =>
+    `<button type="button" data-run-action="${b.action}" title="${esc(b.title)}"${b.action === "cancel" || b.action === "fail" ? ' class="danger"' : ""}>${esc(b.label)}</button>`).join("")}`;
+  el.dataset.run = runId;
+  el.classList.remove("hidden");
+}
+
+$("#run-actions").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-run-action]");
+  if (!btn) return;
+  const runId = $("#run-actions").dataset.run;
+  const action = btn.dataset.runAction;
+  let reason;
+  if (action === "fail") {
+    reason = prompt("Why did this run fail? (one line)");
+    if (!reason) return;
+  } else if (action === "cancel" && !confirm("Cancel this run and stop its worker?")) {
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await api(`/api/runs/${encodeURIComponent(runId)}/action`, { method: "POST", body: JSON.stringify({ action, reason }) });
+  } catch (err) {
+    alert(`refused: ${err.message}`);
+  }
+  await refreshRuns();
+});
+
 async function selectRun(runId) {
   selectedRun = runId;
   const data = await api(`/api/runs/${runId}`);
+  renderRunActions(runId, data.state);
+  $("#runs-table").querySelectorAll("tr[data-run]").forEach((tr) => tr.classList.toggle("selected", tr.dataset.run === runId));
   const parts = [];
   if (data.mailbox?.STATUS) parts.push(`=== STATUS ===\n${data.mailbox.STATUS}`);
   if (data.mailbox?.["PROMPT.md"]) parts.push(`=== PROMPT.md ===\n${data.mailbox["PROMPT.md"]}`);
@@ -419,9 +471,46 @@ async function refreshUsage() {
   statusEl.textContent = status;
   statusEl.classList.toggle("hidden", !status);
   $("#marked-list").innerHTML = data.marked.length
-    ? `<h3>Marked</h3>${data.marked.map((m) => `<div class="marked-item">${esc(m.key)} until ${esc(m.until)}</div>`).join("")}`
+    ? `<h3>Marked as limited</h3>${data.marked.map((m) => `<div class="marked-item">
+        <strong>${esc(m.key)}</strong> until ${esc(fmtTime(m.until))}${m.reason ? ` · ${esc(m.reason)}` : ""}
+        <button type="button" class="link" data-clear-mark="${esc(m.key)}">Lift now</button></div>`).join("")}`
     : "";
+  const select = $("#mark-target");
+  const targets = data.mark_targets || [];
+  if (select.dataset.keys !== targets.join(",")) {
+    const keep = select.value;
+    select.innerHTML = targets.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    if (targets.includes(keep)) select.value = keep;
+    select.dataset.keys = targets.join(",");
+  }
+  updateAttention();
 }
+
+$("#marked-list").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-clear-mark]");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    await api("/api/actions/clear-mark", { method: "POST", body: JSON.stringify({ target: btn.dataset.clearMark }) });
+  } catch (err) {
+    alert(`could not lift the mark: ${err.message}`);
+  }
+  await refreshUsage();
+});
+
+$("#mark-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = $("#mark-status");
+  const body = { target: $("#mark-target").value, hours: Number($("#mark-hours").value), reason: $("#mark-reason").value };
+  try {
+    const res = await api("/api/actions/mark-limited", { method: "POST", body: JSON.stringify(body) });
+    status.textContent = `${body.target} is out of every chain until ${fmtTime(res.until)}.`;
+    $("#mark-reason").value = "";
+  } catch (err) {
+    status.textContent = `refused: ${err.message}`;
+  }
+  await refreshUsage();
+});
 
 // Delegated, because refreshUsage replaces the whole grid every poll.
 $("#usage-grid").addEventListener("click", async (e) => {
@@ -600,6 +689,13 @@ function openRoleEditor(role, specialist = null) {
   $("#role-editor-name").value = specialist || role?.role || "";
   $("#role-editor-name").readOnly = !!(role || specialist);
   $("#role-editor-status").textContent = "";
+  const effort = $("#role-editor-effort");
+  effort.innerHTML = [`<option value="">per model (default)</option>`,
+    ...(rolesData?.efforts || []).map((x) => `<option value="${esc(x)}">${esc(x)}</option>`)].join("");
+  effort.value = role?.effort || "";
+  effort.dataset.current = role?.effort || "";
+  effort.hidden = !!specialist;
+  effort.previousElementSibling.hidden = !!specialist;
   const list = $("#role-editor-chain");
   list.innerHTML = "";
   const rows = role?.chain?.filter((x) => !x.invalid);
@@ -639,7 +735,11 @@ $("#role-editor-form").addEventListener("submit", async (e) => {
     else $("#role-editor-status").textContent = $("#capability-status").textContent;
     return;
   }
-  const ok = await roleWrite(role, { chain }, `${role} saved`);
+  let ok = await roleWrite(role, { chain }, `${role} saved`);
+  const effort = $("#role-editor-effort");
+  if (ok && effort.value !== effort.dataset.current) {
+    ok = await roleWrite(role, { effort: effort.value || null }, `${role} saved`);
+  }
   if (ok) roleDialog.close();
   else $("#role-editor-status").textContent = $("#roles-status").textContent;
 });
@@ -1565,6 +1665,12 @@ function writeStored(key, value) {
   }
 }
 
+// Rank 0-1 red, rank 2 amber — the same scale as the overview's TIM tile.
+function priorityTone(p) {
+  const v = String(p).trim().toUpperCase();
+  return URGENT_PRIORITIES.has(v) ? "err" : ["P2", "2", "MEDIUM"].includes(v) ? "warn" : "off";
+}
+
 function timKind() {
   const kind = readStored(TIM_KIND_KEY, "task");
   return TIM_KINDS[kind] ? kind : "task";
@@ -1584,8 +1690,8 @@ async function refreshTim() {
   // The panel and its nav link exist in the markup but stay hidden until TIM
   // answers, so a dashboard without TIM never shows an empty box. The class,
   // not the attribute: `nav a` sets display and would win over [hidden].
-  $("#panel-tim").classList.toggle("hidden", !data.installed);
   $("#nav-tim").classList.toggle("hidden", !data.installed);
+  if (!timViewShown) showTimView(readStored(TIM_VIEW_KEY, "work"));
   if (!data.installed) return;
 
   fillSelect($("#tim-launch-cli"), (data.clis || []).map((c) => ({ value: c, label: c })));
@@ -1609,7 +1715,7 @@ async function refreshTim() {
       <summary>${esc(p.title.split(" | ")[0])} <span class="muted">${p.items.length}</span></summary>
       <ul class="tim-items">${p.items.map((item) => `
         <li>
-          <span class="muted">${esc(item.status)}${item.priority ? ` · ${esc(item.priority)}` : ""}</span>
+          <span class="muted">${esc(item.status)}${item.priority ? ` <span class="tag ${priorityTone(item.priority)}">${esc(item.priority)}</span>` : ""}</span>
           ${esc(item.title)}
           ${item.sessions.length
             ? item.sessions.map((sess) => `<a href="#" class="session-link" data-session="${esc(sess)}">running</a>`).join(" ")
@@ -1738,127 +1844,550 @@ $("#tim-tabs").addEventListener("click", (event) => {
 });
 
 // ── Settings ──────────────────────────────────────────────────────────────
-// The roster switches that used to need a text editor. Each control writes
-// one path; the server holds the whitelist, so nothing here can reach the CLI
-// command templates. Not on the five-second cycle: it would reset a field
-// mid-edit, and only this panel changes these values.
-async function refreshSettings() {
-  const d = await api("/api/settings");
-  const num = (path, value, step, title) =>
-    `<input type="number" data-path="${path}" value="${value ?? ""}" step="${step}" title="${esc(title)}">`;
-  const check = (path, on, label, title = "") =>
-    `<label title="${esc(title)}"><input type="checkbox" data-path="${path}"${on ? " checked" : ""}> ${esc(label)}</label>`;
-  const accounts = Object.entries(d.accounts).map(([id, a]) => `
-    <tr data-row="account:${esc(id)}">
-      <td>${check(`accounts.${id}.enabled`, a.enabled, id, a.comment || "")}</td>
-      <td class="muted">${esc(a.kind)}</td>
-      <td>${a.kind === "credit" ? num(`accounts.${id}.remaining`, a.remaining, "any", "Credit left; 0 blocks the account")
-        : a.plans ? `<select data-path="accounts.${esc(id)}.plan" title="Plan of this subscription (information only)">${
-          a.plan ? "" : `<option value="" selected>— plan —</option>`}${a.plans.map((p) =>
-          `<option value="${esc(p)}"${p === a.plan ? " selected" : ""}>${esc(p)}</option>`).join("")}</select>` : ""}</td>
-    </tr>`).join("");
-  const iv = d.usage_watcher.intervals || {};
-  $("#settings-body").innerHTML = `
-    <h3 title="A disabled account takes every model on it out of every chain">Accounts</h3>
-    <table><tbody>${accounts}</tbody></table>
-    <h3 title="Which CLIs run on a subscription with usage windows (the Usage panel)">Subscriptions</h3>
-    <p>${d.clis.map((c) => `<label><input type="checkbox" data-list="subscriptions" value="${esc(c)}"${
-      d.subscriptions.includes(c) ? " checked" : ""}> ${esc(c)}</label>`).join(" ")}</p>
-    <h3 title="Whose spare quota the nightly usage-spender may spend on reviews and audits">Usage spender</h3>
-    <p>${d.subscriptions.map((c) => `<label><input type="checkbox" data-list="usage_spender.subscriptions" value="${esc(c)}"${
-      d.usage_spender.subscriptions.includes(c) ? " checked" : ""}> ${esc(c)}</label>`).join(" ")}</p>
-    <h3>Limits</h3>
-    <dl class="kv">
-      <dt title="Usage share at which a window counts as amber">Warn at</dt><dd>${num("limits.warn_at", d.limits.warn_at, "0.01", "0–1")}</dd>
-      <dt title="Usage share at which a running worker hands off">Hand off at</dt><dd>${num("limits.handoff_at", d.limits.handoff_at, "0.01", "0–1")}</dd>
-    </dl>
-    <h3 title="How often the usage collector reads each subscription's limits">Usage watcher</h3>
-    <dl class="kv">
-      <dt>Tick (s)</dt><dd>${num("usage_watcher.tick_sec", d.usage_watcher.tick_sec, "1", "")}</dd>
-      ${["idle_min", "active_min", "busy_min", "idle_heartbeat_hours"].map((k) =>
-        `<dt>${k.replace(/_/g, " ")}</dt><dd>${num(`usage_watcher.intervals.${k}`, iv[k], "1", "")}</dd>`).join("")}
-    </dl>`;
+// Rendered from the server's registry (src/dashboard/settings.mjs): every
+// field arrives with its label, help, unit, default and bounds, so this file
+// knows no setting by name. Not on the five-second cycle — it would reset a
+// field mid-edit; it loads on entering the view and after each save.
+const SETTINGS_ADVANCED_KEY = "teamup.settingsAdvanced";
+let settingsData = null;
+
+// Buttons that act rather than set, shown under their group.
+const GROUP_ACTIONS = {
+  workers: [{
+    label: "Lift the post-restart cap",
+    title: "After a memory-caused restart team-up caps workers for 24 h; this lifts it now",
+    endpoint: "/api/actions/admission-reset",
+    done: (r) => (r.lifted ? "Cap lifted." : "There was no cap to lift."),
+  }],
+};
+
+const pct = (v) => `${Math.round(v * 1000) / 10} %`;
+
+function formatSetting(f, v) {
+  if (v === undefined) return "—";
+  if (v === null) return f.nullLabel || "not set";
+  if (f.type === "bool") return v ? "on" : "off";
+  if (f.type === "ratio") return pct(v);
+  if (f.type === "set") {
+    if (!v.length) return "none";
+    return v.map((x) => f.options.find((o) => o.value === x)?.label ?? x).join(", ");
+  }
+  if (f.type === "enum") return f.options.find((o) => o.value === v)?.label ?? String(v);
+  return `${v}${f.unit ? ` ${f.unit}` : ""}`;
 }
 
-async function refreshCronJobs() {
-  const d = await api("/api/cron-jobs");
-  const status = $("#cron-jobs-status");
-  const body = $("#cron-jobs-body");
-  if (!d.exists) {
-    status.textContent = "Missing ~/.team-up/cron-jobs.ini. Create it to configure scheduled LLM jobs.";
-    body.innerHTML = "";
-    return;
+function settingControl(f) {
+  const id = `set-${f.path.replace(/[^a-z0-9]/gi, "-")}`;
+  const cur = f.value === undefined ? f.default : f.value;
+  const attrs = `id="${id}" data-path="${esc(f.path)}" data-type="${f.type}"`;
+  const label = f.row ? `<label for="${id}" class="muted">${esc(f.label)}</label>` : "";
+  switch (f.type) {
+    case "bool":
+      return `<label class="switch">${f.row ? esc(f.label) : ""}<input type="checkbox" ${attrs}${cur ? " checked" : ""}
+        aria-label="${esc(f.label)}"></label>`;
+    case "ratio":
+      return `${label}<input type="number" ${attrs} min="0" max="100" step="0.5" value="${f.value === undefined ? "" : Math.round(f.value * 1000) / 10}"
+        placeholder="${f.default == null ? "" : Math.round(f.default * 1000) / 10}" aria-label="${esc(f.label)}"><span class="unit">%</span>`;
+    case "int":
+    case "number":
+      return `${label}<input type="number" ${attrs} step="${f.type === "int" ? 1 : "any"}"${f.min != null ? ` min="${f.min}"` : ""}${f.max != null ? ` max="${f.max}"` : ""}
+        value="${f.value == null ? "" : f.value}" placeholder="${f.default == null ? esc(f.nullLabel || "") : f.default}" aria-label="${esc(f.label)}">${
+        f.unit ? `<span class="unit">${esc(f.unit)}</span>` : ""}`;
+    case "enum":
+      return `${label}<select ${attrs} aria-label="${esc(f.label)}">${f.nullable ? `<option value="__null__"${cur == null ? " selected" : ""}>${esc(f.nullLabel || "not set")}</option>` : ""}${
+        f.options.map((o) => `<option value="${esc(o.value)}"${o.value === cur ? " selected" : ""}>${esc(o.label || "—")}</option>`).join("")}</select>`;
+    case "set":
+      return `<span class="chips" role="group" aria-label="${esc(f.label)}">${f.options.map((o) =>
+        `<label><input type="checkbox" data-set="${esc(f.path)}" value="${esc(JSON.stringify(o.value))}"${
+          (cur || []).includes(o.value) ? " checked" : ""}> ${esc(o.label)}</label>`).join("")}</span>`;
+    default:
+      return "";
   }
-  if (!d.jobs.length) {
-    status.textContent = "No jobs configured.";
-    body.innerHTML = "";
-    return;
-  }
-  status.textContent = "";
-  const rows = d.jobs.map((job) => {
-    const options = [...d.options];
-    const unknown = job.model !== null && !options.includes(job.model);
-    if (unknown) options.push(job.model);
-    return `<tr>
-      <td><code>${esc(job.name)}</code></td>
-      <td><select data-cron-job="${esc(job.name)}" data-current="${esc(job.model ?? "")}"${d.options.length ? "" : " disabled"}>
-        ${job.model === null ? '<option value="" selected disabled>— choose —</option>' : ""}
-        ${options.map((model) => `<option value="${esc(model)}"${model === job.model ? " selected" : ""}>${esc(model)}${model === job.model && unknown ? " (unknown)" : ""}</option>`).join("")}
-      </select></td>
-    </tr>`;
+}
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+function settingMeta(f) {
+  const changed = f.value !== undefined && !same(f.value, f.default);
+  const def = f.default === undefined ? "" : `default ${formatSetting(f, f.default)}`;
+  return `<span class="set-meta">${changed ? `<span class="tag changed">changed</span> ` : ""}${esc(def)}${
+    changed && !f.required ? ` · <button type="button" class="link" data-reset="${esc(f.path)}">reset</button>` : ""}</span>`;
+}
+
+function settingRow(fields) {
+  const [first] = fields;
+  const title = first.row
+    ? `${esc(first.row)}`
+    : `${esc(first.label)}`;
+  const help = [...new Set(fields.map((f) => f.help).filter(Boolean))].join(" ");
+  const effect = first.effect ? `<span class="effect">Takes effect: ${esc(first.effect)}</span>` : "";
+  return `<div class="set-row" data-paths="${esc(fields.map((f) => f.path).join(" "))}">
+    <div class="set-label">${title}${first.row ? "" : `<span class="row-name mono">${esc(first.path)}</span>`}</div>
+    <div class="set-control">${fields.map((f) => `<span class="set-field">${settingControl(f)}</span>${fields.length === 1 ? settingMeta(f) : ""}`).join("")}</div>
+    <p class="set-help">${esc(help)}${fields.length > 1 ? ` ${fields.map(settingMeta).filter((m) => m.includes("changed")).length ? "" : ""}` : ""}${effect}</p>
+  </div>`;
+}
+
+function renderSettings() {
+  if (!settingsData) return;
+  const advanced = $("#settings-advanced").checked;
+  const q = $("#settings-search").value.trim().toLowerCase();
+  const hit = (f) => !q || [f.label, f.help, f.path, f.row, f.group].some((t) => String(t || "").toLowerCase().includes(q));
+  const html = settingsData.groups.map((g) => {
+    if (g.advanced && !advanced && !q) return "";
+    const fields = settingsData.fields.filter((f) => f.group === g.id && (advanced || q || !f.advanced) && (hit(f) || g.title.toLowerCase().includes(q)));
+    if (!fields.length) return "";
+    const rows = [];
+    for (const f of fields) {
+      const last = rows.at(-1);
+      if (f.row && last?.[0].row === f.row) last.push(f);
+      else rows.push([f]);
+    }
+    const hidden = settingsData.fields.filter((f) => f.group === g.id && f.advanced).length;
+    const actions = (GROUP_ACTIONS[g.id] || []).map((a, i) =>
+      `<button type="button" data-group-action="${g.id}:${i}" title="${esc(a.title)}">${esc(a.label)}</button>`).join(" ");
+    return `<section class="set-group" id="group-${g.id}">
+      <h2>${esc(g.title)}</h2>
+      <p class="intro">${esc(g.intro)}</p>
+      ${rows.map(settingRow).join("")}
+      ${actions ? `<div class="toolbar" style="margin-top:.6rem">${actions}</div>` : ""}
+      ${!advanced && !q && hidden ? `<p class="muted">${hidden} advanced setting${hidden === 1 ? "" : "s"} hidden — tick “Show advanced”.</p>` : ""}
+    </section>`;
   }).join("");
-  body.innerHTML = `<table><thead><tr><th>Job</th><th>CLI:model</th></tr></thead><tbody>${rows}</tbody></table>`;
+  $("#settings-body").innerHTML = html || `<p class="empty">No setting matches “${esc(q)}”.</p>`;
+  $("#settings-excluded").innerHTML = settingsData.excluded.map((x) =>
+    `<li><strong>${esc(x.what)}</strong> — ${esc(x.why)}</li>`).join("");
 }
 
-$("#cron-jobs-body").addEventListener("change", async (event) => {
-  const select = event.target.closest("[data-cron-job]");
-  if (!select) return;
-  const name = select.dataset.cronJob;
-  const model = select.value;
-  const previous = select.dataset.current;
-  const status = $("#cron-jobs-status");
-  select.disabled = true;
-  status.textContent = "saving…";
+async function refreshSettings() {
+  settingsData = await api("/api/settings");
+  renderSettings();
+}
+
+function settingsNote(text, tone = "") {
+  const el = $("#settings-status");
+  el.textContent = text;
+  el.className = `status-line ${tone}`;
+}
+
+async function saveSetting(body, rowPaths) {
   try {
-    await api(`/api/cron-jobs/${encodeURIComponent(name)}`, {
-      method: "POST",
-      body: JSON.stringify({ model }),
-    });
-    select.dataset.current = model;
-    status.textContent = `${name}: saved`;
+    const res = await api("/api/settings", { method: "POST", body: JSON.stringify(body) });
+    const f = settingsData.fields.find((x) => x.path === body.path);
+    settingsNote(`${f?.row ? `${f.row} · ` : ""}${f?.label || body.path}: ${body.reset ? "back to default" : "saved"}${res.backup ? ` · backup ${res.backup}` : ""}`, "ok");
+    refreshRoles().catch(() => {});
   } catch (err) {
-    select.value = previous;
-    status.textContent = err.message;
+    settingsNote(`Not saved — ${err.message}`, "err");
+  }
+  await refreshSettings();
+  const row = [...$("#settings-body").querySelectorAll(".set-row")].find((r) => r.dataset.paths.split(" ").includes(rowPaths));
+  row?.classList.add("saved");
+}
+
+$("#settings-body").addEventListener("change", (e) => {
+  const el = e.target;
+  if (el.dataset.set) {
+    const path = el.dataset.set;
+    const value = [...$("#settings-body").querySelectorAll(`[data-set="${CSS.escape(path)}"]:checked`)].map((x) => JSON.parse(x.value));
+    saveSetting({ path, value }, path);
+    return;
+  }
+  const path = el.dataset.path;
+  if (!path) return;
+  const type = el.dataset.type;
+  let body;
+  if (type === "bool") body = { path, value: el.checked };
+  else if (type === "enum") body = el.value === "__null__" ? { path, value: null } : { path, value: el.value };
+  else if (el.value.trim() === "") body = { path, reset: true };
+  else if (type === "ratio") body = { path, value: Number(el.value) / 100 };
+  else body = { path, value: Number(el.value) };
+  saveSetting(body, path);
+});
+
+$("#settings-body").addEventListener("click", async (e) => {
+  const reset = e.target.closest("[data-reset]");
+  if (reset) {
+    saveSetting({ path: reset.dataset.reset, reset: true }, reset.dataset.reset);
+    return;
+  }
+  const act = e.target.closest("[data-group-action]");
+  if (!act) return;
+  const [group, i] = act.dataset.groupAction.split(":");
+  const action = GROUP_ACTIONS[group][Number(i)];
+  act.disabled = true;
+  try {
+    settingsNote(action.done(await api(action.endpoint, { method: "POST", body: "{}" })), "ok");
+  } catch (err) {
+    settingsNote(`Refused — ${err.message}`, "err");
+  }
+  act.disabled = false;
+});
+
+$("#settings-search").addEventListener("input", renderSettings);
+$("#settings-advanced").checked = readStored(SETTINGS_ADVANCED_KEY, false) === true;
+$("#settings-advanced").addEventListener("change", () => {
+  writeStored(SETTINGS_ADVANCED_KEY, $("#settings-advanced").checked);
+  renderSettings();
+});
+onEnter.settings = () => refreshSettings().catch((err) => settingsNote(err.message, "err"));
+
+// ── Automation ────────────────────────────────────────────────────────────
+// Built-in jobs (explained, switchable where they live in the crontab) and
+// jobs of your own. Loaded on entering the view and once a minute for the
+// overview's attention list; never on the five-second cycle.
+let automationData = null;
+
+function automationNote(text, tone = "") {
+  const el = $("#automation-status");
+  el.textContent = text;
+  el.className = `status-line ${tone}`;
+}
+
+function fmtWhen(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const now = new Date();
+  const day = d.toDateString() === now.toDateString() ? "today"
+    : d.toDateString() === new Date(now.getTime() + 86_400_000).toDateString() ? "tomorrow"
+      : d.toDateString() === new Date(now.getTime() - 86_400_000).toDateString() ? "yesterday"
+        : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  return `${day} ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function lastRunTag(run) {
+  if (!run) return '<span class="tag off">never ran</span>';
+  if (run.running) return `<span class="tag warn">running since ${esc(fmtWhen(run.at))}</span>`;
+  return `<span class="tag ${run.exit === 0 ? "ok" : "err"}">${run.exit === 0 ? "ok" : `exit ${run.exit}`}</span> ${esc(fmtWhen(run.at))}`;
+}
+
+function customJobCard(j) {
+  const sync = j.inSync === false ? '<span class="tag warn" title="The crontab does not match this job; save it again">not in crontab</span>' : "";
+  return `<article class="job${j.enabled ? "" : " is-off"}" data-job="${esc(j.name)}">
+    <div class="job-head">
+      <h3>${esc(j.name)}</h3>${sync}
+      <span class="spacer"></span>
+      <label class="switch" title="On: cron starts it on schedule"><input type="checkbox" data-job-toggle${j.enabled ? " checked" : ""} aria-label="Enabled"></label>
+      <button type="button" data-job-run title="Start it now; output goes to the log">Run now</button>
+      <button type="button" data-job-edit>Edit</button>
+      <button type="button" data-job-log>Log</button>
+      <button type="button" data-job-delete class="danger">Delete</button>
+    </div>
+    ${j.description ? `<p>${esc(j.description)}</p>` : ""}
+    <div class="job-when">
+      <span><b>When</b> ${esc(j.when?.text || j.schedule)}</span>
+      <span><b>Next</b> ${j.enabled ? esc(fmtWhen(j.when?.next)) : "off"}</span>
+      <span><b>Last</b> ${lastRunTag(j.lastRun)}</span>
+      <span><b>Model</b> ${esc(j.model || "—")}</span>
+      <span><b>Folder</b> <code>${esc((j.cwd || "").replace(/^\/home\/[^/]+/, "~"))}</code></span>
+      ${j.notify ? "<span>→ Telegram</span>" : ""}
+    </div>
+  </article>`;
+}
+
+function builtinJobCard(j) {
+  const state = !j.installed ? '<span class="tag off">not installed</span>'
+    : j.enabled ? '<span class="tag ok">on</span>' : '<span class="tag off">off</span>';
+  const toggle = j.editable
+    ? `<label class="switch"><input type="checkbox" data-builtin-toggle${j.enabled ? " checked" : ""} aria-label="Enabled"></label>`
+    : "";
+  const modelRow = j.model ? `<label for="bm-${j.id}">${esc(j.model.label)}</label>
+    <select id="bm-${j.id}" data-builtin-model="${esc(j.model.job)}">${
+      (j.model.value && !automationData.options.models.includes(j.model.value) ? [j.model.value] : []).concat(automationData.options.models)
+        .map((m) => `<option value="${esc(m)}"${m === j.model.value ? " selected" : ""}>${esc(m)}</option>`).join("")}</select>` : "";
+  const knobs = (j.knobs || []).map((k) => k.type === "flag"
+    ? `<span></span><label class="inline"><input type="checkbox" data-knob="${esc(k.key)}"${k.value ? " checked" : ""}${j.editable ? "" : " disabled"}> ${esc(k.label)}</label>`
+    : `<label for="kn-${j.id}-${k.key}">${esc(k.label)}</label><span><input type="number" id="kn-${j.id}-${k.key}" data-knob="${esc(k.key)}" min="${k.min}" max="${k.max}" step="1"
+        value="${k.value ?? ""}" placeholder="${k.default}"${j.editable ? "" : " disabled"}> ${esc(k.unit || "")} <span class="muted">(default ${k.default})</span></span>`).join("");
+  const schedule = j.editable
+    ? `<label for="bs-${j.id}">Schedule (cron)</label><span class="form-row"><input type="text" id="bs-${j.id}" class="mono" data-builtin-schedule value="${esc(j.schedule || "")}">
+        <button type="button" data-builtin-schedule-save>Save</button></span>`
+    : "";
+  return `<article class="job${j.installed && j.enabled ? "" : " is-off"}" data-builtin="${esc(j.id)}">
+    <div class="job-head">
+      <h3>${esc(j.title)}</h3>${state}<span class="tag">${j.llm ? "uses an LLM" : "no LLM"}</span>
+      <span class="spacer"></span>${toggle}
+    </div>
+    <div class="job-when">
+      <span><b>When</b> ${esc(j.when?.text || "—")}</span>
+      <span><b>Next</b> ${j.installed && j.enabled ? esc(fmtWhen(j.when?.next)) : "—"}</span>
+      <span><b>Last activity</b> ${esc(fmtWhen(j.lastRun))}</span>
+    </div>
+    <p>${esc(j.what)}</p>
+    <p class="cost">Cost: ${esc(j.cost)}</p>
+    <details><summary>Details &amp; settings</summary>
+      <div class="knobs">
+        ${modelRow}${knobs}${schedule}
+        <span class="muted">Scheduled in</span><span>${esc(j.where)}</span>
+        ${j.output ? `<span class="muted">Output</span><code>${esc(j.output)}</code>` : ""}
+        ${j.off ? `<span class="muted">To stop it</span><span>${esc(j.off)}</span>` : ""}
+        ${j.settings ? `<span></span><a href="#/settings" data-settings-group="${esc(j.settings)}">Open its settings →</a>` : ""}
+      </div>
+    </details>
+  </article>`;
+}
+
+function renderAutomation() {
+  const d = automationData;
+  if (!d) return;
+  if (!d.crontab.readable) automationNote(`Cannot read your crontab: ${d.crontab.error}`, "err");
+  $("#custom-jobs").innerHTML = d.custom.length
+    ? `<div class="job-list">${d.custom.map(customJobCard).join("")}</div>`
+    : `<div class="empty">No jobs of your own yet. A job is a prompt that a worker runs in one of your repos on a schedule —
+        say a weekly dependency check, or a nightly “read the logs and file what looks wrong”.</div>`;
+  $("#builtin-jobs").innerHTML = d.builtin.map(builtinJobCard).join("");
+  $("#services").innerHTML = `<table><thead><tr><th>Service</th><th>What it does</th><th>State</th></tr></thead><tbody>${
+    d.services.map((s) => `<tr><td>${esc(s.title)}<div class="muted mono">${esc(s.unit)}</div></td><td>${esc(s.what)}</td>
+      <td><span class="tag ${s.active === "active" ? "ok" : s.active === "failed" ? "err" : "off"}">${esc(s.active)}${s.sub ? ` · ${esc(s.sub)}` : ""}</span></td></tr>`).join("")
+  }</tbody></table>${d.crontab.otherLines ? `<p class="muted">Your crontab also runs ${d.crontab.otherLines} job${d.crontab.otherLines === 1 ? "" : "s"} team-up does not manage; they are left alone.</p>` : ""}`;
+  const failing = d.custom.filter((j) => j.lastRun && !j.lastRun.running && j.lastRun.exit !== 0).length;
+  updateNavBadge("badge-automation", failing ? String(failing) : "", "red", failing > 0, failing ? `${failing} job(s) failed last time` : "");
+}
+
+async function refreshAutomation() {
+  automationData = await api("/api/automation");
+  dashboardMetrics.automation = automationData;
+  renderAutomation();
+  updateAttention();
+}
+onEnter.automation = () => refreshAutomation().catch((err) => automationNote(err.message, "err"));
+
+async function automationWrite(url, body, done) {
+  try {
+    const res = await api(url, { method: "POST", body: JSON.stringify(body) });
+    automationNote(`${done}${res.backup ? ` · crontab backup ${res.backup}` : ""}`, "ok");
+    return true;
+  } catch (err) {
+    automationNote(`Refused — ${err.message}`, "err");
+    return false;
   } finally {
-    select.disabled = false;
+    await refreshAutomation().catch(() => {});
+  }
+}
+
+$("#builtin-jobs").addEventListener("change", async (e) => {
+  const card = e.target.closest("[data-builtin]");
+  if (!card) return;
+  const id = card.dataset.builtin;
+  const title = automationData.builtin.find((j) => j.id === id)?.title || id;
+  if (e.target.matches("[data-builtin-toggle]")) {
+    await automationWrite(`/api/automation/builtin/${id}`, { enabled: e.target.checked }, `${title} switched ${e.target.checked ? "on" : "off"}`);
+  } else if (e.target.matches("[data-builtin-model]")) {
+    try {
+      await api(`/api/cron-jobs/${encodeURIComponent(e.target.dataset.builtinModel)}`, { method: "POST", body: JSON.stringify({ model: e.target.value }) });
+      automationNote(`${title} now runs on ${e.target.value}`, "ok");
+    } catch (err) {
+      automationNote(`Refused — ${err.message}`, "err");
+    }
+    await refreshAutomation().catch(() => {});
+  } else if (e.target.matches("[data-knob]")) {
+    const key = e.target.dataset.knob;
+    const value = e.target.type === "checkbox" ? e.target.checked : e.target.value.trim() === "" ? null : Number(e.target.value);
+    await automationWrite(`/api/automation/builtin/${id}`, { knob: { key, value } }, `${title}: ${key} saved`);
   }
 });
 
-$("#settings-body").addEventListener("change", async (e) => {
-  const el = e.target;
-  let path = el.dataset.path;
-  let value;
-  if (el.dataset.list) {
-    path = el.dataset.list;
-    value = [...$("#settings-body").querySelectorAll(`[data-list="${path}"]:checked`)].map((x) => x.value);
-  } else if (!path) {
+$("#builtin-jobs").addEventListener("click", async (e) => {
+  const link = e.target.closest("[data-settings-group]");
+  if (link) {
+    setTimeout(() => $(`#group-${link.dataset.settingsGroup}`)?.scrollIntoView({ behavior: "smooth" }), 400);
     return;
-  } else if (el.type === "checkbox") {
-    value = el.checked;
-  } else if (el.type === "number") {
-    value = Number(el.value);
-  } else {
-    value = el.value;
   }
-  const status = $("#settings-status");
+  if (!e.target.matches("[data-builtin-schedule-save]")) return;
+  const card = e.target.closest("[data-builtin]");
+  const schedule = card.querySelector("[data-builtin-schedule]").value;
+  await automationWrite(`/api/automation/builtin/${card.dataset.builtin}`, { schedule }, "Schedule saved");
+});
+
+$("#custom-jobs").addEventListener("change", async (e) => {
+  if (!e.target.matches("[data-job-toggle]")) return;
+  const name = e.target.closest("[data-job]").dataset.job;
+  await automationWrite(`/api/automation/jobs/${name}/enabled`, { enabled: e.target.checked }, `${name} switched ${e.target.checked ? "on" : "off"}`);
+});
+
+$("#custom-jobs").addEventListener("click", async (e) => {
+  const card = e.target.closest("[data-job]");
+  if (!card) return;
+  const name = card.dataset.job;
+  const job = automationData.custom.find((j) => j.name === name);
+  if (e.target.matches("[data-job-edit]")) openJobEditor(job);
+  else if (e.target.matches("[data-job-log]")) openJobLog(name);
+  else if (e.target.matches("[data-job-run]")) {
+    if (await automationWrite(`/api/automation/jobs/${name}/run`, {}, `${name} started — its output lands in the log`)) {
+      setTimeout(() => refreshAutomation().catch(() => {}), 3000);
+    }
+  } else if (e.target.matches("[data-job-delete]") && confirm(`Delete the job "${name}" and its prompt?`)) {
+    await automationWrite(`/api/automation/jobs/${name}/delete`, {}, `${name} deleted`);
+  }
+});
+
+const jobDialog = $("#job-editor");
+let jobOriginal = null;
+let previewTimer = null;
+
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    const out = $("#job-schedule-preview");
+    const schedule = $("#job-schedule").value.trim();
+    if (!schedule) {
+      out.textContent = "";
+      return;
+    }
+    try {
+      const p = await api(`/api/automation/preview?schedule=${encodeURIComponent(schedule)}`);
+      out.textContent = p.error ? `✗ ${p.error}` : `${p.text} · next run ${fmtWhen(p.next)}`;
+    } catch (err) {
+      out.textContent = err.message;
+    }
+  }, 250);
+}
+
+function openJobEditor(job = null) {
+  jobOriginal = job?.name || null;
+  $("#job-editor-title").textContent = job ? `Edit ${job.name}` : "New job";
+  $("#job-editor-status").textContent = "";
+  $("#job-name").value = job?.name || "";
+  $("#job-description").value = job?.description || "";
+  const schedule = job?.schedule || "0 6 * * *";
+  $("#job-schedule").value = schedule;
+  const preset = [...$("#job-schedule-preset").options].find((o) => o.value === schedule);
+  $("#job-schedule-preset").value = preset ? schedule : "";
+  $("#job-cwd").value = (job?.cwd || "").replace(/^\/home\/[^/]+/, "~");
+  $("#job-cwd-options").innerHTML = [...projectsByPath.keys()].map((p) => `<option value="${esc(p)}">`).join("");
+  const models = automationData?.options.models || [];
+  $("#job-model").innerHTML = models.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+  $("#job-model").value = job?.model && models.includes(job.model) ? job.model : (models.includes("claude:claude-sonnet") ? "claude:claude-sonnet" : models.find((m) => m.startsWith("claude:"))) || models[0] || "";
+  $("#job-prompt").value = job?.prompt?.trim() || "";
+  $("#job-notify").checked = job ? job.notify : true;
+  $("#job-enabled").checked = job ? job.enabled : true;
+  schedulePreview();
+  jobDialog.showModal();
+}
+
+$("#job-new").addEventListener("click", async () => {
+  if (!automationData) await refreshAutomation().catch(() => {});
+  openJobEditor(null);
+});
+$("#job-editor-cancel").addEventListener("click", () => jobDialog.close());
+$("#job-schedule-preset").addEventListener("change", () => {
+  const v = $("#job-schedule-preset").value;
+  if (v) $("#job-schedule").value = v;
+  $("#job-schedule").focus();
+  schedulePreview();
+});
+$("#job-schedule").addEventListener("input", () => {
+  const v = $("#job-schedule").value.trim();
+  $("#job-schedule-preset").value = [...$("#job-schedule-preset").options].some((o) => o.value === v) ? v : "";
+  schedulePreview();
+});
+$("#job-editor-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = {
+    original: jobOriginal,
+    name: $("#job-name").value.trim(),
+    description: $("#job-description").value,
+    schedule: $("#job-schedule").value.trim(),
+    cwd: $("#job-cwd").value.trim(),
+    model: $("#job-model").value,
+    prompt: $("#job-prompt").value,
+    notify: $("#job-notify").checked,
+    enabled: $("#job-enabled").checked,
+  };
   try {
-    const res = await api("/api/settings", { method: "POST", body: JSON.stringify({ path, value }) });
-    status.textContent = `${path} saved · backup ${res.backup}`;
-    refreshRoles().catch(() => {});
+    const res = await api("/api/automation/jobs", { method: "POST", body: JSON.stringify(body) });
+    jobDialog.close();
+    automationNote(`${body.name} saved${res.backup ? ` · crontab backup ${res.backup}` : ""}`, "ok");
   } catch (err) {
-    status.textContent = `refused: ${err.message}`;
+    $("#job-editor-status").textContent = `Not saved — ${err.message}`;
   }
-  refreshSettings().catch(() => {});
+  await refreshAutomation().catch(() => {});
+});
+
+async function openJobLog(name) {
+  $("#job-log-title").textContent = `Log · ${name}`;
+  $("#job-log-body").textContent = "loading…";
+  $("#job-log").showModal();
+  try {
+    const { log } = await api(`/api/automation/jobs/${name}/log`);
+    $("#job-log-body").textContent = log || "No runs yet.";
+    $("#job-log-body").scrollTop = $("#job-log-body").scrollHeight;
+  } catch (err) {
+    $("#job-log-body").textContent = err.message;
+  }
+}
+
+// ── Needs attention ───────────────────────────────────────────────────────
+// The overview's to-do list, assembled from what the other views already
+// fetched. Empty means nothing is waiting on you, and the panel hides.
+function updateAttention() {
+  const items = [];
+  const runs = dashboardMetrics.runCounts || {};
+  if (runs.waiting) items.push({ tone: "red", text: `${runs.waiting} run${runs.waiting === 1 ? " is" : "s are"} waiting for your answer`, href: "#/runs" });
+  if (runs.failedUncollected) items.push({ tone: "red", text: `${runs.failedUncollected} failed run${runs.failedUncollected === 1 ? "" : "s"} not looked at yet`, href: "#/runs" });
+  for (const [key, w] of Object.entries(dashboardMetrics.usage?.windows || {})) {
+    if (w.level === "red" || w.level === "amber") {
+      items.push({ tone: w.level === "red" ? "red" : "", text: `${key} is at ${w.usedPct}%${w.resets_at ? ` — resets ${fmtWhen(w.resets_at)}` : ""}`, href: "#/overview" });
+    }
+  }
+  for (const [cli, c] of Object.entries(dashboardMetrics.usage?.collectors || {})) {
+    if (c?.stale) items.push({ tone: "", text: `Usage readings for ${cli} are stale — limits are not being checked`, href: "#/overview" });
+  }
+  const auto = dashboardMetrics.automation;
+  if (auto && !auto.crontab.readable) items.push({ tone: "red", text: "The crontab cannot be read — scheduled jobs are unknown", href: "#/automation" });
+  for (const j of auto?.custom || []) {
+    if (j.lastRun && !j.lastRun.running && j.lastRun.exit !== 0) items.push({ tone: "red", text: `Job ${j.name} failed on its last run (exit ${j.lastRun.exit})`, href: "#/automation" });
+    if (j.inSync === false) items.push({ tone: "", text: `Job ${j.name} is not installed in the crontab — open and save it again`, href: "#/automation" });
+  }
+  $("#attention-list").innerHTML = items.map((i) => `<li class="${i.tone}">${esc(i.text)}<a href="${i.href}">Open →</a></li>`).join("");
+  $("#panel-attention").classList.toggle("hidden", items.length === 0);
+}
+
+// ── TIM: open work | explorer ─────────────────────────────────────────────
+const TIM_VIEW_KEY = "teamup.timView";
+let timViewShown = false;
+
+function showTimView(view) {
+  timViewShown = true;
+  const which = view === "explorer" ? "explorer" : "work";
+  writeStored(TIM_VIEW_KEY, which);
+  for (const b of $("#tim-views").querySelectorAll("[data-tim-view]")) {
+    b.classList.toggle("is-active", b.dataset.timView === which);
+    b.setAttribute("aria-selected", String(b.dataset.timView === which));
+  }
+  for (const pane of document.querySelectorAll("[data-tim-pane]")) pane.classList.toggle("hidden", pane.dataset.timPane !== which);
+  if (which === "explorer") {
+    const frame = $("#tim-frame");
+    if (!frame.src) {
+      $("#tim-explorer-status").textContent = "Starting the TIM viewer…";
+      frame.addEventListener("load", () => {
+        $("#tim-explorer-status").textContent = "";
+        frame.classList.remove("hidden");
+      }, { once: true });
+      frame.src = "/tim-viewer/?embed=1";
+    }
+  }
+}
+$("#tim-views").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tim-view]");
+  if (b) showTimView(b.dataset.timView);
+});
+
+// Models tab: ask every CLI what it offers now.
+$("#models-scan").addEventListener("click", async () => {
+  const btn = $("#models-scan");
+  btn.disabled = true;
+  try {
+    await api("/api/actions/models-scan", { method: "POST", body: "{}" });
+    $("#catalogue-status").textContent = "Scan started — every CLI is asked for its models; the list refreshes in about two minutes.";
+    setTimeout(() => {
+      btn.disabled = false;
+      refreshCatalogue().catch(() => {});
+    }, 120_000);
+  } catch (err) {
+    $("#catalogue-status").textContent = `Refused — ${err.message}`;
+    btn.disabled = false;
+  }
 });
 
 // ── AI Trending ───────────────────────────────────────────────────────────
@@ -2055,11 +2584,15 @@ function refreshAll() {
   ]);
 }
 
+let automationTimer = null;
+
 function startPolling() {
   refreshSpecialists().catch(() => {});
   showRolesTab(readStored(ROLES_TAB_KEY, "roles") === "models" ? "models" : "roles");
   refreshSettings().catch(() => {});
-  refreshCronJobs().catch((err) => { $("#cron-jobs-status").textContent = err.message; });
+  refreshAutomation().catch(() => {});
+  clearInterval(automationTimer);
+  automationTimer = setInterval(() => refreshAutomation().catch(() => {}), 60_000);
   refreshTrending();
   clearInterval(trendingTimer);
   trendingTimer = setInterval(refreshTrending, 10 * 60_000);

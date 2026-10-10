@@ -36,7 +36,7 @@ export const GROUPS = [
   {
     id: "accounts",
     title: "Accounts",
-    intro: "Every model belongs to an account. Switch an account off and all its models drop out of every role chain until you switch it back on.",
+    intro: "Every model belongs to an account. Switch one off and all its models drop out of every role chain until you switch it back on. The plan only tells the usage-spender how much spare work a night can buy; a credit account at 0 is blocked.",
   },
   {
     id: "limits",
@@ -150,18 +150,18 @@ export function settingsFields(roster = {}) {
     const row = `${id} (${account?.kind === "credit" ? "credit" : "subscription"})`;
     add({
       group: "accounts", row, path: `accounts.${id}.enabled`, type: "bool", label: "Enabled",
-      help: account?.$comment || "Off takes every model on this account out of every chain.",
+      help: account?.$comment || "",
       default: true, effect: EFFECT.pick, required: true,
     });
     if (account?.kind === "credit") {
       add({
         group: "accounts", row, path: `accounts.${id}.remaining`, type: "number", label: "Credit left",
-        help: "0 or less blocks the account.", min: -1e9, effect: EFFECT.pick,
+        help: "", min: -1e9, effect: EFFECT.pick,
       });
     } else if (PLAN_TIERS[id]) {
       add({
         group: "accounts", row, path: `accounts.${id}.plan`, type: "enum", label: "Plan",
-        help: "A bigger plan lets the usage-spender do more spare work per night.",
+        help: "",
         options: opts(PLAN_TIERS[id]), nullable: true, nullLabel: "not set", effect: EFFECT.info,
       });
     }
