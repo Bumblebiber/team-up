@@ -36,9 +36,13 @@ test("a chain naming a model on the wrong CLI is refused", () => {
   assert.throws(() => applyRoleEdit(roster, { role: "Bad Name", chain: [{ cli: "codex", model: "gpt-6-sol" }] }), /role name/);
 });
 
-test("delete is refused while a specialist runs on the role", () => {
-  assert.throws(() => applyRoleEdit(roster, { role: "implementer", delete: true }), /code-writer run on implementer — reassign them first/);
-  assert.equal(applyRoleEdit(roster, { role: "planner", delete: true }).roles.planner, undefined);
+test("delete is refused while a specialist runs on the role, or team-up's own code asks for it", () => {
+  const r = { ...roster, roles: { ...roster.roles, scout: { chain: ["claude:claude-opus"] }, triage: { chain: ["claude:claude-opus"] } },
+    specialists: { "code-writer": { role: "triage" } } };
+  assert.throws(() => applyRoleEdit(r, { role: "triage", delete: true }), /code-writer run on triage — reassign them first/);
+  assert.throws(() => applyRoleEdit(r, { role: "implementer", delete: true }), /used by the insights job/);
+  assert.throws(() => applyRoleEdit(r, { role: "planner", delete: true }), /change its chain instead/);
+  assert.equal(applyRoleEdit(r, { role: "scout", delete: true }).roles.scout, undefined);
 });
 
 test("a role carries an effort of its own, cleared with null", () => {

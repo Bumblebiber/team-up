@@ -591,7 +591,9 @@ async function refreshRoles() {
           r.skipped.length} skipped right now</div>` : ""}</td>
       <td class="row-actions">
         <button type="button" class="role-edit" data-role="${esc(r.role)}" title="Edit chain">✎</button>
-        <button type="button" class="role-delete" data-role="${esc(r.role)}" title="Delete role">🗑</button>
+        ${r.protected
+          ? `<span class="role-pin" title="Used by ${esc(r.protected)} — cannot be deleted">🔒</span>`
+          : `<button type="button" class="role-delete" data-role="${esc(r.role)}" title="Delete role">🗑</button>`}
       </td>
     </tr>`).join("");
   $("#roles-table").innerHTML = `<table>

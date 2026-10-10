@@ -54,9 +54,10 @@ test("the validator wants exactly one of role or chain, and a role that exists",
 });
 
 test("a role a specialist runs on cannot be deleted", () => {
-  const assigned = applySpecialistAssignment(roster, { id: "coding.codey", role: "implementer" });
-  assert.throws(() => applyRoleEdit(assigned, { role: "implementer", delete: true }),
-    /coding\.codey run on implementer — reassign them first/);
+  const withScout = { ...roster, roles: { ...roster.roles, scout: { chain: ["codex:luna"] } } };
+  const assigned = applySpecialistAssignment(withScout, { id: "coding.codey", role: "scout" });
+  assert.throws(() => applyRoleEdit(assigned, { role: "scout", delete: true }),
+    /coding\.codey run on scout — reassign them first/);
 });
 
 test("a roster the validator rejects is never written, and a write keeps a backup", () => {

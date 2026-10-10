@@ -77,12 +77,24 @@ export const EXCLUDED = [
     why: "Pointing it at another file from the browser would read that file. Set the key under Providers.",
   },
   {
-    what: "Per-model wiring (cli_model, reasoning, efforts, limit_windows)",
-    why: "Written by the model scan when a model is added under Roles & Models → Roster. Hand edits go in roster.json.",
+    what: "Per-model wiring (cli_model, reasoning, efforts, default effort, limit_windows)",
+    why: "Written by the model scan when a model is added under Roles & Models → Roster. Effort is set per role or per chain entry there; hand edits go in roster.json.",
   },
   {
     what: "Adding or removing accounts",
     why: "An account is created with the first model that needs it. Edit roster.json for anything else.",
+  },
+  {
+    what: "Capability packages beyond one specialist (install, update, rollback, remove, --for host|all), specialist uninstall",
+    why: "They change what runs with which permissions on the whole host — `team-up capability …` / `team-up specialist uninstall` in a terminal.",
+  },
+  {
+    what: "Background service installation (telemetry timer, cleanup timer, resume at boot)",
+    why: "systemd units: `team-up telemetry install-timer`, `team-up runs gc-install`, `team-up runs resume-install`. Their state is shown under Scheduled jobs.",
+  },
+  {
+    what: "Times of Hermes-scheduled jobs (golden-task, usage safety net)",
+    why: "The Hermes cron daemon owns ~/.hermes/cron/jobs.json; their model is editable under Scheduled jobs.",
   },
 ];
 

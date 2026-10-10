@@ -58,6 +58,7 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
       const result = pick({ roster, usage, role, now });
       return {
         role,
+        protected: own(PROTECTED_ROLES, role) ? PROTECTED_ROLES[role] : null,
         effort: spec?.effort ?? null,
         chain: chainView(roster, store, spec?.chain || [], now),
         pick: result.model
@@ -102,6 +103,16 @@ export function normalizeChain(roster, chain) {
   });
 }
 
+// Roles team-up's own code asks `pick` for. Deleting one breaks that caller
+// at its next run, so the dashboard refuses; edit their chains instead.
+export const PROTECTED_ROLES = {
+  implementer: "the insights job's fix runs and the usage-spender's implement runs",
+  reviewer: "the usage-spender's reviews and audits",
+  researcher: "the usage-spender's research tasks",
+  planner: "the usage-spender's triage runs",
+  observer: "the run observer that watches every worker",
+};
+
 // Role-wide effort: the generic levels every CLI maps (config.mjs EFFORT_ORDER
 // minus the spellings only one CLI knows). A chain entry's own effort wins.
 export const ROLE_EFFORTS = ["low", "medium", "high", "max"];
@@ -120,6 +131,7 @@ export function applyRoleEdit(roster, { role, chain, effort, delete: remove } = 
   next.roles ??= {};
   if (remove) {
     if (!own(next.roles, role)) throw new Error(`unknown role: ${role}`);
+    if (own(PROTECTED_ROLES, role)) throw new Error(`${role} is used by ${PROTECTED_ROLES[role]} — change its chain instead`);
     const users = Object.entries(next.specialists || {}).filter(([, s]) => s?.role === role).map(([id]) => id);
     if (users.length) throw new Error(`${users.join(", ")} run on ${role} — reassign them first`);
     delete next.roles[role];
