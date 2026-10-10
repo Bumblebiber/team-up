@@ -25,6 +25,7 @@ function applyRoute() {
     else link.removeAttribute("aria-current");
   });
   if (!$("#app").classList.contains("hidden")) onEnter[route]?.();
+  if (route === "tim") requestAnimationFrame(fitTimFrame);
   document.title = `${document.querySelector(`.view[data-view="${route}"] .page-head h1`)?.textContent || "team-up"} · team-up`;
 }
 
@@ -2358,6 +2359,7 @@ function showTimView(view) {
     b.setAttribute("aria-selected", String(b.dataset.timView === which));
   }
   for (const pane of document.querySelectorAll("[data-tim-pane]")) pane.classList.toggle("hidden", pane.dataset.timPane !== which);
+  requestAnimationFrame(fitTimFrame);
   if (which === "explorer") {
     const frame = $("#tim-frame");
     if (!frame.src) {
@@ -2365,11 +2367,23 @@ function showTimView(view) {
       frame.addEventListener("load", () => {
         $("#tim-explorer-status").textContent = "";
         frame.classList.remove("hidden");
+        fitTimFrame();
       }, { once: true });
       frame.src = "/tim-viewer/?embed=1";
     }
   }
 }
+// The explorer fills the window down to its bottom edge, so the embedded
+// viewer is the only thing that scrolls on that view.
+function fitTimFrame() {
+  const frame = $("#tim-frame");
+  if (!frame.offsetParent) return;
+  const top = frame.getBoundingClientRect().top + window.scrollY;
+  const pad = parseFloat(getComputedStyle($("main")).paddingBottom) || 0;
+  frame.style.height = `${Math.max(416, window.innerHeight - top - pad - 2)}px`;
+}
+window.addEventListener("resize", fitTimFrame);
+
 $("#tim-views").addEventListener("click", (e) => {
   const b = e.target.closest("[data-tim-view]");
   if (b) showTimView(b.dataset.timView);

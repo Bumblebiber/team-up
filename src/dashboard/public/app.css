@@ -207,8 +207,8 @@ main { min-width: 0; padding: 1rem; }
 .panel {
   min-width: 0;
   overflow-x: auto;
-  margin-bottom: 1rem;
-  padding: 1rem;
+  margin-bottom: 0.85rem;
+  padding: 0.85rem 1rem;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -218,7 +218,8 @@ main { min-width: 0; padding: 1rem; }
 
 .toolbar { margin-bottom: 0.5rem; color: var(--muted); }
 
-.table-wrap { overflow: auto; max-height: 60vh; }
+/* No max-height: the page is the one scroll area, a table never gets its own. */
+.table-wrap { overflow-x: auto; }
 table {
   width: 100%;
   border-collapse: collapse;
@@ -306,8 +307,7 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
   word-break: break-word;
   font-family: ui-monospace, monospace;
   font-size: 0.8rem;
-  max-height: 50vh;
-  overflow: auto;
+  overflow-x: auto;
 }
 
 .term-backdrop {
@@ -517,14 +517,14 @@ details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 .chain-row { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; margin: 0.25rem 0; }
 .chain-row .ce-model { flex: 1; min-width: 12rem; }
 #role-editor-name { width: 100%; }
-#roles-status, #settings-status { min-height: 1.2em; }
+
 
 /* Settings */
 #settings-body table td { padding: 0.15rem 0.5rem; }
 #settings-body input[type="number"] { width: 6rem; }
 #settings-body label { margin-right: 0.6rem; white-space: nowrap; }
 #cron-jobs-body select { min-width: 14rem; max-width: 100%; }
-#cron-jobs-status { min-height: 1.2em; }
+
 
 #admin-gate { margin: 0.75rem 1rem 0; background: var(--surface); }
 .nowrap { white-space: nowrap; }
@@ -565,12 +565,14 @@ label.inline { display: inline-flex; align-items: center; gap: 0.35rem; }
 .sidebar-nav a[aria-current="page"] .nav-ico { color: var(--accent); }
 
 /* Page header: the title says where you are, the line says what it is for. */
-main { max-width: 84rem; padding: 1.25rem 1.5rem 3rem; }
-.page-head { margin: 0 0 1rem; }
-.page-head h1 { margin: 0 0 0.2rem; font-size: 1.35rem; letter-spacing: -0.01em; }
+main { padding: 1rem 1.25rem 1.5rem; }
+.page-head { margin: 0 0 0.75rem; }
+.page-head h1 { margin: 0 0 0.15rem; font-size: 1.25rem; letter-spacing: -0.01em; }
+/* Empty status lines take no room until they have something to say. */
+.muted:empty, .status-line:empty, .repair-status:empty { display: none; }
 .page-head p { margin: 0; max-width: 52rem; color: var(--muted); }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
-.status-line { min-height: 1.3em; margin: 0 0 0.6rem; color: var(--muted); font-size: 0.85rem; }
+.status-line { margin: 0 0 0.6rem; color: var(--muted); font-size: 0.85rem; }
 .status-line.ok { color: var(--green); }
 .status-line.err { color: var(--red); }
 
@@ -664,9 +666,11 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 #job-log-body { max-height: 65vh; }
 
 /* TIM explorer: the TIM viewer, embedded through the dashboard's proxy. */
-.panel.explorer { padding: 0; overflow: hidden; }
+.panel.explorer { padding: 0; margin-bottom: 0; overflow: hidden; }
 .panel.explorer .muted { margin: 0.75rem 1rem; }
-#tim-frame { display: block; width: 100%; height: calc(100vh - 13rem); min-height: 34rem; border: 0; background: var(--surface); }
+/* Height set by fitTimFrame() to end at the window's bottom edge: the viewer
+   scrolls inside, the page does not. */
+#tim-frame { display: block; width: 100%; height: calc(100vh - 13rem); min-height: 26rem; border: 0; background: var(--surface); }
 
 @media (max-width: 760px) {
   main { padding: 0.9rem 0.75rem 2rem; }
