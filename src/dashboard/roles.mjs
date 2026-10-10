@@ -1,5 +1,5 @@
 import { pick, parseChainEntry } from "../roster/chain.mjs";
-import { cliModelFor, PLAN_TIERS } from "../roster/config.mjs";
+import { cliModelFor } from "../roster/config.mjs";
 import { cellStatus, addOfferedVersions } from "../roster/latest.mjs";
 
 /**
@@ -85,7 +85,7 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
   // Versions a CLI ships that the roster does not know yet; the upgrade
   // button adds them before it moves the chains.
   const addable = addOfferedVersions(roster, store, now).added;
-  return { roles, models, addable, clis: Object.keys(roster?.clis || {}).sort() };
+  return { roles, models, addable, efforts: ROLE_EFFORTS, clis: Object.keys(roster?.clis || {}).sort() };
 }
 
 /** Chain entries as the browser sends them → what roster.json stores. */
@@ -102,12 +102,17 @@ export function normalizeChain(roster, chain) {
   });
 }
 
+// Role-wide effort: the generic levels every CLI maps (config.mjs EFFORT_ORDER
+// minus the spellings only one CLI knows). A chain entry's own effort wins.
+export const ROLE_EFFORTS = ["low", "medium", "high", "max"];
+
 /**
  * One edit per call:
  * - `{ role, chain }` creates or replaces a chain
+ * - `{ role, effort }` sets the role-wide effort; null or "" clears it
  * - `{ role, delete: true }` removes it, refused while a specialist runs on it
  */
-export function applyRoleEdit(roster, { role, chain, delete: remove } = {}) {
+export function applyRoleEdit(roster, { role, chain, effort, delete: remove } = {}) {
   if (!ROLE_NAME.test(String(role || ""))) {
     throw new Error("role name: lowercase letters, digits, . _ - (max 64)");
   }
@@ -127,7 +132,14 @@ export function applyRoleEdit(roster, { role, chain, delete: remove } = {}) {
     };
     return next;
   }
-  throw new Error("edit names no field (expected chain or delete)");
+  if (effort !== undefined) {
+    if (!own(next.roles, role)) throw new Error(`unknown role: ${role}`);
+    if (effort === null || effort === "") delete next.roles[role].effort;
+    else if (ROLE_EFFORTS.includes(effort)) next.roles[role].effort = effort;
+    else throw new Error(`effort must be one of ${ROLE_EFFORTS.join(", ")}`);
+    return next;
+  }
+  throw new Error("edit names no field (expected chain, effort or delete)");
 }
 
 /**
@@ -149,62 +161,4 @@ export function applySpecialistAssignment(roster, { id, role, chain } = {}) {
   }
   if (!Object.keys(next.specialists).length) delete next.specialists;
   return next;
-}
-
-// ── Settings ───────────────────────────────────────────────────────────────
-// Whose quota scripts/usage-spender.py may spend when the roster has no
-// usage_spender.subscriptions. Keep in sync with SPEND_DEFAULT there.
-const SPENDER_DEFAULT = ["claude", "codex", "cursor"];
-
-// Whitelisted paths only. `clis[*].cmd` is deliberately absent: a command
-// template edited from a browser is an arbitrary-execution lever.
-const isNum = (v) => typeof v === "number" && Number.isFinite(v);
-const isUnit = (v) => isNum(v) && v >= 0 && v <= 1;
-const isPosInt = (v) => Number.isInteger(v) && v > 0;
-const isBool = (v) => typeof v === "boolean";
-const isStrList = (v) => Array.isArray(v) && v.every((s) => typeof s === "string" && s);
-
-const SETTINGS = [
-  [/^accounts\.([^.]+)\.enabled$/, isBool, (r, [, id]) => own(r.accounts, id)],
-  [/^accounts\.([^.]+)\.remaining$/, isNum, (r, [, id]) => own(r.accounts, id) && r.accounts[id].kind === "credit"],
-  [/^accounts\.([^.]+)\.plan$/, (v) => typeof v === "string",
-    (r, [, id], v) => own(r.accounts, id) && r.accounts[id].kind === "subscription" && !!PLAN_TIERS[id]?.includes(v)],
-  [/^limits\.(warn_at|handoff_at)$/, (v) => isUnit(v) && v > 0],
-  [/^subscriptions$/, isStrList, (r, _m, v) => v.every((cli) => own(r.clis, cli))],
-  [/^usage_spender\.subscriptions$/, isStrList, (r, _m, v) => v.every((cli) => own(r.clis, cli))],
-  [/^usage_watcher\.tick_sec$/, isPosInt],
-  [/^usage_watcher\.intervals\.(idle_min|active_min|busy_min|idle_heartbeat_hours)$/, isPosInt],
-];
-
-export function applySettingsEdit(roster, { path: setting, value } = {}) {
-  const rule = SETTINGS.find(([re]) => re.test(String(setting || "")));
-  if (!rule) throw new Error(`not editable here: ${setting}`);
-  const [re, valid, exists = () => true] = rule;
-  const match = String(setting).match(re);
-  if (!valid(value) || !exists(roster, match, value)) {
-    throw new Error(`invalid value for ${setting}: ${JSON.stringify(value)}`);
-  }
-  const next = structuredClone(roster);
-  const keys = setting.split(".");
-  let node = next;
-  for (const key of keys.slice(0, -1)) node = node[key] ??= {};
-  node[keys.at(-1)] = value;
-  return next;
-}
-
-export function buildSettingsView(roster) {
-  const accounts = Object.fromEntries(Object.entries(roster?.accounts || {}).map(([id, a]) =>
-    [id, { kind: a.kind, enabled: a.enabled, ...(a.kind === "credit" ? { remaining: a.remaining ?? null } : {}),
-      ...(a.kind === "subscription" && PLAN_TIERS[id] ? { plan: a.plan ?? null, plans: PLAN_TIERS[id] } : {}),
-      ...(a.$comment ? { comment: a.$comment } : {}) }]));
-  return {
-    accounts,
-    limits: { warn_at: roster?.limits?.warn_at ?? null, handoff_at: roster?.limits?.handoff_at ?? null },
-    subscriptions: roster?.subscriptions || [],
-    usage_spender: { subscriptions: roster?.usage_spender?.subscriptions ?? SPENDER_DEFAULT },
-    usage_watcher: { tick_sec: roster?.usage_watcher?.tick_sec ?? null,
-      intervals: roster?.usage_watcher?.intervals || {} },
-    clis: Object.keys(roster?.clis || {}).sort(),
-    roles: Object.keys(roster?.roles || {}).sort(),
-  };
 }

@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateRoster } from "../../src/roster/config.mjs";
-import { applyRoleEdit, applySettingsEdit, buildRolesView, buildSettingsView, modelLabel } from "../../src/dashboard/roles.mjs";
+import { applyRoleEdit, buildRolesView, modelLabel } from "../../src/dashboard/roles.mjs";
 
 const roster = {
   clis: { claude: { cmd: ["claude"] }, codex: { cmd: ["codex"] } },
@@ -42,33 +41,14 @@ test("delete is refused while a specialist runs on the role", () => {
   assert.equal(applyRoleEdit(roster, { role: "planner", delete: true }).roles.planner, undefined);
 });
 
-test("settings: only whitelisted paths, typed", () => {
-  assert.equal(applySettingsEdit(roster, { path: "accounts.claude.enabled", value: false }).accounts.claude.enabled, false);
-  assert.equal(applySettingsEdit(roster, { path: "limits.warn_at", value: 0.8 }).limits.warn_at, 0.8);
-  assert.throws(() => applySettingsEdit(roster, { path: "clis.claude.cmd", value: ["sh"] }), /not editable/);
-  assert.throws(() => applySettingsEdit(roster, { path: "accounts.nope.enabled", value: true }), /invalid/);
-  assert.throws(() => applySettingsEdit(roster, { path: "subscriptions", value: ["ghost"] }), /invalid/);
-  assert.throws(() => applySettingsEdit(roster, { path: "triage.enabled", value: true }), /not editable/);
-  assert.throws(() => applyRoleEdit(roster, { role: "planner", pin_head: true }), /expected chain or delete/);
-  assert.throws(() => applySettingsEdit(roster, { path: "accounts.claude.remaining", value: 3 }), /invalid/);
-});
-
-test("settings: usage-spender quota list is editable and defaults to claude, codex, cursor", () => {
-  assert.deepEqual(buildSettingsView(roster).usage_spender.subscriptions, ["claude", "codex", "cursor"]);
-  const next = applySettingsEdit(roster, { path: "usage_spender.subscriptions", value: ["claude"] });
-  assert.deepEqual(next.usage_spender.subscriptions, ["claude"]);
-  assert.deepEqual(buildSettingsView(next).usage_spender.subscriptions, ["claude"]);
-  assert.deepEqual(applySettingsEdit(roster, { path: "usage_spender.subscriptions", value: [] }).usage_spender.subscriptions, []);
-  assert.throws(() => applySettingsEdit(roster, { path: "usage_spender.subscriptions", value: ["ghost"] }), /invalid/);
-});
-
-test("settings: a subscription names its plan from its own list, a credit account none", () => {
-  const r = { ...roster, accounts: { ...roster.accounts, claude: { kind: "subscription", enabled: true }, api: { kind: "credit", enabled: true } } };
-  assert.equal(applySettingsEdit(r, { path: "accounts.claude.plan", value: "max20x" }).accounts.claude.plan, "max20x");
-  assert.throws(() => applySettingsEdit(r, { path: "accounts.claude.plan", value: "ultra" }), /invalid/);
-  assert.throws(() => applySettingsEdit(r, { path: "accounts.api.plan", value: "pro" }), /invalid/);
-  const v = validateRoster({ ...r, accounts: { ...r.accounts, claude: { ...r.accounts.claude, plan: "gold" } } });
-  assert.ok(v.errors.some((e) => /accounts\.claude\.plan/.test(e)));
+test("a role carries an effort of its own, cleared with null", () => {
+  const next = applyRoleEdit(roster, { role: "planner", effort: "high" });
+  assert.equal(next.roles.planner.effort, "high");
+  assert.deepEqual(next.roles.planner.chain, roster.roles.planner.chain, "chain untouched");
+  assert.equal(applyRoleEdit(next, { role: "planner", effort: null }).roles.planner.effort, undefined);
+  assert.throws(() => applyRoleEdit(roster, { role: "planner", effort: "turbo" }), /effort must be one of/);
+  assert.throws(() => applyRoleEdit(roster, { role: "ghost", effort: "high" }), /unknown role/);
+  assert.throws(() => applyRoleEdit(roster, { role: "planner", pin_head: true }), /expected chain, effort or delete/);
 });
 
 test("roles view carries pick, chain state and labels", () => {
@@ -79,7 +59,6 @@ test("roles view carries pick, chain state and labels", () => {
 });
 
 test("prototype keys never resolve as roles or accounts", () => {
-  assert.throws(() => applySettingsEdit(roster, { path: "accounts.__proto__.enabled", value: true }), /invalid/);
   assert.throws(() => applyRoleEdit(roster, { role: "constructor", delete: true }), /unknown role/);
   assert.throws(() => applyRoleEdit(roster, { role: "x", chain: [{ cli: "codex", model: "constructor" }] }), /unknown model/);
   assert.equal(({}).enabled, undefined);

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """usage-spender: spend subscription quota that would otherwise reset unused.
 
-Hourly cron, stateless tick. Reads team-up's live quota windows (usage.json, refreshed every
+Cron every 10 minutes (flock), stateless tick. Reads team-up's live quota windows (usage.json, refreshed every
 ~5 min by the usage watcher) and holds each window to a pacing curve: the share of the window
 that should be used by now, given the days until it resets. A window below its curve, with a
 gap worth at least one task on that account's plan, gets ONE team-up worker per tick
-(admission allows one worker on this box). New spawns only inside SPAWN_HOURS. Per tick:
+(admission allows one worker on this box). New spawns only inside SPAWN_HOURS. The knobs below
+are defaults; roster usage_spender.* (dashboard Settings) overrides them, see apply_knobs. Per tick:
 
   1. ledger runs: reconcile (`runs wait --ceiling-sec 1`, which also runs the verify command);
      a question gets one canned answer, then a cancel; a run older than MAX_RUN_H is cancelled
@@ -162,6 +163,45 @@ def target(days_left, cycle_days):
         if d0 <= d <= d1:
             return t0 + (t1 - t0) * (d - d0) / (d1 - d0)
     return CURVE[0][1] if d > CURVE[0][0] else CURVE[-1][1]
+
+
+def apply_knobs(roster):
+    """Dashboard-editable knobs from roster usage_spender.* (Settings panel, src/dashboard/settings.mjs).
+    A value of the wrong type keeps the built-in one and says so: one bad edit must not stop every tick."""
+    global SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST
+    knobs = roster.get("usage_spender") or {}
+    if not isinstance(knobs, dict):
+        return
+
+    def num(v, lo, hi):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi
+
+    checks = {
+        "spawn_hours": lambda v: isinstance(v, list) and v and all(
+            isinstance(h, int) and not isinstance(h, bool) and 0 <= h <= 23 for h in v),
+        "implement": lambda v: isinstance(v, bool),
+        "implement_model": lambda v: isinstance(v, dict) and all(
+            isinstance(k, str) and isinstance(m, str) and (m == "" or m.startswith(k + ":")) for k, m in v.items()),
+        "max_run_h": lambda v: num(v, 0.5, 48),
+        "task_cost": lambda v: num(v, 0.001, 1),
+    }
+    for key, ok in checks.items():
+        if key not in knobs:
+            continue
+        v = knobs[key]
+        if not ok(v):
+            ERRORS.append(f"usage_spender.{key} = {v!r} ignored, built-in value kept")
+        elif key == "spawn_hours":
+            SPAWN_HOURS = set(v)
+        elif key == "implement":
+            IMPLEMENT = v
+        elif key == "implement_model":
+            # "" = no override for that cli: the implementer role chain decides.
+            IMPLEMENT_MODEL = {k: m for k, m in {**IMPLEMENT_MODEL, **v}.items() if m}
+        elif key == "max_run_h":
+            MAX_RUN_H = v
+        else:
+            TASK_COST = v
 
 
 def task_cost(roster, cli):
@@ -605,6 +645,7 @@ def main(argv):
     except (OSError, ValueError) as e:  # still reconcile and run intake; just spawn nothing
         roster = {"roles": {}, "accounts": {}}
         ERRORS.append(f"cannot read {ROSTER}: {e}")
+    apply_knobs(roster)
     if not dry:
         day_dir.mkdir(parents=True, exist_ok=True)
 
@@ -657,6 +698,7 @@ def main(argv):
 
 
 def selftest():
+    global SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST
     now = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
     fresh = "2026-10-09T11:30:00Z"
 
@@ -762,6 +804,18 @@ def selftest():
         assert cron_model("usage-spender-host", HOST_DEFAULT, f.name) == "codex:gpt-6-luna"
         assert cron_model("other", HOST_DEFAULT, f.name) == HOST_DEFAULT
         assert cron_model("missing", HOST_DEFAULT, f.name) == HOST_DEFAULT
+    # dashboard knobs: valid values replace the built-ins, a wrong type keeps them and is reported
+    saved = (SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST, list(ERRORS))
+    apply_knobs({"usage_spender": {"spawn_hours": [22, 23], "implement": False, "max_run_h": 2,
+                                   "task_cost": 0.2, "implement_model": {"claude": "", "codex": "codex:gpt-6-sol"}}})
+    assert SPAWN_HOURS == {22, 23} and IMPLEMENT is False and MAX_RUN_H == 2 and TASK_COST == 0.2
+    assert IMPLEMENT_MODEL == {"codex": "codex:gpt-6-sol"}, IMPLEMENT_MODEL  # "" drops claude's override
+    SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST = saved[:5]
+    apply_knobs({"usage_spender": {"spawn_hours": [25], "implement": "yes", "max_run_h": True,
+                                   "implement_model": {"claude": "codex:x"}}})
+    assert (SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H) == saved[:4]
+    assert len(ERRORS) == len(saved[5]) + 4 and "spawn_hours" in ERRORS[len(saved[5])], ERRORS
+    ERRORS[:] = saved[5]
     print("selftest ok")
 
 

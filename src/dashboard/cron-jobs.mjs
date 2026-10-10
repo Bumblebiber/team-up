@@ -24,26 +24,61 @@ function sectionName(line) {
   return match ? match[1].trim() : null;
 }
 
-function modelValue(line) {
+function keyValue(line) {
   if (/^\s*[#;]/.test(line)) return null;
-  const match = line.match(/^\s*model\s*=\s*(\S*)/);
-  return match ? match[1] : null;
+  const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(.*?)\s*$/);
+  return match ? [match[1].toLowerCase(), match[2]] : null;
 }
 
-export function parseCronJobs(text) {
-  const jobs = [];
+/** Every section with its `key = value` pairs (first one wins, as in ops-run.sh). */
+export function parseCronSections(text) {
+  const sections = [];
   let current = null;
   for (const { text: line } of splitLines(String(text ?? ""))) {
     const name = sectionName(line);
     if (name !== null) {
-      current = { name, model: null };
-      jobs.push(current);
-    } else if (current && current.model === null) {
-      const value = modelValue(line);
-      if (value !== null) current.model = value;
+      current = { name, values: {} };
+      sections.push(current);
+    } else if (current) {
+      const kv = keyValue(line);
+      if (kv && !Object.hasOwn(current.values, kv[0])) current.values[kv[0]] = kv[1];
     }
   }
-  return jobs;
+  return sections;
+}
+
+export function parseCronJobs(text) {
+  return parseCronSections(text).map(({ name, values }) => ({
+    name,
+    model: values.model ? values.model.split(/\s/)[0] : null,
+  }));
+}
+
+/**
+ * Replace section `name` with `[name]` + `lines`, append it when missing, or
+ * remove it when `lines` is null. Comments and blank lines right before the
+ * next header belong to that next section and stay where they are.
+ */
+export function replaceCronSection(text, name, lines) {
+  const all = splitLines(String(text ?? ""));
+  const start = all.findIndex((line) => sectionName(line.text) === name);
+  const eol = all.find((l) => l.ending)?.ending || "\n";
+  const fresh = lines === null ? [] : [`[${name}]`, ...lines].map((t) => ({ text: t, ending: eol }));
+  if (start === -1) {
+    if (!fresh.length) return String(text ?? "");
+    if (all.length && !all.at(-1).ending) all.at(-1).ending = eol;
+    const gap = all.length && all.at(-1).text.trim() ? [{ text: "", ending: eol }] : [];
+    return [...all, ...gap, ...fresh].map((l) => `${l.text}${l.ending}`).join("");
+  }
+  let end = all.findIndex((line, i) => i > start && sectionName(line.text) !== null);
+  if (end === -1) end = all.length;
+  else while (end - 1 > start && (!all[end - 1].text.trim() || /^\s*[#;]/.test(all[end - 1].text))) end--;
+  if (!fresh.length && start > 0 && !all[start - 1].text.trim()) {
+    all.splice(start - 1, end - start + 1);
+  } else {
+    all.splice(start, end - start, ...fresh);
+  }
+  return all.map((l) => `${l.text}${l.ending}`).join("");
 }
 
 export function setCronJobModel(text, name, model) {

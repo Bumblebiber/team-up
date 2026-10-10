@@ -332,14 +332,23 @@ async function main() {
   }
 
   console.log(`team-up usage-watcher tick=${cfg.tick_sec}s`);
+  let current = roster;
   for (;;) {
+    // Re-read every tick: a dashboard edit (subscriptions, intervals) takes
+    // effect within a minute instead of at the next service restart. An
+    // unreadable roster keeps the last good one.
     try {
-      const r = tickOnce({ roster });
+      current = loadJson(configPath()) || current;
+    } catch (e) {
+      console.error("watcher: roster unreadable, keeping the last good one:", e.message || e);
+    }
+    try {
+      const r = tickOnce({ roster: current });
       if (r.collect.length) console.log(`collected: ${r.successful.join(", ") || "(none ok)"}`);
     } catch (e) {
       console.error("watcher tick error:", e.message || e);
     }
-    const sleepSec = watcherSleepSec(cfg);
+    const sleepSec = watcherSleepSec(watcherConfig(current));
     await new Promise((res) => setTimeout(res, sleepSec * 1000));
   }
 }

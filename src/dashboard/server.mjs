@@ -25,7 +25,8 @@ import {
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
 import { readTrending, trendingDir } from "./trending.mjs";
 import { buildCatalogueView, applyCatalogueToggle } from "./catalogue.mjs";
-import { buildRolesView, applyRoleEdit, applySettingsEdit, buildSettingsView, modelLabel, applySpecialistAssignment } from "./roles.mjs";
+import { buildRolesView, applyRoleEdit, modelLabel, applySpecialistAssignment } from "./roles.mjs";
+import { applySettingsEdit, buildSettingsView } from "./settings.mjs";
 import { bringToLatest } from "../roster/latest.mjs";
 import { loadModelsStore } from "../collectors/models-store.mjs";
 import { subscriptionsFromRoster } from "../usage/usage-collect.mjs";
@@ -43,6 +44,14 @@ import {
   sanitizeForDashboard,
 } from "./data.mjs";
 import { createAdminGate } from "./admin.mjs";
+import {
+  admissionResetAction,
+  clearMarkAction,
+  markLimitedAction,
+  markTargets,
+  runAction,
+  startModelsScan,
+} from "./actions.mjs";
 import { appendAudit } from "./audit.mjs";
 import {
   buildProvidersView,
@@ -54,6 +63,16 @@ import {
 } from "./providers.mjs";
 import { buildClisView, commandExists } from "./clis.mjs";
 import { cronJobsPath, cronModelOptions, parseCronJobs, setCronJobModel } from "./cron-jobs.mjs";
+import {
+  buildAutomationView,
+  deleteCustomJob,
+  editBuiltin,
+  JOB_NAME,
+  readJobLog,
+  runCustomJobNow,
+  saveCustomJob,
+  setCustomJobEnabled,
+} from "./automation.mjs";
 import {
   isValidCliId,
   bootstrapAvailable,
@@ -1037,6 +1056,82 @@ export function createDashboardServer({
       return;
     }
 
+    const runActionMatch = pathname.match(/^\/api\/runs\/([^/]+)\/action$/);
+    const ACTIONS = {
+      "/api/actions/mark-limited": "usage.mark_limited",
+      "/api/actions/clear-mark": "usage.clear_mark",
+      "/api/actions/admission-reset": "admission.reset",
+      "/api/actions/models-scan": "models.scan",
+    };
+    if (req.method === "POST" && (runActionMatch || Object.hasOwn(ACTIONS, pathname))) {
+      if (!requireWriteAccess(req, res)) return;
+      const action = runActionMatch ? "run.action" : ACTIONS[pathname];
+      let target = runActionMatch ? decodeURIComponent(runActionMatch[1]) : "";
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        let result;
+        if (runActionMatch) {
+          target = `${target} ${body.action}`;
+          result = runAction(decodeURIComponent(runActionMatch[1]), String(body.action || ""), { reason: body.reason });
+        } else if (pathname === "/api/actions/mark-limited") {
+          target = String(body.target || "");
+          result = markLimitedAction(body, { roster: loadRoster(env), env, now: now() });
+        } else if (pathname === "/api/actions/clear-mark") {
+          target = String(body.target || "");
+          result = clearMarkAction(body, { env });
+        } else if (pathname === "/api/actions/admission-reset") {
+          result = admissionResetAction({ env });
+        } else {
+          result = startModelsScan({ env });
+        }
+        appendAudit({ actor: "127.0.0.1", action, target, result: "ok" }, { env });
+        memo.invalidate("usage");
+        memo.invalidate("pick");
+        memo.invalidate("roles");
+        jsonResponse(res, 200, { ok: true, ...result });
+      } catch (e) {
+        appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    // Automation writes: a built-in job's crontab line, or a custom job (ini +
+    // prompt file + the crontab's managed block). Every one re-reads the
+    // crontab, backs it up and verifies the result (crontab.mjs).
+    const builtinMatch = pathname.match(/^\/api\/automation\/builtin\/([a-z0-9-]+)$/);
+    const jobMatch = pathname.match(/^\/api\/automation\/jobs(?:\/([a-z0-9-]+)\/(enabled|delete|run))?$/);
+    if (req.method === "POST" && (builtinMatch || jobMatch)) {
+      if (!requireWriteAccess(req, res)) return;
+      const verb = builtinMatch ? "builtin" : jobMatch[2] || "save";
+      const action = `automation.${verb}`;
+      let target = builtinMatch?.[1] || jobMatch?.[1] || "";
+      try {
+        const body = JSON.parse(await readBody(req, PREFS_MAX_BODY) || "{}");
+        let result;
+        if (builtinMatch) {
+          result = editBuiltin({ id: target, enabled: body.enabled, schedule: body.schedule, knob: body.knob }, { exec, env });
+        } else if (verb === "save") {
+          target = String(body.name || "");
+          result = saveCustomJob(body, { exec, env, modelOptions: cronModelOptions(loadRoster(env)) });
+        } else if (!JOB_NAME.test(target)) {
+          throw new Error("bad job name");
+        } else if (verb === "enabled") {
+          result = setCustomJobEnabled(target, body.enabled === true, { exec, env });
+        } else if (verb === "delete") {
+          result = deleteCustomJob(target, { exec, env });
+        } else {
+          result = runCustomJobNow(target, { env });
+        }
+        appendAudit({ actor: "127.0.0.1", action, target, result: "ok" }, { env });
+        jsonResponse(res, 200, { ok: true, backup: result?.backup ? path.basename(result.backup) : null });
+      } catch (e) {
+        appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     const roleMatch = pathname.match(/^\/api\/roles\/([^/]+)$/);
     const isSettings = pathname === "/api/settings";
     const isUpgrade = pathname === "/api/roles-upgrade";
@@ -1367,7 +1462,7 @@ export function createDashboardServer({
             report: readRepairReport(cli, { env }).present,
           };
         }
-        return buildUsageView(usage, roster, ts, { watcher, repairs });
+        return { ...buildUsageView(usage, roster, ts, { watcher, repairs }), mark_targets: markTargets(roster) };
       });
       jsonResponse(res, 200, data);
       return;
@@ -1407,6 +1502,17 @@ export function createDashboardServer({
       // accounts here are the on/off switches the panel edits; nothing secret
       // lives in them, and the sanitizer still drops anything key-shaped.
       jsonResponse(res, 200, sanitizeForDashboard(buildSettingsView(loadRoster(env))));
+      return;
+    }
+
+    if (pathname === "/api/automation") {
+      jsonResponse(res, 200, buildAutomationView({ env, exec, modelOptions: cronModelOptions(loadRoster(env)) }));
+      return;
+    }
+
+    const logMatch = pathname.match(/^\/api\/automation\/jobs\/([a-z0-9-]+)\/log$/);
+    if (logMatch) {
+      jsonResponse(res, 200, { log: readJobLog(logMatch[1], { env }) });
       return;
     }
 
