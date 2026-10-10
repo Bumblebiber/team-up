@@ -542,10 +542,15 @@ $("#usage-grid").addEventListener("click", async (e) => {
 });
 
 // ── Roles & Models ────────────────────────────────────────────────────────
-// One row per role: its chain, what `pick` would choose right now and why it
-// skipped the rest. Editing happens in a <dialog>, so the five-second redraw
-// of this table never eats a half-built chain.
+// Left: one row per role, its chain as chips — the one `pick` would choose
+// right now outlined, the ones it skips right now faded. Right: the roster as
+// a palette. Chains are edited by dragging: roster → chain inserts, chip →
+// chip reorders, chip → roster (or ✕) removes. Every drop saves the whole
+// chain, each entry with its effort and pin. The ✎ dialog keeps per-entry
+// effort and pinning, and is the keyboard and touch path.
 let rolesData = null;
+let rolesDrag = null;
+let rolesKeyDrawn = "";
 
 const CELL_STATE = {
   gone: ["red", "gone — the CLI no longer offers it"],
@@ -553,53 +558,84 @@ const CELL_STATE = {
   unknown: ["", "no fresh scan of this CLI — availability unknown"],
 };
 
-function chainChip(c, i) {
+function chainChip(c, i, r) {
   if (c.invalid) return `<span class="chip missing" title="${esc(c.invalid)}">invalid</span>`;
   const [cls, why] = c.state === "gone" && !c.newest
     ? ["red", "gone — the CLI no longer offers it and no newer version of this model exists. Delete it from the chain or pick another model"]
     : CELL_STATE[c.state] || ["", ""];
-  const notes = [why, c.newest ? `newer: ${c.newest}` : "", c.pinned ? "version pinned" : "",
-    c.effort ? `effort ${c.effort}` : ""].filter(Boolean).join(" · ");
-  return `<span class="chip chain-chip ${cls}"${providerAttr(c.cli, c.model)} title="${esc(`${c.cli}:${c.model}${notes ? ` — ${notes}` : ""}`)}">${
-    i + 1}. ${esc(c.label)}${c.pinned ? " 📌" : ""}${c.newest ? " ⬆" : ""}${c.state === "gone" ? " ✗" : ""}</span>`;
+  // pick walks the chain in order and records one skip per entry it passes,
+  // so skipped[i] belongs to chain[i] and the pick sits right after them.
+  const skip = i < r.skipped.length ? r.skipped[i].reason : "";
+  const now = r.pick && i === r.skipped.length;
+  const notes = [now ? "pick now" : "", skip ? `skipped now: ${skip}` : "", why, c.newest ? `newer: ${c.newest}` : "",
+    c.pinned ? "version pinned" : "", c.effort ? `effort ${c.effort}` : ""].filter(Boolean).join(" · ");
+  const movable = !r.chain.some((x) => x.invalid);
+  return `<span class="chip chain-chip ${cls}${now ? " is-pick" : ""}${skip ? " is-skipped" : ""}"${providerAttr(c.cli, c.model)}${
+    movable ? ` draggable="true" data-index="${i}"` : ""} title="${esc(`${c.cli}:${c.model}${notes ? ` — ${notes}` : ""}`)}">${
+    i + 1}. ${esc(c.label)}${c.effort ? ` <small>${esc(c.effort)}</small>` : ""}${c.pinned ? " 📌" : ""}${c.newest ? " ⬆" : ""}${
+    c.state === "gone" ? " ✗" : ""}${movable ? `<button type="button" class="chip-x" data-index="${i}" title="Remove from the chain" aria-label="Remove ${esc(c.label)}">✕</button>` : ""}</span>`;
+}
+
+function roleRow(r) {
+  const broken = r.chain.some((x) => x.invalid);
+  return `<div class="role-row" data-role="${esc(r.role)}">
+    <div class="role-name"><strong>${esc(r.role)}</strong>${r.effort ? ` <span class="muted" title="Effort for the whole role">${esc(r.effort)}</span>` : ""}</div>
+    <div class="chain-drop" data-role="${esc(r.role)}"${broken ? ' data-locked="1" title="This chain has an entry team-up cannot read — fix it with ✎ first"' : ""}>${
+      r.chain.map((c, i) => chainChip(c, i, r)).join("")}${r.pick ? "" : '<span class="badge red" title="Every model in the chain is skipped right now">exhausted</span>'}</div>
+    <div class="row-actions">
+      <button type="button" class="role-edit" data-role="${esc(r.role)}" title="Effort, pinning, chain as a form">✎</button>
+      ${r.protected
+        ? `<span class="role-pin" title="Used by ${esc(r.protected)} — cannot be deleted">🔒</span>`
+        : `<button type="button" class="role-delete" data-role="${esc(r.role)}" title="Delete role">🗑</button>`}
+    </div>
+  </div>`;
+}
+
+/** The roster as drag sources: one chip per model and CLI, grouped by CLI. */
+function renderPalette() {
+  const used = new Map();
+  for (const r of rolesData.roles) {
+    for (const c of r.chain) if (!c.invalid) used.set(`${c.cli}:${c.model}`, [...(used.get(`${c.cli}:${c.model}`) || []), r.role]);
+  }
+  const groups = rolesData.clis.map((cli) => {
+    const chips = rolesData.models.filter((m) => m.clis.includes(cli)).map((m) => {
+      const roles = used.get(`${cli}:${m.id}`) || [];
+      return `<span class="chip palette-chip${roles.length ? "" : " unused"}" draggable="true" data-cli="${esc(cli)}" data-model="${esc(m.id)}"${
+        providerAttr(cli, m.id)} title="${esc(`${cli}:${m.id} — ${roles.length ? `in ${roles.join(", ")}` : "in no chain yet"}`)}">${esc(m.label)}</span>`;
+    }).join("");
+    return chips ? `<div class="palette-group"><span class="palette-cli">${esc(cli)}</span><div>${chips}</div></div>` : "";
+  }).join("");
+  $("#roster-palette").innerHTML = groups || '<p class="muted">No models in the roster — add some below.</p>';
 }
 
 let specialistRolesKey = "";
 
 async function refreshRoles() {
-  rolesData = await api("/api/roles");
+  const data = await api("/api/roles");
+  // A redraw mid-drag drops the chip in the user's hand; dragend redraws.
+  if (rolesDrag) return;
+  rolesData = data;
   // The specialist's assign dropdown lists the roles; redraw it only when they
   // change, so the 5s poll never resets it mid-pick.
-  const rolesKey = rolesData.roles.map((r) => r.role).join(",");
+  const rolesKey = data.roles.map((r) => r.role).join(",");
   if (rolesKey !== specialistRolesKey) {
     specialistRolesKey = rolesKey;
     renderSpecialist();
   }
-  const upgrades = rolesData.roles.flatMap((r) => r.chain.filter((c) => c.newest && (!c.pinned || c.state === "gone")));
-  const addable = rolesData.addable || [];
+  // An unchanged redraw would only flicker the hover state.
+  const key = JSON.stringify(data);
+  if (key === rolesKeyDrawn) return;
+  rolesKeyDrawn = key;
+  const upgrades = data.roles.flatMap((r) => r.chain.filter((c) => c.newest && (!c.pinned || c.state === "gone")));
+  const addable = data.addable || [];
   const btn = $("#roles-upgrade");
   btn.classList.toggle("hidden", !upgrades.length && !addable.length);
   btn.textContent = `⬆ Bring to newest versions (${[
     addable.length ? `${addable.length} new: ${addable.map((a) => a.id).join(", ")}` : "",
     upgrades.length ? `${upgrades.length} chain entr${upgrades.length === 1 ? "y" : "ies"}` : "",
   ].filter(Boolean).join(" · ")})`;
-  const rows = rolesData.roles.map((r) => `
-    <tr>
-      <td><strong>${esc(r.role)}</strong></td>
-      <td class="nowrap">${r.pick ? `${esc(r.pick.label)} <span class="muted">${esc(r.pick.cli)}${r.pick.effort ? ` · ${esc(r.pick.effort)}` : ""}</span>` : "<em>exhausted</em>"}</td>
-      <td class="chain-cell">${r.chain.map(chainChip).join(" ")}${r.skipped.length
-        ? `<div class="skipped" title="${esc(r.skipped.map((x) => `${x.model}: ${x.reason}`).join("\n"))}">⚠ ${
-          r.skipped.length} skipped right now</div>` : ""}</td>
-      <td class="row-actions">
-        <button type="button" class="role-edit" data-role="${esc(r.role)}" title="Edit chain">✎</button>
-        ${r.protected
-          ? `<span class="role-pin" title="Used by ${esc(r.protected)} — cannot be deleted">🔒</span>`
-          : `<button type="button" class="role-delete" data-role="${esc(r.role)}" title="Delete role">🗑</button>`}
-      </td>
-    </tr>`).join("");
-  $("#roles-table").innerHTML = `<table>
-    <thead><tr><th>Role</th><th>Pick now</th><th>Chain</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="4">No roles</td></tr>'}</tbody></table>`;
+  $("#roles-list").innerHTML = data.roles.map(roleRow).join("") || '<p class="muted">No roles yet.</p>';
+  renderPalette();
 }
 
 async function roleWrite(role, body, note) {
@@ -615,7 +651,13 @@ async function roleWrite(role, body, note) {
   }
 }
 
-$("#roles-table").addEventListener("click", async (e) => {
+$("#roles-list").addEventListener("click", async (e) => {
+  const x = e.target.closest(".chip-x");
+  if (x) {
+    const role = x.closest(".chain-drop").dataset.role;
+    saveChain(role, (chain) => `${chainEntryLabel(chain.splice(Number(x.dataset.index), 1)[0])} removed`);
+    return;
+  }
   const btn = e.target.closest("button[data-role]");
   if (!btn) return;
   const role = btn.dataset.role;
@@ -625,6 +667,150 @@ $("#roles-table").addEventListener("click", async (e) => {
     && confirm(`Delete role "${role}"?\n\nAnything that still runs \`team-up pick --role ${role}\` will fail.`)) {
     roleWrite(role, { delete: true }, `${role} deleted`);
   }
+});
+
+const chainEntry = (c) => ({ cli: c.cli, model: c.model, effort: c.effort || null, pinned: !!c.pinned });
+const chainEntryLabel = (c) => `${c.cli}:${c.model}`;
+
+/** Apply `edit` (returns the status note) to a copy of the role's chain and save it, unless nothing changed. */
+function saveChain(role, edit) {
+  const current = rolesData?.roles.find((r) => r.role === role)?.chain || [];
+  if (current.some((c) => c.invalid)) return;
+  const chain = current.map(chainEntry);
+  const before = JSON.stringify(chain);
+  const note = edit(chain);
+  if (JSON.stringify(chain) === before) return;
+  if (!chain.length) {
+    $("#roles-status").textContent = `${role} needs at least one model — delete the role instead`;
+    return;
+  }
+  roleWrite(role, { chain }, `${role}: ${note}`);
+}
+
+/** Where a drop at (x, y) lands among the zone's chips: before the first chip after the pointer. */
+function dropIndex(zone, x, y) {
+  const chips = [...zone.querySelectorAll(".chain-chip")];
+  const at = chips.findIndex((chip) => {
+    const b = chip.getBoundingClientRect();
+    return y < b.top || (y <= b.bottom && x < b.left + b.width / 2);
+  });
+  return at < 0 ? chips.length : at;
+}
+
+// The insertion point is a highlight on a chip edge, not an element: an
+// element would shift the chips under the pointer and make the index flicker.
+function dropMark(zone, index) {
+  clearDropMark();
+  const chips = zone?.querySelectorAll(".chain-chip") || [];
+  if (chips[index]) chips[index].classList.add("drop-before");
+  else chips[chips.length - 1]?.classList.add("drop-after");
+}
+
+function clearDropMark() {
+  for (const el of document.querySelectorAll(".drop-before, .drop-after")) el.classList.remove("drop-before", "drop-after");
+}
+
+function endRolesDrag() {
+  rolesDrag = null;
+  clearDropMark();
+  for (const el of document.querySelectorAll(".is-over, .is-dragging")) el.classList.remove("is-over", "is-dragging");
+  refreshRoles().catch(() => {});
+}
+
+const board = $(".roles-board");
+board.addEventListener("dragstart", (e) => {
+  const chip = e.target.closest?.(".chain-chip[draggable], .palette-chip");
+  if (!chip) return;
+  if (chip.classList.contains("palette-chip")) {
+    rolesDrag = { entry: { cli: chip.dataset.cli, model: chip.dataset.model, effort: null, pinned: false } };
+  } else {
+    const role = chip.closest(".chain-drop").dataset.role;
+    const index = Number(chip.dataset.index);
+    rolesDrag = { from: role, index, entry: chainEntry(rolesData.roles.find((r) => r.role === role).chain[index]) };
+  }
+  e.dataTransfer.setData("text/plain", `${rolesDrag.entry.cli}:${rolesDrag.entry.model}`);
+  e.dataTransfer.effectAllowed = "copyMove";
+  requestAnimationFrame(() => chip.classList.add("is-dragging"));
+});
+board.addEventListener("dragover", (e) => {
+  if (!rolesDrag) return;
+  const zone = e.target.closest(".chain-drop:not([data-locked])");
+  const back = rolesDrag.from && e.target.closest("#panel-roster");
+  for (const el of board.querySelectorAll(".is-over")) if (el !== zone && el !== back) el.classList.remove("is-over");
+  if (!zone && !back) {
+    clearDropMark();
+    return;
+  }
+  e.preventDefault();
+  e.dataTransfer.dropEffect = zone && rolesDrag.from === zone.dataset.role ? "move" : zone ? "copy" : "move";
+  (zone || back).classList.add("is-over");
+  if (zone) dropMark(zone, dropIndex(zone, e.clientX, e.clientY));
+  else clearDropMark();
+});
+board.addEventListener("dragleave", (e) => {
+  if (rolesDrag && !board.contains(e.relatedTarget)) {
+    clearDropMark();
+    for (const el of board.querySelectorAll(".is-over")) el.classList.remove("is-over");
+  }
+});
+board.addEventListener("drop", (e) => {
+  const drag = rolesDrag;
+  if (!drag) return;
+  e.preventDefault();
+  const zone = e.target.closest(".chain-drop:not([data-locked])");
+  if (zone?.dataset.new) {
+    createRole(drag.entry);
+  } else if (zone) {
+    const role = zone.dataset.role;
+    saveChain(role, (chain) => {
+      let at = dropIndex(zone, e.clientX, e.clientY);
+      // From the same chain, or already in it: move rather than duplicate.
+      const from = drag.from === role ? drag.index : chain.findIndex((c) => c.cli === drag.entry.cli && c.model === drag.entry.model);
+      const entry = from >= 0 ? chain[from] : drag.entry;
+      if (from >= 0) {
+        chain.splice(from, 1);
+        if (at > from) at -= 1;
+      }
+      chain.splice(at, 0, entry);
+      return `${chainEntryLabel(entry)} at ${at + 1}`;
+    });
+  } else if (drag.from && e.target.closest("#panel-roster")) {
+    saveChain(drag.from, (chain) => `${chainEntryLabel(chain.splice(drag.index, 1)[0])} removed`);
+  }
+  endRolesDrag();
+});
+document.addEventListener("dragend", () => {
+  if (rolesDrag) endRolesDrag();
+});
+
+// New role: name it, drop its first model. The form is the keyboard path.
+function createRole(entry) {
+  const input = $("#role-new-name");
+  const role = input.value.trim();
+  if (!input.checkValidity() || !role) {
+    $("#roles-status").textContent = "name the role first: lowercase letters, digits, . _ -";
+    input.focus();
+    return;
+  }
+  if (rolesData?.roles.some((r) => r.role === role)) {
+    $("#roles-status").textContent = `${role} already exists — drop the model on its row instead`;
+    return;
+  }
+  roleWrite(role, { chain: [entry] }, `${role} created`).then((ok) => {
+    if (ok) $("#role-new").classList.add("hidden");
+  });
+}
+
+$("#role-add").addEventListener("click", () => {
+  $("#role-new").classList.remove("hidden");
+  $("#role-new-name").value = "";
+  $("#role-new-name").focus();
+});
+$("#role-new-cancel").addEventListener("click", () => $("#role-new").classList.add("hidden"));
+$("#role-new-form").addEventListener("click", () => {
+  $("#role-new").classList.add("hidden");
+  openRoleEditor(null);
+  $("#role-editor-name").value = $("#role-new-name").value.trim();
 });
 
 $("#roles-upgrade").addEventListener("click", async () => {
@@ -706,7 +892,6 @@ function openRoleEditor(role, specialist = null) {
   roleDialog.showModal();
 }
 
-$("#role-add").addEventListener("click", () => openRoleEditor(null));
 $("#role-editor-add").addEventListener("click", () => $("#role-editor-chain").append(chainRow()));
 $("#role-editor-cancel").addEventListener("click", () => {
   roleDialog.close();
@@ -747,20 +932,14 @@ $("#role-editor-form").addEventListener("submit", async (e) => {
   else $("#role-editor-status").textContent = $("#roles-status").textContent;
 });
 
-// ── Models tab ──────────────────────────────────────────────────────────────
-// Per provider, every model it offers; checked = in the roster, so the chain
-// dropdowns offer it. It stays out of `refreshAll`: it redraws on tab switch
-// and after a toggle, so open providers stay open.
-const ROLES_TAB_KEY = "teamup.rolesTab";
+// ── Add or remove models ───────────────────────────────────────────────────
+// Per provider, every model it offers; checked = in the roster, so the
+// palette offers it. It stays out of `refreshAll`: it redraws when opened and
+// after a toggle, so open providers stay open.
+const CATALOGUE_OPEN_KEY = "teamup.catalogueOpen";
 const CATALOGUE_KIND_KEY = "teamup.catalogueKind";
 const catalogueOpen = new Set();
 let catalogueData = null;
-
-function showRolesTab(tab) {
-  for (const btn of $("#roles-tabs").querySelectorAll(".tim-tab")) btn.classList.toggle("is-active", btn.dataset.tab === tab);
-  for (const body of $("#panel-roles").querySelectorAll("[data-tab-body]")) body.classList.toggle("hidden", body.dataset.tabBody !== tab);
-  if (tab === "models") refreshCatalogue().catch((err) => { $("#catalogue-status").textContent = err.message; });
-}
 
 function renderCatalogue() {
   if (!catalogueData) return;
@@ -792,11 +971,9 @@ async function refreshCatalogue() {
   renderCatalogue();
 }
 
-$("#roles-tabs").addEventListener("click", (e) => {
-  const tab = e.target.closest(".tim-tab")?.dataset.tab;
-  if (!tab) return;
-  writeStored(ROLES_TAB_KEY, tab);
-  showRolesTab(tab);
+$("#catalogue-box").addEventListener("toggle", (e) => {
+  writeStored(CATALOGUE_OPEN_KEY, e.target.open ? "1" : "");
+  if (e.target.open) refreshCatalogue().catch((err) => { $("#catalogue-status").textContent = err.message; });
 });
 $("#catalogue-tabs").addEventListener("click", (e) => {
   const kind = e.target.closest(".tim-tab")?.dataset.kind;
@@ -2468,7 +2645,8 @@ const PANEL_HELP = {
   "panel-sessions": "Live tmux sessions (click one to open its terminal) and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
   "panel-projects": "Repos in the collecting folder: branch, command policy trust, open sessions. Start opens a CLI session in the repo; Fix all / auto-fix write unambiguous policies and trust their checksums.",
   "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
-  "panel-roles": "Every role, the model `team-up pick` would choose right now, and the fallback chain behind it. ✎ edits a chain, ⬆ marks entries with a newer version available, ✗ entries the CLI no longer offers. The Roster tab lists every model per provider; a checked one is in the roster and offered in the chains. Specialists run on a role's chain or their own — picked in the Specialists widget.",
+  "panel-roles": "Every role and its fallback chain. The outlined chip is what `team-up pick` would choose right now; faded chips are skipped right now (hover for why). Drag chips to reorder, drop a model from the roster to add it, ✕ to remove; dragging a chip onto another role copies it. ✎ sets effort and pinning. ⬆ marks a newer version, ✗ a model the CLI no longer offers.",
+  "panel-roster": "Every model in the roster, grouped by the CLI it runs on — the drag sources for the chains. Dashed: in no chain yet. Under 'Add or remove models' each provider lists what it offers; a checked model is in the roster.",
   "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions and limits are under Details.",
   "panel-settings": "Roster switches: accounts on/off, subscriptions, usage-spender quota, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
   "panel-cron-jobs": "Which CLI×model runs each scheduled LLM job (~/.team-up/cron-jobs.ini). No fallback: if that CLI is at its limit, the job fails and says so.",
@@ -2604,7 +2782,7 @@ let automationTimer = null;
 
 function startPolling() {
   refreshSpecialists().catch(() => {});
-  showRolesTab(readStored(ROLES_TAB_KEY, "roles") === "models" ? "models" : "roles");
+  $("#catalogue-box").open = readStored(CATALOGUE_OPEN_KEY, "") === "1";
   refreshSettings().catch(() => {});
   refreshAutomation().catch(() => {});
   clearInterval(automationTimer);

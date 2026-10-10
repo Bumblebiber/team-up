@@ -171,37 +171,47 @@
         <section class="view" data-view="roles">
           <header class="page-head">
             <h1>Roles &amp; Models</h1>
-            <p>A role is a job description with a fallback chain of models: the first one with quota left does the work. The roster lists every model team-up may use.</p>
+            <p>A role is a job description with a fallback chain of models: the first one with quota left does the work. Drag a model from the roster onto a role to add it, drag chips to reorder a chain, ✕ or drag back to the roster to remove.</p>
           </header>
+          <div class="roles-board">
           <section id="panel-roles" class="panel">
-        <h2>Models</h2>
-        <div class="toolbar">
-          <span class="segmented" id="roles-tabs">
-            <button type="button" class="tim-tab is-active" data-tab="roles">Roles</button>
-            <button type="button" class="tim-tab" data-tab="models">Roster</button>
-          </span>
-        </div>
-        <div data-tab-body="roles">
-          <div class="toolbar">
-            <button type="button" id="role-add" class="primary">+ Role</button>
-            <button type="button" id="roles-upgrade" class="hidden"></button>
-          </div>
-          <p id="roles-status" class="muted"></p>
-          <div id="roles-table" class="table-wrap"></div>
-        </div>
-        <div data-tab-body="models" class="hidden">
-          <div class="toolbar">
-            <span class="segmented small" id="catalogue-tabs">
-              <button type="button" class="tim-tab is-active" data-kind="subscription">Subscription</button>
-              <button type="button" class="tim-tab" data-kind="api">API key</button>
-            </span>
-            <input type="search" id="catalogue-search" placeholder="Filter models…">
-            <button type="button" id="models-scan" title="Ask every CLI which models it offers now (takes a minute or two)">Rescan CLIs</button>
-          </div>
-          <p id="catalogue-status" class="muted"></p>
-          <div id="catalogue-list"></div>
-        </div>
+            <h2>Roles</h2>
+            <div class="toolbar">
+              <button type="button" id="role-add" class="primary">+ Role</button>
+              <button type="button" id="roles-upgrade" class="hidden"></button>
+            </div>
+            <p id="roles-status" class="status-line" aria-live="polite"></p>
+            <div id="role-new" class="hidden">
+              <div class="role-row is-new">
+                <div class="role-name"><input type="text" id="role-new-name" placeholder="new role name" pattern="[a-z0-9][a-z0-9._\-]*" autocomplete="off" aria-label="New role name"></div>
+                <div class="chain-drop" data-role="" data-new="1"><span class="muted">drop the first model here</span></div>
+                <div class="row-actions">
+                  <button type="button" id="role-new-form" title="Set it up in a form instead">✎</button>
+                  <button type="button" id="role-new-cancel" title="Cancel">✕</button>
+                </div>
+              </div>
+            </div>
+            <div id="roles-list"></div>
           </section>
+          <section id="panel-roster" class="panel roster-side">
+            <h2>Roster</h2>
+            <p class="muted">Every model team-up may use, by the CLI it runs on. Drag one onto a role.</p>
+            <div id="roster-palette"></div>
+            <details id="catalogue-box">
+              <summary>Add or remove models</summary>
+              <div class="toolbar">
+                <span class="segmented small" id="catalogue-tabs">
+                  <button type="button" class="tim-tab is-active" data-kind="subscription">Subscription</button>
+                  <button type="button" class="tim-tab" data-kind="api">API key</button>
+                </span>
+                <input type="search" id="catalogue-search" placeholder="Filter models…">
+                <button type="button" id="models-scan" title="Ask every CLI which models it offers now (takes a minute or two)">Rescan CLIs</button>
+              </div>
+              <p id="catalogue-status" class="muted"></p>
+              <div id="catalogue-list"></div>
+            </details>
+          </section>
+          </div>
         </section>
 
         <section class="view" data-view="specialists">

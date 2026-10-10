@@ -505,11 +505,44 @@ details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 .pref-list { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; font-size: 0.85rem; }
 .pref-list label, .launch-dialog label.inline { display: inline-flex; gap: 0.3rem; margin: 0.2rem 0; }
 
-/* Roles */
-.chain-cell { line-height: 1.9; }
-.chain-chip { white-space: nowrap; }
+/* Roles: chains on the left, the roster to drag from on the right. The
+   roster column sticks while the roles scroll, without a scroll area of its
+   own; with the catalogue open it is too tall to stick and scrolls along. */
+.roles-board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(18rem, 26rem); gap: 1rem; align-items: start; }
+.roles-board > .panel { margin-bottom: 0; }
+.roster-side { position: sticky; top: 1rem; }
+.roster-side:has(#catalogue-box[open]) { position: static; }
+.roster-side > p.muted { margin: 0 0 0.5rem; font-size: 0.8rem; }
+@media (max-width: 1100px) {
+  .roles-board { grid-template-columns: minmax(0, 1fr); }
+  .roster-side { position: static; }
+}
+.role-row { display: grid; grid-template-columns: 11rem minmax(0, 1fr) auto; gap: 0.6rem; align-items: center; padding: 0.3rem 0; border-top: 1px solid var(--border); }
+.role-row:first-child { border-top: 0; }
+.role-row.is-new { border: 1px dashed var(--accent); border-radius: 8px; padding: 0.3rem 0.4rem; margin-bottom: 0.4rem; }
+.role-name { overflow-wrap: anywhere; }
+.role-name input { width: 100%; }
+.chain-drop { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; min-height: 1.8rem; padding: 0.15rem 0.3rem; border: 1px dashed transparent; border-radius: 8px; }
+.chain-drop.is-over, #panel-roster.is-over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+#panel-roster.is-over { border-style: dashed; }
+.chain-chip, .palette-chip { white-space: nowrap; margin: 0; }
+.chain-chip[draggable="true"], .palette-chip { cursor: grab; user-select: none; }
+.chain-chip small { color: var(--muted); }
+.chain-chip.is-pick { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
+.chain-chip.is-skipped { opacity: 0.55; }
+.is-dragging { opacity: 0.35; }
+.chain-chip.drop-before { box-shadow: -6px 0 0 -1px var(--accent); }
+.chain-chip.drop-after { box-shadow: 6px 0 0 -1px var(--accent); }
+.chain-chip .chip-x { opacity: 0; font-size: 0.75rem; }
+.chain-chip:hover .chip-x, .chip-x:focus-visible { opacity: 1; }
 .chip[data-provider] { border-color: color-mix(in srgb, var(--prov) 55%, var(--border)); }
 .chip.red { border-color: var(--red); color: var(--red); }
+.palette-group { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: 0.4rem; padding: 0.25rem 0; border-top: 1px solid var(--border); }
+.palette-group:first-child { border-top: 0; }
+.palette-group > div { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.palette-cli { color: var(--muted); font-size: 0.8rem; padding-top: 0.15rem; }
+.palette-chip.unused { border-style: dashed; color: var(--muted); }
+#catalogue-box { margin-top: 0.5rem; }
 .row-actions { white-space: nowrap; }
 .row-actions button, .role-pin {
   border: 0; background: none; cursor: pointer; padding: 0.1rem 0.25rem; color: var(--text);
