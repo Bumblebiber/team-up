@@ -81,6 +81,19 @@ whose checksum has been trusted with
 `team-up specialist trust-policy --project <absolute-path>`. A missing policy
 removes command permissions for that launch; an untrusted policy blocks launch.
 
+## Editing settings
+
+Every setting in this file that a person plausibly changes is editable in the
+dashboard's **Settings** page, with its help text, unit, default and when it
+takes effect (the registry is `src/dashboard/settings.mjs`). A save is
+validated, written to `roster.json` with a backup, and "reset" removes the key
+so the default applies again. Deliberately not editable from a browser:
+`clis.*.cmd` / `headless_cmd` (arbitrary command execution) and
+`openrouter.key_file` (would read any file); the page lists them with the reason.
+
+The usage watcher re-reads `roster.json` every tick, so `subscriptions` and
+`usage_watcher.*` changes apply within a minute, without a restart.
+
 ## Limits
 
 | Field | Default | Meaning |
@@ -88,6 +101,9 @@ removes command permissions for that launch; an untrusted policy blocks launch.
 | `limits.warn_at` | `0.9` | Usage fraction that asks the agent to converge to a clean committed state |
 | `limits.handoff_at` | `0.95` | Usage fraction that triggers a TIM handoff note and session stop |
 | `limits.handoff_at_burst` | `0.8` | Burst-window threshold (5h/session windows) |
+| `limits.project_min` | `30` | Minutes a burst window's burn rate is projected ahead when routing; `0` turns it off |
+| `limits.usage_max_age_min` | `10` | A blocking handoff only trusts usage readings this fresh |
+| `limits.idle_session_hours` | `2` | `runs gc` closes a worker's tmux session idle this long |
 
 The warning and limit thresholds (the limit-watch hook and `team-up usage
 --check`) count only the windows of the CLI the calling session runs on; an
@@ -135,3 +151,49 @@ After a `team_up_suspected` restart, `runs resume` caps the limit at half the
 workers that ran before it; the cap holds until `team-up admission reset` or
 24 h without a refusal. `team-up admission check [--cli <cli>]` shows the
 decision and why (exit 3 when refused).
+
+## Usage spender
+
+The `usage_spender` block tunes `scripts/usage-spender.py` (cron, every 10
+minutes). Every key is optional; a value of the wrong type is ignored with a
+note in the tick JSON and the built-in value is kept.
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `usage_spender.subscriptions` | `["claude","codex","cursor"]` | Whose spare quota may be spent; `[]` switches the spender off |
+| `usage_spender.spawn_hours` | `[23,0,1,2]` | Local hours in which a new task may start |
+| `usage_spender.implement` | `true` | `false`: reviews and triage only, no implement runs |
+| `usage_spender.implement_model` | `{"claude":"claude:claude-sonnet"}` | Per CLI, the `cli:model` for implement runs; `""` = the implementer role chain |
+| `usage_spender.max_run_h` | `4` | A spender run still active after this long is cancelled |
+| `usage_spender.task_cost` | `0.3` | Share of a weekly window one task burns on the smallest paid plan |
+
+## Scheduled jobs
+
+`~/.team-up/cron-jobs.ini` holds one section per scheduled LLM job. Built-in
+jobs (`golden-task`, `insights`, `usage-spender-host`) only set `model =
+<cli>:<model>`; they are scheduled in the crontab or by the Hermes cron daemon.
+The dashboard's **Scheduled jobs** page explains each one, shows next and last
+run, and switches crontab jobs on and off (prefixing the line with
+`#team-up-off# `), moves their schedule, or sets a whitelisted env knob
+(`STALE_RUNS_HOURS`, `INSIGHTS_NO_MERGE`).
+
+Your own jobs are sections with `custom = true`:
+
+```ini
+[weekly-deps]
+custom = true
+description = Check outdated dependencies and open one PR
+schedule = 0 6 * * 1
+model = claude:claude-sonnet
+cwd = /home/you/projects/repo
+notify = true
+enabled = true
+```
+
+The prompt lives in `~/.team-up/cron-prompts/<name>.md`. The ini is the source
+of truth: the dashboard regenerates the crontab block between
+`# >>> team-up managed jobs …` and `# <<< team-up managed jobs <<<` from it,
+one line per enabled job running `scripts/cron-job.sh <name>`. Nothing outside
+that block is added or removed; every write re-reads the crontab, keeps a
+backup in `~/.team-up/backups/crontab/` and verifies the result. Output goes to
+`~/.team-up/logs/cron/<name>.log`; `notify = true` also sends it to Telegram.
