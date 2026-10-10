@@ -91,8 +91,31 @@ function shellQuote(s) {
   return /^[A-Za-z0-9_\-./=]+$/.test(s) ? s : "'" + s.replaceAll("'", "'\\''") + "'";
 }
 
+// tmux 3.4 refuses a new-session whose client message passes ~16 KB ("command
+// too long"; measured 2026-10-10: 16,000 B inline ok, 17,000 B refused — a
+// 50 KB spender PR-review prompt never started). -c and -e share that budget.
+const TMUX_INLINE_MAX_BYTES = 8 * 1024;
+// Linux MAX_ARG_STRLEN: no single argv string, NUL included, may reach 128 KiB.
+const ARG_MAX_BYTES = 128 * 1024;
+
+/** A long command's launcher, named by session so a failed start can drop it. */
+export function launcherPath(session, env = process.env) {
+  return path.join(teamUpHome(env), "launch", `${session.replace(/[^\w.-]/g, "_")}.sh`);
+}
+
+function writeLauncher(session, command) {
+  const file = launcherPath(session);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  // exec keeps the CLI (or the headless wrapper) as the pane's process, so a
+  // kill-session's SIGHUP still reaches it. 0600: the prompt can carry diffs.
+  fs.writeFileSync(file, `rm -f -- "$0"\nexec ${command}\n`, { mode: 0o600 });
+  return file;
+}
+
 /**
- * Pure tmux argv builder — spawn itself stays a one-liner around this.
+ * tmux argv builder — spawn itself stays a one-liner around this. A command
+ * past TMUX_INLINE_MAX_BYTES is written to a self-deleting launcher and tmux
+ * gets `sh <launcher>`; shorter ones stay inline, with no file.
  * `env` becomes `-e K=V` flags: how a spawned worker proves to itself that it
  * is a worker and not the interface agent talking to a human.
  *
@@ -101,10 +124,20 @@ function shellQuote(s) {
  * through here (see executeResumeAction in runs/runs.mjs).
  */
 export function tmuxArgs({ session, dir, argv, env = {} }) {
+  // ponytail: past 128 KiB one argument cannot be exec'd at all; hand that
+  // CLI its prompt by file or stdin once prompts get there.
+  const huge = argv.find((a) => Buffer.byteLength(a) >= ARG_MAX_BYTES);
+  if (huge !== undefined) {
+    throw new Error(`a ${Buffer.byteLength(huge)}-byte argument passes the 128 KiB per-argument exec limit`);
+  }
   const envFlags = Object.entries({ TEAMUP_WORKER: "1", ...env })
     .filter(([, v]) => v)
     .flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  return ["new-session", "-d", "-s", session, "-c", dir, ...envFlags, argv.map(shellQuote).join(" ")];
+  let command = argv.map(shellQuote).join(" ");
+  if (Buffer.byteLength(command) > TMUX_INLINE_MAX_BYTES) {
+    command = `sh ${shellQuote(writeLauncher(session, command))}`;
+  }
+  return ["new-session", "-d", "-s", session, "-c", dir, ...envFlags, command];
 }
 
 /**
@@ -120,12 +153,18 @@ function runsOverride() {
 
 /** Start an already-built worker argv in detached tmux. */
 export function startInTmux({ session, dir, argv, runId, exec = execFileSync }) {
-  exec("tmux", tmuxArgs({
+  const args = tmuxArgs({
     session,
     dir,
     argv,
     env: runId ? { TEAMUP_RUN_ID: runId, ...runsOverride() } : {},
-  }), { stdio: "inherit" });
+  });
+  try {
+    exec("tmux", args, { stdio: "inherit" });
+  } catch (error) {
+    fs.rmSync(launcherPath(session), { force: true });
+    throw error;
+  }
   return { session };
 }
 

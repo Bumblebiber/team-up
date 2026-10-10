@@ -69,7 +69,7 @@ case "$cmd" in
   kill-session)
     name=""
     while [[ $# -gt 0 ]]; do
-      if [[ "$1" == "-t" ]]; then name="$2"; break; fi
+      if [[ "$1" == "-t" ]]; then name="\${2#=}"; break; fi
       shift || true
     done
     if [[ -n "$name" && -f "$SESS" ]]; then

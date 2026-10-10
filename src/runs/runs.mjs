@@ -1653,16 +1653,24 @@ async function cmdResume(args) {
   console.log(`log: ${report.logFile}`);
 }
 
+/**
+ * Mark first, then stop the worker's tmux: the headless wrapper's SIGHUP path
+ * skips its closeout, so the status stays cancelled. A cancel that only marked
+ * the run left the CLI and its tools spending quota (2026-10-09).
+ */
+export function cancelRun(runId, { stopTmux = stopTmuxSession } = {}) {
+  const state = setStatus(runId, "cancelled");
+  if (state.worker?.tmux) stopTmux(state.worker.tmux);
+  return state;
+}
+
 function cmdCancel(args) {
   const runId = args[0];
   if (!runId) {
     console.error("usage: runs.mjs cancel <runId>");
     process.exit(1);
   }
-  setStatus(runId, "cancelled");
-  const state = loadState(runId);
-  state.status = "cancelled";
-  saveState(state);
+  cancelRun(runId);
   console.log(`cancelled ${runId}`);
 }
 

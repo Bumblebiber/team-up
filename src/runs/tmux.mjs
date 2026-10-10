@@ -33,7 +33,9 @@ export function inspectTmuxSession(session, { exec = execFileSync } = {}) {
 export function stopTmuxSession(session, { exec = execFileSync } = {}) {
   if (!session) return false;
   try {
-    exec("tmux", ["kill-session", "-t", session], { stdio: "ignore" });
+    // "=" = exact name. Without it tmux falls back to a prefix match: killing
+    // a gone "x-ab" took the live "x-abc" with it (measured, tmux 3.4).
+    exec("tmux", ["kill-session", "-t", `=${session}`], { stdio: "ignore" });
     return true;
   } catch {
     return false;
