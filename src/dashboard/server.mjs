@@ -1675,7 +1675,15 @@ export function startDashboard({
   const { server, timViewer } = createDashboardServer({
     env, host, token, io, allowInstall, requireAdminConfirm, publicOrigin,
   });
+  // A signal skips "exit" handlers: stop the viewer child, then die of the
+  // same signal (the listener is gone, so the default action applies).
   process.once("exit", () => timViewer.stop());
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.once(sig, () => {
+      timViewer.stop();
+      process.kill(process.pid, sig);
+    });
+  }
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
