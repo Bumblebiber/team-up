@@ -2,6 +2,8 @@
 
 import { scanModels, defaultRun } from "../collectors/cli-models.mjs";
 import { withModelPtyLock } from "../collectors/models-pty.mjs";
+import { newFamilies } from "../roster/latest.mjs";
+import { addNotifications } from "../notifications.mjs";
 import {
   loadModelsStore,
   mergeModelsStore,
@@ -69,8 +71,16 @@ export function runModelsScan(
   const { reports, collectedByCli } = scanModels({ roster, cliFilter, run, runModelPty });
 
   if (!noWrite) {
-    const merged = mergeModelsStore(loadModelsStore(env), reports, collectedByCli, scannedAt);
+    const previous = loadModelsStore(env);
+    const merged = mergeModelsStore(previous, reports, collectedByCli, scannedAt);
     writeModelsStore(merged, env);
+    addNotifications(newFamilies(previous, merged).map(({ cli, family, ids }) => ({
+      key: `family:${cli}:${family}`,
+      kind: "model-family",
+      title: `${cli} offers a new model family: ${family}`,
+      text: `${ids.slice(0, 4).join(", ")}${ids.length > 4 ? ` +${ids.length - 4}` : ""} — not in the roster and not moved to automatically. Add it under Roles & Models → Add or remove models if you want it.`,
+      link: "#/roles",
+    })), { env });
   }
 
   if (json) {

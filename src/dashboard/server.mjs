@@ -64,6 +64,7 @@ import {
   removeOpenRouterKey,
 } from "./providers.mjs";
 import { buildClisView, commandExists } from "./clis.mjs";
+import { listNotifications, markNotificationsRead } from "../notifications.mjs";
 import { cronJobsPath, cronModelOptions, parseCronJobs, setCronJobModel } from "./cron-jobs.mjs";
 import {
   buildAutomationView,
@@ -1066,6 +1067,17 @@ export function createDashboardServer({
       "/api/actions/admission-reset": "admission.reset",
       "/api/actions/models-scan": "models.scan",
     };
+    if (req.method === "POST" && pathname === "/api/notifications/read") {
+      if (!requireWriteAccess(req, res)) return;
+      try {
+        const body = JSON.parse(await readBody(req) || "{}");
+        const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : null;
+        jsonResponse(res, 200, markNotificationsRead(ids, env));
+      } catch (e) {
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
     if (req.method === "POST" && (runActionMatch || Object.hasOwn(ACTIONS, pathname))) {
       if (!requireWriteAccess(req, res)) return;
       const action = runActionMatch ? "run.action" : ACTIONS[pathname];
@@ -1501,6 +1513,11 @@ export function createDashboardServer({
       const data = clisMemo.get("capability-pool", () =>
         sanitizeForDashboard(buildCapabilityPoolView({ env })));
       jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/notifications") {
+      jsonResponse(res, 200, { items: listNotifications(env) });
       return;
     }
 

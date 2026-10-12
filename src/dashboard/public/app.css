@@ -716,3 +716,15 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 #chip-editor .ce-up, #chip-editor .ce-down, #chip-editor .ce-remove { display: none; }
 .palette-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .ce-fast-label[hidden] { display: none; }
+
+/* Notification bell: top of the sidebar, its panel drops below it. */
+.sidebar-brand { position: relative; }
+.bell { margin-left: auto; border: 0; background: none; cursor: pointer; position: relative; padding: 0.1rem 0.3rem; font-size: 1rem; }
+.bell-count { position: absolute; top: -0.2rem; right: -0.25rem; min-width: 1rem; padding: 0 0.25rem; border-radius: 9px; background: var(--red); color: #fff; font-size: 0.65rem; line-height: 1rem; text-align: center; }
+.bell-panel { position: fixed; z-index: 50; top: 3.2rem; left: 0.75rem; width: min(26rem, calc(100vw - 1.5rem)); max-height: 70vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px rgb(0 0 0 / 18%); padding: 0.6rem 0.75rem; }
+.bell-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
+.bell-head button { font-size: 0.8rem; }
+#bell-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+#bell-list li { padding: 0.45rem 0.55rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem; }
+#bell-list li.unread { border-left: 3px solid var(--accent); }
+#bell-list p { margin: 0.2rem 0; color: var(--muted); }

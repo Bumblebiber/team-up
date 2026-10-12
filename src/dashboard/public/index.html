@@ -19,7 +19,13 @@
 
   <div id="app" class="app hidden">
     <aside class="sidebar">
-      <header class="sidebar-brand"><h1>team-up</h1><small>agent roster</small></header>
+      <header class="sidebar-brand"><h1>team-up</h1><small>agent roster</small>
+        <button type="button" id="bell" class="bell" title="Notifications" aria-label="Notifications" aria-expanded="false"><span aria-hidden="true">🔔</span><span id="bell-count" class="bell-count hidden"></span></button>
+      </header>
+      <section id="bell-panel" class="bell-panel hidden" aria-label="Notifications">
+        <div class="bell-head"><strong>Notifications</strong><button type="button" id="bell-read-all">Mark all read</button></div>
+        <ul id="bell-list"></ul>
+      </section>
       <nav class="sidebar-nav" aria-label="Dashboard views">
         <a href="#/overview" data-route="overview"><span class="nav-ico" aria-hidden="true">◎</span>Overview<span id="badge-overview" class="nav-badge hidden"></span></a>
         <details class="nav-group" open>

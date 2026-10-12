@@ -2821,6 +2821,51 @@ function enablePanelChrome() {
   applyPanelPrefs();
 }
 
+// ── Notifications (the bell) ───────────────────────────────────────────────
+// Things worth knowing but not urgent — a CLI offering a new model family.
+// Opening the panel marks what it shows read.
+let notifications = [];
+
+async function refreshNotifications() {
+  notifications = (await api("/api/notifications")).items || [];
+  const unread = notifications.filter((n) => !n.read).length;
+  $("#bell-count").textContent = unread > 9 ? "9+" : String(unread);
+  $("#bell-count").classList.toggle("hidden", !unread);
+  if (!$("#bell-panel").classList.contains("hidden")) renderBell();
+}
+
+function renderBell() {
+  $("#bell-list").innerHTML = notifications.map((n) => `<li class="${n.read ? "" : "unread"}">
+    <strong>${esc(n.title)}</strong><p>${esc(n.text || "")}</p>
+    <small class="muted">${esc(new Date(n.at).toLocaleString())}</small>${
+      n.link?.startsWith("#/") ? ` <a href="${esc(n.link)}" class="bell-link">open</a>` : ""}</li>`).join("")
+    || '<li class="muted">Nothing new.</li>';
+}
+
+async function markBellRead(ids) {
+  try {
+    await api("/api/notifications/read", { method: "POST", body: JSON.stringify(ids ? { ids } : {}) });
+  } catch { /* read-only token: the badge just stays */ }
+  await refreshNotifications().catch(() => {});
+}
+
+$("#bell").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = $("#bell-panel").classList.toggle("hidden") === false;
+  $("#bell").setAttribute("aria-expanded", String(open));
+  if (!open) return;
+  renderBell();
+  const unread = notifications.filter((n) => !n.read).map((n) => n.id);
+  if (unread.length) setTimeout(() => markBellRead(unread), 1500);
+});
+$("#bell-read-all").addEventListener("click", () => markBellRead(null));
+$("#bell-list").addEventListener("click", (e) => {
+  if (e.target.closest(".bell-link")) $("#bell-panel").classList.add("hidden");
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#bell-panel, #bell")) $("#bell-panel").classList.add("hidden");
+});
+
 function refreshAll() {
   return Promise.allSettled([
     refreshUsage(),
@@ -2830,6 +2875,7 @@ function refreshAll() {
     refreshTim(),
     refreshRoles(),
     refreshSetup(),
+    refreshNotifications(),
   ]);
 }
 

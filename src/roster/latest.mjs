@@ -210,3 +210,38 @@ export function bringToLatest(roster, store, now = Date.now()) {
   const { next, removed } = pruneGone(moved, store, now);
   return { next, added, changes, removed };
 }
+
+// API catalogues (OpenRouter through opencode) add vendors weekly; a bell for
+// each would be noise. The subscription CLIs ship a new family rarely.
+const FAMILY_WATCH_SKIP = new Set(["opencode", "hermes"]);
+
+/** Families a CLI's listing names: cursor's per-effort and -fast ids fold into one. */
+export function familiesOf(cli, ids) {
+  const plain = cli === "cursor" ? groupEfforts(ids.map((id) => id.replace(/-fast$/, ""))).map((g) => g.base) : ids;
+  const families = new Map();
+  for (const id of plain) {
+    const { family } = splitVersion(id);
+    if (!families.has(family)) families.set(family, []);
+    families.get(family).push(id);
+  }
+  return families;
+}
+
+/**
+ * Model families a scan lists that the previous scan of that CLI did not —
+ * a version bump of a family stays out (the drift job moves chains onto it).
+ * A CLI without a previous listing is skipped: everything would be "new".
+ * @returns {Array<{ cli, family, ids }>}
+ */
+export function newFamilies(previous, next) {
+  const out = [];
+  for (const [cli, entry] of Object.entries(next?.clis || {})) {
+    const before = previous?.clis?.[cli]?.models;
+    if (FAMILY_WATCH_SKIP.has(cli) || !entry?.supported || !Array.isArray(entry.models) || !Array.isArray(before)) continue;
+    const old = familiesOf(cli, before.map((m) => m.cli_id));
+    for (const [family, ids] of familiesOf(cli, entry.models.map((m) => m.cli_id))) {
+      if (!old.has(family)) out.push({ cli, family, ids });
+    }
+  }
+  return out;
+}
