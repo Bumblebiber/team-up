@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildCommand } from "../../src/roster/command.mjs";
-import { fastSupported } from "../../src/roster/config.mjs";
+import { fastSupported, fastNote } from "../../src/roster/config.mjs";
 import { pick } from "../../src/roster/chain.mjs";
 
 const roster = {
@@ -49,4 +49,11 @@ test("pick carries the chain entry's fast", () => {
 test("codex fast follows codex's own model cache when it is readable", () => {
   assert.equal(fastSupported(roster, store, "sol", "codex", new Set(["sol"])), true);
   assert.equal(fastSupported(roster, store, "sol", "codex", new Set(["other"])), false);
+});
+
+test("fastNote quotes codex's own words and flags a missing usage note", () => {
+  const slugs = new Map([["sol", "2x speed, increased usage"]]);
+  assert.equal(fastNote(roster, "sol", "codex", slugs), "codex: 2x speed, increased usage");
+  assert.match(fastNote(roster, "sol", "codex", new Map([["sol", "1.5x speed"]])), /names no extra usage/);
+  assert.match(fastNote(roster, "grok", "cursor"), /usually billed higher/);
 });

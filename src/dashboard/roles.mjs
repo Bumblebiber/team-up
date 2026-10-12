@@ -1,5 +1,5 @@
 import { pick, parseChainEntry } from "../roster/chain.mjs";
-import { cliModelFor, fastSupported, FAST_CLIS, codexFastSlugs } from "../roster/config.mjs";
+import { cliModelFor, fastSupported, fastNote, FAST_CLIS, codexFastSlugs } from "../roster/config.mjs";
 import { cellStatus, addOfferedVersions } from "../roster/latest.mjs";
 
 /**
@@ -84,7 +84,9 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
         .filter((v) => typeof v === "string" && v))],
       default_effort: spec?.effort ?? null,
       // The CLIs this model can run fast on (codex tier, cursor -fast id).
-      fast: (Array.isArray(spec?.cli) ? spec.cli : []).filter((cli) => fastSupported(roster, store, id, cli, codexSlugs)),
+      fast: Object.fromEntries((Array.isArray(spec?.cli) ? spec.cli : [])
+        .filter((cli) => fastSupported(roster, store, id, cli, codexSlugs))
+        .map((cli) => [cli, fastNote(roster, id, cli, codexSlugs)])),
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
   // Versions a CLI ships that the roster does not know yet; the upgrade

@@ -852,7 +852,7 @@ function chainRow(entry = {}) {
       `<option${c === cli ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
     <select class="ce-model"></select>
     <select class="ce-effort" title="Overrides the model's default effort for this role"></select>
-    <label class="ce-fast-label" title="Fast mode: faster answers, more quota per task (codex: priority tier · cursor: the -fast model)"><input type="checkbox" class="ce-fast"${entry.fast ? " checked" : ""}> ⚡ fast</label>
+    <label class="ce-fast-label"><input type="checkbox" class="ce-fast"${entry.fast ? " checked" : ""}> ⚡ fast</label>
     <label title="Stay on exactly this version; never move to a newer one"><input type="checkbox" class="ce-pinned"${entry.pinned ? " checked" : ""}> pin version</label>
     <button type="button" class="ce-up" title="Move up">↑</button>
     <button type="button" class="ce-down" title="Move down">↓</button>
@@ -876,8 +876,10 @@ function chainRow(entry = {}) {
     sel.innerHTML = `<option value="">default${m?.default_effort ? ` (${esc(m.default_effort)})` : ""}</option>`
       + values.map((v) => `<option${v === keep ? " selected" : ""}>${esc(v)}</option>`).join("");
     // Fast only where the CLI can do it for this model; hidden means off.
-    const canFast = !!m?.fast?.includes(row.querySelector(".ce-cli").value);
+    const note = m?.fast?.[row.querySelector(".ce-cli").value];
+    const canFast = note !== undefined;
     row.querySelector(".ce-fast-label").hidden = !canFast;
+    row.querySelector(".ce-fast-label").title = `Fast mode — ${note || "uses more quota"}`;
     if (!canFast) row.querySelector(".ce-fast").checked = false;
   };
   row.querySelector(".ce-cli").addEventListener("change", fill);

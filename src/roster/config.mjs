@@ -163,10 +163,23 @@ export function codexFastSlugs(env = process.env) {
   try {
     const file = path.join(env.CODEX_HOME || path.join(env.HOME || "", ".codex"), "models_cache.json");
     const models = JSON.parse(fs.readFileSync(file, "utf8")).models || [];
-    return new Set(models.filter((m) => m.service_tiers?.length).map((m) => m.slug));
+    // slug → codex's own words for the tier, e.g. "2x speed, increased usage".
+    return new Map(models.filter((m) => m.service_tiers?.length)
+      .map((m) => [m.slug, m.service_tiers.map((t) => t.description).filter(Boolean).join("; ")]));
   } catch {
     return null;
   }
+}
+
+/** What fast costs, for the dashboard's tooltip: the CLI's own words where it gives any. */
+export function fastNote(roster, model, cli, codexSlugs = null) {
+  if (cli === "codex") {
+    const said = codexSlugs?.get?.(cliModelFor(roster, model, cli));
+    if (!said) return "codex priority tier — uses more of the codex quota";
+    return /usage/i.test(said) ? `codex: ${said}` : `codex: ${said} (codex names no extra usage for this model)`;
+  }
+  if (cli === "cursor") return "cursor -fast model — usually billed higher than the normal one; cursor's model list gives no figure";
+  return "";
 }
 
 /** Can this model run fast on this CLI? `store` is models.json; `codexSlugs` from codexFastSlugs(). */
