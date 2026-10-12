@@ -78,3 +78,10 @@ test("formatStoreAge renders human units", () => {
   assert.equal(formatStoreAge(30_000), "30s ago");
   assert.equal(formatStoreAge(120_000), "2m ago");
 });
+
+test("a version probe that failed keeps the last known version", () => {
+  const previous = { clis: { claude: { supported: true, models: [{ cli_id: "sonnet", display_name: "sonnet", version: "Sonnet 5.5" }] } } };
+  const collected = new Map([["claude", { supported: true, models: [{ id: "sonnet", display_name: "sonnet" }, { id: "opus", display_name: "opus", version: "Opus 5.6" }] }]]);
+  const out = mergeModelsStore(previous, [{ cli: "claude", supported: true }], collected, "2026-10-12T00:00:00Z");
+  assert.deepEqual(out.clis.claude.models.map((m) => m.version), ["Sonnet 5.5", "Opus 5.6"]);
+});

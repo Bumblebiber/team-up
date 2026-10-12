@@ -37,13 +37,16 @@ export function mergeModelsStore(previous, reports, collectedByCli, scannedAt) {
       continue;
     }
 
+    // A version probe that failed this time (claude asks one alias at a
+    // time) keeps the last one it named, rather than showing none.
+    const priorVersion = new Map((prev[cliId]?.models || []).filter((m) => m.version).map((m) => [m.cli_id, m.version]));
     clis[cliId] = {
       supported: true,
       scanned_at: scannedAt,
       models: (collected.models || []).map((m) => ({
         cli_id: m.id,
         display_name: m.display_name,
-        ...(m.version ? { version: m.version } : {}),
+        ...((m.version || priorVersion.get(m.id)) ? { version: m.version || priorVersion.get(m.id) } : {}),
         ...(m.current ? { current: true } : {}),
       })),
       gone: report.gone || [],
