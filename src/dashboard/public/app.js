@@ -574,7 +574,7 @@ function chainChip(c, i, r) {
     c.pinned ? "version pinned" : "", c.effort ? `effort ${c.effort}` : ""].filter(Boolean).join(" · ");
   const movable = !r.chain.some((x) => x.invalid);
   return `<span class="chip chain-chip ${cls}${now ? " is-pick" : ""}${skip ? " is-skipped" : ""}"${providerAttr(c.cli, c.model)}${
-    movable ? ` draggable="true" data-index="${i}"` : ""} title="${esc(`${c.cli}:${c.model}${notes ? ` — ${notes}` : ""}`)}">${
+    movable ? ` draggable="true" data-index="${i}"` : ""} title="${esc(`${c.cli}:${c.model}${notes ? ` — ${notes}` : ""}${movable ? "\nDouble-click to change CLI, model or effort" : ""}`)}">${
     i + 1}. ${esc(c.label)}${c.effort ? ` <small>${esc(c.effort)}</small>` : ""}${c.pinned ? " 📌" : ""}${c.newest ? " ⬆" : ""}${
     c.state === "gone" ? " ✗" : ""}${movable ? `<button type="button" class="chip-x" data-index="${i}" title="Remove from the chain" aria-label="Remove ${esc(c.label)}">✕</button>` : ""}</span>`;
 }
@@ -865,12 +865,13 @@ function chainRow(entry = {}) {
   };
   // Effort values are the model's own (codex says xhigh, claude says max), so
   // the list follows the model picked. A value no longer in the map stays
-  // selectable rather than being dropped silently.
+  // selectable rather than being dropped silently — for that model only.
   const fillEffort = () => {
     const m = models.find((x) => x.id === row.querySelector(".ce-model").value);
     const sel = row.querySelector(".ce-effort");
-    const keep = sel.dataset.touched ? sel.value : entry.effort || "";
-    const values = [...new Set([...(m?.efforts || []), ...(keep ? [keep] : [])])];
+    const same = m?.id === entry.model;
+    const keep = sel.dataset.touched ? sel.value : same ? entry.effort || "" : "";
+    const values = [...new Set([...(m?.efforts || []), ...(keep && same ? [keep] : [])])];
     sel.innerHTML = `<option value="">default${m?.default_effort ? ` (${esc(m.default_effort)})` : ""}</option>`
       + values.map((v) => `<option${v === keep ? " selected" : ""}>${esc(v)}</option>`).join("");
   };
@@ -910,6 +911,38 @@ $("#role-editor-cancel").addEventListener("click", () => {
   roleDialog.close();
   // The assign dropdown already shows "own chain…"; put it back.
   if (specialistChainTarget) renderSpecialist();
+});
+// Double-click a chain chip: change that one entry's CLI, model, effort, pin.
+const chipDialog = $("#chip-editor");
+let chipTarget = null;
+$("#roles-list").addEventListener("dblclick", (e) => {
+  const chip = e.target.closest(".chain-chip[data-index]");
+  if (!chip || e.target.closest(".chip-x")) return;
+  const role = chip.closest(".chain-drop").dataset.role;
+  const index = Number(chip.dataset.index);
+  const entry = rolesData?.roles.find((r) => r.role === role)?.chain[index];
+  if (!entry) return;
+  chipTarget = { role, index };
+  $("#chip-editor-title").textContent = `${role} · entry ${index + 1}`;
+  $("#chip-editor-row").replaceChildren(chainRow(entry));
+  chipDialog.showModal();
+});
+$("#chip-editor-cancel").addEventListener("click", () => chipDialog.close());
+$("#chip-editor-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const row = $("#chip-editor-row .chain-row");
+  const entry = {
+    cli: row.querySelector(".ce-cli").value,
+    model: row.querySelector(".ce-model").value,
+    effort: row.querySelector(".ce-effort").value || null,
+    pinned: row.querySelector(".ce-pinned").checked,
+  };
+  const { role, index } = chipTarget;
+  saveChain(role, (chain) => {
+    chain[index] = entry;
+    return `entry ${index + 1} → ${chainEntryLabel(entry)}${entry.effort ? ` · ${entry.effort}` : ""}`;
+  });
+  chipDialog.close();
 });
 $("#role-editor-chain").addEventListener("click", (e) => {
   const row = e.target.closest(".chain-row");
