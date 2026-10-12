@@ -154,9 +154,24 @@ export const CODEX_FAST_TIER = "priority";
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Can this model run fast on this CLI? `store` is models.json. */
-export function fastSupported(roster, store, model, cli) {
-  if (cli === "codex") return true;
+/**
+ * Codex slugs whose own model cache lists a service tier (all of them as of
+ * 2026-10-12, astra to luna). null when the cache is unreadable: then fast is
+ * offered anyway — codex drops a tier a model lacks, with a warning.
+ */
+export function codexFastSlugs(env = process.env) {
+  try {
+    const file = path.join(env.CODEX_HOME || path.join(env.HOME || "", ".codex"), "models_cache.json");
+    const models = JSON.parse(fs.readFileSync(file, "utf8")).models || [];
+    return new Set(models.filter((m) => m.service_tiers?.length).map((m) => m.slug));
+  } catch {
+    return null;
+  }
+}
+
+/** Can this model run fast on this CLI? `store` is models.json; `codexSlugs` from codexFastSlugs(). */
+export function fastSupported(roster, store, model, cli, codexSlugs = null) {
+  if (cli === "codex") return !codexSlugs || codexSlugs.has(cliModelFor(roster, model, cli));
   if (cli !== "cursor") return false;
   const alias = aliasFor(roster?.models?.[model], model, cli);
   const re = new RegExp(`^${escapeRe(alias).replace(escapeRe("-{effort}"), "(-[a-z-]+)?")}-fast$`);

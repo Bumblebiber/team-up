@@ -45,3 +45,8 @@ test("fastSupported: codex always, cursor only with a scanned twin, others never
 test("pick carries the chain entry's fast", () => {
   assert.equal(pick({ roster, usage: {}, role: "r" }).fast, true);
 });
+
+test("codex fast follows codex's own model cache when it is readable", () => {
+  assert.equal(fastSupported(roster, store, "sol", "codex", new Set(["sol"])), true);
+  assert.equal(fastSupported(roster, store, "sol", "codex", new Set(["other"])), false);
+});
