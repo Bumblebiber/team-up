@@ -715,3 +715,4 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 }
 #chip-editor .ce-up, #chip-editor .ce-down, #chip-editor .ce-remove { display: none; }
 .palette-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ce-fast-label[hidden] { display: none; }

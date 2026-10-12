@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyRoleEdit, buildRolesView, modelLabel } from "../../src/dashboard/roles.mjs";
+import { applyRoleEdit, buildRolesView, modelLabel, normalizeChain } from "../../src/dashboard/roles.mjs";
 
 const roster = {
   clis: { claude: { cmd: ["claude"] }, codex: { cmd: ["codex"] } },
@@ -66,4 +66,11 @@ test("prototype keys never resolve as roles or accounts", () => {
   assert.throws(() => applyRoleEdit(roster, { role: "constructor", delete: true }), /unknown role/);
   assert.throws(() => applyRoleEdit(roster, { role: "x", chain: [{ cli: "codex", model: "constructor" }] }), /unknown model/);
   assert.equal(({}).enabled, undefined);
+});
+
+test("normalizeChain keeps fast, and refuses it on a CLI without fast mode", () => {
+  const roster = { models: { sol: { cli: ["codex"] }, oc: { cli: ["opencode"] } } };
+  assert.deepEqual(normalizeChain(roster, [{ cli: "codex", model: "sol", fast: true }]), [{ model: "sol", cli: "codex", fast: true }]);
+  assert.deepEqual(normalizeChain(roster, [{ cli: "codex", model: "sol", fast: false }]), ["codex:sol"]);
+  assert.throws(() => normalizeChain(roster, [{ cli: "opencode", model: "oc", fast: true }]), /no fast mode/);
 });

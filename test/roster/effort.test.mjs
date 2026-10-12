@@ -19,5 +19,5 @@ test("unset effort removes flag and value", () => {
 
 test("object chain cell carries effort", () => {
   assert.deepEqual(parseChainEntry({ cli: "cursor", model: "m", effort: "high" }),
-    { cli: "cursor", model: "m", effort: "high" });
+    { cli: "cursor", model: "m", effort: "high", fast: false });
 });

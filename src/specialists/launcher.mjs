@@ -458,6 +458,7 @@ export async function launch({
       cli: cell.cli,
       prompt: workerPrompt,
       effort: cell.effort,
+      fast: cell.fast === true,
       dir: dest,
     });
     const runPath = runDir(state.runId);
@@ -496,6 +497,7 @@ export async function launch({
       cli: cell.cli,
       model: cell.model,
       effort: cell.effort,
+      ...(cell.fast ? { fast: true } : {}),
       limit_windows: limitWindows,
     };
     stAfter.budget = launchState.budget;
@@ -518,6 +520,7 @@ export async function launch({
         cli: cell.cli,
         model: cell.model,
         effort: cell.effort ?? null,
+        ...(cell.fast ? { fast: true } : {}),
         pinned: Boolean(runtimeOverride),
         skipped: profileResult.skipped,
         refresh: null,

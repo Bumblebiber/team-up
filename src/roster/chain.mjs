@@ -40,17 +40,20 @@ export function parseChainEntry(entry) {
     if (entry.effort !== undefined && entry.effort !== null && typeof entry.effort !== "string") {
       throw new Error(`invalid chain entry effort (must be a string): ${JSON.stringify(entry)}`);
     }
-    return { model: entry.model, cli: entry.cli ?? null, effort: entry.effort || null };
+    if (entry.fast !== undefined && typeof entry.fast !== "boolean") {
+      throw new Error(`invalid chain entry fast (must be true or false): ${JSON.stringify(entry)}`);
+    }
+    return { model: entry.model, cli: entry.cli ?? null, effort: entry.effort || null, fast: entry.fast === true };
   }
   if (typeof entry !== "string" || !entry) {
     throw new Error(`invalid chain entry: ${entry}`);
   }
   const i = entry.indexOf(":");
-  if (i === -1) return { model: entry, cli: null, effort: null };
+  if (i === -1) return { model: entry, cli: null, effort: null, fast: false };
   const cli = entry.slice(0, i);
   const model = entry.slice(i + 1);
   if (!cli || !model) throw new Error(`invalid chain entry: ${entry}`);
-  return { model, cli, effort: null };
+  return { model, cli, effort: null, fast: false };
 }
 
 
@@ -164,6 +167,7 @@ export function evaluatePickCell({
   model: name,
   cli: cliIn,
   entryEffort = null,
+  entryFast = false,
   now = Date.now(),
 }) {
   const skipped = [];
@@ -212,6 +216,7 @@ export function evaluatePickCell({
     model: name,
     cli,
     effort: resolveEffort({ roster, role, model: name, entryEffort }),
+    fast: entryFast === true,
     skipped,
   };
 }
@@ -236,6 +241,7 @@ export function pick({ roster, usage, role, now = Date.now() }) {
       model: parsed.model,
       cli: parsed.cli,
       entryEffort: parsed.effort,
+      entryFast: parsed.fast,
       now,
     });
     if (cell.skipped.length) {

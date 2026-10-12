@@ -107,10 +107,10 @@ test("pick throws on unknown role", () => {
 });
 
 test("parseChainEntry accepts bare model, cli:model, and objects", () => {
-  assert.deepEqual(parseChainEntry("model-a"), { model: "model-a", cli: null, effort: null });
-  assert.deepEqual(parseChainEntry("cursor:model-g"), { model: "model-g", cli: "cursor", effort: null });
-  assert.deepEqual(parseChainEntry({ model: "model-c", cli: "hermes" }), { model: "model-c", cli: "hermes", effort: null });
-  assert.deepEqual(parseChainEntry({ model: "model-a" }), { model: "model-a", cli: null, effort: null });
+  assert.deepEqual(parseChainEntry("model-a"), { model: "model-a", cli: null, effort: null, fast: false });
+  assert.deepEqual(parseChainEntry("cursor:model-g"), { model: "model-g", cli: "cursor", effort: null, fast: false });
+  assert.deepEqual(parseChainEntry({ model: "model-c", cli: "hermes" }), { model: "model-c", cli: "hermes", effort: null, fast: false });
+  assert.deepEqual(parseChainEntry({ model: "model-a" }), { model: "model-a", cli: null, effort: null, fast: false });
   assert.throws(() => parseChainEntry(":nope"), /invalid chain entry/);
   assert.throws(() => parseChainEntry({}), /invalid chain entry/);
 });
@@ -118,9 +118,15 @@ test("parseChainEntry accepts bare model, cli:model, and objects", () => {
 test("parseChainEntry carries chain-entry effort", () => {
   assert.deepEqual(
     parseChainEntry({ model: "model-a", cli: "claude", effort: "max" }),
-    { model: "model-a", cli: "claude", effort: "max" },
+    { model: "model-a", cli: "claude", effort: "max", fast: false },
   );
   assert.throws(() => parseChainEntry({ model: "model-a", effort: 3 }), /effort/);
+});
+
+test("parseChainEntry carries fast and refuses a non-boolean", () => {
+  assert.equal(parseChainEntry({ model: "m", cli: "codex", fast: true }).fast, true);
+  assert.equal(parseChainEntry("codex:m").fast, false);
+  assert.throws(() => parseChainEntry({ model: "m", fast: "yes" }), /fast/);
 });
 
 test("pick resolves effort precedence", () => {

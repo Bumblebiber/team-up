@@ -142,6 +142,33 @@ export function aliasFor(modelDef, modelId, cli) {
   return modelId;
 }
 
+/**
+ * Fast mode, per CLI. codex: the `priority` service tier (the id codex's own
+ * model cache lists as "Fast"; it costs more quota). cursor: the `-fast` twin
+ * of the model id, only when a scan listed it — an id cursor does not know
+ * fails the run. Other CLIs: no switch team-up can set. (claude: `fastMode`
+ * exists, but is not verified for headless runs — not offered.)
+ */
+export const FAST_CLIS = ["codex", "cursor"];
+export const CODEX_FAST_TIER = "priority";
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Can this model run fast on this CLI? `store` is models.json. */
+export function fastSupported(roster, store, model, cli) {
+  if (cli === "codex") return true;
+  if (cli !== "cursor") return false;
+  const alias = aliasFor(roster?.models?.[model], model, cli);
+  const re = new RegExp(`^${escapeRe(alias).replace(escapeRe("-{effort}"), "(-[a-z-]+)?")}-fast$`);
+  return (store?.clis?.cursor?.models || []).some((m) => re.test(m.cli_id));
+}
+
+/** The cursor model id with fast on, or null when no scan listed that twin. */
+export function cursorFastId(store, cliModel) {
+  const id = `${cliModel}-fast`;
+  return (store?.clis?.cursor?.models || []).some((m) => m.cli_id === id) ? id : null;
+}
+
 /** Every id a model answers to, for free-text model resolution. */
 export function cliModelAliases(modelDef, modelId) {
   const alias = modelDef?.cli_model;

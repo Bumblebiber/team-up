@@ -297,6 +297,7 @@ export async function spawnInTmux({
     cli: r.cli,
     model: r.model,
     effort: r.effort ?? null,
+    ...(r.fast ? { fast: true } : {}),
     pinned: Boolean(modelPin),
     skipped: r.skipped,
     refresh,
@@ -309,6 +310,7 @@ export async function spawnInTmux({
     prompt,
     runId: effectiveRunId,
     effort: r.effort,
+    fast: r.fast === true,
     sessionPrefix: `team-up-${role}`,
   });
 }

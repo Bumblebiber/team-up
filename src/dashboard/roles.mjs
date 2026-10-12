@@ -1,5 +1,5 @@
 import { pick, parseChainEntry } from "../roster/chain.mjs";
-import { cliModelFor } from "../roster/config.mjs";
+import { cliModelFor, fastSupported, FAST_CLIS } from "../roster/config.mjs";
 import { cellStatus, addOfferedVersions } from "../roster/latest.mjs";
 
 /**
@@ -44,6 +44,7 @@ function chainView(roster, store, chain, now) {
       model: parsed.model,
       effort: parsed.effort,
       pinned: typeof raw === "object" && raw?.pinned === true,
+      fast: parsed.fast,
       label: modelLabel(roster, store, parsed.model, cli),
       state,
       newest,
@@ -81,6 +82,8 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
         .map((level) => spec?.reasoning?.[level]), ...(Array.isArray(spec?.efforts) ? spec.efforts : [])]
         .filter((v) => typeof v === "string" && v))],
       default_effort: spec?.effort ?? null,
+      // The CLIs this model can run fast on (codex tier, cursor -fast id).
+      fast: (Array.isArray(spec?.cli) ? spec.cli : []).filter((cli) => fastSupported(roster, store, id, cli)),
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
   // Versions a CLI ships that the roster does not know yet; the upgrade
@@ -93,13 +96,14 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
 export function normalizeChain(roster, chain) {
   if (!Array.isArray(chain) || chain.length === 0) throw new Error("chain must name at least one model");
   return chain.map((entry, i) => {
-    const { model, cli, effort, pinned } = entry || {};
+    const { model, cli, effort, pinned, fast } = entry || {};
     const spec = own(roster.models, model) ? roster.models[model] : null;
     if (!spec) throw new Error(`chain[${i}]: unknown model ${model}`);
     if (!cli || !spec.cli?.includes(cli)) throw new Error(`chain[${i}]: ${model} does not run on ${cli}`);
     if (effort != null && typeof effort !== "string") throw new Error(`chain[${i}]: effort must be a string`);
-    if (!effort && !pinned) return `${cli}:${model}`;
-    return { model, cli, ...(effort ? { effort } : {}), ...(pinned ? { pinned: true } : {}) };
+    if (fast && !FAST_CLIS.includes(cli)) throw new Error(`chain[${i}]: ${cli} has no fast mode`);
+    if (!effort && !pinned && !fast) return `${cli}:${model}`;
+    return { model, cli, ...(effort ? { effort } : {}), ...(pinned ? { pinned: true } : {}), ...(fast ? { fast: true } : {}) };
   });
 }
 

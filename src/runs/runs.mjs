@@ -675,7 +675,7 @@ export function outcomeSummary(states = listAllStates({ onCorrupt: () => {} })) 
 }
 
 /** After roster dispatch spawns tmux, link session to run registry. */
-export function linkDispatchToRun(runId, session, { model, cli, effort, headless } = {}) {
+export function linkDispatchToRun(runId, session, { model, cli, effort, fast, headless } = {}) {
   if (!runId) return false;
   const st = loadState(runId);
   if (!st) return false;
@@ -684,6 +684,7 @@ export function linkDispatchToRun(runId, session, { model, cli, effort, headless
   if (model !== undefined) st.worker.model = model;
   if (cli !== undefined) st.worker.cli = cli;
   if (effort !== undefined) st.worker.effort = effort ?? null;
+  if (fast) st.worker.fast = true;
   if (headless) st.worker.headless = true;
   st.watcher = { ...(st.watcher || { kind: "internal_subagent" }), attached: true };
   saveState(st);
@@ -784,12 +785,12 @@ export function buildCliArgv({ cli, sessionId }) {
  * argument is "agent"; both cold starts on record failed.
  */
 export function coldStartArgv(state, roster, prompt, dir) {
-  const { cli, model, effort = null } = state.worker || {};
+  const { cli, model, effort = null, fast = false } = state.worker || {};
   if (!roster?.clis?.[cli]?.cmd) {
     throw new Error(`cold start of ${state.runId}: no clis.${cli}.cmd in the roster`);
   }
   if (!model) throw new Error(`cold start of ${state.runId}: no worker.model recorded`);
-  return buildCommand({ roster, model, cli, prompt, effort, dir });
+  return buildCommand({ roster, model, cli, prompt, effort, fast, dir });
 }
 
 export function resumeLockPath() {

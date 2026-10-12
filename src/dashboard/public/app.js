@@ -571,11 +571,11 @@ function chainChip(c, i, r) {
   const skip = i < r.skipped.length ? r.skipped[i].reason : "";
   const now = r.pick && i === r.skipped.length;
   const notes = [now ? "pick now" : "", skip ? `skipped now: ${skip}` : "", why, c.newest ? `newer: ${c.newest}` : "",
-    c.pinned ? "version pinned" : "", c.effort ? `effort ${c.effort}` : ""].filter(Boolean).join(" · ");
+    c.pinned ? "version pinned" : "", c.effort ? `effort ${c.effort}` : "", c.fast ? "fast (more quota)" : ""].filter(Boolean).join(" · ");
   const movable = !r.chain.some((x) => x.invalid);
   return `<span class="chip chain-chip ${cls}${now ? " is-pick" : ""}${skip ? " is-skipped" : ""}"${providerAttr(c.cli, c.model)}${
     movable ? ` draggable="true" data-index="${i}"` : ""} title="${esc(`${c.cli}:${c.model}${notes ? ` — ${notes}` : ""}${movable ? "\nDouble-click to change CLI, model or effort" : ""}`)}">${
-    i + 1}. ${esc(c.label)}${c.effort ? ` <small>${esc(c.effort)}</small>` : ""}${c.pinned ? " 📌" : ""}${c.newest ? " ⬆" : ""}${
+    i + 1}. ${esc(c.label)}${c.effort ? ` <small>${esc(c.effort)}</small>` : ""}${c.fast ? " ⚡" : ""}${c.pinned ? " 📌" : ""}${c.newest ? " ⬆" : ""}${
     c.state === "gone" ? " ✗" : ""}${movable ? `<button type="button" class="chip-x" data-index="${i}" title="Remove from the chain" aria-label="Remove ${esc(c.label)}">✕</button>` : ""}</span>`;
 }
 
@@ -672,7 +672,7 @@ $("#roles-list").addEventListener("click", async (e) => {
   }
 });
 
-const chainEntry = (c) => ({ cli: c.cli, model: c.model, effort: c.effort || null, pinned: !!c.pinned });
+const chainEntry = (c) => ({ cli: c.cli, model: c.model, effort: c.effort || null, pinned: !!c.pinned, fast: !!c.fast });
 const chainEntryLabel = (c) => `${c.cli}:${c.model}`;
 
 /** Apply `edit` (returns the status note) to a copy of the role's chain and save it, unless nothing changed. */
@@ -852,6 +852,7 @@ function chainRow(entry = {}) {
       `<option${c === cli ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
     <select class="ce-model"></select>
     <select class="ce-effort" title="Overrides the model's default effort for this role"></select>
+    <label class="ce-fast-label" title="Fast mode: faster answers, more quota per task (codex: priority tier · cursor: the -fast model)"><input type="checkbox" class="ce-fast"${entry.fast ? " checked" : ""}> ⚡ fast</label>
     <label title="Stay on exactly this version; never move to a newer one"><input type="checkbox" class="ce-pinned"${entry.pinned ? " checked" : ""}> pin version</label>
     <button type="button" class="ce-up" title="Move up">↑</button>
     <button type="button" class="ce-down" title="Move down">↓</button>
@@ -874,6 +875,10 @@ function chainRow(entry = {}) {
     const values = [...new Set([...(m?.efforts || []), ...(keep && same ? [keep] : [])])];
     sel.innerHTML = `<option value="">default${m?.default_effort ? ` (${esc(m.default_effort)})` : ""}</option>`
       + values.map((v) => `<option${v === keep ? " selected" : ""}>${esc(v)}</option>`).join("");
+    // Fast only where the CLI can do it for this model; hidden means off.
+    const canFast = !!m?.fast?.includes(row.querySelector(".ce-cli").value);
+    row.querySelector(".ce-fast-label").hidden = !canFast;
+    if (!canFast) row.querySelector(".ce-fast").checked = false;
   };
   row.querySelector(".ce-cli").addEventListener("change", fill);
   row.querySelector(".ce-model").addEventListener("change", fillEffort);
@@ -936,11 +941,12 @@ $("#chip-editor-form").addEventListener("submit", (e) => {
     model: row.querySelector(".ce-model").value,
     effort: row.querySelector(".ce-effort").value || null,
     pinned: row.querySelector(".ce-pinned").checked,
+    fast: row.querySelector(".ce-fast").checked,
   };
   const { role, index } = chipTarget;
   saveChain(role, (chain) => {
     chain[index] = entry;
-    return `entry ${index + 1} → ${chainEntryLabel(entry)}${entry.effort ? ` · ${entry.effort}` : ""}`;
+    return `entry ${index + 1} → ${chainEntryLabel(entry)}${entry.effort ? ` · ${entry.effort}` : ""}${entry.fast ? " · fast" : ""}`;
   });
   chipDialog.close();
 });
@@ -963,6 +969,7 @@ $("#role-editor-form").addEventListener("submit", async (e) => {
     model: row.querySelector(".ce-model").value,
     effort: row.querySelector(".ce-effort").value.trim() || null,
     pinned: row.querySelector(".ce-pinned").checked,
+    fast: row.querySelector(".ce-fast").checked,
   }));
   if (specialistChainTarget) {
     if (await assignSpecialist(specialistChainTarget, { chain }, `${specialistChainTarget} runs on its own chain`)) roleDialog.close();

@@ -46,7 +46,12 @@ Each specialist runs on a role's chain or on a chain of its own, set under
 Exactly one of `role` or `chain`. The chain is tried top to bottom with the same
 gates as role dispatch, plus the harness capabilities the specialist needs
 (context isolation, command broker). Effort comes from the chain entry, then the
-role's `effort`, then the model's default. An unassigned specialist does not
+role's `effort`, then the model's default. `"fast": true` on a chain entry
+(role or specialist) runs it in fast mode: codex adds the `priority` service
+tier, cursor uses the model's `-fast` id when a scan listed one (else it runs
+without fast and says so). Fast answers cost more quota. Claude Code's fast mode
+draws on paid usage credits only, so team-up does not offer it; other CLIs have
+none. A `--model` pin does not inherit fast. An unassigned specialist does not
 launch. A manifest's `model_profile` is ignored. When migrating an older roster,
 remove legacy `tier` fields and the old `triage` block; move its `key_file` to
 `openrouter.key_file` if needed.

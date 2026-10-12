@@ -1,4 +1,5 @@
-import { cliModelFor, aliasFor } from "./config.mjs";
+import { cliModelFor, aliasFor, CODEX_FAST_TIER, cursorFastId } from "./config.mjs";
+import { loadModelsStore } from "../collectors/models-store.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -30,12 +31,21 @@ export function resolveEffort({ roster, role, model, entryEffort, cellEffort }) 
   return entryEffort || cellEffort || roster?.roles?.[role]?.effort || roster?.models?.[model]?.effort || null;
 }
 
-export function buildCommand({ roster, model, cli, prompt, effort = null, dir = null, headless = false, lastMessage = null }) {
+export function buildCommand({
+  roster, model, cli, prompt, effort = null, fast = false, dir = null, headless = false, lastMessage = null, store = null,
+}) {
   const field = headless ? "headless_cmd" : "cmd";
   const template = roster.clis?.[cli]?.[field];
   if (!template) throw new Error(`no cli template for "${cli}" in roster.json clis section (${field})`);
   // Cursor carries the effort in the model id; the template takes it there.
-  const cliModel = cliModelFor(roster, model, cli, effort);
+  let cliModel = cliModelFor(roster, model, cli, effort);
+  if (fast && cli === "cursor") {
+    const id = cursorFastId(store ?? loadModelsStore(), cliModel);
+    if (id) cliModel = id;
+    else console.error(`roster: no ${cliModel}-fast in the cursor scan — running without fast`);
+  } else if (fast && cli !== "codex") {
+    console.error(`roster: fast is not available on ${cli} — ignored`);
+  }
   const inName = aliasFor(roster.models?.[model], model, cli).includes("{effort}");
   const hasSlot = template.some((p) => p.includes("{effort}"));
   if (effort && !hasSlot && !inName) {
@@ -64,6 +74,11 @@ export function buildCommand({ roster, model, cli, prompt, effort = null, dir = 
         .replaceAll("{last_message}", lastMessage ?? "")
         .replaceAll("{effort}", effort ?? "")
     );
+  }
+  if (cli === "codex" && fast) {
+    const delimiter = argv.indexOf("--");
+    argv.splice(delimiter < 0 ? (promptIndex ?? argv.length) : delimiter, 0, "-c", `service_tier="${CODEX_FAST_TIER}"`);
+    if (promptIndex !== null && delimiter < 0) promptIndex += 2;
   }
   if (cli === "codex" && dir) {
     let cwd = path.resolve(dir);
@@ -177,6 +192,7 @@ export async function spawnPinnedInTmux({
   prompt,
   runId,
   effort = null,
+  fast = false,
   sessionPrefix = "team-up-pinned",
   role = "dispatch",
 }) {
@@ -199,7 +215,7 @@ export async function spawnPinnedInTmux({
   const headless = Boolean(roster.clis[cli].headless_cmd);
   if (cli === "agy" && !headless) ensureAgyWorkspaceTrusted(dir);
   const lastMessage = path.resolve(mailboxDir(effectiveRunId), "LAST_MESSAGE.md");
-  const built = buildCommand({ roster, model, cli, prompt, effort, dir, headless, lastMessage });
+  const built = buildCommand({ roster, model, cli, prompt, effort, fast, dir, headless, lastMessage });
   const argv = headless
     ? [
       process.execPath,
@@ -217,6 +233,7 @@ export async function spawnPinnedInTmux({
     model,
     cli,
     effort: effort ?? null,
+    fast,
     headless,
   });
   try {

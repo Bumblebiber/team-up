@@ -128,6 +128,7 @@ export function resolveProfile({
         cli,
         model,
         effort: resolveEffort({ roster, role, model, entryEffort: entry.effort }),
+        ...(entry.fast ? { fast: true } : {}),
         priority: index,
       };
       const gate = evaluateUsageAndMarkGate({

@@ -33,11 +33,12 @@ function argValue(args, flag) {
   return i === -1 ? undefined : args[i + 1];
 }
 
-function pickJsonPayload({ model, cli, effort, skipped, quota_blocked = [] }) {
+function pickJsonPayload({ model, cli, effort, fast = false, skipped, quota_blocked = [] }) {
   return {
     model: model ?? null,
     cli: cli ?? null,
     effort: effort ?? null,
+    fast: fast === true,
     skipped,
     quota_blocked,
   };
@@ -72,6 +73,7 @@ async function cmdPick(args, io) {
         model: r.model,
         cli: r.cli,
         effort: r.effort,
+        fast: r.fast,
         skipped: r.skipped,
         quota_blocked: [],
       })));
@@ -80,6 +82,7 @@ async function cmdPick(args, io) {
     io.out(`model: ${r.model}`);
     io.out(`cli: ${r.cli}`);
     if (r.effort) io.out(`effort: ${r.effort}`);
+    if (r.fast) io.out("fast: on");
     return 0;
   }
   io.err("usage: team-up pick --role <role> [--json]");
