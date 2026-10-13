@@ -138,6 +138,8 @@
             <input type="text" id="projects-dir" placeholder="~/projects" autocomplete="off">
           </label>
           <select id="projects-cli" aria-label="CLI for new sessions"></select>
+          <input type="text" id="projects-new-name" placeholder="new-project" autocomplete="off" aria-label="New project name">
+          <button type="button" id="projects-new" title="Create the folder, git init, and — with TIM installed — the TIM project and its .tim-project marker">New project</button>
           <button type="button" id="projects-fix-all" title="Write unambiguous missing command policies and trust the ones it wrote">Fix all</button>
           <label title="On every refresh: write unambiguous missing .team-up/commands.json files (uncommitted); trusts nothing">
             <input type="checkbox" id="projects-auto"> auto-fix

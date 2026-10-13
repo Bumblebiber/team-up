@@ -1791,6 +1791,29 @@ async function autoFixProjects() {
   await refreshProjects();
 }
 
+$("#projects-new").addEventListener("click", async (e) => {
+  const input = $("#projects-new-name");
+  const name = input.value.trim();
+  if (!name) return input.focus();
+  const btn = e.currentTarget; // currentTarget is null after the first await
+  btn.disabled = true;
+  try {
+    const res = await api("/api/projects/create", {
+      method: "POST",
+      body: JSON.stringify({ name, projects_dir: readProjectsDir() }),
+    });
+    projectsNote = res.warning
+      ? `created ${res.path} — ${res.warning}`
+      : `created ${res.path}${res.tim ? ` (TIM ${res.tim})` : ""}`;
+    input.value = "";
+  } catch (err) {
+    projectsNote = `${name}: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+  await refreshProjects();
+});
+
 $("#projects-fix-all").addEventListener("click", async (e) => {
   e.target.disabled = true;
   try {

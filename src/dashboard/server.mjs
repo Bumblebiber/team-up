@@ -21,6 +21,7 @@ import {
   startProjectSession,
   writeProjectPolicy,
   trustProjectPolicyForProject,
+  createProject,
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
 import { readTrending, trendingDir } from "./trending.mjs";
@@ -1384,6 +1385,8 @@ export function createDashboardServer({
         writeProjectPolicy({ dir: body.dir, projectsDir: body.projects_dir, policy: body.policy ?? null })],
       "/api/projects/trust-policy": ["project.trust_policy", (body) =>
         trustProjectPolicyForProject({ dir: body.dir, projectsDir: body.projects_dir, env })],
+      "/api/projects/create": ["project.create", (body) =>
+        createProject({ name: body.name, projectsDir: body.projects_dir, exec })],
     }[pathname];
     if (req.method === "POST" && projectWrite) {
       if (!requireWriteAccess(req, res)) return;
@@ -1401,7 +1404,7 @@ export function createDashboardServer({
         {
           actor: "127.0.0.1",
           action,
-          target: String(body.dir ?? ""),
+          target: String(body.dir ?? body.name ?? ""),
           result: result.ok ? "ok" : "fail",
           ...(detail ? { detail } : {}),
         },
