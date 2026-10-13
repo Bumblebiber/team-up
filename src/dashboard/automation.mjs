@@ -131,6 +131,7 @@ export const SERVICES = [
   { unit: "team-up-gc.timer", title: "Cleanup", what: "Every 5 minutes: closes idle worker terminals and reaps runs whose worker is gone." },
   { unit: "team-up-telemetry.timer", title: "Telemetry", what: "Every 30 seconds: samples memory and pressure; sizes the worker limit." },
   { unit: "team-up-resume.service", title: "Resume after boot", what: "After a reboot, wakes the sessions whose runs were still going." },
+  { unit: "team-up-telegram-replies.service", title: "Telegram replies", what: "Acts on your replies to the bots that have a reply action (Communication page)." },
   { unit: "team-up-dashboard.service", title: "Dashboard", what: "This page." },
 ];
 

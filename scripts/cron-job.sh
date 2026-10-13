@@ -62,6 +62,7 @@ printf '%s\n' "$OUT" >> "$LOG"
 echo "=== end $(date -Is) exit $rc" >> "$LOG"
 
 SEND="$HOME/.hermes/bin/send-cron-telegram"
+export TEAMUP_NOTIFY_JOB="$NAME"  # its bot: dashboard → Communication
 if [[ "$NOTIFY" == true && -x "$SEND" ]]; then
   # The bot sends HTML: escape the three characters that would break it.
   MSG=$(printf 'team-up job %s (exit %s)\n\n%s' "$NAME" "$rc" "$OUT" | head -c 3500 \

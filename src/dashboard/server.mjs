@@ -77,6 +77,9 @@ import {
   setCustomJobEnabled,
 } from "./automation.mjs";
 import {
+  addBot, buildCommunicationView, removeBot, sendTest, setDefaultBot, setReply, setRoute,
+} from "./communication.mjs";
+import {
   isValidCliId,
   bootstrapAvailable,
   updateAvailable,
@@ -1112,6 +1115,43 @@ export function createDashboardServer({
       return;
     }
 
+    // Communication writes: bots (token validated with getMe, never echoed or
+    // audited), routes per sender, reply action per bot.
+    const commBotMatch = pathname.match(/^\/api\/communication\/bots(?:\/([a-z0-9_]+)\/(remove|default|reply|test))?$/);
+    if (req.method === "POST" && (commBotMatch || pathname === "/api/communication/routes")) {
+      if (!requireWriteAccess(req, res)) return;
+      const verb = commBotMatch ? commBotMatch[2] || "add" : "route";
+      const action = `communication.${verb}`;
+      let target = commBotMatch?.[1] || "";
+      try {
+        const body = JSON.parse(await readBody(req, PREFS_MAX_BODY) || "{}");
+        const opts = { env, fetchFn };
+        let result;
+        if (verb === "add") {
+          result = await addBot({ token: body.token, chatId: body.chat_id }, opts);
+          target = result.id;
+        } else if (verb === "route") {
+          target = `${body.sender} -> ${body.bot ?? "default"}`;
+          result = await setRoute(String(body.sender || ""), body.bot ?? null, opts);
+        } else if (verb === "remove") {
+          result = await removeBot(target, opts);
+        } else if (verb === "default") {
+          result = await setDefaultBot(target, opts);
+        } else if (verb === "reply") {
+          target = `${target} ${body.action}`;
+          result = await setReply(commBotMatch[1], body, { ...opts, modelOptions: cronModelOptions(loadRoster(env)) });
+        } else {
+          result = await sendTest(target, opts);
+        }
+        appendAudit({ actor: "127.0.0.1", action, target, result: "ok" }, { env });
+        jsonResponse(res, 200, { ok: true, ...result });
+      } catch (e) {
+        appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     // Automation writes: a built-in job's crontab line, or a custom job (ini +
     // prompt file + the crontab's managed block). Every one re-reads the
     // crontab, backs it up and verifies the result (crontab.mjs).
@@ -1545,6 +1585,15 @@ export function createDashboardServer({
         jsonResponse(res, 200, { text: describeSchedule(schedule), next: nextRun(schedule)?.toISOString() ?? null });
       } catch (e) {
         jsonResponse(res, 200, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    if (pathname === "/api/communication") {
+      try {
+        jsonResponse(res, 200, await buildCommunicationView({ env, exec, fetchFn, modelOptions: cronModelOptions(loadRoster(env)) }));
+      } catch (e) {
+        jsonResponse(res, 500, { error: String(e.message || e) });
       }
       return;
     }

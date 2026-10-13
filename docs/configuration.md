@@ -202,3 +202,30 @@ one line per enabled job running `scripts/cron-job.sh <name>`. Nothing outside
 that block is added or removed; every write re-reads the crontab, keeps a
 backup in `~/.team-up/backups/crontab/` and verifies the result. Output goes to
 `~/.team-up/logs/cron/<name>.log`; `notify = true` also sends it to Telegram.
+
+## Communication (Telegram)
+
+`~/.team-up/communication.json` lists the Telegram bots, a route per sending
+job and a reply action per bot; the dashboard's **Communication** page edits it.
+On first use it imports the bots already on the host (CronBot as the default,
+ReminderBot and the Claude telegram plugin's bot as owned by those programs).
+A bot added in the dashboard is validated with `getMe` and stored in
+`~/.team-up/telegram/<id>.env` (mode 0600, `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_CHAT_ID`); views show only `@username` and the token's last four
+characters.
+
+Sending: `~/.hermes/bin/send-cron-telegram` calls `scripts/telegram-route.py`,
+which maps the sender — `$TEAMUP_NOTIFY_JOB`, else the calling script's name
+without `.sh`/`.py` — to a bot env file. No config, an unknown sender or a
+removed bot go to the default bot; a routed bot that fails to send falls back
+to CronBot. `cron-job.sh` sets `TEAMUP_NOTIFY_JOB=<job>`, the usage-spender
+host sends as `usage-spender`.
+
+Replies: `scripts/telegram-replies.py` runs as
+`team-up-telegram-replies.service` and polls (`getUpdates`, timeout 0, every
+3 s) only bots whose reply action is not `off` and that no other program owns.
+`bell` adds the reply to the dashboard's bell; `run` hands reply plus quoted
+message to `ops-run.sh --job reply-<bot> --model <cli:model>` in the chosen
+folder and sends the result back as a reply. Only messages from the bot's own
+chat id are acted on; a bot's backlog from before its first poll is skipped.
+Offsets, status and reply prompts/logs live in `~/.team-up/telegram/`.

@@ -5,27 +5,30 @@
 # to codex, cursor or claude is a one-line edit. stdout = the result, so a
 # Hermes no-agent cron job (no LLM, no cost) delivers it.
 #
-# Usage: ops-run.sh --job NAME [--ceiling-sec N] <cwd> <prompt-file>
+# Usage: ops-run.sh --job NAME [--model CLI:MODEL] [--ceiling-sec N] <cwd> <prompt-file>
+# --model skips the ini (Telegram reply jobs carry their own choice).
 # Exit: 0 done, 1 failed/cancelled/question/dispatch failed, 2 still running at the ceiling,
 #       3 admission refused, 64 usage.
 set -euo pipefail
 
 JOB=
+MODEL=
 CEILING=3300 # under Hermes' 1 h cron script timeout
 INI="${TEAM_UP_HOME:-$HOME/.team-up}/cron-jobs.ini"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --job) JOB=$2; shift 2 ;;
+    --model) MODEL=$2; shift 2 ;;
     --ceiling-sec) CEILING=$2; shift 2 ;;
     *) break ;;
   esac
 done
 if [[ $# -ne 2 || -z "$JOB" ]]; then
-  echo "usage: ops-run.sh --job NAME [--ceiling-sec N] <cwd> <prompt-file>" >&2
+  echo "usage: ops-run.sh --job NAME [--model CLI:MODEL] [--ceiling-sec N] <cwd> <prompt-file>" >&2
   exit 64
 fi
 CWD=$1 PROMPT=$2
-MODEL=$(awk -v s="[$JOB]" '$0==s{f=1;next} /^\[/{f=0} f && /^[ \t]*model[ \t]*=/{sub(/^[^=]*=[ \t]*/,""); sub(/[ \t]+$/,""); print; exit}' "$INI" 2>/dev/null)
+[[ -n "$MODEL" ]] || MODEL=$(awk -v s="[$JOB]" '$0==s{f=1;next} /^\[/{f=0} f && /^[ \t]*model[ \t]*=/{sub(/^[^=]*=[ \t]*/,""); sub(/[ \t]+$/,""); print; exit}' "$INI" 2>/dev/null)
 if [[ "$MODEL" != *:* ]]; then
   echo "ops-run: no 'model = <cli>:<model>' for [$JOB] in $INI"
   exit 64

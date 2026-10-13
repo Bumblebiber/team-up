@@ -42,6 +42,7 @@
         <details class="nav-group" open>
           <summary>Automation</summary>
           <a href="#/automation" data-route="automation"><span class="nav-ico" aria-hidden="true">⏱</span>Scheduled jobs<span id="badge-automation" class="nav-badge hidden"></span></a>
+          <a href="#/communication" data-route="communication"><span class="nav-ico" aria-hidden="true">✉</span>Communication<span id="badge-communication" class="nav-badge hidden"></span></a>
         </details>
         <details class="nav-group" open>
           <summary>System</summary>
@@ -268,6 +269,35 @@
             <h2>Background services</h2>
             <p class="muted">Always-on parts of team-up (systemd user units). Shown for information; manage them with <code>systemctl --user</code>.</p>
             <div id="services" class="table-wrap"></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="communication">
+          <header class="page-head">
+            <h1>Communication</h1>
+            <p>The Telegram bots that reach you: which scheduled job reports through which bot, and what happens when you reply to one.</p>
+          </header>
+          <p id="comm-status" class="status-line" aria-live="polite"></p>
+          <section id="panel-comm-bots" class="panel">
+            <h2>Bots</h2>
+            <p class="muted">A token stays in its own owner-only env file; this page shows the last four characters. The default bot carries every job without a route of its own. Removing a bot that existed before this page only takes it off the list — its env file is left alone.</p>
+            <div id="comm-bots" class="table-wrap"></div>
+            <form id="comm-add" class="form-row inline-form" autocomplete="off">
+              <input id="comm-token" type="password" placeholder="Bot token from @BotFather (123456:ABC…)" size="46" required>
+              <input id="comm-chat" type="text" inputmode="numeric" placeholder="Chat id (default: yours)" size="22">
+              <button type="submit" class="primary">+ Add bot</button>
+            </form>
+            <p class="muted">Press <em>Start</em> in the new bot's chat first — Telegram lets a bot write only to chats that opened it.</p>
+          </section>
+          <section id="panel-comm-routes" class="panel">
+            <h2>Who reports through which bot</h2>
+            <p class="muted">Every crontab job whose script sends through <code>send-cron-telegram</code>, and every job of your own with “notify” on. A route applies to the next message; nothing restarts.</p>
+            <div id="comm-routes" class="table-wrap"></div>
+          </section>
+          <section id="panel-comm-replies" class="panel">
+            <h2>When you reply</h2>
+            <p class="muted">Only replies from the bot's own chat are acted on. <strong>Bell</strong> puts the reply in the dashboard's bell. <strong>Agent</strong> hands it — with the message you replied to — to a worker on the chosen model in the chosen folder and sends its answer back as a reply. Bots another program already listens on stay with that program.</p>
+            <div id="comm-replies" class="job-list"></div>
           </section>
         </section>
 

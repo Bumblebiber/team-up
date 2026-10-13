@@ -2656,6 +2656,153 @@ async function refreshTrending() {
   renderTrending();
 }
 
+// ── Communication: Telegram bots, routes per job, reply actions ──
+let commData = null;
+
+function commNote(text, tone = "") {
+  const el = $("#comm-status");
+  el.textContent = text;
+  el.className = `status-line ${tone}`;
+}
+
+function commBotLabel(b) {
+  return `@${b.username}`;
+}
+
+function renderCommunication() {
+  const d = commData;
+  if (!d) return;
+  $("#comm-bots").innerHTML = d.bots.length
+    ? `<table><thead><tr><th>Bot</th><th>Token</th><th>Default</th><th>Replies</th><th></th></tr></thead><tbody>${
+      d.bots.map((b) => `<tr data-bot="${esc(b.id)}">
+        <td>${esc(commBotLabel(b))}<div class="muted mono">${esc(b.env)}</div></td>
+        <td class="mono">${b.missing ? '<span class="tag err">env file missing</span>' : esc(b.tokenTail || "—")}</td>
+        <td><input type="radio" name="comm-default" data-comm-default${b.isDefault ? " checked" : ""} aria-label="Default bot"></td>
+        <td>${b.owner ? `<span class="muted">${esc(b.owner)}</span>` : esc({ off: "off", bell: "bell", run: "agent" }[b.reply.action] || b.reply.action)}</td>
+        <td class="row-actions"><button type="button" data-comm-test>Test</button>
+          <button type="button" data-comm-remove${b.isDefault ? " disabled title=\"Make another bot the default first\"" : ""}>Remove</button></td>
+      </tr>`).join("")}</tbody></table>`
+    : '<div class="empty">No bots yet. Add one with its token from @BotFather.</div>';
+
+  const def = d.bots.find((b) => b.isDefault);
+  const options = (sel) => `<option value=""${sel ? "" : " selected"}>Default${def ? ` (${esc(commBotLabel(def))})` : ""}</option>${
+    d.bots.map((b) => `<option value="${esc(b.id)}"${sel === b.id ? " selected" : ""}>${esc(commBotLabel(b))}</option>`).join("")}`;
+  $("#comm-routes").innerHTML = d.senders.length
+    ? `<table><thead><tr><th>Job</th><th>Sends through</th></tr></thead><tbody>${
+      d.senders.map((s) => `<tr data-sender="${esc(s.key)}">
+        <td>${esc(s.title)}${s.enabled ? "" : ' <span class="tag off">off</span>'}<div class="muted mono">${esc(s.script || `custom job ${s.key}`)}</div></td>
+        <td><select data-comm-route aria-label="Bot for ${esc(s.title)}">${options(s.bot)}</select></td>
+      </tr>`).join("")}</tbody></table>`
+    : '<div class="empty">No scheduled job sends Telegram messages.</div>';
+
+  $("#comm-replies").innerHTML = d.bots.map((b) => {
+    const r = b.reply || { action: "off" };
+    const poll = b.poll ? (b.poll.ok ? '<span class="tag ok">listening</span>' : `<span class="tag err" title="${esc(b.poll.error || "")}">poll failed</span>`) : "";
+    if (b.owner) {
+      return `<article class="job is-off"><div class="job-head"><h3>${esc(commBotLabel(b))}</h3></div>
+        <p class="muted">Replies are handled by ${esc(b.owner)}. Telegram gives each reply to one listener only, so team-up stays out.</p></article>`;
+    }
+    const models = (r.model && !d.modelOptions.includes(r.model) ? [r.model] : []).concat(d.modelOptions);
+    const model = r.model || d.modelOptions.find((m) => m === "claude:claude-sonnet") || d.modelOptions.find((m) => m.startsWith("claude:")) || models[0];
+    const sendOnly = b.isDefault && b.imported
+      ? '<p class="muted">This bot has been send-only so far (rule: nobody calls getUpdates on it). Switching replies on lifts that rule.</p>' : "";
+    return `<article class="job" data-reply="${esc(b.id)}">
+      <div class="job-head"><h3>${esc(commBotLabel(b))}</h3>${poll}</div>
+      ${sendOnly}
+      <div class="knobs">
+        <label for="cr-${esc(b.id)}">On a reply</label>
+        <select id="cr-${esc(b.id)}" data-reply-action>
+          ${[["off", "Nothing (bot stays send-only)"], ["bell", "Bell in this dashboard"], ["run", "Agent: act on it and answer"]]
+            .map(([v, t]) => `<option value="${v}"${r.action === v ? " selected" : ""}>${t}</option>`).join("")}
+        </select>
+        <label class="run-only">Model</label>
+        <select class="run-only" data-reply-model>${models.map((m) => `<option value="${esc(m)}"${m === model ? " selected" : ""}>${esc(m)}</option>`).join("")}</select>
+        <label class="run-only">Working folder</label>
+        <input class="run-only mono" type="text" data-reply-cwd value="${esc(r.cwd || "~/projects/team-up")}" size="40">
+        <label class="run-only">Extra instructions</label>
+        <textarea class="run-only" data-reply-instructions rows="3" placeholder="Optional, e.g. “You may cancel stuck runs with team-up runs cancel.”">${esc(r.instructions || "")}</textarea>
+        <span></span><span><button type="button" class="primary" data-reply-save>Save</button></span>
+      </div>
+    </article>`;
+  }).join("");
+  $("#comm-replies").querySelectorAll("[data-reply]").forEach(toggleRunFields);
+  const broken = d.bots.filter((b) => b.missing || (b.poll && !b.poll.ok)).length;
+  updateNavBadge("badge-communication", broken ? String(broken) : "", "red", broken > 0, broken ? `${broken} bot(s) need attention` : "");
+}
+
+function toggleRunFields(card) {
+  const run = card.querySelector("[data-reply-action]").value === "run";
+  card.querySelectorAll(".run-only").forEach((el) => el.classList.toggle("hidden", !run));
+}
+
+async function refreshCommunication() {
+  commData = await api("/api/communication");
+  renderCommunication();
+}
+onEnter.communication = () => refreshCommunication().catch((err) => commNote(err.message, "err"));
+
+async function commWrite(url, body, done) {
+  try {
+    await api(url, { method: "POST", body: JSON.stringify(body) });
+    commNote(done, "ok");
+    return true;
+  } catch (err) {
+    commNote(`Refused — ${err.message}`, "err");
+    return false;
+  } finally {
+    await refreshCommunication().catch(() => {});
+  }
+}
+
+$("#comm-add").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const token = $("#comm-token").value.trim();
+  const chat = $("#comm-chat").value.trim();
+  commNote("Checking the token with Telegram …");
+  if (await commWrite("/api/communication/bots", { token, chat_id: chat || undefined }, "Bot added")) {
+    $("#comm-token").value = "";
+    $("#comm-chat").value = "";
+  }
+});
+
+$("#comm-bots").addEventListener("click", async (e) => {
+  const id = e.target.closest("[data-bot]")?.dataset.bot;
+  if (!id) return;
+  if (e.target.matches("[data-comm-test]")) {
+    await commWrite(`/api/communication/bots/${id}/test`, {}, "Test message sent — check Telegram");
+  } else if (e.target.matches("[data-comm-remove]") && confirm(`Remove this bot from the list?`)) {
+    await commWrite(`/api/communication/bots/${id}/remove`, {}, "Bot removed");
+  }
+});
+
+$("#comm-bots").addEventListener("change", async (e) => {
+  if (!e.target.matches("[data-comm-default]")) return;
+  const id = e.target.closest("[data-bot]").dataset.bot;
+  await commWrite(`/api/communication/bots/${id}/default`, {}, "Default bot changed");
+});
+
+$("#comm-routes").addEventListener("change", async (e) => {
+  if (!e.target.matches("[data-comm-route]")) return;
+  const sender = e.target.closest("[data-sender]").dataset.sender;
+  await commWrite("/api/communication/routes", { sender, bot: e.target.value || null }, `${sender} routed`);
+});
+
+$("#comm-replies").addEventListener("change", (e) => {
+  if (e.target.matches("[data-reply-action]")) toggleRunFields(e.target.closest("[data-reply]"));
+});
+
+$("#comm-replies").addEventListener("click", async (e) => {
+  if (!e.target.matches("[data-reply-save]")) return;
+  const card = e.target.closest("[data-reply]");
+  const body = {
+    action: card.querySelector("[data-reply-action]").value,
+    model: card.querySelector("[data-reply-model]").value,
+    cwd: card.querySelector("[data-reply-cwd]").value.trim(),
+    instructions: card.querySelector("[data-reply-instructions]").value,
+  };
+  await commWrite(`/api/communication/bots/${card.dataset.reply}/reply`, body, "Reply action saved");
+});
+
 function renderTrending() {
   const sections = trendingData?.sections || [];
   $("#trending-date").textContent = trendingData?.date || "";
@@ -2886,7 +3033,9 @@ function startPolling() {
   $("#catalogue-box").open = readStored(CATALOGUE_OPEN_KEY, "") === "1";
   refreshSettings().catch(() => {});
   refreshAutomation().catch(() => {});
+  refreshCommunication().catch(() => {});
   clearInterval(automationTimer);
+  // Communication is not polled: a re-render would wipe a half-edited reply form.
   automationTimer = setInterval(() => refreshAutomation().catch(() => {}), 60_000);
   refreshTrending();
   clearInterval(trendingTimer);
