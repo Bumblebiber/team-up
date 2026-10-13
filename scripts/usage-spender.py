@@ -5,16 +5,20 @@ Cron every 10 minutes (flock), stateless tick. Reads team-up's live quota window
 ~5 min by the usage watcher) and holds each window to a pacing curve: the share of the window
 that should be used by now, given the days until it resets. A window below its curve, with a
 gap worth at least one task on that account's plan, gets ONE team-up worker per tick
-(admission allows one worker on this box). New spawns only inside SPAWN_HOURS. The knobs below
+(admission allows one worker on this box). New spawns only between SPAWN_FROM and SPAWN_UNTIL; a run
+started before SPAWN_UNTIL keeps running past it. The knobs below
 are defaults; roster usage_spender.* (dashboard Settings) overrides them, see apply_knobs. Per tick:
 
   1. ledger runs: reconcile (`runs wait --ceiling-sec 1`, which also runs the verify command);
-     a question gets one canned answer, then a cancel; a run older than MAX_RUN_H is cancelled
+     a run that asks a question is parked: its worker is stopped, the question waits in the
+     dashboard's Action Center, and once Benni answered, the next spawn window resumes it in a fresh
+     run (original prompt + question + answer). A run older than MAX_RUN_H is cancelled
   2. a finished implement run with a passing verify and new commits -> push its usage-spender/*
      branch and open a DRAFT PR (never merge; no verify command -> local branch only)
   3. finished, uncollected ledger runs -> start one Claude Code intake host in tmux
      on the CLI from ~/.team-up/cron-jobs.ini [usage-spender-host] (scripts/usage-spender-host.md): check results, record in TIM, collect, Telegram summary
-  4. no ledger run active and a window below its curve -> spawn exactly one task
+  4. no ledger run active: resume an answered parked run, else, with a window below its curve,
+     spawn exactly one task
 
 Tasks, in order: review an open PR in our repos (read-only, TIM + Telegram only, no GitHub
 comment), implement an open TIM task/bug, implement a GitHub issue (both in a fresh clone; triage
@@ -23,7 +27,7 @@ committed repos. Workers never write memory; the host does.
 
   scripts/usage-spender.py              tick: act, write <day>/tick-HHMM.json + ledger
   scripts/usage-spender.py --dry-run    decide only: no spawn, no host, no writes
-  --any-hour                            ignore SPAWN_HOURS (manual runs and dry runs by day)
+  --any-hour                            ignore the spawn window (manual runs and dry runs by day)
   scripts/usage-spender.py --selftest
 """
 import configparser
@@ -94,7 +98,8 @@ SELF_TAG = "#usage-spender"  # the host files findings with this tag; never feed
 # spare Max 20x quota should buy real implementation work, so the spender uses claude-sonnet there.
 IMPLEMENT_MODEL = {"claude": "claude:claude-sonnet"}
 IMPLEMENT = True          # TIM tasks / issues -> implement in a clone; False -> triage only
-SPAWN_HOURS = {23, 0, 1, 2}  # local hours a tick may spawn (Benni: 23:00-03:00); intake runs any hour
+# Local spawn window [SPAWN_FROM, SPAWN_UNTIL), wraps past midnight; equal = all day. Intake runs any hour.
+SPAWN_FROM, SPAWN_UNTIL = 23, 3  # Benni: 23:00-03:00
 MAX_RUN_H = 4             # a run still active after this long is cancelled, so it can't block the queue
 OWNERS = {"Bumblebiber", "ZF-IT-Automation"}  # "our repos": GitHub owners; upstream clones are not ours
 DIFF_CAP = 150_000        # bytes of PR diff rendered into a review prompt
@@ -110,6 +115,7 @@ WINDOWS = {
     "agy:3p-weekly": ("agy", "agy:3p-5h", 7),
 }
 TERMINAL = {"done", "failed", "cancelled"}
+WAITING = {"waiting_human", "waiting_decision"}  # parked: worker stopped, question in the Action Center
 
 # fallback pool per cli, in priority order: (task, team-up role)
 FALLBACK = {
@@ -132,8 +138,10 @@ TASKS = {
                  "design fit with the surrounding code, security.\n\n## PR: {title}\n\n{body}\n\n"
                  "## Diff\n\n```diff\n{diff}\n```",
     "implement": "Implement {ref} in {clone}, a fresh clone of {repo} on branch {branch} (already "
-                 "checked out). Work only in that clone. If this is not a clear code change, is bigger "
-                 "than about a day, or needs a decision from Benni: commit nothing and report why. "
+                 "checked out). Work only in that clone. If this is not a clear code change or is bigger "
+                 "than about a day: commit nothing and report why. If it needs a decision from Benni, ask "
+                 "it (worker protocol, QUESTIONS.md) instead of guessing: he answers in the morning and the "
+                 "task resumes the night after. "
                  "Otherwise make the smallest change that does it, add or adjust tests, run the tests, and "
                  "commit on {branch} with a conventional commit message. Never push, never open a PR, "
                  "never touch {repo} itself. {verify_note}\n\n## {title}\n\n{body}",
@@ -169,7 +177,7 @@ def target(days_left, cycle_days):
 def apply_knobs(roster):
     """Dashboard-editable knobs from roster usage_spender.* (Settings panel, src/dashboard/settings.mjs).
     A value of the wrong type keeps the built-in one and says so: one bad edit must not stop every tick."""
-    global SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST
+    global SPAWN_FROM, SPAWN_UNTIL, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST
     knobs = roster.get("usage_spender") or {}
     if not isinstance(knobs, dict):
         return
@@ -178,8 +186,8 @@ def apply_knobs(roster):
         return isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi
 
     checks = {
-        "spawn_hours": lambda v: isinstance(v, list) and v and all(
-            isinstance(h, int) and not isinstance(h, bool) and 0 <= h <= 23 for h in v),
+        "spawn_from": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 23,
+        "spawn_until": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 23,
         "implement": lambda v: isinstance(v, bool),
         "implement_model": lambda v: isinstance(v, dict) and all(
             isinstance(k, str) and isinstance(m, str) and (m == "" or m.startswith(k + ":")) for k, m in v.items()),
@@ -192,8 +200,10 @@ def apply_knobs(roster):
         v = knobs[key]
         if not ok(v):
             ERRORS.append(f"usage_spender.{key} = {v!r} ignored, built-in value kept")
-        elif key == "spawn_hours":
-            SPAWN_HOURS = set(v)
+        elif key == "spawn_from":
+            SPAWN_FROM = v
+        elif key == "spawn_until":
+            SPAWN_UNTIL = v
         elif key == "implement":
             IMPLEMENT = v
         elif key == "implement_model":
@@ -203,6 +213,12 @@ def apply_knobs(roster):
             MAX_RUN_H = v
         else:
             TASK_COST = v
+
+
+def in_spawn_window(hour):
+    if SPAWN_FROM < SPAWN_UNTIL:
+        return SPAWN_FROM <= hour < SPAWN_UNTIL
+    return hour >= SPAWN_FROM or hour < SPAWN_UNTIL
 
 
 def task_cost(roster, cli):
@@ -484,10 +500,11 @@ def spawn(a, day_dir):
         shutil.rmtree(a["clone"], ignore_errors=True)
 
 
-def _spawn(a, day_dir):
+def _spawn(a, day_dir, text=None):
     cwd = a.get("clone") or a["repo"]
-    prompt = day_dir / f"{slug(a['key'])}.md"
-    prompt.write_text(render(a))
+    prompt = day_dir / f"{slug(a['key'])}{'-resumed' if text else ''}.md"
+    prompt.write_text(text or render(a))
+    a["prompt"] = str(prompt)
     model = a["model"].split(":", 1)[1]
     verify = ["--verify-command", a["verify"], "--verify-runs", "1"] if a.get("verify") else []
     r = teamup("runs", "create", "--cwd", cwd, "--role", a["role"], "--worker-cli", a["cli"],
@@ -535,33 +552,74 @@ def publish(e, st):
         e["pr"] = r.stdout.strip().splitlines()[-1]
 
 
+def answer_of(run_id):
+    """(question, answer) once ANSWER.md is newer than QUESTIONS.md, else None."""
+    mb = RUNS / run_id / "mailbox"
+    try:
+        q, a = mb / "QUESTIONS.md", mb / "ANSWER.md"
+        if a.stat().st_mtime >= q.stat().st_mtime:
+            return q.read_text().strip(), a.read_text().strip()
+    except OSError:
+        pass
+    return None
+
+
 def triage_runs(ledger, now, dry):
-    """Reconcile ledger runs, answer/cancel stuck ones, publish implement results. -> (active, to_intake)."""
-    active, intake = [], []
+    """Reconcile ledger runs, park waiting ones, cancel stuck ones, publish implement results.
+    -> (active, to_intake, answered parked runs)."""
+    active, intake, resumable = [], [], []
     for e in ledger:
         if e.get("status") in TERMINAL and e.get("collected"):
             continue
-        if not dry and e.get("status") not in TERMINAL:
+        if e.get("parked"):
+            # The dashboard's answer sets the run to watching with no worker; something may later mark
+            # it failed. The answer counts either way, unless Benni cancelled the run.
+            st = run_state(e["run_id"]).get("status")
+            if st != "cancelled" and answer_of(e["run_id"]):
+                resumable.append(e)
+                continue
+            if st not in TERMINAL:
+                continue  # still waiting for Benni; blocks nothing
+            e.pop("parked")
+        elif not dry and e.get("status") not in TERMINAL:
             teamup("runs", "wait", e["run_id"], "--ceiling-sec", "1", timeout=1800)  # reconcile + verify
         st = run_state(e["run_id"])
         e["status"], e["collected"] = st.get("status", "failed"), bool(st.get("collected"))
-        if not dry and e["status"] not in TERMINAL:
-            if datetime.fromisoformat(e["at"]) < now - timedelta(hours=MAX_RUN_H):
-                teamup("runs", "cancel", e["run_id"])
-                e["status"] = "cancelled"
-            elif e["status"] == "question" and e.get("answered"):
-                teamup("runs", "cancel", e["run_id"])
-                e["status"] = "cancelled"
-            elif e["status"] == "question":
-                teamup("runs", "answer", e["run_id"], "--text", "No human available. Finish with what you have.")
-                e["answered"] = True
+        if not dry and e["status"] in WAITING:
+            # Its worker would hold the one admission slot all night: stop it, keep the question.
+            tmux = (st.get("worker") or {}).get("tmux")
+            if tmux:
+                sh("tmux", "kill-session", "-t", tmux)
+            e["parked"] = now.isoformat()
+            continue
+        if not dry and e["status"] not in TERMINAL and datetime.fromisoformat(e["at"]) < now - timedelta(hours=MAX_RUN_H):
+            teamup("runs", "cancel", e["run_id"])
+            e["status"] = "cancelled"
         if not dry and e["status"] == "done" and e.get("kind") == "implement" and "pr" not in e and "publish" not in e:
             publish(e, st)
         if e["status"] not in TERMINAL:
             active.append(e)
         elif not e["collected"] and e.get("intake_tries", 0) < 2:
             intake.append(e)
-    return active, intake
+    return active, intake, resumable
+
+
+def resume(e, day_dir):
+    """A fresh run for a parked run Benni answered: its prompt plus question and answer, same clone.
+    The old run is cancelled and collected. -> the new run's dict (spawned / rc / error set)."""
+    q, ans = answer_of(e["run_id"])
+    a = {k: e[k] for k in LEDGER_KEYS if e.get(k) and k != "run_id"}
+    text = ((Path(e["prompt"]).read_text() if e.get("prompt") else render(a)) + f"\n\n## Continued after a question\n\nAn earlier run on this task "
+            f"({e['run_id']}) stopped to ask:\n\n{q}\n\nBenni answered:\n\n{ans}\n\nContinue from there. "
+            f"What is already in {a.get('clone') or a['repo']} (files, commits) is that run's work; build on it.\n")
+    _spawn(a, day_dir, text)
+    if a.get("spawned") or a.get("rc") != 3:  # admission refusal: retry next tick
+        teamup("runs", "cancel", e["run_id"])
+        teamup("runs", "collect", e["run_id"], "--note", f"usage-spender: resumed as {a.get('run_id')}"
+               if a.get("spawned") else f"usage-spender: resume failed: {a.get('error')}")
+        e.pop("parked")
+        e.update(status="cancelled", collected=True, resumed_as=a.get("run_id"), resume_error=a.get("error"))
+    return a
 
 
 def host_alive(host):
@@ -624,7 +682,7 @@ def start_host(runs, verdicts, day_dir, host, model):
 
 
 LEDGER_KEYS = ("key", "kind", "role", "repo", "gh", "ref", "title", "cli", "model", "window", "run_id",
-               "clone", "branch", "verify")
+               "clone", "branch", "verify", "prompt", "resumed_from")
 
 
 def main(argv):
@@ -650,10 +708,11 @@ def main(argv):
     if not dry:
         day_dir.mkdir(parents=True, exist_ok=True)
 
-    active, intake = triage_runs(ledger, now, dry)
+    active, intake, resumable = triage_runs(ledger, now, dry)
     verdicts, wanted = decide(usage, roster, now)
     tick = {"run_at": now.isoformat(), "dry_run": dry, "source": str(USAGE), "windows": verdicts,
-            "active": [e["run_id"] for e in active], "action": None}
+            "active": [e["run_id"] for e in active],
+            "parked": [e["run_id"] for e in ledger if e.get("parked")], "action": None}
 
     host = f"usage-spender-host-{local.strftime('%Y%m%d-%H%M')}"
     if intake and not any(host_alive(e["intake_host"]) for e in ledger if e.get("intake_host")):
@@ -664,10 +723,19 @@ def main(argv):
             for e in intake:
                 e["intake_host"], e["intake_tries"] = host, e.get("intake_tries", 0) + 1
 
-    if local.hour not in SPAWN_HOURS and "--any-hour" not in argv:
-        tick["action"] = f"outside spawn hours {sorted(SPAWN_HOURS)}"
+    if not in_spawn_window(local.hour) and "--any-hour" not in argv:
+        tick["action"] = f"outside spawn window {SPAWN_FROM:02d}:00-{SPAWN_UNTIL:02d}:00"
     elif active:
         tick["action"] = "a usage-spender run is still active, one at a time"
+    elif resumable:  # Benni answered: finish what was started before new work, curve or not
+        e = resumable[0]
+        a = {"resume": e["run_id"], "key": e["key"]}
+        if not dry:
+            a = resume(e, day_dir)
+            if a.get("spawned"):
+                ledger.append({k: a[k] for k in LEDGER_KEYS if a.get(k)}
+                              | {"at": now.isoformat(), "status": "starting", "resumed_from": e["run_id"]})
+        tick["action"] = a
     elif wanted:
         repos, taken, a = local_repos(), recently_taken(ledger, now), None
         for key, cli, gap, cost in wanted:
@@ -699,7 +767,7 @@ def main(argv):
 
 
 def selftest():
-    global SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST
+    global SPAWN_FROM, SPAWN_UNTIL, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST, RUNS
     now = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
     fresh = "2026-10-09T11:30:00Z"
 
@@ -806,17 +874,51 @@ def selftest():
         assert cron_model("other", HOST_DEFAULT, f.name) == HOST_DEFAULT
         assert cron_model("missing", HOST_DEFAULT, f.name) == HOST_DEFAULT
     # dashboard knobs: valid values replace the built-ins, a wrong type keeps them and is reported
-    saved = (SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST, list(ERRORS))
-    apply_knobs({"usage_spender": {"spawn_hours": [22, 23], "implement": False, "max_run_h": 2,
+    # spawn window: end exclusive, wraps past midnight, equal = all day
+    assert [h for h in range(24) if in_spawn_window(h)] == [0, 1, 2, 23]
+    saved = (SPAWN_FROM, SPAWN_UNTIL, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST, list(ERRORS))
+    apply_knobs({"usage_spender": {"spawn_from": 1, "spawn_until": 5, "implement": False, "max_run_h": 2,
                                    "task_cost": 0.2, "implement_model": {"claude": "", "codex": "codex:gpt-6-sol"}}})
-    assert SPAWN_HOURS == {22, 23} and IMPLEMENT is False and MAX_RUN_H == 2 and TASK_COST == 0.2
+    assert [h for h in range(24) if in_spawn_window(h)] == [1, 2, 3, 4]
+    assert IMPLEMENT is False and MAX_RUN_H == 2 and TASK_COST == 0.2
     assert IMPLEMENT_MODEL == {"codex": "codex:gpt-6-sol"}, IMPLEMENT_MODEL  # "" drops claude's override
-    SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST = saved[:5]
-    apply_knobs({"usage_spender": {"spawn_hours": [25], "implement": "yes", "max_run_h": True,
+    SPAWN_UNTIL = 1
+    assert all(in_spawn_window(h) for h in range(24))
+    SPAWN_FROM, SPAWN_UNTIL, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H, TASK_COST = saved[:6]
+    apply_knobs({"usage_spender": {"spawn_from": 24, "implement": "yes", "max_run_h": True,
                                    "implement_model": {"claude": "codex:x"}}})
-    assert (SPAWN_HOURS, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H) == saved[:4]
-    assert len(ERRORS) == len(saved[5]) + 4 and "spawn_hours" in ERRORS[len(saved[5])], ERRORS
-    ERRORS[:] = saved[5]
+    assert (SPAWN_FROM, SPAWN_UNTIL, IMPLEMENT, IMPLEMENT_MODEL, MAX_RUN_H) == saved[:5]
+    assert len(ERRORS) == len(saved[6]) + 4 and "spawn_from" in ERRORS[len(saved[6])], ERRORS
+    ERRORS[:] = saved[6]
+
+    # a question parks the run (no block, no cancel); an answer makes it resumable; a cancel unparks it
+    import time
+    with tempfile.TemporaryDirectory() as d:
+        saved_runs, RUNS = RUNS, Path(d)
+
+        def mk(rid, status, files=()):
+            (RUNS / rid / "mailbox").mkdir(parents=True)
+            (RUNS / rid / "STATE.json").write_text(json.dumps({"status": status}))
+            for name in files:
+                (RUNS / rid / "mailbox" / name).write_text(name)
+                time.sleep(0.01)
+        mk("P", "waiting_human", ["QUESTIONS.md"])
+        mk("A", "watching", ["QUESTIONS.md", "ANSWER.md"])
+        mk("C", "cancelled", ["QUESTIONS.md"])
+        old = (now - timedelta(hours=MAX_RUN_H + 1)).isoformat()
+        led = [{"run_id": "P", "at": old, "status": "watching"},
+               {"run_id": "A", "at": old, "status": "waiting_human", "parked": old},
+               {"run_id": "C", "at": old, "status": "waiting_human", "parked": old}]
+        calls = []
+        saved_tu = globals()["teamup"]
+        globals()["teamup"] = lambda *a, **k: calls.append(a)
+        try:
+            act, intake, res = triage_runs(led, now, False)
+        finally:
+            globals()["teamup"], RUNS = saved_tu, saved_runs
+        assert act == [] and [e["run_id"] for e in res] == ["A"], (act, res)
+        assert led[0].get("parked") and led[0]["status"] == "waiting_human" and ("cancel",) not in [c[:1] for c in calls]
+        assert [e["run_id"] for e in intake] == ["C"] and "parked" not in led[2], (intake, led)
     print("selftest ok")
 
 

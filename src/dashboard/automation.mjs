@@ -39,7 +39,7 @@ export const BUILTIN_JOBS = [
     title: "Usage spender",
     source: "crontab",
     match: "scripts/usage-spender.py",
-    what: "Spends subscription quota that would otherwise expire unused. Every 10 minutes it holds each weekly window against a pacing curve; during the night hours it starts one task at a time — a PR review, a code audit, or a fix for a TIM task or GitHub issue in one of your repos. A host session collects the results and reports via Telegram.",
+    what: "Spends subscription quota that would otherwise expire unused. Every 10 minutes it holds each weekly window against a pacing curve; between its start and end time it starts one task after another — a PR review, a code audit, or a fix for a TIM task or GitHub issue in one of your repos. A task that needs a decision waits in the Action Center; once answered, it resumes the next night. A host session collects the results and reports via Telegram.",
     notifies: "Each morning after a spend night: what the night's workers did and what is left for you.",
     cost: "Uses subscription quota — on purpose, only what would reset unused anyway.",
     llm: true,

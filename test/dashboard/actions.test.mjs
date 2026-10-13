@@ -42,3 +42,12 @@ test("run actions: cancel and fail only open runs, fail needs a reason, collect 
   assert.throws(() => runAction("../etc", "cancel"), /invalid run id/);
   assert.throws(() => runAction("20261010T120000Z-aaaa", "rm"), /unknown action/);
 });
+
+test("answer writes ANSWER.md and puts a waiting run back on watch; refused once it no longer waits", () => {
+  plant("20261013T120000Z-ansr", "waiting_human");
+  assert.throws(() => runAction("20261013T120000Z-ansr", "answer", { reason: "  " }), /needs text/);
+  assert.equal(runAction("20261013T120000Z-ansr", "answer", { reason: "Use option B." }).status, "watching");
+  const answer = fs.readFileSync(path.join(home, "runs", "20261013T120000Z-ansr", "mailbox", "ANSWER.md"), "utf8");
+  assert.match(answer, /Use option B\./);
+  assert.throws(() => runAction("20261013T120000Z-ansr", "answer", { reason: "again" }), /no longer waiting/);
+});

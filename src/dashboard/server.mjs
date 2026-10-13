@@ -24,6 +24,7 @@ import {
   createProject,
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
+import { buildActionCenter } from "./action-center.mjs";
 import { readTrending, trendingDir } from "./trending.mjs";
 import { buildCatalogueView, applyCatalogueToggle } from "./catalogue.mjs";
 import { buildRolesView, applyRoleEdit, modelLabel, applySpecialistAssignment } from "./roles.mjs";
@@ -244,6 +245,17 @@ function heartbeatMtimes() {
     }
   }
   return out;
+}
+
+/** The newest block of a run's QUESTIONS.md: earlier ones were already answered. */
+function latestQuestion(runId) {
+  try {
+    const raw = safeReadMailboxFile("QUESTIONS.md", runDir(runId), 16 * 1024);
+    const last = String(raw ?? "").split(/\n---\n/).pop();
+    return last.replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, 2000) || null;
+  } catch {
+    return null;
+  }
 }
 
 function safeReadMailboxFile(name, runRoot, maxBytes = 256 * 1024) {
@@ -1087,12 +1099,14 @@ export function createDashboardServer({
       const action = runActionMatch ? "run.action" : ACTIONS[pathname];
       let target = runActionMatch ? decodeURIComponent(runActionMatch[1]) : "";
       try {
-        const body = JSON.parse(await readBody(req) || "{}");
+        const body = JSON.parse(await readBody(req, runActionMatch ? PREFS_MAX_BODY : MAX_BODY) || "{}");
         let result;
         if (runActionMatch) {
           target = `${target} ${body.action}`;
           result = runAction(decodeURIComponent(runActionMatch[1]), String(body.action || ""), { reason: body.reason });
           memo.invalidate(`run:${decodeURIComponent(runActionMatch[1])}`);
+          memo.invalidate("runs:true");
+          memo.invalidate("runs:false");
         } else if (pathname === "/api/actions/mark-limited") {
           target = String(body.target || "");
           result = markLimitedAction(body, { roster: loadRoster(env), env, now: now() });
@@ -1308,6 +1322,24 @@ export function createDashboardServer({
             .map(([id, spec]) => ({ id, label: modelLabel(roster, store, id), clis: spec.cli ?? [] }))
             .sort((a, b) => a.id.localeCompare(b.id)),
         });
+      } catch (e) {
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    if (pathname === "/api/action-center") {
+      try {
+        const dir = url.searchParams.get("dir") || "";
+        const data = memo.get(`action-center:${dir}`, () => buildActionCenter({
+          timView: buildTimView(dir, {
+            exec,
+            work: timMemo.get("open-work", () => readOpenWork({ exec })),
+          }),
+          states: listAllStates(),
+          questionOf: (runId) => latestQuestion(runId),
+        }));
+        jsonResponse(res, 200, sanitizeForDashboard(data));
       } catch (e) {
         jsonResponse(res, 400, { error: String(e.message || e) });
       }

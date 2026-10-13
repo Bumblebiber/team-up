@@ -16,7 +16,8 @@ import { DEFAULT_THRESHOLDS } from "../telemetry/restart.mjs";
 // Defaults of scripts/usage-spender.py; keep in sync with the constants there.
 export const SPENDER_DEFAULTS = Object.freeze({
   subscriptions: ["claude", "codex", "cursor"],
-  spawn_hours: [23, 0, 1, 2],
+  spawn_from: 23,
+  spawn_until: 3,
   implement: true,
   implement_model: { claude: "claude:claude-sonnet" },
   max_run_h: 4,
@@ -280,11 +281,16 @@ export function settingsFields(roster = {}) {
     help: "Subscriptions whose spare quota may be spent. Untick all to switch the spender off.",
     options: opts(watched), default: SPENDER_DEFAULTS.subscriptions, effect: EFFECT.spender,
   });
+  const hours = opts([...Array(24).keys()], (h) => `${String(h).padStart(2, "0")}:00`);
   add({
-    group: "spender", path: "usage_spender.spawn_hours", type: "set", label: "Start new tasks during",
-    help: "Local hours in which a new task may start. Results are collected at any hour.",
-    options: opts([...Array(24).keys()], (h) => `${String(h).padStart(2, "0")}:00`), minItems: 1,
-    default: SPENDER_DEFAULTS.spawn_hours, effect: EFFECT.spender,
+    group: "spender", path: "usage_spender.spawn_from", type: "enum", label: "Start new tasks from",
+    help: "Local time the night starts. From here, one task after another until the quota target or the end time is reached.",
+    options: hours, default: SPENDER_DEFAULTS.spawn_from, effect: EFFECT.spender,
+  });
+  add({
+    group: "spender", path: "usage_spender.spawn_until", type: "enum", label: "Start new tasks until",
+    help: "No new task starts from this time on; one already running finishes. Same as the start time = all day.",
+    options: hours, default: SPENDER_DEFAULTS.spawn_until, effect: EFFECT.spender,
   });
   add({
     group: "spender", path: "usage_spender.implement", type: "bool", label: "Implement fixes",

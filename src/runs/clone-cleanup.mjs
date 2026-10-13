@@ -64,28 +64,27 @@ export function cloneTargets(cwd, { root = tasksRoot() } = {}) {
     .filter(isCloneRoot);
 }
 
-/** Commits reachable from HEAD or a local branch that are on no remote and not cherry-picked to main. */
+/**
+ * Commits reachable from HEAD or a local branch that are not on origin's main,
+ * neither by ancestry nor by patch-id (cherry-pick, rebase). A commit pushed
+ * only to a feature branch is unmerged and counts. So does a squash merge:
+ * deleting is only safe when landing is provable.
+ */
 function unlandedCommits(dir) {
   if (git(dir, ["fetch", "-q", "origin"], { timeout: FETCH_TIMEOUT_MS }) === null) return { error: "fetch from origin failed" };
-  const notOnRemote = git(dir, ["rev-list", "HEAD", "--branches", "--not", "--remotes"]);
-  if (notOnRemote === null) return { error: "git rev-list failed" };
-  let left = new Set(notOnRemote.split("\n").filter(Boolean));
-  if (!left.size) return { shas: [] };
-  // Cherry-picked or rebased onto main counts as landed (patch-id). A squash
-  // merge does not, and is refused: deleting is only safe when it is provable.
   const main = ["refs/remotes/origin/main", "refs/remotes/origin/master"]
     .find((ref) => git(dir, ["rev-parse", "-q", "--verify", ref]) !== null);
-  if (main) {
-    const tips = ["HEAD", ...(git(dir, ["for-each-ref", "--format=%(refname)", "refs/heads"]) || "").split("\n").filter(Boolean)];
-    const plus = new Set();
-    for (const tip of tips) {
-      for (const line of (git(dir, ["cherry", main, tip]) || "").split("\n")) {
-        if (line.startsWith("+ ")) plus.add(line.slice(2).trim());
-      }
+  if (!main) return { error: "origin has no main or master" };
+  const tips = ["HEAD", ...(git(dir, ["for-each-ref", "--format=%(refname)", "refs/heads"]) || "").split("\n").filter(Boolean)];
+  const unlanded = new Set();
+  for (const tip of tips) {
+    const out = git(dir, ["cherry", main, tip]);
+    if (out === null) return { error: `git cherry failed for ${tip}` };
+    for (const line of out.split("\n")) {
+      if (line.startsWith("+ ")) unlanded.add(line.slice(2).trim());
     }
-    left = new Set([...left].filter((sha) => plus.has(sha)));
   }
-  return { shas: [...left] };
+  return { shas: [...unlanded] };
 }
 
 /**
@@ -119,7 +118,7 @@ export function cloneVerdict(dir, { root = tasksRoot(), states = [] } = {}) {
   if (stash === null || stash.trim()) return { ok: false, reason: "has stash entries" };
   const unlanded = unlandedCommits(target);
   if (unlanded.error) return { ok: false, reason: unlanded.error };
-  if (unlanded.shas.length) return { ok: false, reason: `${unlanded.shas.length} commit(s) not pushed or merged` };
+  if (unlanded.shas.length) return { ok: false, reason: `${unlanded.shas.length} commit(s) not on origin main` };
   return { ok: true, dir: target };
 }
 

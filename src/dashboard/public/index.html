@@ -28,6 +28,7 @@
       </section>
       <nav class="sidebar-nav" aria-label="Dashboard views">
         <a href="#/overview" data-route="overview"><span class="nav-ico" aria-hidden="true">◎</span>Overview<span id="badge-overview" class="nav-badge hidden"></span></a>
+        <a href="#/actions" data-route="actions"><span class="nav-ico" aria-hidden="true">✓</span>Action Center<span id="badge-actions" class="nav-badge hidden"></span></a>
         <details class="nav-group" open>
           <summary>Work</summary>
           <a href="#/runs" data-route="runs"><span class="nav-ico" aria-hidden="true">▶</span>Sessions &amp; Runs<span id="badge-runs" class="nav-badge hidden"></span></a>
@@ -109,6 +110,16 @@
               <p id="mark-status" class="muted" aria-live="polite"></p>
             </details>
           </section>
+        </section>
+
+        <section class="view" data-view="actions">
+          <header class="page-head">
+            <h1>Action Center</h1>
+            <p>Everything waiting on you, most urgent first: questions to answer, decisions to make, results to read, work to start.</p>
+          </header>
+          <div class="segmented" id="ac-filter" role="tablist" aria-label="Show"></div>
+          <p id="ac-status" class="muted" aria-live="polite"></p>
+          <div id="ac-list"></div>
         </section>
 
         <section class="view" data-view="runs">

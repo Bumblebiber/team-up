@@ -16,7 +16,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { setOutcome } from "../src/runs/runs.mjs";
+import { listAllStates, setOutcome } from "../src/runs/runs.mjs";
+import { cleanupRunClone } from "../src/runs/clone-cleanup.mjs";
 import { countedStates } from "./run-insights.mjs";
 
 const BIG = 256 * 1024 * 1024;
@@ -104,6 +105,7 @@ function main(argv) {
   const apply = argv.includes("--apply");
   const all = argv.includes("--all");
   const rows = [];
+  const applied = [];
   for (const state of countedStates()) {
     if (state.status !== "done" || (!all && state.outcome?.value)) continue;
     let result;
@@ -113,11 +115,15 @@ function main(argv) {
       result = { verdict: "error", error: e.message };
     }
     if (apply && result.verdict === "merged" && !state.outcome?.value) {
-      setOutcome(state.runId, "merged", { note: `auto: ${result.how.join("+")} into ${result.target}` });
+      // Clones are shared across runs: removing one now would turn its later
+      // runs into no_git before they are checked. Clean up after the loop.
+      applied.push(setOutcome(state.runId, "merged", { note: `auto: ${result.how.join("+")} into ${result.target}`, cleanup: null }));
       result.applied = true;
     }
     rows.push({ runId: state.runId, role: state.role, cwd: state.cwd, ...result });
   }
+  const states = listAllStates({ onCorrupt: () => {} });
+  for (const state of applied) cleanupRunClone(state, { states });
   if (argv.includes("--json")) {
     process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
     return;

@@ -2067,6 +2067,7 @@ function openLaunchDialog(item) {
 }
 
 $("#tim-launch-cancel").addEventListener("click", () => launchDialog.close());
+launchDialog.addEventListener("close", () => refreshActions().catch(() => {}));
 
 $("#tim-launch-form").addEventListener("submit", async (event) => {
   // Not method="dialog": a refused start has to leave the dialog open with the
@@ -2601,6 +2602,187 @@ function updateAttention() {
   $("#panel-attention").classList.toggle("hidden", items.length === 0);
 }
 
+// ── Action Center ─────────────────────────────────────────────────────────
+// Everything waiting on the human, grouped by project, most urgent first. The
+// server sorts; the browser filters, renders, and keeps half-typed answers
+// alive across the five-second refresh.
+const AC_FILTER_KEY = "teamup.acFilter";
+const AC_CLOSED_KEY = "teamup.acClosed";
+const AC_FILTERS = [
+  ["all", "All", null],
+  ["question", "Questions", ["question"]],
+  ["decision", "Decisions", ["decision"]],
+  ["result", "Results", ["result"]],
+  ["work", "Tasks & bugs", ["task", "bug"]],
+  ["idea", "Ideas", ["idea"]],
+];
+const AC_KIND_LABEL = { question: "Question", decision: "Decision", result: "Result", task: "Task", bug: "Bug", idea: "Idea" };
+const acDrafts = {};
+let acData = null;
+let acRendered = "";
+
+async function refreshActions() {
+  try {
+    acData = await api(`/api/action-center?dir=${encodeURIComponent(readProjectsDir())}`);
+  } catch (err) {
+    $("#ac-status").textContent = err.message;
+    return;
+  }
+  const c = acData.counts;
+  const urgent = c.question + c.decision;
+  updateNavBadge("badge-actions", urgent ? String(urgent) : c.result ? String(c.result) : "", urgent ? "red" : "",
+    urgent + c.result > 0, `${c.question} question(s), ${c.decision} decision(s), ${c.result} unread result(s)`);
+  renderActions();
+}
+
+function acFilter() {
+  const f = readStored(AC_FILTER_KEY, "all");
+  return AC_FILTERS.some(([k]) => k === f) ? f : "all";
+}
+
+function acItem(item, project) {
+  const meta = [
+    item.priority ? `<span class="tag ${priorityTone(item.priority)}">${esc(item.priority)}</span>` : "",
+    item.runId ? esc([item.worker, item.age && `${item.age} ago`].filter(Boolean).join(" · ")) : "",
+    item.status && !item.runId ? esc(item.status) : "",
+  ].filter(Boolean).join(" ");
+  let actions = "";
+  let body = "";
+  if (item.runId) {
+    actions = `<button type="button" data-ac-open="${esc(item.runId)}">Open run</button>`;
+    if (item.kind === "result") {
+      actions += `<button type="button" class="primary" data-ac-run="${esc(item.runId)}" data-action="collect" title="You have read the result; it leaves this list">Done reading</button>`
+        + `<button type="button" data-ac-run="${esc(item.runId)}" data-action="merged" title="The work landed">Merged</button>`
+        + `<button type="button" data-ac-run="${esc(item.runId)}" data-action="discarded" title="The work was not kept">Discarded</button>`;
+    } else {
+      body = `<div class="ac-body">
+        ${item.detail ? `<div class="ac-question">${esc(item.detail)}</div>` : '<p class="muted">No question text in the mailbox — open the run to see what it needs.</p>'}
+        <form class="ac-answer" data-ac-answer="${esc(item.runId)}">
+          <textarea placeholder="Your answer… (Ctrl+Enter sends)" aria-label="Answer" required>${esc(acDrafts[item.runId] || "")}</textarea>
+          <button type="submit" class="primary">Send answer</button>
+        </form></div>`;
+    }
+  } else if (project.dir) {
+    actions = `<button type="button" class="primary" data-ac-start="${esc(item.id)}">Start…</button>`;
+  } else {
+    actions = '<span class="muted" title="No .tim-project marker for this project in the projects folder">no repo</span>';
+  }
+  return `<li class="ac-item">
+    <span class="tag ac-kind ${item.kind}">${AC_KIND_LABEL[item.kind]}</span>
+    <div><span class="ac-title">${esc(item.title)}</span>${meta ? `<span class="ac-meta">${meta}</span>` : ""}</div>
+    <div class="ac-do">${actions}</div>
+    ${body}
+  </li>`;
+}
+
+function renderActions() {
+  if (!acData) return;
+  const filter = acFilter();
+  const kinds = AC_FILTERS.find(([k]) => k === filter)[2];
+  const c = acData.counts;
+  const n = { all: Object.values(c).reduce((a, b) => a + b, 0), question: c.question, decision: c.decision, result: c.result, work: c.task + c.bug, idea: c.idea };
+  const filterHtml = AC_FILTERS.map(([k, label]) =>
+    `<button type="button" role="tab" data-ac-filter="${k}" class="${k === filter ? "is-active" : ""}">${label} <span class="muted">${n[k]}</span></button>`).join("");
+  const closed = new Set(readStored(AC_CLOSED_KEY, []));
+  const groups = acData.projects
+    .map((p) => ({ ...p, items: p.items.filter((i) => (kinds ? kinds.includes(i.kind) : true)) }))
+    .filter((p) => p.items.length);
+  const html = groups.map((p) => {
+    const counts = {};
+    for (const i of p.items) counts[i.kind] = (counts[i.kind] || 0) + 1;
+    const chips = Object.entries(counts).map(([k, v]) =>
+      `<span class="tag ac-kind ${k}">${v} ${AC_KIND_LABEL[k].toLowerCase()}${v === 1 ? "" : "s"}</span>`).join("");
+    // Ideas are many and rarely urgent: in "All" they fold away under the rest.
+    const main = filter === "all" ? p.items.filter((i) => i.kind !== "idea") : p.items;
+    const ideas = filter === "all" ? p.items.filter((i) => i.kind === "idea") : [];
+    return `<details class="ac-project" data-project="${esc(p.label)}"${closed.has(p.label) ? "" : " open"}>
+      <summary>${esc(p.title)} <span class="ac-counts">${chips}</span></summary>
+      <ul class="ac-items">${main.map((i) => acItem(i, p)).join("")}</ul>
+      ${ideas.length ? `<details class="ac-more"><summary>${ideas.length} idea${ideas.length === 1 ? "" : "s"} to decide on</summary><ul class="ac-items">${ideas.map((i) => acItem(i, p)).join("")}</ul></details>` : ""}
+    </details>`;
+  }).join("") || `<div class="ac-empty">${filter === "all" ? "Nothing is waiting on you." : "Nothing in this group."}</div>`;
+
+  const key = filterHtml + html;
+  // A re-render would wipe focus and a half-typed answer; skip it when nothing changed.
+  if (key === acRendered) return;
+  const focused = document.activeElement?.closest?.("[data-ac-answer]")?.dataset.acAnswer;
+  acRendered = key;
+  $("#ac-filter").innerHTML = filterHtml;
+  $("#ac-list").innerHTML = html;
+  const urgent = c.question + c.decision;
+  $("#ac-status").textContent = urgent
+    ? `${urgent} item${urgent === 1 ? "" : "s"} blocked until you answer.`
+    : "Nothing is blocked on you right now.";
+  if (focused) $(`[data-ac-answer="${CSS.escape(focused)}"] textarea`)?.focus();
+}
+
+$("#ac-filter").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-ac-filter]");
+  if (!btn) return;
+  writeStored(AC_FILTER_KEY, btn.dataset.acFilter);
+  renderActions();
+});
+
+$("#ac-list").addEventListener("toggle", (e) => {
+  const el = e.target;
+  if (!el.classList?.contains("ac-project")) return;
+  const shut = new Set(readStored(AC_CLOSED_KEY, []));
+  if (el.open) shut.delete(el.dataset.project);
+  else shut.add(el.dataset.project);
+  writeStored(AC_CLOSED_KEY, [...shut]);
+}, true);
+
+$("#ac-list").addEventListener("input", (e) => {
+  const form = e.target.closest("[data-ac-answer]");
+  if (form) acDrafts[form.dataset.acAnswer] = e.target.value;
+});
+
+$("#ac-list").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.target.closest("[data-ac-answer]")) {
+    e.preventDefault();
+    e.target.form.requestSubmit();
+  }
+});
+
+async function acRunAction(runId, action, reason, btn) {
+  btn.disabled = true;
+  try {
+    await api(`/api/runs/${encodeURIComponent(runId)}/action`, { method: "POST", body: JSON.stringify({ action, reason }) });
+    delete acDrafts[runId];
+    await refreshActions();
+  } catch (err) {
+    btn.disabled = false;
+    alert(`refused: ${err.message}`);
+  }
+}
+
+$("#ac-list").addEventListener("submit", (e) => {
+  const form = e.target.closest("[data-ac-answer]");
+  if (!form) return;
+  e.preventDefault();
+  acRunAction(form.dataset.acAnswer, "answer", form.querySelector("textarea").value, form.querySelector("button"));
+});
+
+$("#ac-list").addEventListener("click", (e) => {
+  const run = e.target.closest("[data-ac-run]");
+  if (run) return acRunAction(run.dataset.acRun, run.dataset.action, null, run);
+  const open = e.target.closest("[data-ac-open]");
+  if (open) {
+    location.hash = "#/runs";
+    selectRun(open.dataset.acOpen);
+    return;
+  }
+  const start = e.target.closest("[data-ac-start]");
+  if (start) {
+    for (const p of acData.projects) {
+      const item = p.items.find((i) => i.id === start.dataset.acStart);
+      if (item) return openLaunchDialog({ ...item, kind: item.timKind, project: p });
+    }
+  }
+});
+
+onEnter.actions = () => refreshActions().catch(() => {});
+
 // ── TIM: open work | explorer ─────────────────────────────────────────────
 const TIM_VIEW_KEY = "teamup.timView";
 let timViewShown = false;
@@ -3039,6 +3221,7 @@ function refreshAll() {
     refreshTmux(),
     refreshProjects(),
     refreshTim(),
+    refreshActions(),
     refreshRoles(),
     refreshSetup(),
     refreshNotifications(),

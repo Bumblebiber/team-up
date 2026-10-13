@@ -59,12 +59,22 @@ test("tracked changes refuse; untracked files alone do not", () => {
   } finally { t.done(); }
 });
 
-test("an unpushed commit refuses; once pushed to a feature branch it passes", () => {
+test("an unpushed commit refuses, and so does one pushed only to a feature branch", () => {
   const t = setup();
   try {
     commit(t.clone);
-    assert.match(cloneVerdict(t.clone, { root: t.root }).reason, /not pushed or merged/);
+    assert.match(cloneVerdict(t.clone, { root: t.root }).reason, /not on origin main/);
     git(t.clone, "push", "-q", "origin", "HEAD:refs/heads/feature");
+    assert.match(cloneVerdict(t.clone, { root: t.root }).reason, /not on origin main/);
+  } finally { t.done(); }
+});
+
+test("a commit merged into origin main passes", () => {
+  const t = setup();
+  try {
+    commit(t.clone);
+    git(t.source, "fetch", "-q", t.clone, "HEAD");
+    git(t.source, "merge", "-q", "--ff-only", "FETCH_HEAD");
     assert.equal(cloneVerdict(t.clone, { root: t.root }).ok, true);
   } finally { t.done(); }
 });
@@ -159,5 +169,20 @@ test("sweep is a dry run by default and skips clones without an outcome", () => 
     const rows = sweepClones({ root: t.root, states, size: () => 1 });
     assert.deepEqual(rows.map((r) => r.kind).sort(), ["no_outcome", "would_remove"]);
     assert.ok(fs.existsSync(path.join(t.clone, ".git")));
+  } finally { t.done(); }
+});
+
+test("state writes still work once the run's clone is gone", async () => {
+  const t = setup();
+  try {
+    const runs = await import("../../src/runs/runs.mjs");
+    const state = runs.createRun({ cwd: t.clone, role: "implementer", parent: { cli: "claude" }, worker: { cli: "claude" }, prompt: "x" });
+    runs.setStatus(state.runId, "done");
+    process.env.TEAM_UP_TASKS_ROOT = t.root;
+    try {
+      runs.setOutcome(state.runId, "merged");
+    } finally { delete process.env.TEAM_UP_TASKS_ROOT; }
+    assert.equal(fs.existsSync(t.clone), false);
+    assert.ok(runs.markCollected(state.runId).collected);
   } finally { t.done(); }
 });
