@@ -2687,12 +2687,15 @@ function renderCommunication() {
   }).join("") + `<h3 class="comm-group">Everything else</h3>
     <table class="comm-table"><tbody><tr data-sender="*">
       <td>Anything not listed above<div class="muted">Any other script that calls <code>send-cron-telegram</code>, and new jobs until you choose for them.</div></td>
-      <td class="comm-dest-col">${commDestSelect(d.default, "everything else")}</td></tr></tbody></table>`;
+      <td>${commDestSelect(d.default, "everything else")}</td></tr></tbody></table>`;
 
   // Replies: which bots listen, and how a new session starts.
   const listening = d.bots.filter((b) => b.listen);
   const usedBots = new Set(d.senders.map((s) => s.dest ?? d.default).concat(d.default));
   const deaf = d.bots.filter((b) => usedBots.has(b.id) && !b.listen && !b.owner);
+  const owned = d.bots.filter((b) => usedBots.has(b.id) && b.owner);
+  const ownedNote = owned.length
+    ? `<div class="comm-notice">Messages now arrive through ${owned.map((b) => `@${esc(b.username)}`).join(", ")}. Replies there are read by ${esc(owned[0].owner)}, not by team-up — they do not continue the session in the footer. Send the jobs through a bot team-up listens to for that.</div>` : "";
   const notice = !listening.length
     ? `<div class="comm-notice"><strong>No bot listens yet, so replying does nothing.</strong> Switch on listening for the bot your messages come from${
         deaf.some((b) => b.imported) ? ` — for @${esc(deaf.find((b) => b.imported).username)} that ends its old send-only rule (it was kept so that no second program would compete for its replies; team-up is the only reader here). Or add a bot of its own for this.` : "."}</div>`
@@ -2706,7 +2709,7 @@ function renderCommunication() {
   }).join("");
   const r = d.replies;
   const models = (d.modelOptions.includes(r.model) ? [] : [r.model]).concat(d.modelOptions);
-  $("#comm-replies").innerHTML = `${notice}${botRows}
+  $("#comm-replies").innerHTML = `${notice}${ownedNote}${botRows}
     <div class="comm-new job">
       <h3>New sessions</h3>
       <p class="muted">Used when you reply to a script's report, or write to a bot without replying to a message. A reply to a message with a 🧵 claude session always continues that session, in its own folder and with its own model.</p>
@@ -2726,9 +2729,9 @@ function renderCommunication() {
       d.bots.map((b) => `<tr data-bot="${esc(b.id)}">
         <td>@${esc(b.username)}<div class="muted mono">${esc(b.env)}</div></td>
         <td class="mono">${b.missing ? '<span class="tag err">token file missing</span>' : esc(b.tokenTail || "—")}</td>
-        <td>${b.uses ? `${b.uses} ${b.uses === 1 ? "destination" : "destinations"}` : '<span class="muted">nothing</span>'}</td>
+        <td>${[b.jobs ? `${b.jobs} job${b.jobs === 1 ? "" : "s"}` : "", b.isDefault ? "everything else" : ""].filter(Boolean).join(" + ") || '<span class="muted">nothing</span>'}</td>
         <td class="row-actions"><button type="button" data-comm-test>Send test</button>
-          <button type="button" data-comm-remove${b.uses ? ' disabled title="Send its jobs elsewhere first"' : ""}>Remove</button></td>
+          <button type="button" data-comm-remove${b.jobs || b.isDefault ? ' disabled title="Send its messages elsewhere first"' : ""}>Remove</button></td>
       </tr>`).join("")}</tbody></table>`
     : '<div class="empty">No bots yet — add one below.</div>';
   const broken = d.bots.filter((b) => b.missing || (b.poll && !b.poll.ok)).length;

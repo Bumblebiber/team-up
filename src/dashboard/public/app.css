@@ -733,7 +733,7 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .comm-how ol, .comm-steps { margin: 0.4rem 0 0; padding-left: 1.3rem; font-size: 0.9rem; max-width: 62rem; }
 .comm-how li, .comm-steps li { margin: 0.3rem 0; }
 .comm-table { width: 100%; table-layout: fixed; }
-.comm-table th.comm-dest-col { width: 16.5rem; }
+.comm-table th:last-child, .comm-table td:last-child { width: 16.5rem; }
 .comm-dest { width: 16rem; }
 .comm-group { margin: 1rem 0 0.25rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .comm-notice { padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: var(--radius); margin: 0.5rem 0 0.8rem; font-size: 0.9rem; }

@@ -89,7 +89,13 @@ function migrate(cfg) {
 /** The config, created on first use from the bots already on this host. */
 export async function loadComm({ env = process.env, fetchFn = fetch, known = KNOWN } = {}) {
   const existing = loadJson(commPath(env));
-  if (existing) return migrate(existing);
+  if (existing) {
+    // telegram.py reads the file as stored: write a migrated one back.
+    const before = JSON.stringify(existing);
+    const cfg = migrate(existing);
+    if (JSON.stringify(cfg) !== before) atomicWriteJson(commPath(env), cfg);
+    return cfg;
+  }
   const cfg = { default: null, bots: [], routes: {}, replies: { ...DEFAULT_REPLIES } };
   for (const k of known) {
     if (!fs.existsSync(k.file)) continue;
@@ -151,7 +157,9 @@ export const replyModelOptions = (modelOptions) => modelOptions.filter((m) => m.
 export async function buildCommunicationView({ env = process.env, exec = execFileSync, fetchFn = fetch, modelOptions = [] } = {}) {
   const cfg = await loadComm({ env, fetchFn });
   const poller = readPollerStatus(env);
-  const routed = (id) => Object.values(cfg.routes).filter((d) => d === id).length + (cfg.default === id ? 1 : 0);
+
+  const senders = listSenders({ env, exec }).map((s) => ({ ...s, dest: cfg.routes[s.key] ?? null }));
+  const jobs = (id) => senders.filter((s) => (s.dest ?? cfg.default) === id).length;
   const bots = cfg.bots.map((b) => {
     let tail = null;
     try {
@@ -160,11 +168,11 @@ export async function buildCommunicationView({ env = process.env, exec = execFil
     } catch { /* env file gone: shown as missing */ }
     return {
       id: b.id, username: b.username, env: tilde(b.env), imported: !!b.imported, owner: b.owner || null,
-      tokenTail: tail, missing: tail === null, listen: !!b.listen, uses: routed(b.id),
+      tokenTail: tail, missing: tail === null, listen: !!b.listen, jobs: jobs(b.id), isDefault: cfg.default === b.id,
       poll: b.listen ? poller?.bots?.[b.id] ?? null : null,
     };
   });
-  const senders = listSenders({ env, exec }).map((s) => ({ ...s, dest: cfg.routes[s.key] ?? null }));
+
   return {
     bots, senders, default: cfg.default,
     replies: { ...cfg.replies, cwd: tilde(cfg.replies.cwd) },

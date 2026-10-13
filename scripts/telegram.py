@@ -399,6 +399,8 @@ def claude(args, cwd):
         out = json.loads(proc.stdout)
     except ValueError:
         out = {"is_error": True, "result": (proc.stdout or proc.stderr).strip()[-1500:]}
+    if isinstance(out, list):  # some claude builds print every event; the last "result" is the answer
+        out = next((e for e in reversed(out) if isinstance(e, dict) and e.get("type") == "result"), {"is_error": True})
     if proc.returncode != 0:
         out["is_error"] = True
     return out
