@@ -2696,7 +2696,7 @@ function renderCommunication() {
   const owned = d.bots.filter((b) => usedBots.has(b.id) && b.owner);
   const ownedNote = owned.length
     ? `<div class="comm-notice">Messages now arrive through ${owned.map((b) => `@${esc(b.username)}`).join(", ")}. Replies there are read by ${esc(owned[0].owner)}, not by team-up — they do not continue the session in the footer. Send the jobs through a bot team-up listens to for that.</div>` : "";
-  const notice = !listening.length
+  const notice = !listening.length && !(owned.length && !deaf.length)
     ? `<div class="comm-notice"><strong>No bot listens yet, so replying does nothing.</strong> Switch on listening for the bot your messages come from${
         deaf.some((b) => b.imported) ? ` — for @${esc(deaf.find((b) => b.imported).username)} that ends its old send-only rule (it was kept so that no second program would compete for its replies; team-up is the only reader here). Or add a bot of its own for this.` : "."}</div>`
     : deaf.length ? `<div class="comm-notice">Messages also arrive through ${deaf.map((b) => `@${esc(b.username)}`).join(", ")}, which do${deaf.length === 1 ? "es" : ""} not listen: replies there do nothing.</div>` : "";
