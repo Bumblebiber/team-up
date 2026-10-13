@@ -56,13 +56,15 @@ if [[ -z "$CWD" || ! -d "$CWD" || ! -f "$PROMPT" ]]; then
   exit 64
 fi
 
-OUT=$("$(dirname "$(readlink -f "$0")")/ops-run.sh" --job "$NAME" "$CWD" "$PROMPT" 2>>"$LOG")
+ID_FILE=$(mktemp); trap 'rm -f "$ID_FILE"' EXIT
+OUT=$(OPS_RUN_ID_FILE="$ID_FILE" "$(dirname "$(readlink -f "$0")")/ops-run.sh" --job "$NAME" "$CWD" "$PROMPT" 2>>"$LOG")
 rc=$?
 printf '%s\n' "$OUT" >> "$LOG"
 echo "=== end $(date -Is) exit $rc" >> "$LOG"
 
 SEND="$HOME/.hermes/bin/send-cron-telegram"
 export TEAMUP_NOTIFY_JOB="$NAME"  # its bot: dashboard → Communication
+TEAMUP_NOTIFY_RUN=$(cat "$ID_FILE" 2>/dev/null); export TEAMUP_NOTIFY_RUN  # footer: cwd, CLI, session
 if [[ "$NOTIFY" == true && -x "$SEND" ]]; then
   # The bot sends HTML: escape the three characters that would break it.
   MSG=$(printf 'team-up job %s (exit %s)\n\n%s' "$NAME" "$rc" "$OUT" | head -c 3500 \

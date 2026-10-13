@@ -30,7 +30,8 @@ const hermesOut = (name) => path.join(HOME, ".hermes", "cron-outputs", name);
  * The jobs team-up ships, in plain words. `match` finds a job's crontab line
  * (or Hermes job) by the script it runs. `knobs` are env settings in front of
  * the command that the dashboard may set. `model` names its cron-jobs.ini
- * section when an LLM does the work.
+ * section when an LLM does the work. `notifies` says what message it sends
+ * (dashboard → Communication); jobs without it send none.
  */
 export const BUILTIN_JOBS = [
   {
@@ -39,6 +40,7 @@ export const BUILTIN_JOBS = [
     source: "crontab",
     match: "scripts/usage-spender.py",
     what: "Spends subscription quota that would otherwise expire unused. Every 10 minutes it holds each weekly window against a pacing curve; during the night hours it starts one task at a time — a PR review, a code audit, or a fix for a TIM task or GitHub issue in one of your repos. A host session collects the results and reports via Telegram.",
+    notifies: "Each morning after a spend night: what the night's workers did and what is left for you.",
     cost: "Uses subscription quota — on purpose, only what would reset unused anyway.",
     llm: true,
     output: path.join(teamUpHome(), "reports", "usage-spender"),
@@ -52,6 +54,7 @@ export const BUILTIN_JOBS = [
     source: "crontab",
     match: "scripts/insights-cron.sh",
     what: "Reads the logs of all team-up runs every 48 hours and turns them into findings: failure reasons, stuck workers, slow paths. Only when the findings changed does an LLM judge them, write TIM entries, and prepare at most one fix — merged into main only if the tests pass in its clone.",
+    notifies: "Every 48 h, only when the run logs show something new: findings and the one fix, if any.",
     cost: "LLM only when the findings changed — at most one evaluation every 2 days.",
     llm: true,
     output: hermesOut("insights"),
@@ -66,6 +69,7 @@ export const BUILTIN_JOBS = [
     source: "crontab",
     match: "usage-watchdog.sh",
     what: "Checks every minute that usage readings keep coming in. A stalled collector, a limit that should have reset, an unexplained jump or repeated failed reads send a Telegram message; otherwise it stays silent.",
+    notifies: "Only when usage readings stall or look wrong.",
     cost: "No LLM.",
     llm: false,
     output: hermesOut("usage-watchdog"),
@@ -76,6 +80,7 @@ export const BUILTIN_JOBS = [
     source: "crontab",
     match: "stale-runs.sh",
     what: "Lists team-up runs that are stuck — waiting on a human, a worker that died, a run that never started — and worker terminals that outlived their run, and sends them to Telegram. It never kills or cancels anything: whether someone is coming back is your call.",
+    notifies: "Every 2 h, only while runs are stuck: which ones and why.",
     cost: "No LLM.",
     llm: false,
     output: hermesOut("stale-runs"),
@@ -89,6 +94,7 @@ export const BUILTIN_JOBS = [
     source: "crontab",
     match: "harness-health.sh",
     what: "Runs `team-up doctor` every 2 hours — CLI versions, capability grants, harness verification — and reports high findings. It exists because a silent claude self-update once revoked every specialist launch and nothing noticed.",
+    notifies: "Every 2 h, only on high findings: a CLI update that broke launches or grants.",
     cost: "No LLM.",
     llm: false,
     output: hermesOut("harness-health"),
@@ -99,6 +105,7 @@ export const BUILTIN_JOBS = [
     source: "crontab",
     match: "model-drift.sh",
     what: "Daily: scans which models each CLI offers, moves role chains onto the newest version of a model family the roster already runs (pinned entries stay), and reports roster models a CLI no longer offers.",
+    notifies: "Daily, only when a model changed: chains moved to a newer version, or a model vanished.",
     cost: "No LLM. Edits roster.json when a newer version ships.",
     llm: false,
     output: hermesOut("model-drift"),
@@ -106,18 +113,19 @@ export const BUILTIN_JOBS = [
   {
     id: "golden-task",
     title: "Golden-task regression",
-    source: "hermes",
+    source: "crontab",
     match: "golden-task-run.sh",
     what: "Once a month a worker solves a fixed reference task in ~/projects/golden-task, so a CLI or model update that breaks real work shows up before it bites.",
     cost: "LLM: one run per month.",
     llm: true,
-    output: null,
+    output: hermesOut("golden-task"),
     model: { job: "golden-task", label: "Model that solves the task" },
+    notifies: "The verdict of the monthly reference task: PASS, DRIFT or FAIL.",
   },
   {
     id: "usage-safety-net",
     title: "Usage collector safety net",
-    source: "hermes",
+    source: "crontab",
     match: "usage-collector-wrapper.sh",
     what: "Daily at 04:00: collects usage itself if the watcher service has not managed to for more than 25 hours.",
     cost: "No LLM.",

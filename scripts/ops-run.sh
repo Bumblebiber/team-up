@@ -6,7 +6,7 @@
 # Hermes no-agent cron job (no LLM, no cost) delivers it.
 #
 # Usage: ops-run.sh --job NAME [--model CLI:MODEL] [--ceiling-sec N] <cwd> <prompt-file>
-# --model skips the ini (Telegram reply jobs carry their own choice).
+# --model skips the ini. OPS_RUN_ID_FILE=<path>: the run id is written there.
 # Exit: 0 done, 1 failed/cancelled/question/dispatch failed, 2 still running at the ceiling,
 #       3 admission refused, 64 usage.
 set -euo pipefail
@@ -45,6 +45,8 @@ CREATED=$("${TEAMUP[@]}" runs create --cwd "$CWD" --role "$ROLE" --worker-cli "$
 RUN=$(sed -n 's/^runId: //p' <<<"$CREATED")
 MB=$(sed -n 's/^mailbox: //p' <<<"$CREATED")
 [[ -n "$RUN" ]] || { echo "ops-run: runs create gave no run id" >&2; exit 1; }
+# The caller's Telegram footer names this run's cwd, CLI and session.
+[[ -z "${OPS_RUN_ID_FILE:-}" ]] || printf '%s\n' "$RUN" > "$OPS_RUN_ID_FILE"
 
 set +e
 "${TEAMUP[@]}" dispatch --role "$ROLE" --model "$MODEL" --prompt-file "$PROMPT" --dir "$CWD" --run-id "$RUN" >&2

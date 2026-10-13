@@ -81,7 +81,8 @@ fi
 
 BEFORE=$(git -C "$REPO" status --porcelain)
 DECISION="${JSON%.json}.decision.md"
-"${CMD[@]}" > "$DECISION" 2>> "$LOG_DIR/stderr.log"
+ID_FILE=$(mktemp); trap 'rm -f "$ID_FILE"' EXIT
+OPS_RUN_ID_FILE="$ID_FILE" "${CMD[@]}" > "$DECISION" 2>> "$LOG_DIR/stderr.log"
 RC=$?
 # A run that never judged (admission refused, CLI limited, ceiling) must not
 # burn the 48h stamp or mark this finding set as seen: tomorrow retries.
@@ -154,4 +155,5 @@ $MSG"
 
 echo "$MSG"
 ESCAPED=$(printf '%s' "$MSG" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
-"$HOME/.hermes/bin/send-cron-telegram" "$ESCAPED" || echo "WARN: CronBot telegram send failed" >&2
+# The footer names the evaluator's session: a reply on Telegram continues it.
+TEAMUP_NOTIFY_RUN=$(cat "$ID_FILE" 2>/dev/null) "$HOME/.hermes/bin/send-cron-telegram" "$ESCAPED" || echo "WARN: telegram send failed" >&2

@@ -728,3 +728,17 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 #bell-list li { padding: 0.45rem 0.55rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem; }
 #bell-list li.unread { border-left: 3px solid var(--accent); }
 #bell-list p { margin: 0.2rem 0; color: var(--muted); }
+
+/* Communication */
+.comm-how ol, .comm-steps { margin: 0.4rem 0 0; padding-left: 1.3rem; font-size: 0.9rem; max-width: 62rem; }
+.comm-how li, .comm-steps li { margin: 0.3rem 0; }
+.comm-table { width: 100%; table-layout: fixed; }
+.comm-table th.comm-dest-col { width: 16.5rem; }
+.comm-dest { width: 16rem; }
+.comm-group { margin: 1rem 0 0.25rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.comm-notice { padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: var(--radius); margin: 0.5rem 0 0.8rem; font-size: 0.9rem; }
+.comm-bot-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; padding: 0.45rem 0; border-bottom: 1px solid var(--border); }
+.comm-bot-row:last-child { border-bottom: 0; }
+.comm-bot-row .name { min-width: 12rem; font-weight: 600; }
+.comm-new { margin-top: 1rem; }
+.comm-new textarea { width: 100%; max-width: 40rem; }

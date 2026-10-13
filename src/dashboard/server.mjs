@@ -77,7 +77,7 @@ import {
   setCustomJobEnabled,
 } from "./automation.mjs";
 import {
-  addBot, buildCommunicationView, removeBot, sendTest, setDefaultBot, setReply, setRoute,
+  addBot, buildCommunicationView, listSenders, removeBot, sendTest, setListen, setReplies, setRoute,
 } from "./communication.mjs";
 import {
   isValidCliId,
@@ -1116,11 +1116,13 @@ export function createDashboardServer({
     }
 
     // Communication writes: bots (token validated with getMe, never echoed or
-    // audited), routes per sender, reply action per bot.
-    const commBotMatch = pathname.match(/^\/api\/communication\/bots(?:\/([a-z0-9_]+)\/(remove|default|reply|test))?$/);
-    if (req.method === "POST" && (commBotMatch || pathname === "/api/communication/routes")) {
+    // audited), where each sender's messages go, which bots listen, and how a
+    // reply that starts a new session runs.
+    const commBotMatch = pathname.match(/^\/api\/communication\/bots(?:\/([a-z0-9_]+)\/(remove|listen|test))?$/);
+    const commOther = pathname.match(/^\/api\/communication\/(routes|replies)$/);
+    if (req.method === "POST" && (commBotMatch || commOther)) {
       if (!requireWriteAccess(req, res)) return;
-      const verb = commBotMatch ? commBotMatch[2] || "add" : "route";
+      const verb = commBotMatch ? commBotMatch[2] || "add" : commOther[1];
       const action = `communication.${verb}`;
       let target = commBotMatch?.[1] || "";
       try {
@@ -1130,16 +1132,18 @@ export function createDashboardServer({
         if (verb === "add") {
           result = await addBot({ token: body.token, chatId: body.chat_id }, opts);
           target = result.id;
-        } else if (verb === "route") {
-          target = `${body.sender} -> ${body.bot ?? "default"}`;
-          result = await setRoute(String(body.sender || ""), body.bot ?? null, opts);
+        } else if (verb === "routes") {
+          target = `${body.sender} -> ${body.dest ?? "unset"}`;
+          const listed = body.sender === "*" ? listSenders({ env, exec }).map((x) => x.key) : [];
+          result = await setRoute(String(body.sender || ""), body.dest ?? null, { ...opts, listed });
+        } else if (verb === "replies") {
+          target = String(body.model || "");
+          result = await setReplies(body, { ...opts, modelOptions: cronModelOptions(loadRoster(env)) });
         } else if (verb === "remove") {
           result = await removeBot(target, opts);
-        } else if (verb === "default") {
-          result = await setDefaultBot(target, opts);
-        } else if (verb === "reply") {
-          target = `${target} ${body.action}`;
-          result = await setReply(commBotMatch[1], body, { ...opts, modelOptions: cronModelOptions(loadRoster(env)) });
+        } else if (verb === "listen") {
+          target = `${target} ${body.listen === true ? "on" : "off"}`;
+          result = await setListen(commBotMatch[1], body.listen === true, opts);
         } else {
           result = await sendTest(target, opts);
         }

@@ -275,29 +275,43 @@
         <section class="view" data-view="communication">
           <header class="page-head">
             <h1>Communication</h1>
-            <p>The Telegram bots that reach you: which scheduled job reports through which bot, and what happens when you reply to one.</p>
+            <p>How team-up and TIM reach you, and what happens when you answer.</p>
           </header>
           <p id="comm-status" class="status-line" aria-live="polite"></p>
-          <section id="panel-comm-bots" class="panel">
-            <h2>Bots</h2>
-            <p class="muted">A token stays in its own owner-only env file; this page shows the last four characters. The default bot carries every job without a route of its own. Removing a bot that existed before this page only takes it off the list — its env file is left alone.</p>
-            <div id="comm-bots" class="table-wrap"></div>
-            <form id="comm-add" class="form-row inline-form" autocomplete="off">
-              <input id="comm-token" type="password" placeholder="Bot token from @BotFather (123456:ABC…)" size="46" required>
-              <input id="comm-chat" type="text" inputmode="numeric" placeholder="Chat id (default: yours)" size="22">
-              <button type="submit" class="primary">+ Add bot</button>
-            </form>
-            <p class="muted">Press <em>Start</em> in the new bot's chat first — Telegram lets a bot write only to chats that opened it.</p>
+          <section class="panel comm-how">
+            <h2>How it works</h2>
+            <ol>
+              <li><strong>Every job sends to one place</strong> — a Telegram bot, or only the bell at the top of this dashboard (no push on your phone).</li>
+              <li><strong>Every Telegram message ends with where it came from:</strong> 📂 folder · 🤖 CLI and model · 🧵 session. A report from a plain script says so instead.</li>
+              <li><strong>Reply to a message to continue its session.</strong> In Telegram, swipe the message (or long-press → Reply) and write. Your text goes into exactly that session; its answer comes back as a reply, with the same footer. A message from a script, or a message you write without replying to one, starts a new session (settings under <em>Replies</em>).</li>
+            </ol>
           </section>
           <section id="panel-comm-routes" class="panel">
-            <h2>Who reports through which bot</h2>
-            <p class="muted">Every crontab job whose script sends through <code>send-cron-telegram</code>, and every job of your own with “notify” on. A route applies to the next message; nothing restarts.</p>
-            <div id="comm-routes" class="table-wrap"></div>
+            <h2>Where messages go</h2>
+            <p class="muted">Most jobs stay silent until something needs you. A change applies to the next message.</p>
+            <div id="comm-routes"></div>
           </section>
           <section id="panel-comm-replies" class="panel">
-            <h2>When you reply</h2>
-            <p class="muted">Only replies from the bot's own chat are acted on. <strong>Bell</strong> puts the reply in the dashboard's bell. <strong>Agent</strong> hands it — with the message you replied to — to a worker on the chosen model in the chosen folder and sends its answer back as a reply. Bots another program already listens on stay with that program.</p>
-            <div id="comm-replies" class="job-list"></div>
+            <h2>Replies</h2>
+            <div id="comm-replies"></div>
+          </section>
+          <section id="panel-comm-bots" class="panel">
+            <h2>Bots</h2>
+            <div id="comm-bots" class="table-wrap"></div>
+            <details class="inline-form" id="comm-add-box">
+              <summary>+ Add a bot</summary>
+              <ol class="comm-steps">
+                <li>In Telegram, write <code>/newbot</code> to <strong>@BotFather</strong> and pick a name. It answers with a token.</li>
+                <li>Open the new bot and press <strong>Start</strong> — a bot may only write to chats that opened it.</li>
+                <li>Paste the token here. team-up checks it with Telegram and keeps it in an owner-only file; this page only ever shows its last four characters.</li>
+              </ol>
+              <form id="comm-add" class="form-row" autocomplete="off">
+                <input id="comm-token" type="password" placeholder="123456789:AA…" size="46" required aria-label="Bot token">
+                <input id="comm-chat" type="text" inputmode="numeric" placeholder="Chat id (optional)" size="18" aria-label="Chat id, only if not your own">
+                <button type="submit" class="primary">Add bot</button>
+              </form>
+              <p class="muted">Leave the chat id empty: the bot then writes to you, like the others.</p>
+            </details>
           </section>
         </section>
 

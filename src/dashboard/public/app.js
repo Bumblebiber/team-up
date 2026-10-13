@@ -2656,7 +2656,7 @@ async function refreshTrending() {
   renderTrending();
 }
 
-// ── Communication: Telegram bots, routes per job, reply actions ──
+// ── Communication: where messages go, replies, bots ──
 let commData = null;
 
 function commNote(text, tone = "") {
@@ -2665,74 +2665,74 @@ function commNote(text, tone = "") {
   el.className = `status-line ${tone}`;
 }
 
-function commBotLabel(b) {
-  return `@${b.username}`;
+function commDestSelect(value, label) {
+  const d = commData;
+  return `<select class="comm-dest" data-comm-dest aria-label="Where ${esc(label)} goes">${
+    d.bots.map((b) => `<option value="${esc(b.id)}"${value === b.id ? " selected" : ""}>📱 Telegram · @${esc(b.username)}</option>`).join("")
+  }<option value="bell"${value === "bell" ? " selected" : ""}>🔔 Dashboard bell only</option></select>`;
 }
 
 function renderCommunication() {
   const d = commData;
   if (!d) return;
-  $("#comm-bots").innerHTML = d.bots.length
-    ? `<table><thead><tr><th>Bot</th><th>Token</th><th>Default</th><th>Replies</th><th></th></tr></thead><tbody>${
-      d.bots.map((b) => `<tr data-bot="${esc(b.id)}">
-        <td>${esc(commBotLabel(b))}<div class="muted mono">${esc(b.env)}</div></td>
-        <td class="mono">${b.missing ? '<span class="tag err">env file missing</span>' : esc(b.tokenTail || "—")}</td>
-        <td><input type="radio" name="comm-default" data-comm-default${b.isDefault ? " checked" : ""} aria-label="Default bot"></td>
-        <td>${b.owner ? `<span class="muted">${esc(b.owner)}</span>` : esc({ off: "off", bell: "bell", run: "agent" }[b.reply.action] || b.reply.action)}</td>
-        <td class="row-actions"><button type="button" data-comm-test>Test</button>
-          <button type="button" data-comm-remove${b.isDefault ? " disabled title=\"Make another bot the default first\"" : ""}>Remove</button></td>
-      </tr>`).join("")}</tbody></table>`
-    : '<div class="empty">No bots yet. Add one with its token from @BotFather.</div>';
+  const groups = ["team-up", "TIM", "Your jobs"];
+  const table = (rows) => `<table class="comm-table"><thead><tr><th>Job — what it sends</th><th class="comm-dest-col">Goes to</th></tr></thead><tbody>${
+    rows.map((s) => `<tr data-sender="${esc(s.key)}">
+      <td>${esc(s.title)}${!s.scheduled ? ' <span class="tag off">not scheduled</span>' : s.enabled ? "" : ' <span class="tag off">switched off</span>'}
+        <div class="muted">${esc(s.notifies)}</div></td>
+      <td>${commDestSelect(s.dest ?? d.default, s.title)}</td></tr>`).join("")}</tbody></table>`;
+  $("#comm-routes").innerHTML = groups.map((g) => {
+    const rows = d.senders.filter((s) => s.group === g);
+    return rows.length ? `<h3 class="comm-group">${esc(g)}</h3>${table(rows)}` : "";
+  }).join("") + `<h3 class="comm-group">Everything else</h3>
+    <table class="comm-table"><tbody><tr data-sender="*">
+      <td>Anything not listed above<div class="muted">Any other script that calls <code>send-cron-telegram</code>, and new jobs until you choose for them.</div></td>
+      <td class="comm-dest-col">${commDestSelect(d.default, "everything else")}</td></tr></tbody></table>`;
 
-  const def = d.bots.find((b) => b.isDefault);
-  const options = (sel) => `<option value=""${sel ? "" : " selected"}>Default${def ? ` (${esc(commBotLabel(def))})` : ""}</option>${
-    d.bots.map((b) => `<option value="${esc(b.id)}"${sel === b.id ? " selected" : ""}>${esc(commBotLabel(b))}</option>`).join("")}`;
-  $("#comm-routes").innerHTML = d.senders.length
-    ? `<table><thead><tr><th>Job</th><th>Sends through</th></tr></thead><tbody>${
-      d.senders.map((s) => `<tr data-sender="${esc(s.key)}">
-        <td>${esc(s.title)}${s.enabled ? "" : ' <span class="tag off">off</span>'}<div class="muted mono">${esc(s.script || `custom job ${s.key}`)}</div></td>
-        <td><select data-comm-route aria-label="Bot for ${esc(s.title)}">${options(s.bot)}</select></td>
-      </tr>`).join("")}</tbody></table>`
-    : '<div class="empty">No scheduled job sends Telegram messages.</div>';
-
-  $("#comm-replies").innerHTML = d.bots.map((b) => {
-    const r = b.reply || { action: "off" };
-    const poll = b.poll ? (b.poll.ok ? '<span class="tag ok">listening</span>' : `<span class="tag err" title="${esc(b.poll.error || "")}">poll failed</span>`) : "";
-    if (b.owner) {
-      return `<article class="job is-off"><div class="job-head"><h3>${esc(commBotLabel(b))}</h3></div>
-        <p class="muted">Replies are handled by ${esc(b.owner)}. Telegram gives each reply to one listener only, so team-up stays out.</p></article>`;
-    }
-    const models = (r.model && !d.modelOptions.includes(r.model) ? [r.model] : []).concat(d.modelOptions);
-    const model = r.model || d.modelOptions.find((m) => m === "claude:claude-sonnet") || d.modelOptions.find((m) => m.startsWith("claude:")) || models[0];
-    const sendOnly = b.isDefault && b.imported
-      ? '<p class="muted">This bot has been send-only so far (rule: nobody calls getUpdates on it). Switching replies on lifts that rule.</p>' : "";
-    return `<article class="job" data-reply="${esc(b.id)}">
-      <div class="job-head"><h3>${esc(commBotLabel(b))}</h3>${poll}</div>
-      ${sendOnly}
-      <div class="knobs">
-        <label for="cr-${esc(b.id)}">On a reply</label>
-        <select id="cr-${esc(b.id)}" data-reply-action>
-          ${[["off", "Nothing (bot stays send-only)"], ["bell", "Bell in this dashboard"], ["run", "Agent: act on it and answer"]]
-            .map(([v, t]) => `<option value="${v}"${r.action === v ? " selected" : ""}>${t}</option>`).join("")}
-        </select>
-        <label class="run-only">Model</label>
-        <select class="run-only" data-reply-model>${models.map((m) => `<option value="${esc(m)}"${m === model ? " selected" : ""}>${esc(m)}</option>`).join("")}</select>
-        <label class="run-only">Working folder</label>
-        <input class="run-only mono" type="text" data-reply-cwd value="${esc(r.cwd || "~/projects/team-up")}" size="40">
-        <label class="run-only">Extra instructions</label>
-        <textarea class="run-only" data-reply-instructions rows="3" placeholder="Optional, e.g. “You may cancel stuck runs with team-up runs cancel.”">${esc(r.instructions || "")}</textarea>
-        <span></span><span><button type="button" class="primary" data-reply-save>Save</button></span>
-      </div>
-    </article>`;
+  // Replies: which bots listen, and how a new session starts.
+  const listening = d.bots.filter((b) => b.listen);
+  const usedBots = new Set(d.senders.map((s) => s.dest ?? d.default).concat(d.default));
+  const deaf = d.bots.filter((b) => usedBots.has(b.id) && !b.listen && !b.owner);
+  const notice = !listening.length
+    ? `<div class="comm-notice"><strong>No bot listens yet, so replying does nothing.</strong> Switch on listening for the bot your messages come from${
+        deaf.some((b) => b.imported) ? ` — for @${esc(deaf.find((b) => b.imported).username)} that ends its old send-only rule (it was kept so that no second program would compete for its replies; team-up is the only reader here). Or add a bot of its own for this.` : "."}</div>`
+    : deaf.length ? `<div class="comm-notice">Messages also arrive through ${deaf.map((b) => `@${esc(b.username)}`).join(", ")}, which do${deaf.length === 1 ? "es" : ""} not listen: replies there do nothing.</div>` : "";
+  const botRows = d.bots.map((b) => {
+    const poll = b.poll ? (b.poll.ok ? '<span class="tag ok">listening</span>' : `<span class="tag err" title="${esc(b.poll.error || "")}">cannot read replies: ${esc(b.poll.error || "")}</span>`) : "";
+    const ctl = b.owner
+      ? `<span class="muted">Replies are read by ${esc(b.owner)} — Telegram gives each reply to one reader only.</span>`
+      : `<label class="switch"><input type="checkbox" data-comm-listen${b.listen ? " checked" : ""}> Listen for replies</label>${poll}`;
+    return `<div class="comm-bot-row" data-bot="${esc(b.id)}"><span class="name">@${esc(b.username)}</span>${ctl}</div>`;
   }).join("");
-  $("#comm-replies").querySelectorAll("[data-reply]").forEach(toggleRunFields);
+  const r = d.replies;
+  const models = (d.modelOptions.includes(r.model) ? [] : [r.model]).concat(d.modelOptions);
+  $("#comm-replies").innerHTML = `${notice}${botRows}
+    <div class="comm-new job">
+      <h3>New sessions</h3>
+      <p class="muted">Used when you reply to a script's report, or write to a bot without replying to a message. A reply to a message with a 🧵 claude session always continues that session, in its own folder and with its own model.</p>
+      <div class="knobs">
+        <label for="comm-r-model">Model</label>
+        <select id="comm-r-model">${models.map((m) => `<option value="${esc(m)}"${m === r.model ? " selected" : ""}>${esc(m)}</option>`).join("")}</select>
+        <label for="comm-r-cwd">Folder</label>
+        <input id="comm-r-cwd" class="mono" type="text" value="${esc(r.cwd)}" size="40">
+        <label for="comm-r-instr">Extra instructions</label>
+        <textarea id="comm-r-instr" rows="3" placeholder="Optional, e.g. “You may cancel stuck runs with team-up runs cancel.”">${esc(r.instructions || "")}</textarea>
+        <span></span><span><button type="button" class="primary" id="comm-r-save">Save</button></span>
+      </div>
+    </div>`;
+
+  $("#comm-bots").innerHTML = d.bots.length
+    ? `<table><thead><tr><th>Bot</th><th>Token</th><th>Carries</th><th></th></tr></thead><tbody>${
+      d.bots.map((b) => `<tr data-bot="${esc(b.id)}">
+        <td>@${esc(b.username)}<div class="muted mono">${esc(b.env)}</div></td>
+        <td class="mono">${b.missing ? '<span class="tag err">token file missing</span>' : esc(b.tokenTail || "—")}</td>
+        <td>${b.uses ? `${b.uses} ${b.uses === 1 ? "destination" : "destinations"}` : '<span class="muted">nothing</span>'}</td>
+        <td class="row-actions"><button type="button" data-comm-test>Send test</button>
+          <button type="button" data-comm-remove${b.uses ? ' disabled title="Send its jobs elsewhere first"' : ""}>Remove</button></td>
+      </tr>`).join("")}</tbody></table>`
+    : '<div class="empty">No bots yet — add one below.</div>';
   const broken = d.bots.filter((b) => b.missing || (b.poll && !b.poll.ok)).length;
   updateNavBadge("badge-communication", broken ? String(broken) : "", "red", broken > 0, broken ? `${broken} bot(s) need attention` : "");
-}
-
-function toggleRunFields(card) {
-  const run = card.querySelector("[data-reply-action]").value === "run";
-  card.querySelectorAll(".run-only").forEach((el) => el.classList.toggle("hidden", !run));
 }
 
 async function refreshCommunication() {
@@ -2754,14 +2754,35 @@ async function commWrite(url, body, done) {
   }
 }
 
+$("#comm-routes").addEventListener("change", async (e) => {
+  if (!e.target.matches("[data-comm-dest]")) return;
+  const sender = e.target.closest("[data-sender]").dataset.sender;
+  const label = e.target.selectedOptions[0]?.textContent || e.target.value;
+  await commWrite("/api/communication/routes", { sender, dest: e.target.value }, `Saved — ${sender === "*" ? "everything else" : sender} → ${label}`);
+});
+
+$("#comm-replies").addEventListener("change", async (e) => {
+  if (!e.target.matches("[data-comm-listen]")) return;
+  const id = e.target.closest("[data-bot]").dataset.bot;
+  const on = e.target.checked;
+  await commWrite(`/api/communication/bots/${id}/listen`, { listen: on }, on ? "Listening — replies to this bot now continue their session" : "Stopped listening");
+});
+
+$("#comm-replies").addEventListener("click", async (e) => {
+  if (e.target.id !== "comm-r-save") return;
+  await commWrite("/api/communication/replies", {
+    model: $("#comm-r-model").value, cwd: $("#comm-r-cwd").value.trim(), instructions: $("#comm-r-instr").value,
+  }, "New-session settings saved");
+});
+
 $("#comm-add").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const token = $("#comm-token").value.trim();
-  const chat = $("#comm-chat").value.trim();
   commNote("Checking the token with Telegram …");
-  if (await commWrite("/api/communication/bots", { token, chat_id: chat || undefined }, "Bot added")) {
+  const chat = $("#comm-chat").value.trim();
+  if (await commWrite("/api/communication/bots", { token: $("#comm-token").value.trim(), chat_id: chat || undefined }, "Bot added — send it a test, then route jobs to it above")) {
     $("#comm-token").value = "";
     $("#comm-chat").value = "";
+    $("#comm-add-box").open = false;
   }
 });
 
@@ -2770,37 +2791,9 @@ $("#comm-bots").addEventListener("click", async (e) => {
   if (!id) return;
   if (e.target.matches("[data-comm-test]")) {
     await commWrite(`/api/communication/bots/${id}/test`, {}, "Test message sent — check Telegram");
-  } else if (e.target.matches("[data-comm-remove]") && confirm(`Remove this bot from the list?`)) {
+  } else if (e.target.matches("[data-comm-remove]") && confirm("Remove this bot from the list?")) {
     await commWrite(`/api/communication/bots/${id}/remove`, {}, "Bot removed");
   }
-});
-
-$("#comm-bots").addEventListener("change", async (e) => {
-  if (!e.target.matches("[data-comm-default]")) return;
-  const id = e.target.closest("[data-bot]").dataset.bot;
-  await commWrite(`/api/communication/bots/${id}/default`, {}, "Default bot changed");
-});
-
-$("#comm-routes").addEventListener("change", async (e) => {
-  if (!e.target.matches("[data-comm-route]")) return;
-  const sender = e.target.closest("[data-sender]").dataset.sender;
-  await commWrite("/api/communication/routes", { sender, bot: e.target.value || null }, `${sender} routed`);
-});
-
-$("#comm-replies").addEventListener("change", (e) => {
-  if (e.target.matches("[data-reply-action]")) toggleRunFields(e.target.closest("[data-reply]"));
-});
-
-$("#comm-replies").addEventListener("click", async (e) => {
-  if (!e.target.matches("[data-reply-save]")) return;
-  const card = e.target.closest("[data-reply]");
-  const body = {
-    action: card.querySelector("[data-reply-action]").value,
-    model: card.querySelector("[data-reply-model]").value,
-    cwd: card.querySelector("[data-reply-cwd]").value.trim(),
-    instructions: card.querySelector("[data-reply-instructions]").value,
-  };
-  await commWrite(`/api/communication/bots/${card.dataset.reply}/reply`, body, "Reply action saved");
 });
 
 function renderTrending() {
