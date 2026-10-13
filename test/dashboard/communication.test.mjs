@@ -67,7 +67,11 @@ test("replies: owned bots stay with their owner, agent runs need a known model a
   await assert.rejects(setReply("bot2", { action: "bell" }, opts), /handled by someone else/);
   await assert.rejects(setReply("bot1", { action: "run", model: "x:y", cwd: dir }, opts), /model/);
   await assert.rejects(setReply("bot1", { action: "run", model: "claude:claude-sonnet", cwd: "/no/such" }, opts), /working directory/);
+  const offset = path.join(env.TEAM_UP_HOME, "telegram", "offsets", "bot1");
+  fs.mkdirSync(path.dirname(offset), { recursive: true });
+  fs.writeFileSync(offset, "7");
   await setReply("bot1", { action: "run", model: "claude:claude-sonnet", cwd: dir }, opts);
+  assert.equal(fs.existsSync(offset), false, "a changed action drops the offset: no backlog replay");
   const cfg = await loadComm({ env });
   assert.deepEqual(cfg.bots[0].reply, { action: "run", model: "claude:claude-sonnet", cwd: dir, instructions: "" });
 });

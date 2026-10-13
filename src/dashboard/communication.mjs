@@ -216,6 +216,9 @@ export async function setReply(id, input = {}, { env = process.env, fetchFn = fe
     reply.cwd = cwd;
     reply.instructions = String(input.instructions || "").slice(0, 4000);
   }
+  // A fresh offset makes the poller skip what queued up while it was not
+  // listening, so switching replies back on never acts on stale messages.
+  if (action !== (bot.reply?.action || "off")) fs.rmSync(path.join(botDir(env), "offsets", id), { force: true });
   bot.reply = reply;
   save(cfg, env);
   return {};

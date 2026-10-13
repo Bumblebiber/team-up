@@ -133,7 +133,9 @@ def handle(job_file):
     out = proc.stdout.strip()
     if proc.returncode != 0:
         out = f"❌ fehlgeschlagen (exit {proc.returncode})\n\n{out or proc.stderr.strip()[-1500:]}"
-    send(env["TELEGRAM_BOT_TOKEN"], env.get("TELEGRAM_CHAT_ID"), out, job["message_id"])
+    sent = send(env["TELEGRAM_BOT_TOKEN"], env.get("TELEGRAM_CHAT_ID"), out, job["message_id"])
+    if not sent.get("ok"):
+        print(f"send back failed: {sent.get('description')}\n{out}", file=sys.stderr)
     return proc.returncode
 
 
