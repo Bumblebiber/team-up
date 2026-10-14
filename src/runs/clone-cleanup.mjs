@@ -83,6 +83,11 @@ function unlandedCommits(dir) {
     .find((ref) => git(dir, ["rev-parse", "-q", "--verify", ref]) !== null);
   if (!main) return { error: "origin has no main or master" };
   const tips = ["HEAD", ...(git(dir, ["for-each-ref", "--format=%(refname)", "refs/heads"]) || "").split("\n").filter(Boolean)];
+  // A linked worktree's detached HEAD is in no ref, and once its dir is gone
+  // (prunable) cloneVerdict lets it through: its commits count here.
+  const worktrees = git(dir, ["worktree", "list", "--porcelain"]);
+  if (worktrees === null) return { error: "git worktree list failed" };
+  for (const m of worktrees.matchAll(/^HEAD ([0-9a-f]+)$/gm)) tips.push(m[1]);
   const tags = git(dir, ["for-each-ref", "--format=%(objectname) %(refname)", "refs/tags"]);
   if (tags === null) return { error: "git for-each-ref refs/tags failed" };
   if (tags.trim()) {

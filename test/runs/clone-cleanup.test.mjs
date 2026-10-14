@@ -200,6 +200,17 @@ test("a linked worktree refuses until it is gone", () => {
   } finally { t.done(); }
 });
 
+test("a commit on a deleted worktree's detached HEAD keeps the clone", () => {
+  const t = setup();
+  try {
+    const wt = path.join(t.clone, ".worktrees", "d");
+    git(t.clone, "worktree", "add", "-q", "--detach", wt);
+    commit(wt, "only-here.txt");
+    fs.rmSync(wt, { recursive: true });
+    assert.match(cloneVerdict(t.clone, { root: t.root }).reason, /not on origin main/);
+  } finally { t.done(); }
+});
+
 test("ignored work output is kept; only regenerable ignored paths go", () => {
   const t = setup();
   try {
