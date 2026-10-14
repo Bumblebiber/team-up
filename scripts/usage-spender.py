@@ -229,11 +229,15 @@ def task_cost(roster, cli):
     return TASK_COST / w if w else float("inf")
 
 
+def spend_clis(roster):
+    return (roster.get("usage_spender") or {}).get("subscriptions", SPEND_DEFAULT)
+
+
 def decide(usage, roster, now):
     """Pure. -> ({window: verdict}, [(window, cli, gap, cost)] most tasks' worth of gap first)."""
     windows = usage.get("windows", {})
     verdicts, wanted = {}, []
-    spend = (roster.get("usage_spender") or {}).get("subscriptions", SPEND_DEFAULT)
+    spend = spend_clis(roster)
     for key, (cli, burst, cycle) in WINDOWS.items():
         if cli not in spend:
             verdicts[key] = "off (not in usage_spender.subscriptions)"
@@ -280,7 +284,7 @@ def sh(*cmd, cwd=None, timeout=120):
     return r
 
 
-ERRORS = []  # gh / tim failures this tick, written into the tick JSON so a broken cron env shows
+ERRORS = []  # gh / tim / resume failures this tick, written into the tick JSON so a broken cron env shows
 
 
 def ghjson(*args):
@@ -579,16 +583,24 @@ def triage_runs(ledger, now, dry):
         if e.get("status") in TERMINAL and e.get("collected"):
             continue
         if e.get("parked"):
-            # The dashboard's answer sets the run to watching with no worker; something may later mark
-            # it failed. The answer counts either way, unless Benni cancelled the run.
-            st = run_state(e["run_id"]).get("status")
-            if st != "cancelled" and answer_of(e["run_id"]):
-                resumable.append(e)
-                continue
-            if st in WAITING:
-                continue  # still waiting for Benni; blocks nothing
-            e.pop("parked")  # cancelled, or left waiting some other way: the usual path from here
-        elif not dry and e.get("status") not in TERMINAL:
+            st = run_state(e["run_id"])
+            tmux = (st.get("worker") or {}).get("tmux")
+            if not dry and tmux:  # boot or `runs resume` respawned it: the spender resumes, one worker only
+                sh("tmux", "kill-session", "-t", f"={tmux}")
+            try:  # read after the kill: a worker closes out in the mailbox, STATE follows on a reconcile
+                mailbox = (RUNS / e["run_id"] / "mailbox" / "STATUS").read_text().strip()
+            except OSError:
+                mailbox = ""
+            # The dashboard's answer sets the run to watching with no worker. A finished run is never
+            # resumed: resume() cancels the old run, which would overwrite its result.
+            if mailbox not in TERMINAL and st.get("status") in WAITING | {"watching"}:
+                if answer_of(e["run_id"]):
+                    resumable.append(e)
+                    continue
+                if st.get("status") in WAITING:
+                    continue  # still waiting for Benni; blocks nothing
+            e.pop("parked")  # finished, cancelled, or left waiting some other way: the usual path from here
+        if not dry and e.get("status") not in TERMINAL:
             teamup("runs", "wait", e["run_id"], "--ceiling-sec", "1", timeout=1800)  # reconcile + verify
         st = run_state(e["run_id"])
         e["status"], e["collected"] = st.get("status", "failed"), bool(st.get("collected"))
@@ -596,7 +608,7 @@ def triage_runs(ledger, now, dry):
             # Its worker would hold the one admission slot all night: stop it, keep the question.
             tmux = (st.get("worker") or {}).get("tmux")
             if tmux:
-                sh("tmux", "kill-session", "-t", tmux)
+                sh("tmux", "kill-session", "-t", f"={tmux}")
             e["parked"] = now.isoformat()
             continue
         if not dry and e["status"] not in TERMINAL and datetime.fromisoformat(e["at"]) < now - timedelta(hours=MAX_RUN_H):
@@ -633,6 +645,28 @@ def resume(e, day_dir):
     return a
 
 
+def resume_answered(resumable, roster, day_dir, ledger, now, dry):
+    """Resume answered parked runs in order, curve or not -> (tick action or None, quota-blocked clis).
+    A row the spender may not run now (cli switched off, implement off) stays parked for later."""
+    spend, blocked = spend_clis(roster), set()
+    for e in resumable:
+        if e.get("cli") not in spend or e.get("cli") in blocked or e.get("kind") == "implement" and not IMPLEMENT:
+            continue
+        if dry:
+            return {"resume": e["run_id"], "key": e["key"]}, blocked
+        a = resume(e, day_dir)
+        if a.get("spawned"):
+            ledger.append({k: a[k] for k in LEDGER_KEYS if a.get(k)}
+                          | {"at": now.isoformat(), "status": "starting", "resumed_from": e["run_id"]})
+            return a, blocked
+        if a.get("rc") == 3:  # machine full: new work would be refused too
+            return a, blocked
+        if a.get("rc") == 2:  # its model is quota-blocked: stays parked, and that cli gets no new work
+            blocked.add(e["cli"])
+        ERRORS.append(f"resume of {e['run_id']}: {a.get('error')}")
+    return None, blocked
+
+
 def host_alive(host):
     return sh("tmux", "has-session", "-t", host).returncode == 0
 
@@ -640,7 +674,8 @@ def host_alive(host):
 def host_prompt(runs, verdicts, date, host):
     def line(e):
         extra = [e.get("ref"), e.get("branch") and f"branch {e['branch']} in {e['clone']}",
-                 e.get("pr") and f"draft PR {e['pr']}", e.get("publish")]
+                 e.get("pr") and f"draft PR {e['pr']}", e.get("publish"),
+                 e.get("resume_error") and f"Benni answered its question; resume failed: {e['resume_error']}"]
         return (f"- {e['run_id']} ({e['status']}): {e['kind']} on {e['repo']} ({e['model']}, role {e['role']})"
                 + "".join(f" — {x}" for x in extra if x))
     windows = "\n".join(f"- {k}: {v}" for k, v in verdicts.items())
@@ -738,35 +773,30 @@ def main(argv):
         tick["action"] = f"outside spawn window {SPAWN_FROM:02d}:00-{SPAWN_UNTIL:02d}:00"
     elif active:
         tick["action"] = "a usage-spender run is still active, one at a time"
-    elif resumable:  # Benni answered: finish what was started before new work, curve or not
-        e = resumable[0]
-        a = {"resume": e["run_id"], "key": e["key"]}
-        if not dry:
-            a = resume(e, day_dir)
-            if a.get("spawned"):
-                ledger.append({k: a[k] for k in LEDGER_KEYS if a.get(k)}
-                              | {"at": now.isoformat(), "status": "starting", "resumed_from": e["run_id"]})
-        tick["action"] = a
-    elif wanted:
-        repos, taken, a = local_repos(), recently_taken(ledger, now), None
-        for key, cli, gap, cost in wanted:
-            a = choose(candidates(repos, cli, now), roster, cli, taken)
-            if a:
-                a.update(window=key, gap=round(gap, 3))
-                break
-        if not a:
-            tick["action"] = "below curve, but no task left with a roster pin on that cli"
-        else:
-            if not dry:
-                spawn(a, day_dir)
-                if a.get("spawned"):
-                    ledger.append({k: a[k] for k in LEDGER_KEYS if a.get(k)} | {"at": now.isoformat(),
-                                                                               "status": "starting"})
-                elif a.get("rc") != 3:  # admission refusal = machine busy, retry next tick; else back off
-                    ledger.append({k: a[k] for k in LEDGER_KEYS if a.get(k) and k != "run_id"}
-                                  | {"at": now.isoformat(), "status": "failed", "collected": True,
-                                     "error": a["error"]})
-            tick["action"] = {k: v for k, v in a.items() if k != "body"}
+    else:  # Benni answered: finish what was started before new work
+        tick["action"], blocked = resume_answered(resumable, roster, day_dir, ledger, now, dry)
+        if not tick["action"] and wanted:
+            repos, taken, a = local_repos(), recently_taken(ledger, now), None
+            for key, cli, gap, cost in wanted:
+                if cli in blocked:  # a dispatch there is quota-blocked this tick
+                    continue
+                a = choose(candidates(repos, cli, now), roster, cli, taken)
+                if a:
+                    a.update(window=key, gap=round(gap, 3))
+                    break
+            if not a:
+                tick["action"] = "below curve, but no task left with a roster pin on that cli"
+            else:
+                if not dry:
+                    spawn(a, day_dir)
+                    if a.get("spawned"):
+                        ledger.append({k: a[k] for k in LEDGER_KEYS if a.get(k)} | {"at": now.isoformat(),
+                                                                                   "status": "starting"})
+                    elif a.get("rc") != 3:  # admission refusal = machine busy, retry next tick; else back off
+                        ledger.append({k: a[k] for k in LEDGER_KEYS if a.get(k) and k != "run_id"}
+                                      | {"at": now.isoformat(), "status": "failed", "collected": True,
+                                         "error": a["error"]})
+                tick["action"] = {k: v for k, v in a.items() if k != "body"}
 
     if ERRORS:
         tick["errors"] = ERRORS
@@ -853,6 +883,37 @@ def selftest():
     assert "- R1 (done): pr-review on /r1 (claude:claude-opus, role reviewer) — o/r#9" in hp, hp
     assert "kill-session -t usage-spender-host-20261012-0000" in hp and '"team_up_run": "<run_id>"' in hp, hp
     assert str(TELEGRAM) in hp and "- claude:week: x" in hp, hp
+    # a failed resume reaches intake with Benni's answer named, not as a plain cancelled run
+    hp = host_prompt([{"run_id": "R2", "status": "cancelled", "kind": "implement", "repo": "/r", "model": "codex:x",
+                       "role": "implementer", "resume_error": "runs create rc=1: boom"}], {}, "d", "h")
+    assert "(cancelled): implement on /r (codex:x, role implementer) — Benni answered its question; resume failed: " \
+           "runs create rc=1: boom" in hp, hp
+
+    # answered parked runs: in order; rc 2 blocks that cli and tries the next, rc 3 or a spawn ends the tick;
+    # a cli switched off or implement off keeps its row parked
+    rows = [{"run_id": r, "key": r, "cli": c, "kind": k} for r, c, k in [
+        ("Q", "claude", "pr-review"), ("Q2", "claude", "triage"), ("OFF", "agy", "triage"),
+        ("IMP", "codex", "implement"), ("FULL", "cursor", "triage"), ("OK", "codex", "triage")]]
+    outcome = {"Q": {"rc": 2, "error": "dispatch rc=2"}, "FULL": {"rc": 3, "error": "dispatch rc=3"},
+               "OK": {"spawned": True, "run_id": "N", "key": "OK", "cli": "codex"}}
+    tried, led = [], []
+    saved_resume, saved_impl, saved_err = globals()["resume"], IMPLEMENT, list(ERRORS)
+    globals()["resume"], IMPLEMENT = lambda e, d: tried.append(e["run_id"]) or dict(outcome[e["run_id"]]), False
+    try:
+        a, blocked = resume_answered(rows, {}, None, led, now, False)
+        assert a["rc"] == 3 and tried == ["Q", "FULL"] and blocked == {"claude"}, (a, tried, blocked)
+        assert led == [] and "resume of Q: dispatch rc=2" in ERRORS, (led, ERRORS)
+        tried[:] = []
+        a, blocked = resume_answered([r for r in rows if r["run_id"] != "FULL"], {}, None, led, now, False)
+        assert a["run_id"] == "N" and tried == ["Q", "OK"], (a, tried)
+        assert led[0]["resumed_from"] == "OK" and led[0]["status"] == "starting", led
+        tried[:] = []
+        assert resume_answered(rows[:4], {}, None, led, now, False) == (None, {"claude"}) and tried == ["Q"]
+        a, _ = resume_answered(rows, {"usage_spender": {"subscriptions": ["codex"]}}, None, led, now, True)
+        assert a == {"resume": "OK", "key": "OK"}, a  # dry: the first row a real tick would try
+    finally:
+        globals()["resume"], IMPLEMENT = saved_resume, saved_impl
+        ERRORS[:] = saved_err
 
     # render: a TIM task or issue carries "body" itself, and it may be None
     issue = {"key": "k", "repo": "/r", "gh": "o/r", "ref": "o/r issue #1", "url": "u", "title": "T", "body": "B"}
@@ -914,29 +975,38 @@ def selftest():
     with tempfile.TemporaryDirectory() as d:
         saved_runs, RUNS = RUNS, Path(d)
 
-        def mk(rid, status, files=()):
+        def mk(rid, status, files=(), **st):
             (RUNS / rid / "mailbox").mkdir(parents=True)
-            (RUNS / rid / "STATE.json").write_text(json.dumps({"status": status}))
+            (RUNS / rid / "STATE.json").write_text(json.dumps({"status": status, **st}))
             for name in files:
                 (RUNS / rid / "mailbox" / name).write_text(name)
                 time.sleep(0.01)
         mk("P", "waiting_human", ["QUESTIONS.md"])
-        mk("A", "watching", ["QUESTIONS.md", "ANSWER.md"])
+        mk("A", "watching", ["QUESTIONS.md", "ANSWER.md"], worker={"tmux": "tA"})  # boot respawned its worker
         mk("C", "cancelled", ["QUESTIONS.md"])
+        # answered, but its worker finished: STATE done, or only the mailbox says so yet -> intake, never resumed
+        mk("D", "done", ["QUESTIONS.md", "ANSWER.md"])
+        mk("W", "watching", ["QUESTIONS.md", "ANSWER.md"])
+        (RUNS / "W" / "mailbox" / "STATUS").write_text("done\n")
         old = (now - timedelta(hours=MAX_RUN_H + 1)).isoformat()
         led = [{"run_id": "P", "at": old, "status": "watching"},
                {"run_id": "A", "at": old, "status": "waiting_human", "parked": old},
-               {"run_id": "C", "at": old, "status": "waiting_human", "parked": old}]
-        calls = []
-        saved_tu = globals()["teamup"]
+               {"run_id": "C", "at": old, "status": "waiting_human", "parked": old},
+               {"run_id": "D", "at": old, "status": "waiting_human", "parked": old},
+               {"run_id": "W", "at": old, "status": "waiting_human", "parked": old}]
+        calls, shells = [], []
+        saved_tu, saved_sh = globals()["teamup"], globals()["sh"]
         globals()["teamup"] = lambda *a, **k: calls.append(a)
+        globals()["sh"] = lambda *a, **k: shells.append(a)
         try:
             act, intake, res = triage_runs(led, now, False)
         finally:
-            globals()["teamup"], RUNS = saved_tu, saved_runs
+            globals()["teamup"], globals()["sh"], RUNS = saved_tu, saved_sh, saved_runs
         assert act == [] and [e["run_id"] for e in res] == ["A"], (act, res)
+        assert ("tmux", "kill-session", "-t", "=tA") in shells, shells
         assert led[0].get("parked") and led[0]["status"] == "waiting_human" and ("cancel",) not in [c[:1] for c in calls]
-        assert [e["run_id"] for e in intake] == ["C"] and "parked" not in led[2], (intake, led)
+        assert [e["run_id"] for e in intake][:2] == ["C", "D"] and "parked" not in led[2], (intake, led)
+        assert led[3]["status"] == "done" and "parked" not in led[4] and ("runs", "wait", "W", "--ceiling-sec", "1") in calls
     print("selftest ok")
 
 

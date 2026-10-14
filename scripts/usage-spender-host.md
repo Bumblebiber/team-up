@@ -32,6 +32,9 @@ Record one TIM task per run with tim_write:
   each with the reason.
 - status:
   - "todo" if a verified finding needs a fix, or a draft PR needs Benni's review
+  - "todo", not "cancelled", if its line says "resume failed": Benni answered the run's question, but
+    the run that should continue with his answer (in its mailbox, ANSWER.md) never started, so nobody
+    acted on it. Quote the resume error in the content.
   - "done" otherwise
   - "cancelled" if the run failed or was cancelled
 
