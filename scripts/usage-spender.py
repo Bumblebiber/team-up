@@ -115,7 +115,8 @@ WINDOWS = {
     "agy:3p-weekly": ("agy", "agy:3p-5h", 7),
 }
 TERMINAL = {"done", "failed", "cancelled"}
-WAITING = {"waiting_human", "waiting_decision"}  # parked: worker stopped, question in the Action Center
+# Parked: worker stopped, question in the Action Center. waiting_decision is a capacity state, not Benni's.
+WAITING = {"waiting_human"}
 
 # fallback pool per cli, in priority order: (task, team-up role)
 FALLBACK = {
@@ -309,9 +310,11 @@ def local_repos():
         except (OSError, ValueError):
             pass
         gh = m.group(1) if m and m.group(1).split("/")[0] in OWNERS else None
-        if gh and (ghjson("repo", "view", gh, "--json", "isArchived") or {}).get("isArchived", True):
-            gh = None  # archived (or unreachable): no PRs, no push
-        out[p] = {"gh": gh, "tim": tim, "last": int(last) if last.isdigit() else 0}
+        # Archived: its tasks are history. Unreachable: unknown this tick. Neither may fall back
+        # to a triage in Benni's own checkout (archived o9k was first in line on 2026-10-14).
+        skip = bool(gh) and (ghjson("repo", "view", gh, "--json", "isArchived") or {}).get("isArchived", True)
+        out[p] = {"gh": None if skip else gh, "tim": tim, "skip": skip,
+                  "last": int(last) if last.isdigit() else 0}
     return out
 
 
@@ -342,7 +345,7 @@ def tim_read(ids):
 
 
 def tim_candidates(repos):
-    by_project = {r["tim"]: p for p, r in repos.items() if r["tim"]}
+    by_project = {r["tim"]: p for p, r in repos.items() if r["tim"] and not r.get("skip")}
     r = sh(*TIM, "open-work")
     try:
         items = json.loads(r.stdout)["items"]
@@ -424,14 +427,16 @@ def render(c):
         diff = sh("gh", "pr", "diff", num, "-R", c["ref"].rsplit("#", 1)[0]).stdout
         if len(diff) > DIFF_CAP:
             diff = diff[:DIFF_CAP] + "\n[diff truncated]"
-        text = TASKS["pr-review"].format(diff=diff, **c)
+        text = TASKS["pr-review"].format(**{**c, "diff": diff})
     elif c["kind"] in ("triage", "implement"):
         body = c.get("body") or "(no body available, work from the title)"
         if c["kind"] == "implement":
             note = (f"The parent runs `{c['verify']}` after you finish; it must pass." if c.get("verify")
                     else "This repo has no test command the parent can run; your branch stays local.")
-            return TASKS["implement"].format(body=body, verify_note=note, **c) + IMPLEMENT_RULES
-        text = TASKS["triage"].format(body=body, **c)
+            return TASKS["implement"].format(**{**c, "body": body, "verify_note": note}) + IMPLEMENT_RULES
+        # c already carries "body" (possibly None): passing it twice raised on every
+        # task and issue tick from 2026-10-09 to 10-14, so no night run ever started.
+        text = TASKS["triage"].format(**{**c, "body": body})
     else:
         text = TASKS[c["kind"]].format(repo=c["repo"], days=ACTIVE_DAYS)
     return text + RULES.format(repo=c["repo"])
@@ -495,9 +500,11 @@ def spawn(a, day_dir):
         if err:
             a.update(spawned=False, error=err)
             return
-    _spawn(a, day_dir)
-    if not a.get("spawned") and a.get("clone"):
-        shutil.rmtree(a["clone"], ignore_errors=True)
+    try:
+        _spawn(a, day_dir)
+    finally:  # also on a raise: a leftover clone fails its key with "already exists" for good
+        if not a.get("spawned") and a.get("clone"):
+            shutil.rmtree(a["clone"], ignore_errors=True)
 
 
 def _spawn(a, day_dir, text=None):
@@ -578,9 +585,9 @@ def triage_runs(ledger, now, dry):
             if st != "cancelled" and answer_of(e["run_id"]):
                 resumable.append(e)
                 continue
-            if st not in TERMINAL:
+            if st in WAITING:
                 continue  # still waiting for Benni; blocks nothing
-            e.pop("parked")
+            e.pop("parked")  # cancelled, or left waiting some other way: the usual path from here
         elif not dry and e.get("status") not in TERMINAL:
             teamup("runs", "wait", e["run_id"], "--ceiling-sec", "1", timeout=1800)  # reconcile + verify
         st = run_state(e["run_id"])
@@ -606,19 +613,23 @@ def triage_runs(ledger, now, dry):
 
 def resume(e, day_dir):
     """A fresh run for a parked run Benni answered: its prompt plus question and answer, same clone.
-    The old run is cancelled and collected. -> the new run's dict (spawned / rc / error set)."""
+    The old run is cancelled; collected once replaced, left for intake when the resume failed.
+    -> the new run's dict (spawned / rc / error set)."""
     q, ans = answer_of(e["run_id"])
     a = {k: e[k] for k in LEDGER_KEYS if e.get(k) and k != "run_id"}
     text = ((Path(e["prompt"]).read_text() if e.get("prompt") else render(a)) + f"\n\n## Continued after a question\n\nAn earlier run on this task "
             f"({e['run_id']}) stopped to ask:\n\n{q}\n\nBenni answered:\n\n{ans}\n\nContinue from there. "
             f"What is already in {a.get('clone') or a['repo']} (files, commits) is that run's work; build on it.\n")
     _spawn(a, day_dir, text)
-    if a.get("spawned") or a.get("rc") != 3:  # admission refusal: retry next tick
+    if a.get("spawned"):
         teamup("runs", "cancel", e["run_id"])
-        teamup("runs", "collect", e["run_id"], "--note", f"usage-spender: resumed as {a.get('run_id')}"
-               if a.get("spawned") else f"usage-spender: resume failed: {a.get('error')}")
+        teamup("runs", "collect", e["run_id"], "--note", f"usage-spender: resumed as {a['run_id']}")
         e.pop("parked")
-        e.update(status="cancelled", collected=True, resumed_as=a.get("run_id"), resume_error=a.get("error"))
+        e.update(status="cancelled", collected=True, resumed_as=a["run_id"])
+    elif a.get("rc") not in (2, 3):  # 2 quota block, 3 machine full: keep the answer, retry next tick
+        teamup("runs", "cancel", e["run_id"])
+        e.pop("parked")
+        e.update(status="cancelled", resume_error=a.get("error"))  # uncollected: the intake host reports it
     return a
 
 
@@ -842,6 +853,13 @@ def selftest():
     assert "- R1 (done): pr-review on /r1 (claude:claude-opus, role reviewer) — o/r#9" in hp, hp
     assert "kill-session -t usage-spender-host-20261012-0000" in hp and '"team_up_run": "<run_id>"' in hp, hp
     assert str(TELEGRAM) in hp and "- claude:week: x" in hp, hp
+
+    # render: a TIM task or issue carries "body" itself, and it may be None
+    issue = {"key": "k", "repo": "/r", "gh": "o/r", "ref": "o/r issue #1", "url": "u", "title": "T", "body": "B"}
+    assert "## T\n\nB" in render(dict(issue, kind="triage")), render(dict(issue, kind="triage"))
+    assert "(no body available" in render(dict(issue, body=None, kind="triage"))
+    impl = render(dict(issue, kind="implement", clone="/c", branch="b", verify=None))
+    assert "## T\n\nB" in impl and "no test command" in impl, impl
 
     # TIM task / issue: implement only with a GitHub remote to push to
     assert work({"key": "k", "gh": "o/r"})["kind"] == "implement" and work({"key": "k", "gh": None})["role"] == "planner"
