@@ -742,3 +742,27 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .comm-bot-row .name { min-width: 12rem; font-weight: 600; }
 .comm-new { margin-top: 1rem; }
 .comm-new textarea { width: 100%; max-width: 40rem; }
+
+/* Action Center */
+.ac-project { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 0.9rem; }
+.ac-project > summary { cursor: pointer; padding: 0.7rem 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-weight: 600; }
+.ac-project > summary .ac-counts { display: inline-flex; flex-wrap: wrap; gap: 0.3rem; font-weight: 400; }
+.ac-items { list-style: none; margin: 0; padding: 0; }
+.ac-item { display: grid; grid-template-columns: 6.5rem 1fr auto; gap: 0.3rem 0.8rem; align-items: start; padding: 0.65rem 1rem; border-top: 1px solid var(--border); }
+.ac-item .ac-title { overflow-wrap: anywhere; }
+.ac-item .ac-meta { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem; }
+.ac-item .ac-do { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
+.ac-item .ac-body { grid-column: 2 / -1; }
+.ac-question { margin: 0.2rem 0 0.5rem; padding: 0.5rem 0.75rem; border-left: 3px solid var(--red); background: var(--surface-2); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ac-answer { display: flex; gap: 0.5rem; align-items: flex-end; }
+.ac-answer textarea { flex: 1; min-height: 3.2rem; resize: vertical; font: inherit; }
+.ac-kind { justify-self: start; }
+.ac-kind.question { color: #fff; background: #dc2626; border-color: #dc2626; }
+.ac-kind.decision { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 50%, var(--border)); }
+.ac-kind.result { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.ac-empty { padding: 2rem; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
+@media (max-width: 640px) {
+  .ac-item { grid-template-columns: 1fr; }
+  .ac-item .ac-do { justify-content: flex-start; }
+  .ac-answer { flex-direction: column; align-items: stretch; }
+}

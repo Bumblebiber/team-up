@@ -66,8 +66,8 @@ test("spender knobs: subscriptions may be empty (spender off), hours are 0-23, m
   assert.deepEqual(applySettingsEdit(roster, { path: "usage_spender.subscriptions", value: [] }).usage_spender.subscriptions, []);
   assert.throws(() => applySettingsEdit(roster, { path: "usage_spender.subscriptions", value: ["cursor"] }), /unknown choice/,
     "only watched subscriptions can be spent");
-  assert.deepEqual(applySettingsEdit(roster, { path: "usage_spender.spawn_hours", value: [22, 23] }).usage_spender.spawn_hours, [22, 23]);
-  assert.throws(() => applySettingsEdit(roster, { path: "usage_spender.spawn_hours", value: [24] }), /unknown choice/);
+  assert.equal(applySettingsEdit(roster, { path: "usage_spender.spawn_from", value: 22 }).usage_spender.spawn_from, 22);
+  assert.throws(() => applySettingsEdit(roster, { path: "usage_spender.spawn_until", value: 24 }), /unknown choice|not one of/);
   const m = field(roster, "usage_spender.implement_model.claude");
   assert.equal(m.default, "claude:claude-sonnet");
   assert.deepEqual(m.options.map((o) => o.value), ["", "claude:claude-opus", "claude:claude-sonnet"]);

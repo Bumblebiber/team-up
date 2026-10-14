@@ -166,7 +166,8 @@ note in the tick JSON and the built-in value is kept.
 | Field | Default | Meaning |
 |-------|---------|---------|
 | `usage_spender.subscriptions` | `["claude","codex","cursor"]` | Whose spare quota may be spent; `[]` switches the spender off |
-| `usage_spender.spawn_hours` | `[23,0,1,2]` | Local hours in which a new task may start |
+| `usage_spender.spawn_from` | `23` | Local hour from which new tasks start |
+| `usage_spender.spawn_until` | `3` | Local hour from which no new task starts (exclusive; wraps past midnight; equal to `spawn_from` = all day). Running tasks finish |
 | `usage_spender.implement` | `true` | `false`: reviews and triage only, no implement runs |
 | `usage_spender.implement_model` | `{"claude":"claude:claude-sonnet"}` | Per CLI, the `cli:model` for implement runs; `""` = the implementer role chain |
 | `usage_spender.max_run_h` | `4` | A spender run still active after this long is cancelled |

@@ -9,6 +9,7 @@ import { telemetryConfig } from "../telemetry/config.mjs";
 import { findStaleRuns, findOrphanSessions, DEFAULT_THRESHOLD_MS } from "./stale.mjs";
 import { findUncollectedRuns, DEFAULT_UNCOLLECTED_DAYS } from "./collect.mjs";
 import { listTmuxSessions } from "./tmux.mjs";
+import { cleanupRunClone, sweepClones, tasksRoot } from "./clone-cleanup.mjs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -631,14 +632,20 @@ export function setWorkerMailboxStatus(runId, status, { reason = null } = {}) {
  */
 export const RUN_OUTCOMES = Object.freeze(["merged", "discarded"]);
 
-export function setOutcome(runId, outcome, { note = null, now = () => new Date().toISOString() } = {}) {
+export function setOutcome(runId, outcome, {
+  note = null, now = () => new Date().toISOString(), cleanup = cleanupRunClone,
+} = {}) {
   if (!RUN_OUTCOMES.includes(outcome)) {
     throw new Error(`unknown outcome ${outcome} (expected ${RUN_OUTCOMES.join("|")})`);
   }
-  return updateState(runId, (state) => {
-    state.outcome = { value: outcome, at: now(), ...(note ? { note } : {}) };
-    return state;
+  const state = updateState(runId, (latest) => {
+    latest.outcome = { value: outcome, at: now(), ...(note ? { note } : {}) };
+    return latest;
   });
+  // Every merge path (CLI, dashboard, run-merge-check --apply) lands here, so
+  // this is where the sandbox clone goes. Outside the state lock: it fetches.
+  cleanup?.(state, { states: listAllStates({ onCorrupt: () => {} }) });
+  return state;
 }
 
 /**
@@ -1472,6 +1479,25 @@ function cmdOutcome(args) {
   console.log(`${runId}: ${state.outcome.value}`);
 }
 
+/** Backlog of clones under the tasks root whose runs are merged/discarded. Dry run unless --apply. */
+function cmdSweepClones(args) {
+  const apply = args.includes("--apply");
+  const rows = sweepClones({ states: listAllStates({ onCorrupt: () => {} }), apply });
+  const gb = (b) => (b / 1e9).toFixed(2);
+  const sum = (kind) => rows.filter((r) => r.kind === kind).reduce((n, r) => n + r.bytes, 0);
+  const count = (kind) => rows.filter((r) => r.kind === kind).length;
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(rows, null, 2));
+    return;
+  }
+  for (const r of rows.filter((x) => x.kind !== "no_outcome")) {
+    console.log(`${r.kind.padEnd(12)} ${gb(r.bytes).padStart(6)} GB  ${r.dir}${r.reason ? `  (${r.reason})` : ""}`);
+  }
+  const done = apply ? "removed" : "would_remove";
+  console.log(`${tasksRoot()}: ${done} ${count(done)} clones, ${gb(sum(done))} GB · kept ${count("kept")} (${gb(sum("kept"))} GB)`
+    + ` · no outcome recorded ${count("no_outcome")} (${gb(sum("no_outcome"))} GB)${apply ? "" : " · dry run, --apply deletes"}`);
+}
+
 function cmdCollect(args) {
   const runId = args[0];
   if (!runId || runId.startsWith("--")) {
@@ -1773,6 +1799,7 @@ const HANDLERS = {
   answer: cmdAnswer,
   "set-status": cmdSetStatus,
   outcome: cmdOutcome,
+  "sweep-clones": cmdSweepClones,
   collect: cmdCollect,
   uncollected: cmdUncollected,
   wait: cmdWait,

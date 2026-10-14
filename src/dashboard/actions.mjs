@@ -12,7 +12,7 @@ import { usagePath, usageWritePath, teamUpHome } from "../paths.mjs";
 import { markLimited } from "../roster/chain.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import { resetCap } from "../admission/admission.mjs";
-import { cancelRun, loadState, markCollected, setOutcome, setStatus } from "../runs/runs.mjs";
+import { cancelRun, loadState, markCollected, setOutcome, setStatus, writeAnswer } from "../runs/runs.mjs";
 import { isValidRunId } from "./data.mjs";
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../bin/team-up.mjs");
@@ -58,6 +58,12 @@ const RUN_ACTIONS = {
     if (!why) throw new Error("a failed run needs a reason — the insights job counts failures by it");
     return setStatus(id, "failed", { reason: why });
   },
+  // The worker reads ANSWER.md; the run goes back to being watched.
+  answer: (id, reason) => {
+    const text = String(reason || "").trim();
+    if (!text) throw new Error("an answer needs text");
+    return writeAnswer(id, text.slice(0, 16_000), { source: "human (dashboard)" });
+  },
 };
 export const RUN_ACTION_NAMES = Object.keys(RUN_ACTIONS);
 
@@ -68,6 +74,9 @@ export function runAction(runId, action, { reason } = {}) {
   if (!state) throw new Error(`unknown run ${runId}`);
   const terminal = ["done", "failed", "cancelled"].includes(state.status);
   if ((action === "cancel" || action === "fail") && terminal) throw new Error(`run is already ${state.status}`);
+  if (action === "answer" && !["waiting_human", "waiting_decision"].includes(state.status)) {
+    throw new Error(`run is no longer waiting (${state.status})`);
+  }
   RUN_ACTIONS[action](runId, reason);
   return { status: loadState(runId)?.status ?? null };
 }
