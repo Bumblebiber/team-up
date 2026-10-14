@@ -376,6 +376,10 @@ export function applySettingsEdit(roster, { path: dotted, value, reset } = {}) {
     }
     return next;
   }
+  // A <select> posts its choice as a string; the spender's hour options are ints.
+  if (field.type === "enum" && typeof value === "string") {
+    value = field.options.find((o) => String(o.value) === value)?.value ?? value;
+  }
   const problem = checkValue(field, value);
   if (problem) throw new Error(`invalid value for ${dotted}: ${field.label} ${problem}`);
   let node = next;

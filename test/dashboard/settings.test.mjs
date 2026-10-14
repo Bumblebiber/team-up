@@ -76,6 +76,13 @@ test("spender knobs: subscriptions may be empty (spender off), hours are 0-23, m
   assert.throws(() => applySettingsEdit(roster, { path: "usage_spender.implement_model.claude", value: "codex:gpt-6-sol" }), /choices/);
 });
 
+test("an enum posted as a <select> string is stored as its option's own value", () => {
+  assert.equal(applySettingsEdit(roster, { path: "usage_spender.spawn_from", value: "22" }).usage_spender.spawn_from, 22);
+  assert.throws(() => applySettingsEdit(roster, { path: "usage_spender.spawn_until", value: "24" }), /not one of/);
+  assert.equal(applySettingsEdit(roster, { path: "usage_spender.implement_model.claude", value: "claude:claude-opus" })
+    .usage_spender.implement_model.claude, "claude:claude-opus");
+});
+
 test("reset removes the key, prunes emptied parents, and the code default applies again", () => {
   const set = applySettingsEdit(roster, { path: "usage_watcher.cli_intervals.codex.idle_min", value: 45 });
   assert.equal(watcherConfig(set).cli_intervals.codex.idle_min, 45);

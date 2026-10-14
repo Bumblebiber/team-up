@@ -2701,7 +2701,7 @@ function acItem(item) {
     body = `<div class="ac-body">
       ${item.detail ? `<div class="ac-question">${esc(item.detail)}</div>` : '<p class="muted">The run left no question text — open the run to see what it needs.</p>'}
       <form class="ac-answer" data-ac-answer="${esc(item.runId)}">
-        <textarea placeholder="Your answer… (Ctrl+Enter sends)" aria-label="Answer" required>${esc(acDrafts[item.runId] || "")}</textarea>
+        <textarea placeholder="Your answer… (Ctrl+Enter sends)" aria-label="Answer" required></textarea>
         <button type="submit" class="primary">Send answer</button>
       </form></div>`;
   }
@@ -2738,16 +2738,26 @@ function renderActions() {
 
   const key = filterHtml + html;
   // A re-render would wipe focus and a half-typed answer; skip it when nothing changed.
+  // Drafts stay out of the markup, so typing alone never changes `key`.
   if (key === acRendered) return;
-  const focused = document.activeElement?.closest?.("[data-ac-answer]")?.dataset.acAnswer;
+  const ta = document.activeElement?.matches?.("[data-ac-answer] textarea") ? document.activeElement : null;
+  const focused = ta && { runId: ta.form.dataset.acAnswer, start: ta.selectionStart, end: ta.selectionEnd, top: ta.scrollTop };
   acRendered = key;
   $("#ac-filter").innerHTML = filterHtml;
   $("#ac-list").innerHTML = html;
+  for (const form of $("#ac-list").querySelectorAll("[data-ac-answer]")) {
+    form.querySelector("textarea").value = acDrafts[form.dataset.acAnswer] || "";
+  }
   const urgent = c.question + c.decision;
   $("#ac-status").textContent = urgent
     ? `${urgent} item${urgent === 1 ? "" : "s"} blocked until you answer.`
     : "Nothing is blocked on you right now.";
-  if (focused) $(`[data-ac-answer="${CSS.escape(focused)}"] textarea`)?.focus();
+  const back = focused && $(`[data-ac-answer="${CSS.escape(focused.runId)}"] textarea`);
+  if (back) {
+    back.focus();
+    back.setSelectionRange(focused.start, focused.end);
+    back.scrollTop = focused.top;
+  }
 }
 
 $("#ac-filter").addEventListener("click", (e) => {

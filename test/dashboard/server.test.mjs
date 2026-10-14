@@ -10,6 +10,7 @@ import {
 } from "../../src/dashboard/server.mjs";
 import { createAdminGate } from "../../src/dashboard/admin.mjs";
 import { createRun, atomicWriteText } from "../../src/runs/runs.mjs";
+import { escalateRun } from "../../src/runs/observe.mjs";
 import { secretsPath } from "../../src/paths.mjs";
 
 function withHome(fn) {
@@ -833,4 +834,60 @@ test("claude sessions: the socket stays server-side, stop is audited, long text 
     const audit = fs.readFileSync(path.join(home, "dashboard-audit.log"), "utf8");
     assert.match(audit, /"action":"claude.stop","target":"42 chat","result":"ok"/);
     server.close();
+  }));
+
+// A run left waiting on a human, one QUESTIONS.md block per question, the way
+// escalateRun appends them.
+function waitingRun(...questions) {
+  const { runId } = createRun({
+    cwd: "/tmp", role: "planner", parent: { cli: "claude", attach: "manual" }, worker: { cli: "claude" }, prompt: "p",
+  });
+  for (const q of questions) escalateRun(runId, q);
+  return runId;
+}
+const acItem = (r, runId) => r.json.projects.flatMap((p) => p.items).find((i) => i.runId === runId);
+
+test("action center shows the whole newest question, its own --- rules included", () =>
+  withHome(async ({ token }) => {
+    const runId = waitingRun("Old, answered question?", "Which store?\n\n---\n\n1. Postgres\n2. SQLite");
+    const { server } = createDashboardServer({ token, exec: () => "" });
+    const port = await listen(server);
+    try {
+      const r = await req(port, "/api/action-center", { token });
+      assert.equal(acItem(r, runId).detail, "Which store?\n\n---\n\n1. Postgres\n2. SQLite");
+    } finally {
+      server.close();
+    }
+  }));
+
+test("an answered question leaves the action center at once, not after the memo expires", () =>
+  withHome(async ({ token }) => {
+    const runId = waitingRun("Which store?");
+    const { server } = createDashboardServer({ token, exec: () => "" });
+    const port = await listen(server);
+    try {
+      assert.ok(acItem(await req(port, "/api/action-center", { token }), runId));
+      const answer = await req(port, `/api/runs/${runId}/action`, {
+        method: "POST", token, csrf: true, body: { action: "answer", reason: "SQLite" },
+      });
+      assert.equal(answer.status, 200, answer.text);
+      assert.equal(acItem(await req(port, "/api/action-center", { token }), runId), undefined);
+    } finally {
+      server.close();
+    }
+  }));
+
+test("a bad collecting folder still lists waiting runs, under Other runs", () =>
+  withHome(async ({ token }) => {
+    const runId = waitingRun("Which store?");
+    // TIM answers, so the view gets as far as resolving the folder.
+    const { server } = createDashboardServer({ token, exec: () => JSON.stringify({ items: [], projects: [] }) });
+    const port = await listen(server);
+    try {
+      const r = await req(port, "/api/action-center?dir=not-absolute", { token });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.projects.find((p) => p.items.some((i) => i.runId === runId))?.title, "Other runs");
+    } finally {
+      server.close();
+    }
   }));

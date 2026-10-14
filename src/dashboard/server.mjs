@@ -193,6 +193,9 @@ function createMemo(ttlMs = 1000) {
     invalidate(key) {
       cache.delete(key);
     },
+    invalidatePrefix(prefix) {
+      for (const key of cache.keys()) if (key.startsWith(prefix)) cache.delete(key);
+    },
   };
 }
 
@@ -257,7 +260,8 @@ function heartbeatMtimes() {
 function latestQuestion(runId) {
   try {
     const raw = safeReadMailboxFile("QUESTIONS.md", runDir(runId), 16 * 1024);
-    const last = String(raw ?? "").split(/\n---\n/).pop();
+    // Only escalateRun's separator: a question's own markdown `---` stays in it.
+    const last = String(raw ?? "").split(/\n---\n\n(?=<!-- source:)/).pop();
     return last.replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, 2000) || null;
   } catch {
     return null;
@@ -1161,6 +1165,7 @@ export function createDashboardServer({
           memo.invalidate(`run:${decodeURIComponent(runActionMatch[1])}`);
           memo.invalidate("runs:true");
           memo.invalidate("runs:false");
+          memo.invalidatePrefix("action-center:");
         } else if (pathname === "/api/actions/mark-limited") {
           target = String(body.target || "");
           result = markLimitedAction(body, { roster: loadRoster(env), env, now: now() });
@@ -1385,14 +1390,19 @@ export function createDashboardServer({
     if (pathname === "/api/action-center") {
       try {
         const dir = url.searchParams.get("dir") || "";
-        const data = memo.get(`action-center:${dir}`, () => buildActionCenter({
-          timView: buildTimView(dir, {
-            exec,
-            work: timMemo.get("open-work", () => readOpenWork({ exec })),
-          }),
-          states: listAllStates(),
-          questionOf: (runId) => latestQuestion(runId),
-        }));
+        const data = memo.get(`action-center:${dir}`, () => {
+          let timView;
+          try {
+            timView = buildTimView(dir, {
+              exec,
+              work: timMemo.get("open-work", () => readOpenWork({ exec })),
+            });
+          } catch {
+            // A bad collecting-folder pref must not hide the runs: they go under "Other runs".
+            timView = { installed: false };
+          }
+          return buildActionCenter({ timView, states: listAllStates(), questionOf: (runId) => latestQuestion(runId) });
+        });
         jsonResponse(res, 200, sanitizeForDashboard(data));
       } catch (e) {
         jsonResponse(res, 400, { error: String(e.message || e) });
