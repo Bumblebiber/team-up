@@ -293,9 +293,11 @@ def local_repos():
         except (OSError, ValueError):
             pass
         gh = m.group(1) if m and m.group(1).split("/")[0] in OWNERS else None
-        if gh and (ghjson("repo", "view", gh, "--json", "isArchived") or {}).get("isArchived", True):
-            gh = None  # archived (or unreachable): no PRs, no push
-        out[p] = {"gh": gh, "tim": tim, "last": int(last) if last.isdigit() else 0}
+        # Archived: its tasks are history. Unreachable: unknown this tick. Neither may fall back
+        # to a triage in Benni's own checkout (archived o9k was first in line on 2026-10-14).
+        skip = bool(gh) and (ghjson("repo", "view", gh, "--json", "isArchived") or {}).get("isArchived", True)
+        out[p] = {"gh": None if skip else gh, "tim": tim, "skip": skip,
+                  "last": int(last) if last.isdigit() else 0}
     return out
 
 
@@ -326,7 +328,7 @@ def tim_read(ids):
 
 
 def tim_candidates(repos):
-    by_project = {r["tim"]: p for p, r in repos.items() if r["tim"]}
+    by_project = {r["tim"]: p for p, r in repos.items() if r["tim"] and not r.get("skip")}
     r = sh(*TIM, "open-work")
     try:
         items = json.loads(r.stdout)["items"]
@@ -481,9 +483,11 @@ def spawn(a, day_dir):
         if err:
             a.update(spawned=False, error=err)
             return
-    _spawn(a, day_dir)
-    if not a.get("spawned") and a.get("clone"):
-        shutil.rmtree(a["clone"], ignore_errors=True)
+    try:
+        _spawn(a, day_dir)
+    finally:  # also on a raise: a leftover clone fails its key with "already exists" for good
+        if not a.get("spawned") and a.get("clone"):
+            shutil.rmtree(a["clone"], ignore_errors=True)
 
 
 def _spawn(a, day_dir):
