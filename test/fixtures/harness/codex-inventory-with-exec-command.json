@@ -1,0 +1,9 @@
+{
+  "model": "gpt-5-codex",
+  "stream": true,
+  "tools": [
+    { "type": "function", "name": "exec_command", "function": { "name": "exec_command" } },
+    { "type": "function", "name": "write_stdin", "function": { "name": "write_stdin" } }
+  ],
+  "input": []
+}
