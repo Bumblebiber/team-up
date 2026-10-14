@@ -760,7 +760,6 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .ac-kind.question { color: #fff; background: #dc2626; border-color: #dc2626; }
 .ac-kind.decision { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 50%, var(--border)); }
 .ac-kind.result { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
-.ac-more > summary { cursor: pointer; padding: 0.55rem 1rem; border-top: 1px solid var(--border); color: var(--muted); }
 .ac-empty { padding: 2rem; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
 @media (max-width: 640px) {
   .ac-item { grid-template-columns: 1fr; }

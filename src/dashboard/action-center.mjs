@@ -1,6 +1,6 @@
-// The Action Center: everything that waits on Benni in one list — runs that
-// asked a question, runs and TIM entries that need a decision, results nobody
-// has read, and the open TIM backlog — grouped by project, most urgent first.
+// The Action Center: every run that waits on Benni — a question to answer, a
+// decision to make, a result nobody has read — grouped by project, most urgent
+// first. TIM entries (tasks, bugs, ideas, reviews) stay in the TIM panel.
 //
 // Pure: the server hands in the TIM view (buildTimView) and the run states.
 
@@ -8,11 +8,7 @@ import path from "node:path";
 import { buildRunRow } from "./data.mjs";
 
 /** Which group an item sits in; lower is shown first. */
-export const KIND_RANK = { question: 0, decision: 1, result: 2, task: 3, bug: 3, idea: 4 };
-
-// TIM mixes P0–P3, critical/high/medium/low and no priority at all.
-const PRIORITY_RANK = { P0: 0, CRITICAL: 0, P1: 1, HIGH: 1, P2: 2, MEDIUM: 2, P3: 3, LOW: 3 };
-export const priorityRank = (p) => PRIORITY_RANK[String(p ?? "").trim().toUpperCase()] ?? 4;
+export const KIND_RANK = { question: 0, decision: 1, result: 2 };
 
 const NO_PROJECT = { label: "-", title: "Other runs", dir: null };
 
@@ -28,7 +24,7 @@ function runProject(state, projects) {
 }
 
 /**
- * @param timView   buildTimView() result, or { installed: false }
+ * @param timView   buildTimView() result, or { installed: false } — only for run → project
  * @param states    every run STATE
  * @param questionOf runId → the question text a waiting run asked (or null)
  */
@@ -63,19 +59,6 @@ export function buildActionCenter({ timView, states, questionOf = () => null, no
     }
   }
 
-  for (const p of projects) {
-    for (const item of p.items) {
-      // Being worked on in a live session: nothing to do until it comes back.
-      if (item.sessions?.length) continue;
-      const kind = item.status === "review" ? "decision" : item.kind;
-      if (!(kind in KIND_RANK)) continue;
-      add(p, {
-        kind, id: item.id, timKind: item.kind, title: item.title, status: item.status,
-        priority: item.priority ?? null, prank: priorityRank(item.priority), prompt: item.prompt,
-      });
-    }
-  }
-
   const order = (a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || a.prank - b.prank;
   const result = [...groups.values()].map((g) => {
     g.items.sort(order);
@@ -86,7 +69,7 @@ export function buildActionCenter({ timView, states, questionOf = () => null, no
   result.sort((a, b) => order(a.top, b.top) || a.title.localeCompare(b.title));
   for (const g of result) delete g.top;
 
-  const counts = { question: 0, decision: 0, result: 0, task: 0, bug: 0, idea: 0 };
+  const counts = { question: 0, decision: 0, result: 0 };
   for (const g of result) for (const i of g.items) counts[i.kind] += 1;
   return { projects: result, counts };
 }

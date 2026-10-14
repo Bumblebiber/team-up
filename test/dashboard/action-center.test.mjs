@@ -1,16 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildActionCenter, priorityRank } from "../../src/dashboard/action-center.mjs";
+import { buildActionCenter } from "../../src/dashboard/action-center.mjs";
 
 const now = Date.parse("2026-10-13T12:00:00Z");
 const tim = (id, kind, status, priority, extra = {}) =>
   ({ id, kind, status, priority, title: id, sessions: [], prompt: "p", ...extra });
 
-test("priority: P-levels and words share one scale, none sorts last", () => {
-  assert.deepEqual(["P0", "high", "medium", "P3", null].map(priorityRank), [0, 1, 2, 3, 4]);
-});
-
-test("groups by project, questions first, projects ranked by their most urgent item", () => {
+test("groups by project, questions first, projects ranked by their most urgent item; TIM entries stay out", () => {
   const timView = {
     installed: true,
     projects: [
@@ -32,14 +28,14 @@ test("groups by project, questions first, projects ranked by their most urgent i
   ];
   const ac = buildActionCenter({ timView, states, questionOf: (id) => (id === "q1" ? "A or B?" : null), now });
 
-  assert.deepEqual(ac.projects.map((p) => p.title), ["Beta", "Alpha", "Other runs"]);
+  assert.deepEqual(ac.projects.map((p) => p.title), ["Beta", "Other runs", "Alpha"]);
   const beta = ac.projects[0];
-  assert.deepEqual(beta.items.map((i) => [i.kind, i.id]), [["question", "run:q1"], ["task", "b-task"]]);
+  assert.deepEqual(beta.items.map((i) => [i.kind, i.id]), [["question", "run:q1"]]);
   assert.equal(beta.items[0].detail, "A or B?");
   assert.equal(beta.items[0].role, "reviewer");
-  assert.deepEqual(ac.projects[1].items.map((i) => i.id),
-    ["a-review", "run:r1", "a-p0", "a-low", "a-idea"], "review is a decision; a live session drops out; old results expire");
-  assert.deepEqual(ac.counts, { question: 1, decision: 1, result: 2, task: 2, bug: 1, idea: 1 });
+  assert.deepEqual(ac.projects[2].items.map((i) => i.id),
+    ["run:r1"], "no TIM entry, review included; old results expire");
+  assert.deepEqual(ac.counts, { question: 1, decision: 0, result: 2 });
 });
 
 test("no TIM: runs still show up", () => {
