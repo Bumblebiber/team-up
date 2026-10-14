@@ -202,3 +202,46 @@ one line per enabled job running `scripts/cron-job.sh <name>`. Nothing outside
 that block is added or removed; every write re-reads the crontab, keeps a
 backup in `~/.team-up/backups/crontab/` and verifies the result. Output goes to
 `~/.team-up/logs/cron/<name>.log`; `notify = true` also sends it to Telegram.
+
+## Communication (Telegram)
+
+`~/.team-up/communication.json`, edited on the dashboard's **Communication**
+page:
+
+- `bots` — Telegram bots, each an env file (`TELEGRAM_BOT_TOKEN`,
+  `TELEGRAM_CHAT_ID`). The first load imports the host's bots: CronBot, plus
+  ReminderBot and the Claude telegram plugin's bot, which carry an `owner`
+  because another program reads their replies. A bot added in the dashboard is
+  checked with `getMe` and stored in `~/.team-up/telegram/<id>.env` (0600).
+  Views show `@username` and the token's last four characters only.
+  `listen: true` means replies to the bot are acted on.
+- `routes` — sender → bot id or `"bell"` (dashboard bell, no push); `default` is
+  where every other sender goes. The page lists team-up's built-in jobs that
+  send (`notifies` in `BUILTIN_JOBS`), TIM's watchdogs and your own jobs with
+  `notify = true`.
+- `replies` — `{model, cwd, instructions}` for a reply that starts a new
+  session (claude models only).
+
+`scripts/telegram.py` does the work (stdlib Python, no node on cron's PATH):
+
+- `send` — called by `~/.hermes/bin/send-cron-telegram` for every report. The
+  sender is `$TEAMUP_NOTIFY_JOB`, else the calling script's file name without
+  `.sh`/`.py`. It appends a footer: 📂 cwd · 🤖 CLI · model · 🧵 session, taken
+  from `$TEAMUP_NOTIFY_RUN`'s run (`STATE.json` + `mailbox/SESSION_ID`), else
+  `$CLAUDE_CODE_SESSION_ID`, else "script, no session". A routed bot that fails
+  falls back to the default; if nothing was sent, the shim sends through
+  CronBot as before. `ops-run.sh` writes its run id to `$OPS_RUN_ID_FILE`;
+  `cron-job.sh`, `insights-cron.sh` and `golden-task-run.sh` pass it on.
+- `serve` — `team-up-telegram-replies.service`. Every 3 s, `getUpdates`
+  (timeout 0) on each bot with `listen` and no `owner`; only messages from the
+  bot's own chat count, and a bot's first poll skips its backlog (switching
+  `listen` resets the offset). A reply to a message whose footer names a
+  claude session continues it: `claude -p --resume <id>` in that cwd, with the
+  model from the footer. A session whose process is still alive is not
+  touched, unless it is the idle terminal of a finished team-up run (then that
+  tmux is closed first). Everything else starts a new `claude -p` session from
+  `replies`. The answer comes back as a reply, footer included, so it can be
+  answered again. Work files live in `~/.team-up/telegram/`.
+
+The SessionStart hook writes a team-up worker's claude session id to
+`runs/<id>/mailbox/SESSION_ID` (first write wins).

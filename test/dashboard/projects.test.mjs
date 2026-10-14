@@ -347,3 +347,36 @@ test("dashboard policy trust refuses a project outside the collecting folder", (
   });
   assert.equal(res.ok, false);
 });
+
+test("createProject: tim new-project when TIM is installed, git init otherwise", async (t) => {
+  const { createProject } = await import("../../src/dashboard/projects.mjs");
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const calls = [];
+  const exec = (cmd, args) => {
+    calls.push([cmd, ...args]);
+    return cmd === "tim" ? '✓ Created project P0099 "gamma" at x\n' : "";
+  };
+
+  const withTim = createProject({ name: "gamma", projectsDir: root, exec, hasTim: () => true });
+  assert.equal(withTim.ok, true);
+  assert.equal(withTim.tim, "P0099");
+  assert.ok(fs.statSync(path.join(root, "gamma")).isDirectory());
+  assert.deepEqual(calls[0], ["tim", "new-project", "--path", path.join(root, "gamma"), "--name", "gamma"]);
+
+  const plain = createProject({ name: "delta", projectsDir: root, exec, hasTim: () => false });
+  assert.equal(plain.tim, null);
+  assert.deepEqual(calls[1], ["git", "init", "-q", path.join(root, "delta")]);
+
+  assert.equal(createProject({ name: "gamma", projectsDir: root, exec, hasTim: () => false }).status, 409);
+  for (const bad of ["", "../x", ".hidden", "-x", "a/b"]) {
+    assert.equal(createProject({ name: bad, projectsDir: root, exec, hasTim: () => false }).status, 400, bad);
+  }
+
+  const failing = createProject({
+    name: "eps", projectsDir: root, hasTim: () => true,
+    exec: () => { throw Object.assign(new Error("x"), { stderr: "db locked" }); },
+  });
+  assert.equal(failing.ok, true);
+  assert.match(failing.warning, /db locked/);
+});

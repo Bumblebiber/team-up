@@ -55,7 +55,8 @@ PROJECTS = HOME / "projects"
 HOST_CWD = Path(ENV.get("USAGE_SPENDER_HOST_CWD") or REPO)
 CRON_JOBS = TU_HOME / "cron-jobs.ini"  # [usage-spender-host] model = cli:model picks the host CLI
 HOST_DEFAULT = "claude:claude-opus"
-TELEGRAM = HOME / ".hermes/bin/send-cron-telegram"
+# The host runs this as a shell command; the prefix routes it like the spender (dashboard → Communication).
+TELEGRAM = f"TEAMUP_NOTIFY_JOB=usage-spender {HOME / '.hermes/bin/send-cron-telegram'}"
 LABEL = ENV.get("USAGE_SPENDER_LABEL") or "usage-spender"  # Telegram headline; a test run sets its own
 CLONES = TU_HOME / "spender" / "clones"
 # `tim` command as argv; TIM_CMD overrides until `tim read` ships on PATH.

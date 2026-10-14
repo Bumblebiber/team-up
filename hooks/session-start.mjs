@@ -5,7 +5,8 @@
 // It must never block or fail a session: every error is swallowed and logged.
 import fs from "node:fs";
 import path from "node:path";
-import { debugLogDir, sessionsDir } from "../src/paths.mjs";
+import { debugLogDir, runsPath, sessionsDir } from "../src/paths.mjs";
+import { RUN_ID_PATTERN } from "../src/runs/runs.mjs";
 import { CLI_PROCESS_NAMES, currentTmux, findCliProcess, writeSessionRecord } from "../src/runs/parent.mjs";
 import { takePendingWakeup } from "../src/runs/pending.mjs";
 
@@ -27,11 +28,29 @@ function readStdin() {
   }
 }
 
+/**
+ * A team-up worker names its session in its run's mailbox, so a Telegram
+ * footer can say which session wrote a result and a reply can continue it.
+ * First write wins: a claude started inside the worker must not take over.
+ */
+export function recordWorkerSession(sessionId, env = process.env) {
+  const runId = env.TEAMUP_RUN_ID;
+  if (!env.TEAMUP_WORKER || !RUN_ID_PATTERN.test(String(runId || ""))) return;
+  const mailbox = path.join(runsPath(env), runId, "mailbox");
+  if (!fs.existsSync(mailbox)) return;
+  try {
+    fs.writeFileSync(path.join(mailbox, "SESSION_ID"), `${sessionId}\n`, { flag: "wx" });
+  } catch (e) {
+    if (e.code !== "EEXIST") throw e;
+  }
+}
+
 export function runSessionStart({ input, env = process.env, ppid = process.ppid, procRoot = "/proc", exec } = {}) {
   const event = JSON.parse(input || "{}");
   if (!event.session_id) throw new Error("hook input has no session_id");
   // The Cursor CLI runs Claude Code hooks too (on by default). Its chat is not
   // a Claude session: record it as Cursor, only where its process is found.
+  recordWorkerSession(event.session_id, env);
   if (event.cursor_version || env.CURSOR_VERSION) {
     const cursor = findCliProcess(ppid, { procRoot, cli: "cursor" });
     if (!cursor || !CLI_PROCESS_NAMES.cursor.includes(cursor.comm)) return null;

@@ -91,7 +91,7 @@ test("editCrontab backs up before writing and leaves an unchanged crontab alone"
   assert.equal(none.state.text, `${BLOCK_START}\n@daily /r/cron-job.sh x\n${BLOCK_END}\n`);
 });
 
-test("built-in jobs: found by script, explained, switchable; Hermes jobs are read-only", () => {
+test("built-in jobs: found by script, explained, switchable", () => {
   const { state, exec } = fakeCron(LIVE);
   const view = buildAutomationView({ exec, now: new Date(2026, 9, 10, 13, 0) });
   const insights = view.builtin.find((j) => j.id === "insights");
@@ -111,7 +111,9 @@ test("built-in jobs: found by script, explained, switchable; Hermes jobs are rea
   assert.ok(state.text.includes("INSIGHTS_NO_MERGE=1 /home/u/projects/team-up/scripts/insights-cron.sh"));
   assert.throws(() => editBuiltin({ id: "stale-runs", knob: { key: "STALE_RUNS_HOURS", value: 0 } }, { exec }), /whole number/);
   assert.throws(() => editBuiltin({ id: "stale-runs", knob: { key: "PATH", value: 1 } }, { exec }), /no setting PATH/);
-  assert.throws(() => editBuiltin({ id: "golden-task", enabled: false }, { exec }), /Hermes/);
+  // Moved off the Hermes daemon (2026-10-13): a missing crontab line is "not installed", not editable.
+  assert.equal(view.builtin.find((j) => j.id === "golden-task").installed, false);
+  assert.throws(() => editBuiltin({ id: "golden-task", enabled: false }, { exec }), /no crontab line/);
 });
 
 test("custom job: saved to the ini and its prompt file, installed as one managed line", () => {

@@ -42,6 +42,7 @@
         <details class="nav-group" open>
           <summary>Automation</summary>
           <a href="#/automation" data-route="automation"><span class="nav-ico" aria-hidden="true">⏱</span>Scheduled jobs<span id="badge-automation" class="nav-badge hidden"></span></a>
+          <a href="#/communication" data-route="communication"><span class="nav-ico" aria-hidden="true">✉</span>Communication<span id="badge-communication" class="nav-badge hidden"></span></a>
         </details>
         <details class="nav-group" open>
           <summary>System</summary>
@@ -139,6 +140,8 @@
             <input type="text" id="projects-dir" placeholder="~/projects" autocomplete="off">
           </label>
           <select id="projects-cli" aria-label="CLI for new sessions"></select>
+          <input type="text" id="projects-new-name" placeholder="new-project" autocomplete="off" aria-label="New project name">
+          <button type="button" id="projects-new" title="Create the folder, git init, and — with TIM installed — the TIM project and its .tim-project marker">New project</button>
           <button type="button" id="projects-fix-all" title="Write unambiguous missing command policies and trust the ones it wrote">Fix all</button>
           <label title="On every refresh: write unambiguous missing .team-up/commands.json files (uncommitted); trusts nothing">
             <input type="checkbox" id="projects-auto"> auto-fix
@@ -270,6 +273,49 @@
             <h2>Background services</h2>
             <p class="muted">Always-on parts of team-up (systemd user units). Shown for information; manage them with <code>systemctl --user</code>.</p>
             <div id="services" class="table-wrap"></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="communication">
+          <header class="page-head">
+            <h1>Communication</h1>
+            <p>How team-up and TIM reach you, and what happens when you answer.</p>
+          </header>
+          <p id="comm-status" class="status-line" aria-live="polite"></p>
+          <section class="panel comm-how">
+            <h2>How it works</h2>
+            <ol>
+              <li><strong>Every job sends to one place</strong> — a Telegram bot, or only the bell at the top of this dashboard (no push on your phone).</li>
+              <li><strong>Every Telegram message ends with where it came from:</strong> 📂 folder · 🤖 CLI and model · 🧵 session. A report from a plain script says so instead.</li>
+              <li><strong>Reply to a message to continue its session.</strong> In Telegram, swipe the message (or long-press → Reply) and write. Your text goes into exactly that session; its answer comes back as a reply, with the same footer. A message from a script, or a message you write without replying to one, starts a new session (settings under <em>Replies</em>).</li>
+            </ol>
+          </section>
+          <section id="panel-comm-routes" class="panel">
+            <h2>Where messages go</h2>
+            <p class="muted">Most jobs stay silent until something needs you. A change applies to the next message.</p>
+            <div id="comm-routes"></div>
+          </section>
+          <section id="panel-comm-replies" class="panel">
+            <h2>Replies</h2>
+            <div id="comm-replies"></div>
+          </section>
+          <section id="panel-comm-bots" class="panel">
+            <h2>Bots</h2>
+            <div id="comm-bots" class="table-wrap"></div>
+            <details class="inline-form" id="comm-add-box">
+              <summary>+ Add a bot</summary>
+              <ol class="comm-steps">
+                <li>In Telegram, write <code>/newbot</code> to <strong>@BotFather</strong> and pick a name. It answers with a token.</li>
+                <li>Open the new bot and press <strong>Start</strong> — a bot may only write to chats that opened it.</li>
+                <li>Paste the token here. team-up checks it with Telegram and keeps it in an owner-only file; this page only ever shows its last four characters.</li>
+              </ol>
+              <form id="comm-add" class="form-row" autocomplete="off">
+                <input id="comm-token" type="password" placeholder="123456789:AA…" size="46" required aria-label="Bot token">
+                <input id="comm-chat" type="text" inputmode="numeric" placeholder="Chat id (optional)" size="18" aria-label="Chat id, only if not your own">
+                <button type="submit" class="primary">Add bot</button>
+              </form>
+              <p class="muted">Leave the chat id empty: the bot then writes to you, like the others.</p>
+            </details>
           </section>
         </section>
 

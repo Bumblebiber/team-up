@@ -10,6 +10,7 @@ import {
   resolveProjectCommandPolicy,
 } from "../commands/policy.mjs";
 import { isPolicyTrusted, trustProjectPolicy } from "../specialists/approvals.mjs";
+import { commandExists } from "./clis.mjs";
 
 export const SESSION_PREFIX = "team-up-proj-";
 
@@ -225,6 +226,40 @@ export function trustProjectPolicyForProject({ dir, projectsDir, env = process.e
     status: 400,
     error: (result.errors || []).join("; "),
   };
+}
+
+const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * A new, empty project folder in the collecting folder. With TIM installed,
+ * `tim new-project` does the rest: git init, the project root entry and a
+ * valid `.tim-project` marker. Without it, a plain `git init`. A failed TIM
+ * step keeps the folder — it is reported, not rolled back.
+ */
+export function createProject({ name, projectsDir, exec = execFileSync, hasTim = () => !!commandExists("tim") } = {}) {
+  const clean = String(name || "").trim();
+  if (!PROJECT_NAME.test(clean)) {
+    return { ok: false, status: 400, error: "name: letters, digits, . _ - only, not starting with a dot or dash" };
+  }
+  const target = path.join(resolveCollectingDir(projectsDir), clean);
+  try {
+    fs.mkdirSync(target);
+  } catch (e) {
+    if (e.code === "EEXIST") return { ok: false, status: 409, error: `${clean} already exists` };
+    throw e;
+  }
+  const run = (cmd, args) => exec(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (hasTim()) {
+    try {
+      const out = run("tim", ["new-project", "--path", target, "--name", clean]);
+      const label = String(out).match(/\b[PLEN]\d{4}\b/)?.[0] ?? null;
+      return { ok: true, path: target, tim: label ?? "created" };
+    } catch (e) {
+      return { ok: true, path: target, tim: null, warning: `tim new-project failed: ${String(e.stderr || e.message).trim()}` };
+    }
+  }
+  run("git", ["init", "-q", target]);
+  return { ok: true, path: target, tim: null };
 }
 
 /** Branch and dirtiness in one call — `status --branch` reports both. */

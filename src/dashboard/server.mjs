@@ -27,6 +27,7 @@ import {
   startProjectSession,
   writeProjectPolicy,
   trustProjectPolicyForProject,
+  createProject,
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
 import { readTrending, trendingDir } from "./trending.mjs";
@@ -82,6 +83,9 @@ import {
   saveCustomJob,
   setCustomJobEnabled,
 } from "./automation.mjs";
+import {
+  addBot, buildCommunicationView, listSenders, removeBot, sendTest, setListen, setReplies, setRoute,
+} from "./communication.mjs";
 import {
   isValidCliId,
   bootstrapAvailable,
@@ -1166,6 +1170,47 @@ export function createDashboardServer({
       return;
     }
 
+    // Communication writes: bots (token validated with getMe, never echoed or
+    // audited), where each sender's messages go, which bots listen, and how a
+    // reply that starts a new session runs.
+    const commBotMatch = pathname.match(/^\/api\/communication\/bots(?:\/([a-z0-9_]+)\/(remove|listen|test))?$/);
+    const commOther = pathname.match(/^\/api\/communication\/(routes|replies)$/);
+    if (req.method === "POST" && (commBotMatch || commOther)) {
+      if (!requireWriteAccess(req, res)) return;
+      const verb = commBotMatch ? commBotMatch[2] || "add" : commOther[1];
+      const action = `communication.${verb}`;
+      let target = commBotMatch?.[1] || "";
+      try {
+        const body = JSON.parse(await readBody(req, PREFS_MAX_BODY) || "{}");
+        const opts = { env, fetchFn };
+        let result;
+        if (verb === "add") {
+          result = await addBot({ token: body.token, chatId: body.chat_id }, opts);
+          target = result.id;
+        } else if (verb === "routes") {
+          target = `${body.sender} -> ${body.dest ?? "unset"}`;
+          const listed = body.sender === "*" ? listSenders({ env, exec }).map((x) => x.key) : [];
+          result = await setRoute(String(body.sender || ""), body.dest ?? null, { ...opts, listed });
+        } else if (verb === "replies") {
+          target = String(body.model || "");
+          result = await setReplies(body, { ...opts, modelOptions: cronModelOptions(loadRoster(env)) });
+        } else if (verb === "remove") {
+          result = await removeBot(target, opts);
+        } else if (verb === "listen") {
+          target = `${target} ${body.listen === true ? "on" : "off"}`;
+          result = await setListen(commBotMatch[1], body.listen === true, opts);
+        } else {
+          result = await sendTest(target, opts);
+        }
+        appendAudit({ actor: "127.0.0.1", action, target, result: "ok" }, { env });
+        jsonResponse(res, 200, { ok: true, ...result });
+      } catch (e) {
+        appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
+        jsonResponse(res, 400, { error: String(e.message || e) });
+      }
+      return;
+    }
+
     // Automation writes: a built-in job's crontab line, or a custom job (ini +
     // prompt file + the crontab's managed block). Every one re-reads the
     // crontab, backs it up and verifies the result (crontab.mjs).
@@ -1394,6 +1439,8 @@ export function createDashboardServer({
         writeProjectPolicy({ dir: body.dir, projectsDir: body.projects_dir, policy: body.policy ?? null })],
       "/api/projects/trust-policy": ["project.trust_policy", (body) =>
         trustProjectPolicyForProject({ dir: body.dir, projectsDir: body.projects_dir, env })],
+      "/api/projects/create": ["project.create", (body) =>
+        createProject({ name: body.name, projectsDir: body.projects_dir, exec })],
     }[pathname];
     if (req.method === "POST" && projectWrite) {
       if (!requireWriteAccess(req, res)) return;
@@ -1411,7 +1458,7 @@ export function createDashboardServer({
         {
           actor: "127.0.0.1",
           action,
-          target: String(body.dir ?? ""),
+          target: String(body.dir ?? body.name ?? ""),
           result: result.ok ? "ok" : "fail",
           ...(detail ? { detail } : {}),
         },
@@ -1608,6 +1655,15 @@ export function createDashboardServer({
         jsonResponse(res, 200, { text: describeSchedule(schedule), next: nextRun(schedule)?.toISOString() ?? null });
       } catch (e) {
         jsonResponse(res, 200, { error: String(e.message || e) });
+      }
+      return;
+    }
+
+    if (pathname === "/api/communication") {
+      try {
+        jsonResponse(res, 200, await buildCommunicationView({ env, exec, fetchFn, modelOptions: cronModelOptions(loadRoster(env)) }));
+      } catch (e) {
+        jsonResponse(res, 500, { error: String(e.message || e) });
       }
       return;
     }

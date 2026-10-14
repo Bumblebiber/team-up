@@ -1843,6 +1843,29 @@ async function autoFixProjects() {
   await refreshProjects();
 }
 
+$("#projects-new").addEventListener("click", async (e) => {
+  const input = $("#projects-new-name");
+  const name = input.value.trim();
+  if (!name) return input.focus();
+  const btn = e.currentTarget; // currentTarget is null after the first await
+  btn.disabled = true;
+  try {
+    const res = await api("/api/projects/create", {
+      method: "POST",
+      body: JSON.stringify({ name, projects_dir: readProjectsDir() }),
+    });
+    projectsNote = res.warning
+      ? `created ${res.path} — ${res.warning}`
+      : `created ${res.path}${res.tim ? ` (TIM ${res.tim})` : ""}`;
+    input.value = "";
+  } catch (err) {
+    projectsNote = `${name}: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+  await refreshProjects();
+});
+
 $("#projects-fix-all").addEventListener("click", async (e) => {
   e.target.disabled = true;
   try {
@@ -2708,6 +2731,149 @@ async function refreshTrending() {
   renderTrending();
 }
 
+// ── Communication: where messages go, replies, bots ──
+let commData = null;
+
+function commNote(text, tone = "") {
+  const el = $("#comm-status");
+  el.textContent = text;
+  el.className = `status-line ${tone}`;
+}
+
+function commDestSelect(value, label) {
+  const d = commData;
+  return `<select class="comm-dest" data-comm-dest aria-label="Where ${esc(label)} goes">${
+    d.bots.map((b) => `<option value="${esc(b.id)}"${value === b.id ? " selected" : ""}>📱 Telegram · @${esc(b.username)}</option>`).join("")
+  }<option value="bell"${value === "bell" ? " selected" : ""}>🔔 Dashboard bell only</option></select>`;
+}
+
+function renderCommunication() {
+  const d = commData;
+  if (!d) return;
+  const groups = ["team-up", "TIM", "Your jobs"];
+  const table = (rows) => `<table class="comm-table"><thead><tr><th>Job — what it sends</th><th class="comm-dest-col">Goes to</th></tr></thead><tbody>${
+    rows.map((s) => `<tr data-sender="${esc(s.key)}">
+      <td>${esc(s.title)}${!s.scheduled ? ' <span class="tag off">not scheduled</span>' : s.enabled ? "" : ' <span class="tag off">switched off</span>'}
+        <div class="muted">${esc(s.notifies)}</div></td>
+      <td>${commDestSelect(s.dest ?? d.default, s.title)}</td></tr>`).join("")}</tbody></table>`;
+  $("#comm-routes").innerHTML = groups.map((g) => {
+    const rows = d.senders.filter((s) => s.group === g);
+    return rows.length ? `<h3 class="comm-group">${esc(g)}</h3>${table(rows)}` : "";
+  }).join("") + `<h3 class="comm-group">Everything else</h3>
+    <table class="comm-table"><tbody><tr data-sender="*">
+      <td>Anything not listed above<div class="muted">Any other script that calls <code>send-cron-telegram</code>, and new jobs until you choose for them.</div></td>
+      <td>${commDestSelect(d.default, "everything else")}</td></tr></tbody></table>`;
+
+  // Replies: which bots listen, and how a new session starts.
+  const listening = d.bots.filter((b) => b.listen);
+  const usedBots = new Set(d.senders.map((s) => s.dest ?? d.default).concat(d.default));
+  const deaf = d.bots.filter((b) => usedBots.has(b.id) && !b.listen && !b.owner);
+  const owned = d.bots.filter((b) => usedBots.has(b.id) && b.owner);
+  const ownedNote = owned.length
+    ? `<div class="comm-notice">Messages now arrive through ${owned.map((b) => `@${esc(b.username)}`).join(", ")}. Replies there are read by ${esc(owned[0].owner)}, not by team-up — they do not continue the session in the footer. Send the jobs through a bot team-up listens to for that.</div>` : "";
+  const notice = !listening.length && !(owned.length && !deaf.length)
+    ? `<div class="comm-notice"><strong>No bot listens yet, so replying does nothing.</strong> Switch on listening for the bot your messages come from${
+        deaf.some((b) => b.imported) ? ` — for @${esc(deaf.find((b) => b.imported).username)} that ends its old send-only rule (it was kept so that no second program would compete for its replies; team-up is the only reader here). Or add a bot of its own for this.` : "."}</div>`
+    : deaf.length ? `<div class="comm-notice">Messages also arrive through ${deaf.map((b) => `@${esc(b.username)}`).join(", ")}, which do${deaf.length === 1 ? "es" : ""} not listen: replies there do nothing.</div>` : "";
+  const botRows = d.bots.map((b) => {
+    const poll = b.poll ? (b.poll.ok ? '<span class="tag ok">listening</span>' : `<span class="tag err" title="${esc(b.poll.error || "")}">cannot read replies: ${esc(b.poll.error || "")}</span>`) : "";
+    const ctl = b.owner
+      ? `<span class="muted">Replies are read by ${esc(b.owner)} — Telegram gives each reply to one reader only.</span>`
+      : `<label class="switch"><input type="checkbox" data-comm-listen${b.listen ? " checked" : ""}> Listen for replies</label>${poll}`;
+    return `<div class="comm-bot-row" data-bot="${esc(b.id)}"><span class="name">@${esc(b.username)}</span>${ctl}</div>`;
+  }).join("");
+  const r = d.replies;
+  const models = (d.modelOptions.includes(r.model) ? [] : [r.model]).concat(d.modelOptions);
+  $("#comm-replies").innerHTML = `${notice}${ownedNote}${botRows}
+    <div class="comm-new job">
+      <h3>New sessions</h3>
+      <p class="muted">Used when you reply to a script's report, or write to a bot without replying to a message. A reply to a message with a 🧵 claude session always continues that session, in its own folder and with its own model.</p>
+      <div class="knobs">
+        <label for="comm-r-model">Model</label>
+        <select id="comm-r-model">${models.map((m) => `<option value="${esc(m)}"${m === r.model ? " selected" : ""}>${esc(m)}</option>`).join("")}</select>
+        <label for="comm-r-cwd">Folder</label>
+        <input id="comm-r-cwd" class="mono" type="text" value="${esc(r.cwd)}" size="40">
+        <label for="comm-r-instr">Extra instructions</label>
+        <textarea id="comm-r-instr" rows="3" placeholder="Optional, e.g. “You may cancel stuck runs with team-up runs cancel.”">${esc(r.instructions || "")}</textarea>
+        <span></span><span><button type="button" class="primary" id="comm-r-save">Save</button></span>
+      </div>
+    </div>`;
+
+  $("#comm-bots").innerHTML = d.bots.length
+    ? `<table><thead><tr><th>Bot</th><th>Token</th><th>Carries</th><th></th></tr></thead><tbody>${
+      d.bots.map((b) => `<tr data-bot="${esc(b.id)}">
+        <td>@${esc(b.username)}<div class="muted mono">${esc(b.env)}</div></td>
+        <td class="mono">${b.missing ? '<span class="tag err">token file missing</span>' : esc(b.tokenTail || "—")}</td>
+        <td>${[b.jobs ? `${b.jobs} job${b.jobs === 1 ? "" : "s"}` : "", b.isDefault ? "everything else" : ""].filter(Boolean).join(" + ") || '<span class="muted">nothing</span>'}</td>
+        <td class="row-actions"><button type="button" data-comm-test>Send test</button>
+          <button type="button" data-comm-remove${b.jobs || b.isDefault ? ' disabled title="Send its messages elsewhere first"' : ""}>Remove</button></td>
+      </tr>`).join("")}</tbody></table>`
+    : '<div class="empty">No bots yet — add one below.</div>';
+  const broken = d.bots.filter((b) => b.missing || (b.poll && !b.poll.ok)).length;
+  updateNavBadge("badge-communication", broken ? String(broken) : "", "red", broken > 0, broken ? `${broken} bot(s) need attention` : "");
+}
+
+async function refreshCommunication() {
+  commData = await api("/api/communication");
+  renderCommunication();
+}
+onEnter.communication = () => refreshCommunication().catch((err) => commNote(err.message, "err"));
+
+async function commWrite(url, body, done) {
+  try {
+    await api(url, { method: "POST", body: JSON.stringify(body) });
+    commNote(done, "ok");
+    return true;
+  } catch (err) {
+    commNote(`Refused — ${err.message}`, "err");
+    return false;
+  } finally {
+    await refreshCommunication().catch(() => {});
+  }
+}
+
+$("#comm-routes").addEventListener("change", async (e) => {
+  if (!e.target.matches("[data-comm-dest]")) return;
+  const sender = e.target.closest("[data-sender]").dataset.sender;
+  const label = e.target.selectedOptions[0]?.textContent || e.target.value;
+  await commWrite("/api/communication/routes", { sender, dest: e.target.value }, `Saved — ${sender === "*" ? "everything else" : sender} → ${label}`);
+});
+
+$("#comm-replies").addEventListener("change", async (e) => {
+  if (!e.target.matches("[data-comm-listen]")) return;
+  const id = e.target.closest("[data-bot]").dataset.bot;
+  const on = e.target.checked;
+  await commWrite(`/api/communication/bots/${id}/listen`, { listen: on }, on ? "Listening — replies to this bot now continue their session" : "Stopped listening");
+});
+
+$("#comm-replies").addEventListener("click", async (e) => {
+  if (e.target.id !== "comm-r-save") return;
+  await commWrite("/api/communication/replies", {
+    model: $("#comm-r-model").value, cwd: $("#comm-r-cwd").value.trim(), instructions: $("#comm-r-instr").value,
+  }, "New-session settings saved");
+});
+
+$("#comm-add").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  commNote("Checking the token with Telegram …");
+  const chat = $("#comm-chat").value.trim();
+  if (await commWrite("/api/communication/bots", { token: $("#comm-token").value.trim(), chat_id: chat || undefined }, "Bot added — send it a test, then route jobs to it above")) {
+    $("#comm-token").value = "";
+    $("#comm-chat").value = "";
+    $("#comm-add-box").open = false;
+  }
+});
+
+$("#comm-bots").addEventListener("click", async (e) => {
+  const id = e.target.closest("[data-bot]")?.dataset.bot;
+  if (!id) return;
+  if (e.target.matches("[data-comm-test]")) {
+    await commWrite(`/api/communication/bots/${id}/test`, {}, "Test message sent — check Telegram");
+  } else if (e.target.matches("[data-comm-remove]") && confirm("Remove this bot from the list?")) {
+    await commWrite(`/api/communication/bots/${id}/remove`, {}, "Bot removed");
+  }
+});
+
 function renderTrending() {
   const sections = trendingData?.sections || [];
   $("#trending-date").textContent = trendingData?.date || "";
@@ -2939,7 +3105,9 @@ function startPolling() {
   $("#catalogue-box").open = readStored(CATALOGUE_OPEN_KEY, "") === "1";
   refreshSettings().catch(() => {});
   refreshAutomation().catch(() => {});
+  refreshCommunication().catch(() => {});
   clearInterval(automationTimer);
+  // Communication is not polled: a re-render would wipe a half-edited reply form.
   automationTimer = setInterval(() => refreshAutomation().catch(() => {}), 60_000);
   refreshTrending();
   clearInterval(trendingTimer);
