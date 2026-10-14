@@ -141,6 +141,7 @@ export const SERVICES = [
   { unit: "team-up-resume.service", title: "Resume after boot", what: "After a reboot, wakes the sessions whose runs were still going." },
   { unit: "team-up-telegram-replies.service", title: "Telegram replies", what: "Acts on your replies to the bots that have a reply action (Communication page)." },
   { unit: "team-up-dashboard.service", title: "Dashboard", what: "This page." },
+  { unit: "team-up-dashboard-deploy.timer", title: "Dashboard deploy", what: "Every 2 minutes: moves this page to origin/main and restarts it when main moved. Unmerged work never shows here." },
 ];
 
 export const JOB_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
