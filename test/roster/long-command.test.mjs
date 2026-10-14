@@ -72,3 +72,17 @@ test("cancel marks the run, then stops its recorded worker session", () => {
   cancelRun(bare.runId, { stopTmux: (s) => stopped.push(s) });
   assert.deepEqual(stopped, ["team-up-pinned-xyz"], "no recorded session, nothing killed");
 });
+
+test("a worker with a run starts behind the exit guard; a session without one does not", () => {
+  const state = createRun({
+    cwd: "/tmp/p", role: "dispatch",
+    parent: { cli: "team-up", attach: "manual" },
+    worker: { cli: "codex" },
+    prompt: "x",
+  });
+  const calls = [];
+  startInTmux({ session: "team-up-guard-t1", dir: "/tmp", argv: ["codex", "hi"], runId: state.runId, exec: (_, args) => calls.push(args) });
+  startInTmux({ session: "team-up-guard-t2", dir: "/tmp", argv: ["codex", "hi"], exec: (_, args) => calls.push(args) });
+  assert.match(calls[0].at(-1), /^\/bin\/sh \S+\/scripts\/worker-exit-guard\.sh \S+\/mailbox codex hi$/);
+  assert.equal(calls[1].at(-1), "codex hi");
+});

@@ -176,11 +176,11 @@ test("untrusted project policy refuses command launch; trust-policy enables it",
       "claude 2.1.300 harness verification no_record; launch continues. Run team-up harness verify claude."
     );
 
-    assert.deepEqual(result.argv.slice(0, 4), [
-      "timeout", "--signal=TERM", "--kill-after=5s", "60s",
+    assert.deepEqual(result.argv.slice(0, 5), [
+      "timeout", "--foreground", "--signal=TERM", "--kill-after=5s", "60s",
     ]);
-    assert.equal(result.argv[4], "env");
-    assert.equal(result.argv[5], `HOME=${runHome}`);
+    assert.equal(result.argv[5], "env");
+    assert.equal(result.argv[6], `HOME=${runHome}`);
     const tools = [
       ...builtinsForPermissions(result.permissions),
       ...result.permissions.commands.map((id) => `mcp__team_up_command_broker__${id.replace(/-/g, "_")}`),
@@ -229,8 +229,8 @@ test("untrusted project policy refuses command launch; trust-policy enables it",
     assert.equal(dryRunStarts, 0);
     assert.equal(dryRunWarnings.length, 1);
     assert.equal(loadState(dryRunResult.runId).status, "cancelled");
-    assert.deepEqual(dryRunResult.argv.slice(0, 6), [
-      "timeout", "--signal=TERM", "--kill-after=5s", "60s", "env",
+    assert.deepEqual(dryRunResult.argv.slice(0, 7), [
+      "timeout", "--foreground", "--signal=TERM", "--kill-after=5s", "60s", "env",
       `HOME=${path.join(env.TEAM_UP_RUNS, dryRunResult.runId, "claude-home")}`,
     ]);
     assert.equal(dryRunResult.argv.includes("--strict-mcp-config"), true);

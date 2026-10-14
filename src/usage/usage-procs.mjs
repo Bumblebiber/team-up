@@ -40,6 +40,8 @@ export function isCollectorCmdline(cmdline, envMarker = "O9K_USAGE_COLLECT") {
 /** @returns {boolean} */
 export function isAgentProcessCmdline(cmdline, cli, envMarker = "O9K_USAGE_COLLECT") {
   if (!cmdline || isCollectorCmdline(cmdline, envMarker)) return false;
+  // The exit guard's cmdline repeats the worker argv; the CLI is its child.
+  if (cmdline.includes("worker-exit-guard.sh")) return false;
   if (!CLI_BINARIES[cli]) return false;
   if (cli === "claude") {
     if (/mcp-server|@modelcontextprotocol/i.test(cmdline)) return false;

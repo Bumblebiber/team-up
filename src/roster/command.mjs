@@ -121,8 +121,9 @@ export function launcherPath(session, env = process.env) {
 function writeLauncher(session, command) {
   const file = launcherPath(session);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  // exec keeps the CLI (or the headless wrapper) as the pane's process, so a
-  // kill-session's SIGHUP still reaches it. 0600: the prompt can carry diffs.
+  // exec keeps the command (a worker's exit guard, which runs the CLI in its
+  // own process group) as the pane's process, so a kill-session's SIGHUP still
+  // reaches the CLI. 0600: the prompt can carry diffs.
   fs.writeFileSync(file, `rm -f -- "$0"\nexec ${command}\n`, { mode: 0o600 });
   return file;
 }
@@ -166,12 +167,24 @@ function runsOverride() {
   return runs === path.join(teamUpHome({}), "runs") ? {} : { TEAM_UP_RUNS: runs };
 }
 
+const EXIT_GUARD = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/worker-exit-guard.sh");
+
+/**
+ * A worker's argv behind scripts/worker-exit-guard.sh: when the CLI ends while
+ * the run is still open, the guard closes the mailbox as failed. Without it a
+ * crashed or OOM-killed interactive worker went unnoticed until the 12 h
+ * stale report. Workers only — human sessions have no mailbox.
+ */
+export function guardWorkerArgv(runId, argv) {
+  return ["/bin/sh", EXIT_GUARD, path.resolve(mailboxDir(runId)), ...argv];
+}
+
 /** Start an already-built worker argv in detached tmux. */
 export function startInTmux({ session, dir, argv, runId, exec = execFileSync }) {
   const args = tmuxArgs({
     session,
     dir,
-    argv,
+    argv: runId ? guardWorkerArgv(runId, argv) : argv,
     env: runId ? { TEAMUP_RUN_ID: runId, ...runsOverride() } : {},
   });
   try {
