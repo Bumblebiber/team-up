@@ -408,14 +408,16 @@ def render(c):
         diff = sh("gh", "pr", "diff", num, "-R", c["ref"].rsplit("#", 1)[0]).stdout
         if len(diff) > DIFF_CAP:
             diff = diff[:DIFF_CAP] + "\n[diff truncated]"
-        text = TASKS["pr-review"].format(diff=diff, **c)
+        text = TASKS["pr-review"].format(**{**c, "diff": diff})
     elif c["kind"] in ("triage", "implement"):
         body = c.get("body") or "(no body available, work from the title)"
         if c["kind"] == "implement":
             note = (f"The parent runs `{c['verify']}` after you finish; it must pass." if c.get("verify")
                     else "This repo has no test command the parent can run; your branch stays local.")
-            return TASKS["implement"].format(body=body, verify_note=note, **c) + IMPLEMENT_RULES
-        text = TASKS["triage"].format(body=body, **c)
+            return TASKS["implement"].format(**{**c, "body": body, "verify_note": note}) + IMPLEMENT_RULES
+        # c already carries "body" (possibly None): passing it twice raised on every
+        # task and issue tick from 2026-10-09 to 10-14, so no night run ever started.
+        text = TASKS["triage"].format(**{**c, "body": body})
     else:
         text = TASKS[c["kind"]].format(repo=c["repo"], days=ACTIVE_DAYS)
     return text + RULES.format(repo=c["repo"])
@@ -774,6 +776,13 @@ def selftest():
     assert "- R1 (done): pr-review on /r1 (claude:claude-opus, role reviewer) — o/r#9" in hp, hp
     assert "kill-session -t usage-spender-host-20261012-0000" in hp and '"team_up_run": "<run_id>"' in hp, hp
     assert str(TELEGRAM) in hp and "- claude:week: x" in hp, hp
+
+    # render: a TIM task or issue carries "body" itself, and it may be None
+    issue = {"key": "k", "repo": "/r", "gh": "o/r", "ref": "o/r issue #1", "url": "u", "title": "T", "body": "B"}
+    assert "## T\n\nB" in render(dict(issue, kind="triage")), render(dict(issue, kind="triage"))
+    assert "(no body available" in render(dict(issue, body=None, kind="triage"))
+    impl = render(dict(issue, kind="implement", clone="/c", branch="b", verify=None))
+    assert "## T\n\nB" in impl and "no test command" in impl, impl
 
     # TIM task / issue: implement only with a GitHub remote to push to
     assert work({"key": "k", "gh": "o/r"})["kind"] == "implement" and work({"key": "k", "gh": None})["role"] == "planner"
