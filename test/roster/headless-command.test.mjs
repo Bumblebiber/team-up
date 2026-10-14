@@ -88,7 +88,7 @@ test("startInTmux names the runs dir only when it is not the default", async () 
   const saved = { TEAM_UP_HOME: process.env.TEAM_UP_HOME, TEAM_UP_RUNS: process.env.TEAM_UP_RUNS };
   const tmuxEnv = () => {
     let args;
-    startInTmux({ session: "s", dir: "/tmp", argv: ["x"], runId: "R", exec: (_cmd, a) => { args = a; } });
+    startInTmux({ session: "s", dir: "/tmp", argv: ["x"], runId: "20260922T100319Z-ri6m", exec: (_cmd, a) => { args = a; } });
     return args.filter((a) => a.startsWith("TEAM_UP_RUNS="));
   };
   try {

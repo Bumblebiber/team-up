@@ -179,7 +179,7 @@ test("gc adopts terminal mailbox result and cleans terminal tmux", withTempRuns(
   const stopped = [];
 
   const report = gcRuns({
-    listSessions: () => [],
+    listSessions: () => ["worker-gc"],
     states: [loadState(state.runId)],
     heartbeatFor: () => null,
     inspectTmux: () => ({ exists: true, activityMs: null, sessionId: "$gc" }),
@@ -209,7 +209,7 @@ test("gc does not adopt a done while its verifier is running", withTempRuns(asyn
   try {
     fs.writeFileSync(path.join(mailbox, ".VERIFICATION.lock"), `${holder.pid}\n`);
     const report = gcRuns({
-      listSessions: () => [],
+      listSessions: () => ["worker-gc"],
       now: new Date(NOW),
       states: [loadState(state.runId)],
       heartbeatFor: () => NOW,
@@ -229,7 +229,7 @@ test("ordinary terminal kill retries when stopTmux returns false", withTempRuns(
   let stopCalls = 0;
 
   const first = gcRuns({
-    listSessions: () => [],
+    listSessions: () => ["worker-gc"],
     now: new Date(NOW),
     states: [terminal],
     heartbeatFor: () => null,
@@ -247,7 +247,7 @@ test("ordinary terminal kill retries when stopTmux returns false", withTempRuns(
   assert.equal(loadState(terminal.runId).cleanup?.terminal_tmux_stopped_at, undefined);
 
   const second = gcRuns({
-    listSessions: () => [],
+    listSessions: () => ["worker-gc"],
     now: new Date(NOW + 60_000),
     states: [loadState(terminal.runId)],
     heartbeatFor: () => null,
@@ -266,7 +266,7 @@ test("ordinary terminal kill retries when stopTmux returns false", withTempRuns(
   assert.deepEqual(stopped, ["worker-gc", "worker-gc"]);
 
   const third = gcRuns({
-    listSessions: () => [],
+    listSessions: () => ["worker-gc"],
     now: new Date(NOW + 120_000),
     states: [loadState(terminal.runId)],
     heartbeatFor: () => null,
@@ -281,7 +281,7 @@ test("gc terminal cleanup is idempotent and dry-run never mutates", withTempRuns
   const terminal = createGcFixture({ status: "done" });
   const stopped = [];
   gcRuns({
-    listSessions: () => [],
+    listSessions: () => ["worker-gc"],
     now: new Date(NOW),
     states: [terminal],
     heartbeatFor: () => null,
@@ -293,7 +293,7 @@ test("gc terminal cleanup is idempotent and dry-run never mutates", withTempRuns
   const active = createGcFixture();
   const before = JSON.stringify(loadState(active.runId));
   const report = gcRuns({
-    listSessions: () => [],
+    listSessions: () => ["worker-gc"],
     now: new Date(NOW),
     heartbeatFor: () => NOW - IDLE_MS - 1,
     inspectTmux: () => ({ exists: true, activityMs: NOW - IDLE_MS - 1 }),
@@ -416,3 +416,31 @@ test("gcIdleSessions continues after stopTmux throw", () => {
   assert.equal(report.errors.length, 1);
   assert.deepEqual(stopped, ["team-up-ok-m5x2"]);
 });
+
+test("finished runs are checked against one session listing, not probed one by one", withTempRuns(async () => {
+  const gone = createGcFixture({ status: "done" });
+  const before = fs.readFileSync(path.join(runDir(gone.runId), "STATE.json"), "utf8");
+  const probed = [];
+  const report = gcRuns({
+    listSessions: () => ["someone-else"],
+    now: new Date(NOW),
+    states: [gone],
+    heartbeatFor: () => null,
+    inspectTmux: (s) => { probed.push(s); return { exists: true, activityMs: null, sessionId: "$x" }; },
+    stopTmux: () => { throw new Error("must not kill"); },
+  });
+  assert.deepEqual(report.runs, []);
+  assert.ok(!probed.includes("worker-gc"), "no per-run probe for a session the listing lacks");
+  assert.equal(fs.readFileSync(path.join(runDir(gone.runId), "STATE.json"), "utf8"), before, "nothing written");
+
+  const killed = [];
+  gcRuns({
+    listSessions: () => ["worker-gc"],
+    now: new Date(NOW),
+    states: [loadState(gone.runId)],
+    heartbeatFor: () => null,
+    inspectTmux: () => ({ exists: true, activityMs: null, sessionId: "$x" }),
+    stopTmux: (s) => { killed.push(s); return true; },
+  });
+  assert.deepEqual(killed, ["worker-gc"], "a listed session is still killed");
+}));

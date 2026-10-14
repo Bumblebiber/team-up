@@ -242,6 +242,11 @@ export function gcRuns({
   const nowIso = new Date(nowMs).toISOString();
   const input = states || listAllStates();
   const report = { at: nowIso, dryRun, runs: [] };
+  // One listing per tick for finished runs instead of a probe each: 368 of
+  // them kept a session name that was long gone, ~100k tmux forks a day
+  // (2026-10-14). Nothing is written for them: a write would stamp a fresh
+  // finishedAt on old runs, and a failed listing must not forget a live one.
+  const live = new Set(listSessions());
 
   for (const snapshot of input) {
     let state = loadState(snapshot.runId) || snapshot;
@@ -258,7 +263,10 @@ export function gcRuns({
       }
     }
 
-    const tmux = inspectTmux(state.worker?.tmux || null);
+    const name = state.worker?.tmux || null;
+    const tmux = TERMINAL.has(state.status) && !live.has(name)
+      ? { exists: false, activityMs: null, sessionId: null }
+      : inspectTmux(name);
     const decision = evaluateGcAction({
       state,
       nowMs,

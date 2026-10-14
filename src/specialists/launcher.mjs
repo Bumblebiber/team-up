@@ -483,6 +483,11 @@ export async function launch({
     const timeoutSeconds = budgetNorm.timeout_seconds ?? 0;
     const argv = [
       "timeout",
+      // The pane runs this behind the exit guard, so timeout is no session
+      // leader: without --foreground it moves the CLI into a background
+      // process group, where the TUI stops on its first tty read and a
+      // kill-session's hangup no longer reaches it.
+      "--foreground",
       "--signal=TERM",
       "--kill-after=5s",
       `${timeoutSeconds}s`,
@@ -508,6 +513,10 @@ export async function launch({
 
     if (!dryRun) {
       const session = `team-up-${specialistId.replace(/[^a-z0-9]+/gi, "-")}-${Date.now().toString(36)}`;
+      // Link first, as spawnPinnedInTmux does: a CLI that dies at once is
+      // failed by the exit guard within milliseconds, and a later
+      // STATUS=watching would reopen that run with nothing left to close it.
+      linkDispatchToRun(state.runId, session);
       try {
         startInTmuxFn({ session, dir: dest, argv, runId: state.runId });
         workerStarted = true;
@@ -515,7 +524,6 @@ export async function launch({
         setStatus(state.runId, "failed", { reason: `tmux start: ${error?.message || error}` });
         throw error;
       }
-      linkDispatchToRun(state.runId, session);
       recordPick(state.runId, {
         cli: cell.cli,
         model: cell.model,

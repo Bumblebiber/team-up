@@ -971,7 +971,7 @@ export function executeResumeAction(action, state, {
     state.recovery = "cold_start";
     saveState(state);
   }
-  execFileSync("tmux", resumeTmuxArgs(action, state, argv), { stdio: "ignore" });
+  execFileSync("tmux", resumeTmuxArgs(action, state, guardWorkerArgv(state.runId, argv)), { stdio: "ignore" });
   // A cold start carries the recovery text as its prompt; pasting it too
   // would send it twice.
   if (resumed) pasteInject(action.tmux, action.inject || "", { waitReady, readyTimeoutMs });
@@ -1831,7 +1831,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 
 import { writeTypedResult as writeTypedResultImpl, validateResult } from "../specialists/request.mjs";
-import { buildCommand } from "../roster/command.mjs";
+import { buildCommand, guardWorkerArgv } from "../roster/command.mjs";
 import { configPath, loadJson } from "../roster/config.mjs";
 import { detectParent, pruneSessionRecords } from "./parent.mjs";
 import { writePendingWakeup } from "./pending.mjs";

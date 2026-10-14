@@ -272,12 +272,8 @@ test("production launchSpecialist starts the prepared argv once through fake tmu
     assert.deepEqual(st.runtime.limit_windows, ["claude:5h"]);
     const lines = tmuxLines(tmuxLog);
     assert.ok(lines.some((l) => l.startsWith("new-session")), lines.join("\n"));
-    assert.equal(result.argv[0], "timeout");
-    assert.equal(result.argv[1], "--signal=TERM");
-    assert.equal(result.argv[2], "--kill-after=5s");
-    assert.equal(result.argv[3], "60s");
-    assert.equal(result.argv[4], "env");
-    assert.equal(result.argv[5], `HOME=${path.join(runDir(result.runId), "claude-home")}`);
+    assert.deepEqual(result.argv.slice(0, 6), ["timeout", "--foreground", "--signal=TERM", "--kill-after=5s", "60s", "env"]);
+    assert.equal(result.argv[6], `HOME=${path.join(runDir(result.runId), "claude-home")}`);
     const joined = result.argv.join(" ");
     assert.match(joined, /disallowedTools/);
     assert.match(joined, /mcp-config|claude-mcp/);
