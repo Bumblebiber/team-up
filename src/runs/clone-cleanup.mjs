@@ -3,9 +3,10 @@
 // Every clone-per-writer checkout lives under the tasks root (~/projects/tasks).
 // Nothing removed them after the merge, and the root grew to ~38 GB of repo
 // copies with node_modules. The run's record (STATE, mailbox RESULT.md) lives
-// in ~/.team-up/runs and is never touched here. Untracked files in the clone
-// (PLAN.md, REVIEW.md, a file nobody added) are kept in place. Only .git,
-// tracked files and ignored files (node_modules, .venv, build output) go.
+// in ~/.team-up/runs and is never touched here. Untracked and ignored files in
+// the clone are kept in place: ignored is often work output (HANDOFF-*.md,
+// .env, *.db, data/, .claude/, a .team-up/ TICKET.md via info/exclude). Only
+// .git, tracked files and ignored paths named in REGENERABLE go.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,11 @@ import { teamUpHome } from "../paths.mjs";
 
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
 const FETCH_TIMEOUT_MS = 20_000;
+// Ignored paths an install or build recreates, matched by basename (plus *.tsbuildinfo).
+const REGENERABLE = new Set([
+  "node_modules", ".venv", "venv", "dist", "build", "target", "coverage",
+  ".vite", ".turbo", ".next", "__pycache__", "local_cache",
+]);
 
 export function tasksRoot(env = process.env) {
   return env.TEAM_UP_TASKS_ROOT || path.join(os.homedir(), "projects", "tasks");
@@ -65,10 +71,11 @@ export function cloneTargets(cwd, { root = tasksRoot() } = {}) {
 }
 
 /**
- * Commits reachable from HEAD or a local branch that are not on origin's main,
- * neither by ancestry nor by patch-id (cherry-pick, rebase). A commit pushed
- * only to a feature branch is unmerged and counts. So does a squash merge:
- * deleting is only safe when landing is provable.
+ * Commits reachable from HEAD, a local branch or a tag origin lacks that are
+ * not on origin's main, neither by ancestry nor by patch-id (cherry-pick,
+ * rebase). A commit pushed only to a feature branch is unmerged and counts.
+ * So does a squash merge, and any merge commit off main (cherry skips
+ * merges): deleting is only safe when landing is provable.
  */
 function unlandedCommits(dir) {
   if (git(dir, ["fetch", "-q", "origin"], { timeout: FETCH_TIMEOUT_MS }) === null) return { error: "fetch from origin failed" };
@@ -76,6 +83,18 @@ function unlandedCommits(dir) {
     .find((ref) => git(dir, ["rev-parse", "-q", "--verify", ref]) !== null);
   if (!main) return { error: "origin has no main or master" };
   const tips = ["HEAD", ...(git(dir, ["for-each-ref", "--format=%(refname)", "refs/heads"]) || "").split("\n").filter(Boolean)];
+  const tags = git(dir, ["for-each-ref", "--format=%(objectname) %(refname)", "refs/tags"]);
+  if (tags === null) return { error: "git for-each-ref refs/tags failed" };
+  if (tags.trim()) {
+    // Only tags origin lacks (by name and object): its release tags off main
+    // would otherwise keep every clone of that repo forever.
+    const remote = git(dir, ["ls-remote", "--tags", "origin"], { timeout: FETCH_TIMEOUT_MS });
+    if (remote === null) return { error: "ls-remote origin failed" };
+    const onOrigin = new Set(remote.split("\n").map((l) => l.replace("\t", " ")));
+    for (const t of tags.split("\n").filter(Boolean)) {
+      if (!onOrigin.has(t)) tips.push(`${t.split(" ")[1]}^{commit}`);
+    }
+  }
   const unlanded = new Set();
   for (const tip of tips) {
     const out = git(dir, ["cherry", main, tip]);
@@ -84,6 +103,9 @@ function unlandedCommits(dir) {
       if (line.startsWith("+ ")) unlanded.add(line.slice(2).trim());
     }
   }
+  const merges = git(dir, ["rev-list", "--merges", ...tips, "--not", main]);
+  if (merges === null) return { error: "git rev-list --merges failed" };
+  if (merges.trim()) return { error: `${merges.trim().split("\n").length} unlanded merge commit(s)` };
   return { shas: [...unlanded] };
 }
 
@@ -101,6 +123,13 @@ export function cloneVerdict(dir, { root = tasksRoot(), states = [] } = {}) {
     return { ok: false, reason: "not a full clone (.git missing or a worktree gitfile)" };
   }
   if (!isCloneRoot(target)) return { ok: false, reason: "not a git toplevel" };
+  // A linked worktree's files and detached commits live outside .git, and one
+  // outside the clone would be orphaned. Only a prunable (gone) one is fine.
+  const worktrees = git(target, ["worktree", "list", "--porcelain"]);
+  if (worktrees === null) return { ok: false, reason: "git worktree list failed" };
+  if (worktrees.split("\n\n").filter((e) => e.trim()).slice(1).some((e) => !/^prunable\b/m.test(e))) {
+    return { ok: false, reason: "has linked worktrees" };
+  }
   if (fs.existsSync(path.join(target, ".git", "objects", "info", "alternates"))) {
     return { ok: false, reason: "shared clone (objects/info/alternates)" };
   }
@@ -122,11 +151,19 @@ export function cloneVerdict(dir, { root = tasksRoot(), states = [] } = {}) {
   return { ok: true, dir: target };
 }
 
-/** Delete the clone but keep its untracked, non-ignored files in place. */
+const regenerable = (p) => REGENERABLE.has(path.basename(p)) || p.endsWith(".tsbuildinfo");
+
+/** Delete the clone but keep its untracked and non-regenerable ignored files in place. */
 export function removeClone(dir) {
-  const out = git(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--directory"]);
-  if (out === null) throw new Error(`git ls-files failed in ${dir}`);
-  const keep = out.split("\0").filter(Boolean).map((p) => p.replace(/\/$/, ""));
+  const untracked = git(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--directory"]);
+  const ignored = git(dir, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
+  if (untracked === null || ignored === null) throw new Error(`git ls-files failed in ${dir}`);
+  const list = (out) => out.split("\0").filter(Boolean).map((p) => p.replace(/\/$/, ""));
+  const all = [...new Set([...list(untracked), ...list(ignored).filter((p) => !regenerable(p))])];
+  // git lists a dir and its contents both (data/ and data/save.json); moving
+  // the dir moves them, a second rename would throw halfway.
+  // ponytail: a regenerable dir inside a kept one (newpkg/node_modules) stays; costs disk, never data.
+  const keep = all.filter((p) => !all.some((q) => p.startsWith(`${q}/`)));
   if (!keep.length) {
     fs.rmSync(dir, { recursive: true, force: true });
     return { kept: [] };

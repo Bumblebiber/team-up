@@ -1,9 +1,11 @@
+import "../helpers/hermetic-home.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { cleanupRunClone, cloneTargets, cloneVerdict, sweepClones } from "../../src/runs/clone-cleanup.mjs";
 
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -185,4 +187,68 @@ test("state writes still work once the run's clone is gone", async () => {
     assert.equal(fs.existsSync(t.clone), false);
     assert.ok(runs.markCollected(state.runId).collected);
   } finally { t.done(); }
+});
+
+test("a linked worktree refuses until it is gone", () => {
+  const t = setup();
+  try {
+    const wt = path.join(t.clone, ".worktrees", "w");
+    git(t.clone, "worktree", "add", "-q", wt);
+    assert.match(cloneVerdict(t.clone, { root: t.root }).reason, /linked worktrees/);
+    fs.rmSync(wt, { recursive: true });
+    assert.equal(cloneVerdict(t.clone, { root: t.root }).ok, true);
+  } finally { t.done(); }
+});
+
+test("ignored work output is kept; only regenerable ignored paths go", () => {
+  const t = setup();
+  try {
+    fs.writeFileSync(path.join(t.clone, ".git", "info", "exclude"), ".team-up/\n.env\ndist/\n*.tsbuildinfo\ndata/**\n");
+    for (const f of [".team-up/TICKET.md", ".env", "dist/out.js", "app.tsbuildinfo", "data/save.json", "data/sub/x.json"]) {
+      fs.mkdirSync(path.dirname(path.join(t.clone, f)), { recursive: true });
+      fs.writeFileSync(path.join(t.clone, f), "x");
+    }
+    const [r] = cleanupRunClone({ runId: "r5", cwd: t.clone }, { root: t.root, log: () => {} });
+    assert.equal(r.removed, true, r.reason);
+    assert.deepEqual(fs.readdirSync(t.clone).sort(), [".env", ".team-up", "data"]);
+    assert.ok(fs.existsSync(path.join(t.clone, ".team-up", "TICKET.md")));
+    assert.ok(fs.existsSync(path.join(t.clone, "data", "sub", "x.json")));
+  } finally { t.done(); }
+});
+
+test("an unlanded merge commit or a tag origin lacks refuses; a tag origin has does not", () => {
+  const t = setup();
+  try {
+    git(t.clone, "checkout", "-qb", "side");
+    commit(t.clone);
+    git(t.clone, "checkout", "-q", "main");
+    git(t.source, "fetch", "-q", t.clone, "side");
+    git(t.source, "merge", "-q", "--ff-only", "FETCH_HEAD");
+    git(t.clone, "merge", "-q", "--no-ff", "-m", "merge side", "side");
+    assert.match(cloneVerdict(t.clone, { root: t.root }).reason, /unlanded merge/);
+    git(t.clone, "reset", "-q", "--hard", "origin/main");
+    git(t.clone, "branch", "-qD", "side");
+    commit(t.clone, "c.txt");
+    git(t.clone, "tag", "-a", "-m", "v1", "v1");
+    git(t.clone, "reset", "-q", "--hard", "HEAD~1");
+    assert.match(cloneVerdict(t.clone, { root: t.root }).reason, /not on origin main/);
+    git(t.clone, "push", "-q", "origin", "v1");
+    assert.equal(cloneVerdict(t.clone, { root: t.root }).ok, true);
+  } finally { t.done(); }
+});
+
+// Run alone (no npm preload) this file once logged r1/r3/r4 into the live
+// ~/.team-up/clone-cleanup.log and left a run in the live runs dir.
+test("run alone, this file never writes the invoking user's team-up home", () => {
+  const sentinel = fs.mkdtempSync(path.join(os.tmpdir(), "tu-sentinel-home-"));
+  try {
+    fs.mkdirSync(path.join(sentinel, ".team-up"));
+    const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-name-pattern=^a clean clone", fileURLToPath(import.meta.url)], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, HOME: sentinel },
+    });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^# pass 1$/m);
+    assert.deepEqual(fs.readdirSync(path.join(sentinel, ".team-up")), []);
+  } finally { fs.rmSync(sentinel, { recursive: true, force: true }); }
 });
