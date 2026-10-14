@@ -117,6 +117,10 @@ WINDOWS = {
 TERMINAL = {"done", "failed", "cancelled"}
 # Parked: worker stopped, question in the Action Center. waiting_decision is a capacity state, not Benni's.
 WAITING = {"waiting_human"}
+# CAPACITY_RUN_STATUSES in src/runs/runs.mjs, e.g. boot deferred a parked run's respawn. A parked run
+# there stays parked: resumed or cancelled, the pending capacity wait would still revive the old run.
+# Once its worker is back, the next tick stops it.
+CAPACITY = {"waiting_capacity", "waiting_decision"}
 
 # fallback pool per cli, in priority order: (task, team-up role)
 FALLBACK = {
@@ -591,14 +595,14 @@ def triage_runs(ledger, now, dry):
                 mailbox = (RUNS / e["run_id"] / "mailbox" / "STATUS").read_text().strip()
             except OSError:
                 mailbox = ""
+            status = mailbox if mailbox in TERMINAL else st.get("status")
             # The dashboard's answer sets the run to watching with no worker. A finished run is never
             # resumed: resume() cancels the old run, which would overwrite its result.
-            if mailbox not in TERMINAL and st.get("status") in WAITING | {"watching"}:
-                if answer_of(e["run_id"]):
-                    resumable.append(e)
-                    continue
-                if st.get("status") in WAITING:
-                    continue  # still waiting for Benni; blocks nothing
+            if status in WAITING | {"watching"} and answer_of(e["run_id"]):
+                resumable.append(e)
+                continue
+            if status in WAITING | CAPACITY:
+                continue  # still waiting for Benni, or for room to respawn its worker; blocks nothing
             e.pop("parked")  # finished, cancelled, or left waiting some other way: the usual path from here
         if not dry and e.get("status") not in TERMINAL:
             teamup("runs", "wait", e["run_id"], "--ceiling-sec", "1", timeout=1800)  # reconcile + verify
@@ -988,12 +992,14 @@ def selftest():
         mk("D", "done", ["QUESTIONS.md", "ANSWER.md"])
         mk("W", "watching", ["QUESTIONS.md", "ANSWER.md"])
         (RUNS / "W" / "mailbox" / "STATUS").write_text("done\n")
+        mk("K", "waiting_capacity", ["QUESTIONS.md", "ANSWER.md"])  # boot deferred its respawn: stays parked
         old = (now - timedelta(hours=MAX_RUN_H + 1)).isoformat()
         led = [{"run_id": "P", "at": old, "status": "watching"},
                {"run_id": "A", "at": old, "status": "waiting_human", "parked": old},
                {"run_id": "C", "at": old, "status": "waiting_human", "parked": old},
                {"run_id": "D", "at": old, "status": "waiting_human", "parked": old},
-               {"run_id": "W", "at": old, "status": "waiting_human", "parked": old}]
+               {"run_id": "W", "at": old, "status": "waiting_human", "parked": old},
+               {"run_id": "K", "at": old, "status": "waiting_human", "parked": old}]
         calls, shells = [], []
         saved_tu, saved_sh = globals()["teamup"], globals()["sh"]
         globals()["teamup"] = lambda *a, **k: calls.append(a)
@@ -1007,6 +1013,7 @@ def selftest():
         assert led[0].get("parked") and led[0]["status"] == "waiting_human" and ("cancel",) not in [c[:1] for c in calls]
         assert [e["run_id"] for e in intake][:2] == ["C", "D"] and "parked" not in led[2], (intake, led)
         assert led[3]["status"] == "done" and "parked" not in led[4] and ("runs", "wait", "W", "--ceiling-sec", "1") in calls
+        assert led[5].get("parked") and not [c for c in calls if "K" in c], calls
     print("selftest ok")
 
 
