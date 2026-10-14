@@ -10,6 +10,12 @@ import { loadJson, configPath, usagePath, saveRoster } from "../roster/config.mj
 import { specialistAssignment } from "../roster/profile.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
 import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
+import {
+  listClaudeSessions,
+  stopClaudeSession,
+  sendClaudeMessage,
+  MAX_MESSAGE_CHARS,
+} from "./claude-sessions.mjs";
 import { assertPathInsideRoot } from "../specialists/safe-id.mjs";
 import {
   buildSpecialistsView,
@@ -328,6 +334,11 @@ export function createDashboardServer({
   publicOrigin = env.TEAMUP_DASHBOARD_ORIGIN || "",
   sessionExists = (session) => tmuxSessionExists(session, { exec }),
   sendKeys = sendPaneKeys,
+  claudeSessions = {
+    list: () => listClaudeSessions({ env }),
+    stop: (pid) => stopClaudeSession(pid, { env }),
+    send: (pid, text) => sendClaudeMessage(pid, text, { env }),
+  },
   timViewer = createTimViewerProxy({ env }),
 } = {}) {
   const expectedToken = token ?? ensureDashboardToken(env);
@@ -872,6 +883,49 @@ export function createDashboardServer({
           { actor: "127.0.0.1", action: "tmux.keys", target: session, result: "ok" },
           { env },
         );
+      }
+      jsonResponse(res, 200, { ok: true });
+      return;
+    }
+
+    const claudeMatch = pathname.match(/^\/api\/claude-sessions\/(\d+)\/(stop|message)$/);
+    if (req.method === "POST" && claudeMatch) {
+      if (!requireWriteAccess(req, res)) return;
+      const pid = Number(claudeMatch[1]);
+      const action = `claude.${claudeMatch[2]}`;
+      let result;
+      if (claudeMatch[2] === "stop") {
+        result = claudeSessions.stop(pid);
+      } else {
+        let body;
+        try {
+          body = JSON.parse(await readBody(req) || "{}");
+        } catch {
+          jsonResponse(res, 400, { error: "invalid json" });
+          return;
+        }
+        const text = typeof body.text === "string" ? body.text.trim() : "";
+        // The inbox drops an over-long line without a word to the sender.
+        if (!text || text.length > MAX_MESSAGE_CHARS) {
+          jsonResponse(res, 400, { error: `text must be 1-${MAX_MESSAGE_CHARS} characters` });
+          return;
+        }
+        result = await claudeSessions.send(pid, text);
+      }
+      appendAudit(
+        {
+          actor: "127.0.0.1",
+          action,
+          target: result.session?.name ? `${pid} ${result.session.name}` : String(pid),
+          result: result.ok ? "ok" : "fail",
+          ...(result.ok ? {} : { detail: result.error }),
+        },
+        { env },
+      );
+      memo.invalidate("claude-sessions");
+      if (!result.ok) {
+        jsonResponse(res, result.status ?? 500, { error: result.error });
+        return;
       }
       jsonResponse(res, 200, { ok: true });
       return;
@@ -1454,6 +1508,15 @@ export function createDashboardServer({
         return joinTmuxSessions(sessions, states);
       });
       jsonResponse(res, 200, data);
+      return;
+    }
+
+    if (pathname === "/api/claude-sessions") {
+      const sessions = memo.get("claude-sessions", () => claudeSessions.list());
+      // The socket path is how a message gets in; the browser has no use for it.
+      jsonResponse(res, 200, {
+        sessions: sessions.map(({ socket, ...s }) => ({ ...s, canMessage: Boolean(socket) })),
+      });
       return;
     }
 

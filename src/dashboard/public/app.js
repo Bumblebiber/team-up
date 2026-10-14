@@ -359,6 +359,58 @@ async function refreshTmux() {
   });
 }
 
+async function refreshClaudeSessions() {
+  const data = await api("/api/claude-sessions");
+  const home = /^\/home\/[^/]+/;
+  const rows = data.sessions.map((s) => {
+    const where = s.tmux ? `tmux ${s.tmux}` : s.entrypoint === "claude-desktop" ? "desktop" : (s.entrypoint || "—");
+    // A session in tmux has a real keyboard in the terminal overlay; the
+    // message inbox is only for the ones without one.
+    const steer = s.tmux
+      ? `<button type="button" data-claude-open="${esc(s.tmux)}">Terminal</button>`
+      : s.canMessage ? `<button type="button" data-claude-message>Message</button>` : "";
+    return `<tr data-pid="${s.pid}" data-name="${esc(s.name || "")}" data-status="${esc(s.status || "")}">
+      <td>${esc(s.name || "—")}</td>
+      <td>${esc(where)}</td>
+      <td>${esc(s.status || "—")}</td>
+      <td title="${esc(s.cwd || "")}">${esc((s.cwd || "—").replace(home, "~"))}</td>
+      <td>${s.updatedAt ? esc(fmtTime(new Date(s.updatedAt).toISOString())) : "—"}</td>
+      <td class="row-actions">${steer} <button type="button" data-claude-stop class="danger">Stop</button></td>
+    </tr>`;
+  }).join("");
+  $("#claude-table").innerHTML = `<table>
+    <thead><tr><th>Name</th><th>Where</th><th>Status</th><th>CWD</th><th>Last active</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="6">No sessions</td></tr>'}</tbody></table>`;
+}
+
+$("#claude-table").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button");
+  const tr = btn?.closest("tr[data-pid]");
+  if (!tr) return;
+  if (btn.dataset.claudeOpen) {
+    selectSession(btn.dataset.claudeOpen);
+    return;
+  }
+  const label = `${tr.dataset.name || "this session"} (pid ${tr.dataset.pid})`;
+  try {
+    if (btn.dataset.claudeStop !== undefined) {
+      const busy = tr.dataset.status === "busy" ? "\n\nIt is working right now: the running turn is cut off." : "";
+      if (!confirm(`Stop ${label}?${busy}\n\nThe conversation is kept and can be resumed.`)) return;
+      await api(`/api/claude-sessions/${tr.dataset.pid}/stop`, { method: "POST", body: "{}" });
+    } else if (btn.dataset.claudeMessage !== undefined) {
+      const text = prompt(`Message to ${label}:\n\nIt arrives as a note from another session.`);
+      if (!text?.trim()) return;
+      await api(`/api/claude-sessions/${tr.dataset.pid}/message`, {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      });
+    }
+    await refreshClaudeSessions();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
 /** Browser key name → the name tmux send-keys knows it by. */
 const TMUX_KEYS = {
   Enter: "Enter",
@@ -2697,7 +2749,7 @@ $("#trending-section").addEventListener("change", (e) => {
 // renderer knowing about it.
 const PANEL_HELP = {
   "panel-usage": "Usage windows of every subscription: share used, warn level and when it resets. STALE means the collector stopped reading — one click sends an agent to fix it.",
-  "panel-sessions": "Live tmux sessions (click one to open its terminal) and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
+  "panel-sessions": "Live tmux sessions (click one to open its terminal), every live Claude Code session including the desktop app's (message or stop it), and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
   "panel-projects": "Repos in the collecting folder: branch, command policy trust, open sessions. Start opens a CLI session in the repo; Fix all / auto-fix write unambiguous policies and trust their checksums.",
   "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
   "panel-roles": "Every role and its fallback chain. The outlined chip is what `team-up pick` would choose right now; faded chips are skipped right now (hover for why). Drag chips to reorder, drop a model from the roster to add it, ✕ to remove; dragging a chip onto another role copies it. ✎ sets effort and pinning. ⬆ marks a newer version, ✗ a model the CLI no longer offers.",
@@ -2871,6 +2923,7 @@ function refreshAll() {
     refreshUsage(),
     refreshRuns(),
     refreshTmux(),
+    refreshClaudeSessions(),
     refreshProjects(),
     refreshTim(),
     refreshRoles(),

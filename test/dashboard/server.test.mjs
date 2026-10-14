@@ -804,3 +804,33 @@ test("prefs round-trip through the server so every device shares one layout", ()
     assert.equal(bad.status, 400);
     server.close();
   }));
+
+test("claude sessions: the socket stays server-side, stop is audited, long text refused", () =>
+  withHome(async ({ home, token }) => {
+    const calls = [];
+    const session = { pid: 42, name: "chat", socket: "/run/x.sock" };
+    const { server } = createDashboardServer({
+      token,
+      claudeSessions: {
+        list: () => [session],
+        stop: (pid) => (calls.push(["stop", pid]), { ok: true, session }),
+        send: (pid, text) => (calls.push(["send", pid, text]), { ok: true, session }),
+      },
+    });
+    const port = await listen(server);
+    const cookie = await loginCookie(port, token);
+    const list = await req(port, "/api/claude-sessions", { token });
+    assert.deepEqual(list.json.sessions, [{ pid: 42, name: "chat", canMessage: true }]);
+    const stop = await req(port, "/api/claude-sessions/42/stop", { method: "POST", cookie, csrf: true, body: {} });
+    assert.equal(stop.status, 200);
+    const long = await req(port, "/api/claude-sessions/42/message", {
+      method: "POST", cookie, csrf: true, body: { text: "x".repeat(4001) },
+    });
+    assert.equal(long.status, 400);
+    const noCsrf = await req(port, "/api/claude-sessions/42/stop", { method: "POST", cookie, body: {} });
+    assert.equal(noCsrf.status, 403);
+    assert.deepEqual(calls, [["stop", 42]]);
+    const audit = fs.readFileSync(path.join(home, "dashboard-audit.log"), "utf8");
+    assert.match(audit, /"action":"claude.stop","target":"42 chat","result":"ok"/);
+    server.close();
+  }));
