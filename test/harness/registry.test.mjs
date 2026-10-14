@@ -12,6 +12,7 @@ import {
 import {
   COMMAND_BROKER_CAPABILITY,
   CONTEXT_ISOLATION_CAPABILITY,
+  CODEX_DECLARED_CAPABILITIES,
 } from "../../src/harness/capabilities.mjs";
 
 test("Claude launch capabilities come from adapter declarations, independent of verification", () => {
@@ -28,10 +29,14 @@ test("Claude launch capabilities come from adapter declarations, independent of 
 });
 
 test("unsupported fallback declares no capsule or broker capabilities", () => {
-  for (const id of ["cursor", "codex", "hermes", "opencode", "unknown"]) {
+  for (const id of ["cursor", "hermes", "opencode", "unknown"]) {
     assert.equal(harnessCapabilities(id).command_broker, null);
     assert.equal(harnessCapabilities(id).context_isolation, null);
   }
+});
+
+test("Codex declares isolation and denied native shell from adapter", () => {
+  assert.deepEqual(declaredHarnessCapabilities("codex"), CODEX_DECLARED_CAPABILITIES);
 });
 
 test("Claude capsule launch is prepared without a verification record", (t) => {
@@ -58,11 +63,20 @@ test("Claude capsule launch is prepared without a verification record", (t) => {
   assert.equal(prepared.capabilities.context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });
 
-test("unsupported fallback cannot prepare a capsule", () => {
-  assert.throws(() => prepareHarnessLaunch({
+test("Codex capsule launch is prepared with shell disabled on argv", (t) => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "tu-harness-codex-capsule-"));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+  const prepared = prepareHarnessLaunch({
     cli: "codex",
-    argv: ["codex", "task"],
-    runDir: "/tmp/run",
-    capsule: { mcpConfig: { mcpServers: {} } },
-  }), /HARNESS_CONTEXT_ISOLATION_UNSUPPORTED/);
+    argv: ["codex", "exec", "--", "task"],
+    runDir,
+    capsule: {
+      codexHome: path.join(runDir, "harness", "home"),
+      skillDirs: [],
+      mcpConfig: { mcpServers: {} },
+    },
+    env: { TEAM_UP_HOME: path.join(runDir, "team-up-home") },
+  });
+  assert.equal(prepared.argv[prepared.argv.indexOf("--disable") + 1], "shell_tool");
+  assert.equal(prepared.capabilities.context_isolation, CONTEXT_ISOLATION_CAPABILITY);
 });

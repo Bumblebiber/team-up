@@ -14,6 +14,11 @@ import {
   validateIsolationObservation,
   createSanitizedClaudeHome,
 } from "./isolation-canary.mjs";
+import {
+  inventoryListsNativeShell,
+  isNativeShellToolName,
+} from "./native-shell-tools.mjs";
+import { appendCodexShellDisable } from "./codex.mjs";
 
 export { validateIsolationObservation };
 
@@ -159,12 +164,12 @@ export function parseClaudeStreamEvents(text) {
  */
 export function evaluateNativeShellFromStream({ events = [], text = "" } = {}) {
   void text;
-  const bashUses = events.filter(
-    (e) => e.type === "tool_use" && String(e.name || "").toLowerCase() === "bash"
+  const shellUses = events.filter(
+    (e) => e.type === "tool_use" && isNativeShellToolName(e.name)
   );
   const inventories = events.filter((e) => e.type === "tool_inventory");
 
-  for (const use of bashUses) {
+  for (const use of shellUses) {
     if (
       use.is_error ||
       (use.error &&
@@ -174,29 +179,37 @@ export function evaluateNativeShellFromStream({ events = [], text = "" } = {}) {
     }
   }
 
-  const bashResults = events.filter(
+  const shellResults = events.filter(
     (e) =>
       e.type === "tool_result" &&
-      (e.is_error || /bash/i.test(String(e.name || e.content || "")))
+      (e.is_error ||
+        isNativeShellToolName(e.name) ||
+        isNativeShellToolName(String(e.content || "").split(/\s/)[0]))
   );
-  if (bashResults.some((r) => r.is_error)) return "denied";
+  if (shellResults.some((r) => r.is_error)) return "denied";
 
   if (
     events.some(
       (e) =>
-        /bash/i.test(String(e.name || "")) &&
+        isNativeShellToolName(e.name) &&
         (e.is_error || /denied|disallowed|rejected/i.test(String(e.error || e.content || "")))
     )
   ) {
     return "denied";
   }
 
-  if (inventories.some((inv) => inv.names?.length && !inv.names.some((n) => /bash/i.test(n)))) {
+  if (
+    inventories.some(
+      (inv) => inv.names?.length && !inventoryListsNativeShell(inv.names)
+    )
+  ) {
     return "denied";
   }
+  if (inventories.some((inv) => inventoryListsNativeShell(inv.names))) {
+    return "allowed";
+  }
 
-  if (bashUses.length > 0) {
-    // Bash tool_use present without rejection → allowed (successful or attempted)
+  if (shellUses.length > 0) {
     return "allowed";
   }
 
@@ -509,12 +522,85 @@ export function harnessFixtureProject() {
 /**
  * CLIs `harness verify` has a live runner for.
  */
-export const HARNESS_VERIFY_CLIS = new Set(["claude"]);
+export const HARNESS_VERIFY_CLIS = new Set(["claude", "codex"]);
 
 /** Legacy reason retained so the dashboard can read old Codex verify logs. */
 export const UNVERIFIABLE_ISOLATION_REASONS = new Set([
   "codex_no_live_collector",
 ]);
+
+/**
+ * Codex native_shell is proven from the Responses tool list with
+ * `features.shell_tool=false` (`--disable shell_tool` on argv). No broker probe.
+ */
+export async function liveCodexVerifyRunner({ adapter, fixtureProject, cliVersion }) {
+  void fixtureProject;
+  let versionOut = "";
+  try {
+    versionOut = execFileSync("codex", ["--version"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+  } catch (e) {
+    return {
+      native_shell: "unverified",
+      broker_tool: null,
+      error: `codex executable unavailable: ${e.message}`,
+    };
+  }
+
+  if (typeof adapter.toolInventory !== "function") {
+    return {
+      native_shell: "unverified",
+      broker_tool: null,
+      error: "codex adapter missing toolInventory",
+      cli_version: cliVersion,
+    };
+  }
+
+  const probeHome = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-codex-inv-"));
+  try {
+    const prepared = adapter.prepareLaunch({
+      argv: appendCodexShellDisable(["codex", "exec", "--ephemeral", "--skip-git-repo-check"]),
+      runDir: probeHome,
+      capsule: {
+        codexHome: path.join(probeHome, "home"),
+        skillDirs: [],
+        mcpConfig: { mcpServers: {} },
+      },
+      writeFileSync: fs.writeFileSync,
+      mkdirSync: fs.mkdirSync,
+      chmodSync: fs.chmodSync,
+    });
+    let names;
+    try {
+      names = await Promise.resolve(adapter.toolInventory({ env: prepared.env }));
+    } catch (e) {
+      return {
+        native_shell: "unverified",
+        broker_tool: null,
+        error: `tool inventory unavailable: ${e.message}`,
+        cli_version: cliVersion || String(versionOut).trim(),
+      };
+    }
+    const native_shell = evaluateNativeShellFromStream({
+      events: [{ type: "tool_inventory", names }],
+    });
+    return {
+      native_shell,
+      broker_tool: null,
+      cli_version: cliVersion || String(versionOut).trim(),
+      argv_sample: prepared.argv.slice(0, 16),
+      tool_inventory: names,
+    };
+  } finally {
+    try {
+      fs.rmSync(probeHome, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+}
 
 export async function runHarnessVerify(args, io = { out: console.log, err: console.error }) {
   const [cli, ...rest] = args;
@@ -543,8 +629,13 @@ export async function runHarnessVerify(args, io = { out: console.log, err: conso
     io.err(`harness verify unsupported for ${cli}`);
     return 2;
   }
+  if (cli === "codex" && typeof adapter.toolInventory !== "function") {
+    io.err("adapter codex not ready for live verify: missing toolInventory");
+    return 2;
+  }
   const runners = io.runners || {};
-  const runner = runners[cli] || liveClaudeVerifyRunner;
+  const defaultRunner = cli === "codex" ? liveCodexVerifyRunner : liveClaudeVerifyRunner;
+  const runner = runners[cli] || defaultRunner;
   const env = io.env || process.env;
   try {
     const record = await verifyHarness({

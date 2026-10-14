@@ -14,3 +14,10 @@ export const CLAUDE_DECLARED_CAPABILITIES = Object.freeze({
   native_shell: "denied",
   mcp: "stdio",
 });
+
+export const CODEX_DECLARED_CAPABILITIES = Object.freeze({
+  command_broker: null,
+  context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+  native_shell: "denied",
+  mcp: "stdio",
+});

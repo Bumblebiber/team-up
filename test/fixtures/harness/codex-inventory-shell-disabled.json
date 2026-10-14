@@ -1,0 +1,9 @@
+{
+  "model": "gpt-5-codex",
+  "stream": true,
+  "tools": [
+    { "type": "function", "name": "read_file", "function": { "name": "read_file" } },
+    { "type": "function", "name": "apply_patch", "function": { "name": "apply_patch" } }
+  ],
+  "input": []
+}

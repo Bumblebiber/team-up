@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync as realExecFileSync } from "node:child_process";
 import { claudeAdapter } from "./claude.mjs";
+import { codexAdapter } from "./codex.mjs";
 import { unsupportedAdapter } from "./unsupported.mjs";
 import { CONTEXT_ISOLATION_CAPABILITY, UNVERIFIED_CAPABILITIES } from "./capabilities.mjs";
 import { loadVerificationRecord, listVerificationRecords } from "./verify.mjs";
@@ -10,6 +11,7 @@ import { brokerBinPath } from "../commands/mcp-server.mjs";
 
 const ADAPTERS = Object.freeze({
   claude: claudeAdapter,
+  codex: codexAdapter,
 });
 
 export function getAdapter(cli) {

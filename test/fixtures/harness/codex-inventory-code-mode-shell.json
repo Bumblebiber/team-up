@@ -1,0 +1,15 @@
+{
+  "model": "gpt-6-astra",
+  "stream": true,
+  "tools": [
+    {
+      "type": "function",
+      "name": "exec",
+      "function": {
+        "name": "exec",
+        "description": "Run JS.\n\n### `read_file`\nRead a file.\n\n### `apply_patch`\nPatch.\n\nExample: await tools.exec_command({ command: 'echo x' });"
+      }
+    }
+  ],
+  "input": []
+}
