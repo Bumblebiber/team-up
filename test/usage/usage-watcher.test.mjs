@@ -217,9 +217,9 @@ test("clearCollecting frees CLIs wedged by a restart mid-collect", () => {
   assert.deepEqual(d.collect.sort(), ["claude", "codex", "cursor"]);
 });
 
-test("intervalMinForCli keeps codex and cursor on slower cadence", () => {
+test("intervalMinForCli keeps cursor on slower cadence; claude/codex use JSON", () => {
   assert.equal(intervalMinForCli("claude", "idle", WATCHER_DEFAULT_CONFIG), 10);
-  assert.equal(intervalMinForCli("codex", "idle", WATCHER_DEFAULT_CONFIG), 30);
+  assert.equal(intervalMinForCli("codex", "idle", WATCHER_DEFAULT_CONFIG), 10);
   assert.equal(intervalMinForCli("cursor", "idle", WATCHER_DEFAULT_CONFIG), 30);
   assert.equal(intervalMinForCli("cursor", "busy", WATCHER_DEFAULT_CONFIG), 8);
 });
@@ -228,15 +228,15 @@ test("watcherConfig deep-merges intervals and per-cli overrides", () => {
   const cfg = watcherConfig({
     usage_watcher: {
       intervals: { busy_min: 7 },
-      cli_intervals: { codex: { active_min: 15 } },
+      cli_intervals: { cursor: { active_min: 15 } },
     },
   });
   assert.equal(cfg.intervals.idle_min, 10);
   assert.equal(cfg.intervals.active_min, 10);
   assert.equal(cfg.intervals.busy_min, 7);
   assert.equal(cfg.cli_intervals.cursor.busy_min, 8);
-  assert.equal(intervalMinForCli("codex", "active", cfg), 15);
-  assert.equal(intervalMinForCli("codex", "busy", cfg), 8);
+  assert.equal(intervalMinForCli("cursor", "active", cfg), 15);
+  assert.equal(intervalMinForCli("cursor", "busy", cfg), 8);
 });
 
 test("collect failures record the collector's own reason, not \"Command failed\"", () => {

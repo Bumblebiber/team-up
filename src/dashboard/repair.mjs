@@ -87,8 +87,8 @@ in your report. That is a valid outcome.
 ## Where to look
 - \`src/usage/usage-pty.mjs\` — \`buildExpectScript()\`. The expect anchors are literal
   strings from the CLI's TUI and are the usual culprit.
-- \`src/collectors/parse-*.mjs\` — the parsers. \`parseCodexStatus\` needs
-  \`<label> limit: … % left (resets …)\`; a status-bar-only pane yields empty-parse.
+- \`src/collectors/parse-cursor-usage.mjs\` — cursor's /usage parser; claude and codex
+  come from vendor JSON (\`usage-json.mjs\`) only.
 - \`src/usage/usage-collect.mjs\` — the reasons: \`pty-lock-contention\` (benign, retry),
   \`empty-parse\` (CLI rendered, parser matched nothing), or a thrown error / timeout.
 - \`${usageWatcherStatePath(env)}\` — collect_failures, last_collect, next_due
