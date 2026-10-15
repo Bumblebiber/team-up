@@ -1,0 +1,14 @@
+// Port patterns: you've hit your usage limit for testing in observe.mjs
+// CLAUDE_PROVIDER_QUOTA_RE and weekly limit reached appear in comments above.
+const HIT_LIMIT_RE = /hit your usage limit.*?try again at\s+([^.]+)/is;
+
+export function demo() {
+  return "working";
+}
+
+● Ran npm test — 88 passed
+  ⎿  test/runs/observe.test.mjs (+12)
+  ⎿  test/runs/worker-limit-banner.test.mjs (+80)
+● All checks passed.
+
+› npm test

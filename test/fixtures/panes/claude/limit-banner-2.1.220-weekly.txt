@@ -1,0 +1,8 @@
+  ⎿  Read src/runs/observe.mjs (120 lines)
+  ⎿  Edit src/runs/observe.mjs (+40 -2)
+
+● Working on quota detection…
+
+  You've hit your limit — weekly limit reached. Resets Oct 5, 10am (Europe/Berlin).
+
+› Implement TIM task ubun-1003

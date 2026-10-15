@@ -1,0 +1,5 @@
+│ model: gpt-5.6-sol high               │
+
+You've hit your usage limit for this model's 5h window. Switch to another model now, or try again at 3pm on 5 Aug.
+
+› 
