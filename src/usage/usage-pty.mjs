@@ -12,6 +12,7 @@ import {
   homeDir,
   shellEscape,
   spawnLine,
+  ptyTranscriptInit,
   timeoutTail,
 } from "./pty-expect-core.mjs";
 
@@ -87,6 +88,15 @@ export function redactPaneExcerpt(text, lineCount = 15) {
   return redactSecrets(tail);
 }
 
+/** Last non-empty pane lines for PTY_TIMEOUT_TAIL (formatPtyTimeoutError redacts). */
+export function paneTranscriptForTimeoutMarker(text, lineCount = 15) {
+  if (!text || typeof text !== "string") return "(empty pane)";
+  const stripped = text.replace(/\n?PTY_TIMEOUT_TAIL:\n[\s\S]*$/g, "");
+  const lines = normalizeForRedaction(stripped).replace(/\r/g, "").split("\n").filter((l) => l.trim().length > 0);
+  const tail = lines.slice(-lineCount).join("\n");
+  return tail || "(empty pane)";
+}
+
 export function formatPtyTimeoutError(cli, transcript = "", stderr = "") {
   const raw = [transcript, stderr].filter(Boolean).join("\n");
   const marker = "PTY_TIMEOUT_TAIL:\n";
@@ -132,6 +142,7 @@ ${timeoutTail()}}
 export function buildExpectScript(cli, timeoutSec = 45) {
   const seq = SEQUENCES[cli];
   if (!seq) throw new Error(`no PTY sequence for cli: ${cli}`);
+  const transcriptInit = ptyTranscriptInit();
   const cmd = shellEscape(seq.command);
   const exitCmd = shellEscape(seq.exit);
   const dialogs = dialogBranches();
@@ -146,7 +157,7 @@ export function buildExpectScript(cli, timeoutSec = 45) {
     const panelTimeout = Math.max(60, Math.floor(timeoutSec * 0.35));
     const bootTimeout = Math.max(90, Math.floor(timeoutSec * 0.6));
     const statusBarPat = shellEscape(CODEX_STATUS_BAR_RE + CODEX_ROW_PAINTED);
-    return `set timeout ${bootTimeout}
+    return `${transcriptInit}set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"
 expect {
@@ -177,7 +188,7 @@ ${fastExitBlock(exitCmd)}`;
 
   if (cli === "cursor") {
     const readyPat = shellEscape(seq.ready || "Tip:");
-    return `set timeout ${bootTimeout}
+    return `${transcriptInit}set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"
 expect {
@@ -187,7 +198,7 @@ ${cursorCommandBlock(seq)}${fastExitBlock(exitCmd)}`;
   }
 
   const waitPat = shellEscape(seq.wait);
-  return `set timeout ${timeoutSec}
+  return `${transcriptInit}set timeout ${timeoutSec}
 spawn env O9K_USAGE_COLLECT=1 TERM=xterm-256color ${seq.bin}
 expect {
 ${dialogs}  -re "${waitPat}" { }
@@ -397,7 +408,9 @@ function boundedExpectEntry() {
     clearTimeout(killer);
     snap();
     kill();
-    const extra = timedOut ? "\nPTY_TIMEOUT_TAIL:\n(hard kill)\n" : "";
+    const captured = Buffer.concat([...outChunks, ...errChunks]).toString("utf8");
+    const tail = timedOut ? paneTranscriptForTimeoutMarker(captured) : "";
+    const extra = timedOut ? `\nPTY_TIMEOUT_TAIL:\n${tail}\n` : "";
     const stdout = Buffer.concat(outChunks);
     const stderr = Buffer.concat([Buffer.concat(errChunks), Buffer.from(extra)]);
     process.stdout.write(stdout, () => {
@@ -424,13 +437,13 @@ function isBoundedExpectCli(argv) {
   }
 }
 
-function execExpectBounded(tmp, { timeoutMs, env, pidFile }) {
+function execExpectBounded(tmp, { timeoutMs, env, pidFile, transcriptPath }) {
   const r = spawnSync(
     process.execPath,
     [fileURLToPath(import.meta.url), "--bounded-expect", tmp, String(timeoutMs), pidFile],
     {
       encoding: "utf8",
-      env,
+      env: { ...env, ...(transcriptPath ? { TEAM_UP_PTY_TRANSCRIPT: transcriptPath } : {}) },
       timeout: timeoutMs + 5000,
       killSignal: "SIGKILL",
       maxBuffer: PTY_MAX_BUFFER,
@@ -456,8 +469,10 @@ export function runPtyCollect(cli, opts = {}) {
   const script = opts.script ?? buildExpectScript(cli, timeoutSec);
   const tmp = path.join(os.tmpdir(), `team-up-usage-pty-${cli}-${process.pid}.exp`);
   const pidFile = `${tmp}.tree`;
+  const transcriptPath = path.join(os.tmpdir(), `team-up-pty-transcript-${process.pid}-${Date.now()}.log`);
   // A crashed earlier collector with the same pid may have left its tree behind.
   fs.rmSync(pidFile, { force: true });
+  fs.rmSync(transcriptPath, { force: true });
   fs.writeFileSync(tmp, script);
   try {
     // Strip collect markers from expect's environment — if the parent is already a
@@ -467,6 +482,7 @@ export function runPtyCollect(cli, opts = {}) {
       timeoutMs: hardTimeoutMs,
       env: { ...parentEnv, TERM: COLLECT_ENV.TERM },
       pidFile,
+      transcriptPath,
     });
   } catch (e) {
     const stdout = typeof e?.stdout === "string" ? e.stdout : e?.stdout?.toString?.("utf8") || "";
@@ -493,6 +509,11 @@ export function runPtyCollect(cli, opts = {}) {
     killPublishedTree(pidFile);
     try {
       fs.unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+    try {
+      fs.unlinkSync(transcriptPath);
     } catch {
       /* ignore */
     }

@@ -1,3 +1,4 @@
+import { authFailureStreak, AUTH_FAILURE_STREAK } from "../usage/collect-failures.mjs";
 import { pick, limits } from "../roster/chain.mjs";
 import { SESSION_PREFIX } from "./projects.mjs";
 import { DEFAULT_UNCOLLECTED_DAYS } from "../runs/collect.mjs";
@@ -148,19 +149,7 @@ export function classifyUsageWindow(info, roster, now = Date.now()) {
   };
 }
 
-/**
- * Consecutive auth failures at the tail of the ring. The ring is emptied on a
- * successful collect (tickOnce), so every entry is a failure since the last
- * good reading; only a tail streak means "still failing on login now".
- */
-function authFailureStreak(list) {
-  let n = 0;
-  for (let i = list.length - 1; i >= 0 && list[i]?.reason === "auth_failure"; i -= 1) n += 1;
-  return n;
-}
-
-/** Same threshold as usage-watchdog.mjs FAILURE_REPEAT, and <= COLLECT_FAILURE_RING. */
-export const AUTH_FAILURE_STREAK = 3;
+export { authFailureStreak, AUTH_FAILURE_STREAK };
 
 /**
  * Per-CLI collector health. A window goes STALE because its collector stopped
