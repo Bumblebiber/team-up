@@ -14,8 +14,11 @@ import {
   mailboxDir,
   setStatus,
 } from "./runs.mjs";
-import { pick } from "../roster/chain.mjs";
+import { pick, markLimited } from "../roster/chain.mjs";
 import { loadJson, requireRoster, usagePath } from "../roster/config.mjs";
+import { mergeUsageWindows, writeUsageAtomic } from "../usage/usage-collect.mjs";
+import { normalizeWindowRecord } from "../usage/usage-windows.mjs";
+import { detectWorkerLimitBanner } from "./worker-limit-banner.mjs";
 
 export const DEFAULT_POLL_SEC = 5;
 export const DEFAULT_STALL_TICKS = 3;
@@ -342,6 +345,62 @@ export function answerClaudeTrustPrompt({ runId, state, loop, capture, deps = {}
   return true;
 }
 
+/**
+ * When the worker pane shows a provider quota banner at the tail, mark the
+ * roster cell limited and record the window that was hit — before stall judge.
+ */
+export function maybeMarkWorkerLimitFromPane({ runId, state, loop, capture, deps = {} }) {
+  const cli = state.worker?.cli;
+  const model = state.worker?.model;
+  if (!cli || !model) return false;
+  const now = typeof deps.now === "function" ? deps.now() : (deps.now ?? Date.now());
+  const match = detectWorkerLimitBanner(capture, cli, now);
+  if (!match) return false;
+  const fp = paneFingerprint(capture);
+  if (loop.limitMarkedPanes?.has(fp)) return false;
+
+  const {
+    log = (entry) => appendObservationLog(runId, entry, deps),
+    readUsage = () => loadJson(usagePath()) || {},
+    writeUsage = writeUsageAtomic,
+  } = deps;
+
+  let usage = readUsage();
+  const untilIso = new Date(now + match.ttlMs).toISOString();
+  usage = markLimited({
+    usage,
+    target: model,
+    ttlMs: match.ttlMs,
+    now,
+    reason: `worker limit banner (${match.windowKey})`,
+  });
+  const windowRecord = normalizeWindowRecord(
+    match.windowKey,
+    {
+      used: 1,
+      resets_at_raw: match.resetRaw,
+      source: "worker-limit-banner",
+      updated_at: new Date(now).toISOString(),
+    },
+    { now: new Date(now).toISOString() },
+  );
+  usage = mergeUsageWindows(usage, { [match.windowKey]: windowRecord });
+  writeUsage(usage);
+
+  loop.limitMarkedPanes = loop.limitMarkedPanes || new Set();
+  loop.limitMarkedPanes.add(fp);
+  log({
+    kind: "action",
+    action: "mark_limited",
+    target: model,
+    window: match.windowKey,
+    until: untilIso,
+    reset_raw: match.resetRaw,
+    pane_fp: fp,
+  });
+  return true;
+}
+
 export function buildJudgePrompt({
   pane,
   cli,
@@ -541,6 +600,10 @@ export function hydrateLoopFromLog(runId, loop = createObserverLoop()) {
       loop.autoAnswerCount += 1;
       if (entry.pane_fp) loop.answeredPanes.add(entry.pane_fp);
     }
+    if (entry.kind === "action" && entry.action === "mark_limited" && entry.pane_fp) {
+      loop.limitMarkedPanes = loop.limitMarkedPanes || new Set();
+      loop.limitMarkedPanes.add(entry.pane_fp);
+    }
     if (entry.kind === "decision" && entry.action === "escalate" && entry.finding) {
       findings.push({ finding: entry.finding, at: Date.parse(entry.ts) });
     }
@@ -713,6 +776,7 @@ export function createObserverLoop() {
     deferredEscalateVerdict: false,
     autoAnswerCount: 0,
     answeredPanes: new Set(),
+    limitMarkedPanes: new Set(),
     approvedFindings: new Set(),
     judgeFailedEscalated: false,
     escalated: false,
@@ -984,6 +1048,10 @@ export async function runObserver(runId, deps = {}) {
       const workerAgeSec = deps.mailboxAgeSec ?? getMailboxAge(runId, { now });
       const next = observerTick(loop, capture, { ...deps, silenceSec, mailboxAgeSec });
       Object.assign(loop, next);
+
+      if (maybeMarkWorkerLimitFromPane({ runId, state, loop, capture, deps: { ...deps, usage, now } })) {
+        usage = loadJson(usagePath()) || usage;
+      }
 
       if (answerClaudeTrustPrompt({ runId, state, loop, capture, deps })) {
         await sleep(pollSec);

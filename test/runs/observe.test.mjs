@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as runs from "../../src/runs/runs.mjs";
+import { pick } from "../../src/roster/chain.mjs";
 import {
   normalizePaneText,
   paneFingerprint,
@@ -31,6 +32,7 @@ import {
   tailPane,
   validateVerdictShape,
   claudeTrustPromptKeys,
+  maybeMarkWorkerLimitFromPane,
   sendTmuxKeys,
   defaultCapture,
   runObserver,
@@ -1217,6 +1219,61 @@ test("a claude worker on the trust dialog for its cwd is answered on the first t
   assert.deepEqual(action.keys, ["Down", "Enter"]);
   assert.match(action.reason, /trust/);
   assert.ok(action.pane_fp, "counted by hydrateLoopFromLog for the cap and the repeat guard");
+}));
+
+const CODEX_LIMIT_PANE = readFixture("codex/limit-banner-0.157.0-weekly.txt");
+
+test("observer marks the worker model when the pane shows a quota banner", withTempRuns(async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "team-up-usage-"));
+  const prevHome = process.env.TEAM_UP_HOME;
+  process.env.TEAM_UP_HOME = home;
+  fs.writeFileSync(path.join(home, "usage.json"), "{}\n");
+  try {
+    const state = runs.createRun({
+      cwd: "/tmp/project",
+      role: "implementer",
+      parent: { cli: "claude", attach: "manual" },
+      worker: { cli: "codex", model: "gpt-5.4-mini", tmux: "limit-worker" },
+      prompt: "work",
+    });
+    runs.setStatus(state.runId, "watching");
+    const loop = createObserverLoop();
+    const written = [];
+    const ok = maybeMarkWorkerLimitFromPane({
+      runId: state.runId,
+      state: runs.loadState(state.runId),
+      loop,
+      capture: CODEX_LIMIT_PANE,
+      deps: {
+        now: Date.parse("2026-09-25T17:40:26Z"),
+        writeUsage: (usage) => {
+          written.push(usage);
+          fs.writeFileSync(path.join(home, "usage.json"), `${JSON.stringify(usage, null, 2)}\n`);
+        },
+        readUsage: () => JSON.parse(fs.readFileSync(path.join(home, "usage.json"), "utf8")),
+      },
+    });
+    assert.equal(ok, true);
+    const usage = written.at(-1);
+    assert.equal(usage.marked["gpt-5.4-mini"].reason, "worker limit banner (codex:weekly)");
+    assert.equal(usage.windows["codex:weekly"].used, 1);
+    const roster = {
+      ...TEST_ROSTER,
+      roles: { planner: { chain: ["gpt-5.4-mini", "grok-4.5-high"] } },
+    };
+    const picked = pick({
+      roster,
+      usage,
+      role: "planner",
+      now: Date.parse("2026-09-25T17:40:26Z"),
+    });
+    assert.equal(picked.model, "grok-4.5-high");
+    assert.equal(picked.skipped[0].model, "gpt-5.4-mini");
+  } finally {
+    if (prevHome === undefined) delete process.env.TEAM_UP_HOME;
+    else process.env.TEAM_UP_HOME = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 }));
 
 test("no trust fast path for another cwd, another cli, or a pane already answered", withTempRuns(async () => {
