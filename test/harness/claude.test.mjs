@@ -4,7 +4,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { claudeAdapter, materializeClaudeAuthHome } from "../../src/harness/claude.mjs";
+import {
+  claudeAdapter,
+  CLAUDE_CAPSULE_SETTINGS_JSON,
+  materializeClaudeAuthHome,
+} from "../../src/harness/claude.mjs";
 import { prepareHarnessLaunch } from "../../src/harness/registry.mjs";
 import { ISOLATION_FORBIDDEN_CANARIES } from "../../src/harness/isolation-canary.mjs";
 
@@ -166,6 +170,10 @@ test("a capsule launch loads user settings only, so ancestor project config stay
       flagValues(launch(["claude", "--setting-sources", "user,project", "-p", "work"], capsule)),
       ["user"]
     );
+    const withSettings = launch(["claude", "--settings", "/roster/settings.json", "-p", "work"], capsule);
+    assert.deepEqual(flagValues(withSettings), ["user"]);
+    assert.ok(withSettings.includes(CLAUDE_CAPSULE_SETTINGS_JSON));
+    assert.equal(withSettings.includes("/roster/settings.json"), false);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }
