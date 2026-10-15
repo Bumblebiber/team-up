@@ -1,0 +1,20 @@
+{
+  "schema": "team-up.review-effectiveness/first-turn-benchmarks/v1",
+  "source": "Deep review 2026-10-03 (ubun-1003-ns-01M40SEFPSK9PESR7EGBABZJQW); Claude API usage on first assistant turn (input + cache read + cache creation).",
+  "capsule_specialist": {
+    "n": 10,
+    "tokens": [16100, 16250, 16800, 17100, 17200, 17400, 17500, 17600, 17700, 17700],
+    "method": "measured_api_usage"
+  },
+  "plain_role_dispatch": {
+    "n": 37,
+    "mean_tokens": 57500,
+    "method": "measured_api_usage",
+    "note": "Only mean published in review; individual samples not archived."
+  },
+  "cross_vendor_review": {
+    "status": "not_run",
+    "quota_cap": 0,
+    "reason": "Worker task capped new review quota at 0; comparison deferred."
+  }
+}
