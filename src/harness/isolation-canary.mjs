@@ -18,6 +18,14 @@ import {
   capabilityReasonFromFailure,
   truncateIsoDetail,
 } from "./isolation-result.mjs";
+import {
+  bashSingleQuote,
+  claudeTrustBranch,
+  dialogBranches,
+  fastExitBlock,
+  shellEscape,
+  timeoutTail,
+} from "../usage/pty-expect-core.mjs";
 
 export { isIsoFailure, isoFail } from "./isolation-result.mjs";
 
@@ -113,6 +121,12 @@ export const CLAUDE_HARNESS_BUILTIN_SKILLS = Object.freeze([
  * in only after checking the name is on no path under the host's ~/.claude and
  * absent from installed_plugins.json — otherwise a real leak gets allowlisted.
  */
+/** Account-synced skills from the Claude account — not on disk under capsule HOME. */
+export const ACCOUNT_SYNCED_SKILL_PREFIX = "anthropic-skills:";
+
+/** Short prompt for the interactive isolation leg (production tmux layout). */
+export const INTERACTIVE_ISOLATION_PROBE_PROMPT = "Reply with exactly: probe-ok";
+
 export const CLAUDE_HARNESS_BUILTIN_PLUGINS = Object.freeze([
   "agents-md",
   "telemetry",
@@ -247,6 +261,225 @@ export function verifyInitSurfaceExclusion(init, { expected, prepared } = {}) {
   }
 
   return { ok: violations.length === 0, violations };
+}
+
+/**
+ * Parse skill names from interactive session `skill_listing` transcript attachments.
+ */
+export function parseSkillListingFromTranscript(transcriptText) {
+  const skills = [];
+  for (const line of String(transcriptText || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] !== "{") continue;
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const attachment = evt?.attachment;
+    if (evt?.type !== "attachment" || attachment?.type !== "skill_listing") continue;
+    for (const name of String(attachment.content || "").split(/\r?\n/)) {
+      const skill = name.trim();
+      if (skill) skills.push(skill);
+    }
+  }
+  return [...new Set(skills)];
+}
+
+/**
+ * Parse `instructions` attachments from an interactive session transcript.
+ */
+export function parseInstructionsAttachmentsFromTranscript(transcriptText) {
+  const files = [];
+  for (const line of String(transcriptText || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] !== "{") continue;
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const attachment = evt?.attachment;
+    if (evt?.type !== "attachment" || attachment?.type !== "instructions") continue;
+    for (const file of attachment.files || []) {
+      if (file && typeof file === "object") files.push(file);
+    }
+  }
+  return files;
+}
+
+/**
+ * Interactive capsules expose skills only in the session transcript, not in -p init.
+ */
+export function verifyInteractiveTranscriptSurface(transcriptText, { expected, prepared } = {}) {
+  if (!transcriptText || !String(transcriptText).trim()) {
+    return isoFail("interactive_transcript_missing", "no interactive session transcript");
+  }
+  const skills = parseSkillListingFromTranscript(transcriptText);
+  if (!skills.length) {
+    return isoFail("skill_listing_missing", "no skill_listing attachment in transcript");
+  }
+  for (const skill of skills) {
+    if (skill.startsWith(ACCOUNT_SYNCED_SKILL_PREFIX)) {
+      return isoFail("account_synced_skill_present", skill);
+    }
+  }
+  const exclusion = verifyInitSurfaceExclusion(
+    { skills, plugins: [], tools: [], mcp_servers: [] },
+    { expected, prepared }
+  );
+  if (!exclusion.ok) {
+    const names = (exclusion.violations || []).map((v) => `${v.kind}:${v.name}`);
+    return isoFail(
+      "interactive_skill_surface",
+      names.length ? names.join(", ") : "interactive skill_listing outside allowlist"
+    );
+  }
+  const instructionFiles = parseInstructionsAttachmentsFromTranscript(transcriptText);
+  for (const file of instructionFiles) {
+    const type = String(file.type || "");
+    const content = String(file.content || "");
+    if (type !== "User") {
+      return isoFail("interactive_project_instructions", type || "unknown");
+    }
+    const ancestorNonce = expected?.ancestor_nonce;
+    if (ancestorNonce && content.includes(ancestorNonce)) {
+      return isoFail("forbidden_canary_present", ANCESTOR_CANARY_INSTRUCTIONS);
+    }
+  }
+  const control = expected?.user_instructions_nonce;
+  if (control) {
+    if (!instructionFiles.length) {
+      return isoFail("user_instructions_missing", "no instructions attachment in transcript");
+    }
+    const hasControl = instructionFiles.some(
+      (f) => String(f.content || "").includes(control)
+    );
+    if (!hasControl) {
+      return isoFail("user_instructions_missing", "planted user CLAUDE.md nonce absent");
+    }
+  }
+  return { ok: true, skills };
+}
+
+function findNewestSessionTranscript(probeHome) {
+  const projects = path.join(probeHome, ".claude", "projects");
+  let bestPath = null;
+  let bestMtime = 0;
+  const stack = [projects];
+  while (stack.length) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+      const mtime = fs.statSync(full).mtimeMs;
+      if (mtime >= bestMtime) {
+        bestMtime = mtime;
+        bestPath = full;
+      }
+    }
+  }
+  if (!bestPath) return null;
+  return fs.readFileSync(bestPath, "utf8");
+}
+
+function buildClaudeCapsuleProbeArgv(prepared, { print = true, prompt } = {}) {
+  const pluginDirs = flagValues(prepared.argv, "--plugin-dir");
+  const mcpPath = flagValues(prepared.argv, "--mcp-config")[0];
+  const addDirs = [...flagValues(prepared.argv, "--add-dir")];
+  const toolsFlag = flagValues(prepared.argv, "--tools")[0]
+    || flagValues(prepared.argv, "--allowedTools")[0];
+  const settingSources = flagValues(prepared.argv, "--setting-sources").at(-1);
+  const settingsValues = flagValues(prepared.argv, "--settings");
+  const argv = [
+    "claude",
+    "--strict-mcp-config",
+    "--mcp-config", mcpPath,
+    ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
+    ...addDirs.flatMap((dir) => ["--add-dir", dir]),
+    ...(toolsFlag ? ["--tools", toolsFlag, "--allowedTools", toolsFlag] : []),
+    ...(settingSources ? ["--setting-sources", settingSources] : []),
+    ...settingsValues.flatMap((value) => ["--settings", value]),
+    "--disallowedTools", "Bash",
+  ];
+  if (print) {
+    argv.push(
+      "--print",
+      "--verbose",
+      "--output-format", "stream-json",
+      prompt
+    );
+  } else {
+    argv.push(prompt);
+  }
+  return argv;
+}
+
+function buildInteractiveIsolationExpectScript(shellCommand, timeoutSec = 180) {
+  return `set timeout ${timeoutSec}
+match_max 1000000
+spawn bash -c ${bashSingleQuote(shellCommand)}
+expect {
+${dialogBranches()}${claudeTrustBranch()}  -re "probe-ok" { }
+  -re "Bypass Permissions" { send "y\\r"; exp_continue }
+${timeoutTail()}}
+${fastExitBlock("/exit")}`;
+}
+
+function runInteractiveIsolationLeg({
+  prepared,
+  expected,
+  authHome,
+  cwd,
+  spawnSyncFn = realSpawnSync,
+} = {}) {
+  const env = buildIsolationProbeEnv(authHome);
+  const probeArgv = buildClaudeCapsuleProbeArgv(prepared, {
+    print: false,
+    prompt: INTERACTIVE_ISOLATION_PROBE_PROMPT,
+  });
+  const envPrefix = Object.entries(env)
+    .map(([key, value]) => `${key}=${bashSingleQuote(String(value))}`)
+    .join(" ");
+  const shellCommand = `cd ${bashSingleQuote(cwd)} && exec env ${envPrefix} ${probeArgv.map((a) => bashSingleQuote(a)).join(" ")}`;
+  const script = buildInteractiveIsolationExpectScript(shellCommand);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tu-iso-interactive-"));
+  const scriptPath = path.join(tmp, "probe.exp");
+  fs.writeFileSync(scriptPath, script);
+  let run;
+  try {
+    run = spawnSyncFn("expect", [scriptPath], {
+      encoding: "utf8",
+      timeout: 200_000,
+      env: { ...process.env, TERM: "xterm-256color" },
+    });
+  } finally {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+  if (run?.error) {
+    return isoFail(
+      "interactive_spawn_error",
+      truncateIsoDetail(run.error.message || "interactive probe spawn failed")
+    );
+  }
+  if (run?.status !== 0) {
+    const detail = truncateIsoDetail(`${run?.stderr || ""}\n${run?.stdout || ""}`.trim());
+    return isoFail("interactive_probe_failed", detail || `exit ${run?.status}`);
+  }
+  const transcriptText = findNewestSessionTranscript(authHome);
+  return verifyInteractiveTranscriptSurface(transcriptText, { expected, prepared });
 }
 
 /**
@@ -1527,6 +1760,7 @@ export function collectLiveIsolationObservation({
   adapterId = "claude",
   spawnSyncFn,
   authSourceHome = os.homedir(),
+  interactiveProbe = false,
 } = {}) {
   if (typeof spawnSyncFn !== "function") return isoFail("spawn_sync_unavailable");
   if (!prepared?.argv || !capsule) return isoFail("prepared_invalid", "prepared argv or capsule missing");
@@ -1591,25 +1825,11 @@ export function collectLiveIsolationObservation({
     return isoFail("probe_cwd_missing", "capsule.contextDir missing or not on disk");
   }
   try {
-    const addDirs = [...flagValues(prepared.argv, "--add-dir")];
-    const toolsFlag = flagValues(prepared.argv, "--tools")[0]
-      || flagValues(prepared.argv, "--allowedTools")[0];
-    const settingSources = flagValues(prepared.argv, "--setting-sources").at(-1);
     // Inventory probe uses the same HOME + flags as production (minus prompt).
-    const inventoryArgv = [
-      "claude",
-      "--strict-mcp-config",
-      "--mcp-config", mcpPath,
-      ...pluginDirs.flatMap((dir) => ["--plugin-dir", dir]),
-      ...addDirs.flatMap((dir) => ["--add-dir", dir]),
-      ...(toolsFlag ? ["--tools", toolsFlag, "--allowedTools", toolsFlag] : []),
-      ...(settingSources ? ["--setting-sources", settingSources] : []),
-      "--disallowedTools", "Bash",
-      "--print",
-      "--verbose",
-      "--output-format", "stream-json",
-      INVENTORY_PROMPT,
-    ];
+    const inventoryArgv = buildClaudeCapsuleProbeArgv(prepared, {
+      print: true,
+      prompt: INVENTORY_PROMPT,
+    });
     const inventoryRun = spawnSyncFn(inventoryArgv[0], inventoryArgv.slice(1), {
       encoding: "utf8",
       timeout: 180_000,
@@ -1670,6 +1890,16 @@ export function collectLiveIsolationObservation({
     if (!absentListComplete(observed.absent)) return isoFail("absent_list_incomplete");
     if (!contentNoncesMatch(expectedNonces, observed.content_nonces)) {
       return isoFail("nonces_mismatch", "observed content_nonces do not match expected");
+    }
+    if (interactiveProbe) {
+      const interactive = runInteractiveIsolationLeg({
+        prepared,
+        expected,
+        authHome,
+        cwd,
+        spawnSyncFn,
+      });
+      if (isIsoFailure(interactive)) return interactive;
     }
     return observed;
   } catch (e) {
@@ -1920,6 +2150,7 @@ export function observeContextIsolation({
         expected,
         adapterId,
         spawnSyncFn,
+        interactiveProbe: spawnSyncFn === realSpawnSync,
       });
     }
 

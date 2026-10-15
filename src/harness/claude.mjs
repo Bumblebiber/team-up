@@ -5,6 +5,9 @@ import crypto from "node:crypto";
 import { credentialDenyRules } from "../specialists/permissions.mjs";
 import { CLAUDE_DECLARED_CAPABILITIES } from "./capabilities.mjs";
 
+/** Block account-synced skills (~/.claude/skills/synced) for this invocation only. */
+export const CLAUDE_CAPSULE_SETTINGS_JSON = '{"syncClaudeAiSkills":false}';
+
 function homeChecksum(homePath) {
   const hash = crypto.createHash("sha256");
   const stack = [homePath];
@@ -324,6 +327,12 @@ export const claudeAdapter = {
         next.splice(next.indexOf("--setting-sources"), 2);
       }
       next.push("--setting-sources", "user");
+      // Flag, not a settings.json in the capsule home — closed-world verify only
+      // allows .claude/.credentials.json and materialized skills there.
+      while (next.includes("--settings")) {
+        next.splice(next.indexOf("--settings"), 2);
+      }
+      next.push("--settings", CLAUDE_CAPSULE_SETTINGS_JSON);
     }
     for (const pluginDir of capsule?.pluginDirs ?? []) {
       next.push("--plugin-dir", pluginDir);

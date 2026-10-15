@@ -185,18 +185,17 @@ from, with the prepared `HOME` and the prepared argv's plugin, MCP, tool and
 `--setting-sources` flags. A regression in the run's directory layout or in
 the capsule flags therefore shows up in the canary.
 
-What the canary does not cover: it measures `--print` mode only — the
-`system/init` inventory and the `-p` session transcript — while production
-workers run Claude interactively in tmux. An interactive capsule on 2.1.286
-(probed once by hand, with the flag) loaded no host skills and no `CLAUDE.md`,
-but its skill listing held 33 entries, not 21: on top of the selected skills
-and the `-p` built-ins it carried 13 `anthropic-skills:*` entries that appear
-to be synced from the Claude account (they are on no path under `HOME`), and
-interactive-only built-ins (`artifact-*`, `claude-in-chrome`,
-`keybindings-help`, `init`, `security-review`). Those are not on the
-filesystem surface a capsule closes, and `--print` never lists them, so the
-canary can neither see nor refuse them. An interactive leg of the canary is
-still to be built.
+Production workers run Claude interactively in tmux, not with `-p`. Account-
+synced skills (`anthropic-skills:*`, not on disk under capsule `HOME`) and
+interactive-only built-ins showed up in interactive `skill_listing` transcript
+attachments while `--print` init stayed clean. Capsule launches therefore pass
+`--settings '{"syncClaudeAiSkills":false}'` from `prepareLaunch` (a flag, not
+a file in the materialized home). Live `harness verify` runs a second
+interactive leg after the stream-json inventory probe: it reads the first
+session transcript under the probe `HOME` and fails closed when
+`skill_listing` is outside selected ∪ built-ins, when any
+`anthropic-skills:*` entry appears, or when `instructions` attachments include
+anything beyond the planted user `CLAUDE.md`.
 
 Proof comes from the CLI's own structured output, never from the model's
 answer. The `system/init` inventory may list only the selected set plus the
