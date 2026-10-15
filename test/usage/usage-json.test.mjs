@@ -199,8 +199,7 @@ test("Codex omits account header when auth has no account id and skips other dur
   assert.deepEqual(Object.keys(result.windows).sort(), ["codex:5h", "codex:weekly"]);
 });
 
-test("JSON source failures fall back and preserve safe reasons", async () => {
-  let fallbackCalls = 0;
+test("JSON source failures return stale-safe reasons without PTY fallback", async () => {
   const options = {
     roster: { subscriptions: ["claude"] },
     cli: "claude",
@@ -209,15 +208,11 @@ test("JSON source failures fall back and preserve safe reasons", async () => {
     fileReader: credentialReader({ claudeAiOauth: { accessToken: TOKEN, expiresAt: NOW } }),
     fetchImpl: async () => { throw new Error(TOKEN); },
     now: NOW,
-    collectFallback: async () => {
-      fallbackCalls += 1;
-      return { "claude:session": { used: 0.2 } };
-    },
+    collectFallback: async () => assert.fail("claude must not use PTY fallback"),
   };
   const expired = await collectUsageForCli(options);
-  assert.equal(expired.ok, true);
+  assert.equal(expired.ok, false);
   assert.match(expired.reason, /Claude OAuth token expired/);
-  assert.equal(fallbackCalls, 1);
   assert.equal(JSON.stringify(expired).includes(TOKEN), false);
 
   const unauthorized = await collectUsageForCli({
@@ -225,18 +220,16 @@ test("JSON source failures fall back and preserve safe reasons", async () => {
     fileReader: credentialReader(claudeCredentials),
     fetchImpl: async () => jsonResponse({}, 401),
   });
-  assert.equal(unauthorized.ok, true);
+  assert.equal(unauthorized.ok, false);
   assert.match(unauthorized.reason, /HTTP 401/);
-  assert.equal(fallbackCalls, 2);
   assert.equal(JSON.stringify(unauthorized).includes(TOKEN), false);
 
   const missing = await collectUsageForCli({
     ...options,
     fileReader: () => { const error = new Error("missing"); error.code = "ENOENT"; throw error; },
   });
-  assert.equal(missing.ok, true);
+  assert.equal(missing.ok, false);
   assert.match(missing.reason, /credential file missing/);
-  assert.equal(fallbackCalls, 3);
 });
 
 test("token never enters returned results or written usage document", async () => {
@@ -287,7 +280,7 @@ test("an overage reading is clamped to 100 % instead of dropped", async () => {
   assert.equal(result.windows["claude:week"].used, 1);
 });
 
-test("a response missing a base window falls back to the PTY path with both reasons", async () => {
+test("a response missing a base window fails JSON collect without PTY fallback", async () => {
   const body = fixture("codex-wham-usage.json");
   body.rate_limit.secondary_window.limit_window_seconds = 604_799;
   const result = await collectUsageForCli({
@@ -298,12 +291,10 @@ test("a response missing a base window falls back to the PTY path with both reas
     fileReader: credentialReader(codexCredentials),
     fetchImpl: async () => jsonResponse(body),
     now: NOW,
-    collectFallback: async () => { throw new Error("PTY_TIMEOUT codex: tail <pane>"); },
-    loggedOut: () => false,
+    collectFallback: async () => assert.fail("codex must not use PTY fallback"),
   });
   assert.equal(result.ok, false);
   assert.match(result.reason, /lacked the 5h or weekly window/);
-  assert.match(result.reason, /PTY fallback failed: PTY_TIMEOUT codex: tail <pane>/);
 });
 
 test("a record without scope keeps the scope the JSON source recorded", () => {

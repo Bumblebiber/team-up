@@ -16,10 +16,8 @@ import { subscriptionsFromRoster } from "./usage-collect.mjs";
 export const DEFAULT_CONFIG = {
   tick_sec: 60,
   intervals: { idle_heartbeat_hours: 24, idle_min: 10, active_min: 10, busy_min: 5 },
-  // cursor-agent and codex each boot a full TUI; measured ~32s/collect for codex
-  // and ~110s for cursor after the PTY fast-exit fix — keep pre-fix cadence.
+  // cursor-agent boots a full TUI; measured ~110s/collect after the PTY fast-exit fix.
   cli_intervals: {
-    codex: { idle_min: 30, active_min: 20, busy_min: 8 },
     cursor: { idle_min: 30, active_min: 20, busy_min: 8 },
   },
 };
@@ -223,13 +221,8 @@ function saveState(state) {
   fs.renameSync(tmp, dest);
 }
 
-/**
- * Per-CLI ceiling for one collect. claude answers a plain `-p /usage`; codex
- * and cursor each have to boot a full terminal UI first, and cursor was capped
- * at the claude figure — every cursor collect died on ETIMEDOUT mid-boot, so
- * its windows had not been updated in days.
- */
-const COLLECT_TIMEOUT_MS = { claude: 120_000, codex: 300_000, cursor: 300_000, agy: 60_000 };
+/** Per-CLI ceiling for one collect (JSON for claude/codex/agy; PTY for cursor). */
+const COLLECT_TIMEOUT_MS = { claude: 60_000, codex: 60_000, cursor: 300_000, agy: 60_000 };
 
 function runCollect(cli) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "usage-collect.mjs");

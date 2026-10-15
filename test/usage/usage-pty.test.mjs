@@ -9,61 +9,11 @@ import {
   formatPtyTimeoutError,
   isClosedSpawnExit,
   shouldReturnPtyTranscript,
-  CODEX_LIMIT_READY_RE,
-  CODEX_LIMIT_WAIT,
-  CODEX_LIMIT_WAIT_ALT,
-  CODEX_HIT_LIMIT_WAIT,
-  CODEX_STATUS_BAR_RE,
-  codexTrustFlag,
 } from "../../src/usage/usage-pty.mjs";
 
-const HOME = process.env.HOME || "/home/test";
-
-test("buildExpectScript codex waits for quota patterns with retry on timeout", () => {
-  const script = buildExpectScript("codex", 180);
-  assert.equal(script.split('send "/status\\r"').length - 1, 2);
-  assert.ok(script.includes(CODEX_LIMIT_READY_RE));
-  assert.ok(script.includes(CODEX_HIT_LIMIT_WAIT));
-  assert.ok(script.includes(CODEX_STATUS_BAR_RE));
-  assert.match(script, /timeout \{\s*send "\/status\\r"/);
-  assert.equal(/sleep [1-9]/.test(script.split('send "/status\\r"')[1].split('send "/exit')[0]), false);
-});
-
-test("buildExpectScript codex passes invocation-only trust override from HOME", () => {
-  const script = buildExpectScript("codex", 180);
-  assert.ok(script.includes("trust_level"));
-  assert.ok(script.includes("projects={"));
-  assert.ok(script.includes("check_for_update_on_startup=false"));
-  assert.ok(script.includes(`cd '${HOME}'`));
-});
-
-test("buildExpectScript codex handles update, continue, and directory-trust dialogs", () => {
-  const script = buildExpectScript("codex", 180);
-  assert.match(script, /Update available.*send "\\033"/);
-  assert.match(script, /Continue anyway.*send "y\\r"/);
-  assert.match(script, /Do you trust the contents of this directory.*Yes, continue/);
-  assert.equal(/Update available.*send "1/.test(script), false);
-});
-
-test("buildExpectScript codex uses fast exit instead of long expect eof", () => {
-  const script = buildExpectScript("codex", 180);
-  assert.ok(script.includes('send "/exit\\r"'));
-  assert.match(script, /set timeout 3/);
-  assert.equal(/expect eof/.test(script), false);
-});
-
-test("buildExpectScript codex fast exit catches send to closed spawn", () => {
-  const script = buildExpectScript("codex", 180);
-  assert.match(script, /catch \{ send "\/exit\\r" \}/);
-});
-
-test("buildExpectScript codex retry block repeats quota patterns", () => {
-  const script = buildExpectScript("codex", 180);
-  assert.ok(script.includes(CODEX_LIMIT_WAIT));
-  assert.ok(script.includes(CODEX_LIMIT_WAIT_ALT));
-  const retryBlock = script.split("timeout {")[1] || "";
-  assert.ok(retryBlock.includes(CODEX_LIMIT_WAIT));
-  assert.ok(retryBlock.includes(CODEX_STATUS_BAR_RE));
+test("buildExpectScript rejects claude and codex usage collects", () => {
+  assert.throws(() => buildExpectScript("claude", 45), /no PTY sequence/);
+  assert.throws(() => buildExpectScript("codex", 180), /no PTY sequence/);
 });
 
 test("closed-spawn exit is benign when transcript was captured", () => {
@@ -100,13 +50,6 @@ test("normalizeForRedaction strips ANSI and unwraps continuation lines", () => {
   assert.equal(normalizeForRedaction("line one\n line two"), "line one line two");
 });
 
-test("buildExpectScript claude waits on Current session without blind sleeps after command", () => {
-  const script = buildExpectScript("claude", 45);
-  assert.ok(script.includes('-re "Current session"'));
-  const afterCmd = script.split('send "/usage\\r"')[1] || "";
-  assert.equal(/sleep \d/.test(afterCmd), false);
-});
-
 test("buildExpectScript cursor types /usage and waits for panel, no long sleeps", () => {
   const script = buildExpectScript("cursor", 180);
   assert.ok(script.includes('send "/usage"'));
@@ -124,11 +67,11 @@ test("timeout errors include redacted pane excerpt", () => {
   // Assembled at runtime so repo-wide secret scans stay clean.
   const fakeKey = ["sk", "or", "v1", "0123456789abcdef"].join("-");
   const err = formatPtyTimeoutError(
-    "codex",
+    "cursor",
     `booting\nlimit: 50% left (resets tomorrow)\nPTY_TIMEOUT_TAIL:\n${fakeKey}\nline2`,
     "",
   );
-  assert.match(err, /codex collect timed out/);
+  assert.match(err, /cursor collect timed out/);
   assert.match(err, /\[REDACTED\]/);
   assert.ok(!err.includes(fakeKey));
 });
@@ -222,23 +165,4 @@ test("signalTree leaves a recorded pid alone once its start time no longer match
   signalTree([{ pid: child.pid, pgid: ids.pgid, start: ids.start }], new Set());
   await new Promise((r) => child.once("exit", r));
   assert.equal(alive(), false);
-});
-
-// codex 0.157 answers /status with "Limits: refresh requested" and repaints the
-// rows in place seconds later; meanwhile a "⚠ 5h limit: only 1% left" banner
-// and the "weekly 50% left" status bar are painted. An anchor that fires on
-// those sends /exit before the rows exist, and the collect is empty-parse.
-test("buildExpectScript codex anchors wait for a painted limit row", () => {
-  const script = buildExpectScript("codex", 180);
-  const block = script.split('send "/status\\r"')[1].split('catch { send "/exit')[0];
-  const anchors = [...block.matchAll(/-re "([^"]+)" \{ \}/g)]
-    .map((m) => new RegExp(m[1].replace(/\\\\/g, "\\"), "s"));
-  assert.ok(anchors.length > 0);
-  const raw = fs.readFileSync(
-    new URL("./fixtures/usage/codex-status-cup-render.txt", import.meta.url),
-    "utf8",
-  );
-  const beforeRows = raw.slice(0, raw.indexOf("(resets"));
-  for (const re of anchors) assert.equal(re.test(beforeRows), false, `${re} fires before the rows`);
-  assert.ok(anchors.some((re) => re.test(raw)));
 });

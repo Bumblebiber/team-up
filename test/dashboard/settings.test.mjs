@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { validateRoster } from "../../src/roster/config.mjs";
 import { admissionConfig } from "../../src/admission/admission.mjs";
 import { telemetryConfig } from "../../src/telemetry/config.mjs";
-import { watcherConfig } from "../../src/usage/usage-watcher.mjs";
+import { intervalMinForCli, watcherConfig } from "../../src/usage/usage-watcher.mjs";
 import { applySettingsEdit, buildSettingsView, settingsFields, GROUPS } from "../../src/dashboard/settings.mjs";
 
 const roster = {
@@ -88,7 +88,8 @@ test("reset removes the key, prunes emptied parents, and the code default applie
   assert.equal(watcherConfig(set).cli_intervals.codex.idle_min, 45);
   const back = applySettingsEdit(set, { path: "usage_watcher.cli_intervals.codex.idle_min", reset: true });
   assert.equal(back.usage_watcher, undefined, "emptied objects are pruned");
-  assert.equal(watcherConfig(back).cli_intervals.codex.idle_min, 30);
+  assert.equal(watcherConfig(back).cli_intervals.codex?.idle_min, undefined);
+  assert.equal(intervalMinForCli("codex", "idle", watcherConfig(back)), 10);
   assert.throws(() => applySettingsEdit(roster, { path: "accounts.claude.enabled", reset: true }), /no default/);
 });
 

@@ -1,4 +1,4 @@
-// usage-pty.mjs — expect-based interactive slash-command collector (codex/cursor; claude fallback).
+// usage-pty.mjs — expect-based interactive slash-command collector (cursor usage).
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -6,10 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  codexTrustFlag,
   dialogBranches,
   fastExitBlock,
-  homeDir,
   shellEscape,
   spawnLine,
   timeoutTail,
@@ -17,34 +15,7 @@ import {
 
 const COLLECT_ENV = { O9K_USAGE_COLLECT: "1", TEAM_UP_USAGE_COLLECT: "1", TERM: "xterm-256color" };
 
-/** Mirrors parse-codex-status.mjs LIMIT_LINE_RE — wait for real quota output. */
-const CODEX_LIMIT_WAIT = "Weekly limit:";
-const CODEX_LIMIT_WAIT_ALT = "5h limit:";
-const CODEX_HIT_LIMIT_WAIT = "hit your usage limit";
-/** Full line with resets — short "5h limit:" false-matches ANSI fragments like "[?25h". */
-const CODEX_LIMIT_READY_RE = "limit:.*% left.*resets";
-const CODEX_STATUS_BAR_RE = "weekly .*% left";
-/**
- * Appended to every label anchor: /status may first answer "Limits: refresh
- * requested" and repaint the rows later, while the "⚠ 5h limit: only 1% left"
- * banner and the status bar are already on screen. Returning on those sends
- * /exit before any row exists.
- */
-const CODEX_ROW_PAINTED = ".*% left.*resets";
-
 const SEQUENCES = {
-  claude: { bin: "claude", command: "/usage", wait: "Current session", exit: "/exit" },
-  codex: {
-    bin: "codex",
-    command: "/status",
-    ready: "Tip:",
-    wait: CODEX_LIMIT_WAIT,
-    waitAlt: CODEX_LIMIT_WAIT_ALT,
-    waitHit: CODEX_HIT_LIMIT_WAIT,
-    exit: "/exit",
-    cols: 120,
-    rows: 40,
-  },
   cursor: {
     bin: "cursor-agent",
     command: "/usage",
@@ -95,7 +66,7 @@ export function formatPtyTimeoutError(cli, transcript = "", stderr = "") {
   return `${cli} collect timed out — last pane lines:\n${redactPaneExcerpt(excerpt)}`;
 }
 
-/** expect stderr when /exit is sent after codex already closed the PTY. */
+/** expect stderr when /exit is sent after the CLI already closed the PTY. */
 export function isClosedSpawnExit(stderr = "") {
   return /spawn id .* not open/i.test(stderr);
 }
@@ -132,71 +103,18 @@ ${timeoutTail()}}
 export function buildExpectScript(cli, timeoutSec = 45) {
   const seq = SEQUENCES[cli];
   if (!seq) throw new Error(`no PTY sequence for cli: ${cli}`);
-  const cmd = shellEscape(seq.command);
   const exitCmd = shellEscape(seq.exit);
   const dialogs = dialogBranches();
   const bootTimeout = Math.max(45, Math.floor(timeoutSec * 0.6));
 
-  if (cli === "codex") {
-    const readyPat = shellEscape(seq.ready || "Tip:");
-    const limitReadyPat = shellEscape(CODEX_LIMIT_READY_RE);
-    const weeklyPat = shellEscape(CODEX_LIMIT_WAIT + CODEX_ROW_PAINTED);
-    const fiveHourPat = shellEscape(CODEX_LIMIT_WAIT_ALT + CODEX_ROW_PAINTED);
-    const waitHitPat = shellEscape(seq.waitHit || CODEX_HIT_LIMIT_WAIT);
-    const panelTimeout = Math.max(60, Math.floor(timeoutSec * 0.35));
-    const bootTimeout = Math.max(90, Math.floor(timeoutSec * 0.6));
-    const statusBarPat = shellEscape(CODEX_STATUS_BAR_RE + CODEX_ROW_PAINTED);
-    return `set timeout ${bootTimeout}
-match_max 1000000
-spawn bash -c "${shellEscape(spawnLine(seq))}"
-expect {
-${dialogs}  -re "${readyPat}" { }
-  eof { exit 3 }
-${timeoutTail()}}
-send "${cmd}\\r"
-set timeout ${panelTimeout}
-expect {
-${dialogs}  -re "${weeklyPat}" { }
-  -re "${fiveHourPat}" { }
-  -re "${limitReadyPat}" { }
-  -re "${waitHitPat}" { }
-  -re "${statusBarPat}" { }
-  timeout {
-    send "${cmd}\\r"
-    expect {
-${dialogs}      -re "${weeklyPat}" { }
-      -re "${fiveHourPat}" { }
-      -re "${limitReadyPat}" { }
-      -re "${waitHitPat}" { }
-      -re "${statusBarPat}" { }
-${timeoutTail()}    }
-  }
-}
-${fastExitBlock(exitCmd)}`;
-  }
-
-  if (cli === "cursor") {
-    const readyPat = shellEscape(seq.ready || "Tip:");
-    return `set timeout ${bootTimeout}
+  const readyPat = shellEscape(seq.ready || "Tip:");
+  return `set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${shellEscape(spawnLine(seq))}"
 expect {
 ${dialogs}  -re "${readyPat}" { }
 ${timeoutTail()}}
 ${cursorCommandBlock(seq)}${fastExitBlock(exitCmd)}`;
-  }
-
-  const waitPat = shellEscape(seq.wait);
-  return `set timeout ${timeoutSec}
-spawn env O9K_USAGE_COLLECT=1 TERM=xterm-256color ${seq.bin}
-expect {
-${dialogs}  -re "${waitPat}" { }
-${timeoutTail()}}
-send "${cmd}\\r"
-expect {
-  -re "${waitPat}" { }
-${timeoutTail()}}
-${fastExitBlock(exitCmd)}`;
 }
 
 const PTY_MAX_BUFFER = 4 * 1024 * 1024;
@@ -446,12 +364,12 @@ function execExpectBounded(tmp, { timeoutMs, env, pidFile }) {
 }
 
 /**
- * @param {'claude'|'codex'|'cursor'} cli
+ * @param {'cursor'} cli
  * @param {{ timeoutSec?: number, hardTimeoutMs?: number, script?: string }} [opts]
  * @returns {string} transcript (stdout+stderr)
  */
 export function runPtyCollect(cli, opts = {}) {
-  const timeoutSec = opts.timeoutSec ?? (cli === "codex" || cli === "cursor" ? 180 : 45);
+  const timeoutSec = opts.timeoutSec ?? 180;
   const hardTimeoutMs = opts.hardTimeoutMs ?? (timeoutSec + 30) * 1000;
   const script = opts.script ?? buildExpectScript(cli, timeoutSec);
   const tmp = path.join(os.tmpdir(), `team-up-usage-pty-${cli}-${process.pid}.exp`);
@@ -461,7 +379,7 @@ export function runPtyCollect(cli, opts = {}) {
   fs.writeFileSync(tmp, script);
   try {
     // Strip collect markers from expect's environment — if the parent is already a
-    // collector child, inherited TEAM_UP_USAGE_COLLECT makes codex refuse /status.
+    // collector child, inherited TEAM_UP_USAGE_COLLECT can block vendor commands.
     const { TEAM_UP_USAGE_COLLECT, O9K_USAGE_COLLECT, ...parentEnv } = process.env;
     return execExpectBounded(tmp, {
       timeoutMs: hardTimeoutMs,
@@ -503,12 +421,4 @@ if (isBoundedExpectCli(process.argv)) {
   boundedExpectEntry();
 }
 
-export {
-  COLLECT_ENV,
-  CODEX_LIMIT_WAIT,
-  CODEX_LIMIT_WAIT_ALT,
-  CODEX_HIT_LIMIT_WAIT,
-  CODEX_LIMIT_READY_RE,
-  CODEX_STATUS_BAR_RE,
-  codexTrustFlag,
-};
+export { COLLECT_ENV };

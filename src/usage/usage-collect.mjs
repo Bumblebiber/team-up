@@ -1,12 +1,9 @@
 // usage-collect.mjs — subscription usage collectors → ~/.team-up/usage.json
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseClaudeUsage, claudeParseComplete } from "../collectors/parse-claude-usage.mjs";
-import { parseCodexStatus } from "../collectors/parse-codex-status.mjs";
 import { parseCursorUsage } from "../collectors/parse-cursor-usage.mjs";
 import { configPath, loadJson, usagePath } from "../roster/roster.mjs";
 import { usageWritePath } from "../paths.mjs";
@@ -59,18 +56,6 @@ export function writeUsageAtomic(usageObj, dest = usageWritePath()) {
   fs.renameSync(tmp, dest);
 }
 
-function collectClaudeFast() {
-  const text = execFileSync("claude", ["-p", "/usage"], {
-    encoding: "utf8",
-    env: { ...process.env, ...COLLECT_ENV },
-    timeout: 45_000,
-    maxBuffer: 2 * 1024 * 1024,
-    // claude may be an npm .cmd shim on Windows — needs a shell there.
-    shell: process.platform === "win32",
-  });
-  return parseClaudeUsage(text);
-}
-
 const AUTH_STATUS = {
   claude: ["claude", ["auth", "status"]],
   codex: ["codex", ["login", "status"]],
@@ -96,22 +81,8 @@ export function loggedOut(cli, run = spawnSync) {
   return /"loggedIn":\s*false|^\s*not logged in\b/im.test(`${r?.stdout || ""}\n${r?.stderr || ""}`);
 }
 
-function collectCliTranscript(cli) {
-  if (cli === "claude") {
-    let windows = collectClaudeFast();
-    if (!claudeParseComplete(windows)) {
-      const transcript = runPtyCollect("claude");
-      windows = { ...windows, ...parseClaudeUsage(transcript) };
-    }
-    return windows;
-  }
-  if (cli === "codex") {
-    return parseCodexStatus(runPtyCollect("codex"));
-  }
-  if (cli === "cursor") {
-    return parseCursorUsage(runPtyCollect("cursor"));
-  }
-  throw new Error(`unknown cli: ${cli}`);
+function collectCursorTranscript() {
+  return parseCursorUsage(runPtyCollect("cursor"));
 }
 
 /**
@@ -124,7 +95,6 @@ export async function collectUsageForCli(opts) {
     return { cli, ok: false, reason: "not-subscription" };
   }
 
-  let jsonFallbackReason = null;
   if (cli === "claude" || cli === "codex" || cli === "agy") {
     let jsonResult;
     try {
@@ -155,14 +125,12 @@ export async function collectUsageForCli(opts) {
       }
       return { cli, ok: true, windows: jsonResult.windows };
     }
-    jsonFallbackReason = jsonResult?.reason || "JSON usage produced no supported windows";
-    if (cli === "agy") return { cli, ok: false, reason: jsonFallbackReason };
+    const reason = jsonResult?.reason || "JSON usage produced no supported windows";
+    // No PTY fallback: leave existing windows untouched so they age out as stale.
+    return { cli, ok: false, reason };
   }
 
-  // A PTY collect boots a whole CLI: MCP servers included (the telegram plugin's
-  // `bun`). Those outlive an expect that exits on `/exit` or on a boot
-  // timeout, and pile up in the watcher's cgroup. Sweep inside the lock, so a
-  // concurrent collect's tree is never the one being killed.
+  // Cursor has no JSON source — boot the TUI under the PTY lock.
   let lock;
   try {
     if (opts.collectFallback) {
@@ -170,7 +138,7 @@ export async function collectUsageForCli(opts) {
     } else {
       lock = await withPtyLock(async () => {
         try {
-          return collectCliTranscript(cli);
+          return collectCursorTranscript();
         } finally {
           killCollectStrays();
         }
@@ -178,45 +146,24 @@ export async function collectUsageForCli(opts) {
     }
   } catch (e) {
     if ((opts.loggedOut || loggedOut)(cli)) {
-      return {
-        cli,
-        ok: false,
-        reason: jsonFallbackReason ? `JSON usage failed (${jsonFallbackReason}); PTY fallback: not logged in` : "not logged in",
-      };
-    }
-    if (jsonFallbackReason) {
-      return { cli, ok: false, reason: `JSON usage failed (${jsonFallbackReason}); PTY fallback failed: ${e?.message || e}` };
+      return { cli, ok: false, reason: "not logged in" };
     }
     throw e;
   }
   if (!lock.ok) {
-    const reason = "pty-lock-contention";
-    return {
-      cli,
-      ok: false,
-      reason: jsonFallbackReason ? `JSON usage failed (${jsonFallbackReason}); ${reason}` : reason,
-    };
+    return { cli, ok: false, reason: "pty-lock-contention" };
   }
   const parsed = lock.value;
   if (!parsed || !Object.keys(parsed).length) {
     const reason = (opts.loggedOut || loggedOut)(cli) ? "not logged in" : "empty-parse";
-    return {
-      cli,
-      ok: false,
-      reason: jsonFallbackReason ? `JSON usage failed (${jsonFallbackReason}); PTY fallback: ${reason}` : reason,
-    };
+    return { cli, ok: false, reason };
   }
   if (!dryRun) {
     const readUsage = opts.readUsage || (() => loadJson(usagePath()));
     const writeUsage = opts.writeUsage || ((usage) => writeUsageAtomic(usage));
     writeUsage(mergeUsageWindows(readUsage(), parsed));
   }
-  return {
-    cli,
-    ok: true,
-    windows: parsed,
-    ...(jsonFallbackReason ? { reason: `JSON usage failed (${jsonFallbackReason}); used PTY fallback` } : {}),
-  };
+  return { cli, ok: true, windows: parsed };
 }
 
 /**

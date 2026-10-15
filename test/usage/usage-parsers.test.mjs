@@ -3,47 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseClaudeUsage, claudeParseComplete } from "../../src/collectors/parse-claude-usage.mjs";
-import { parseCodexStatus } from "../../src/collectors/parse-codex-status.mjs";
 import { parseCursorUsage } from "../../src/collectors/parse-cursor-usage.mjs";
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/usage");
-
-test("parseClaudeUsage reads session/week/fable/5h", () => {
-  const text = fs.readFileSync(path.join(FIX, "claude-usage.txt"), "utf8");
-  const w = parseClaudeUsage(text, { now: "2026-07-17T12:00:00Z" });
-  assert.equal(w["claude:session"].used, 0.07);
-  assert.equal(w["claude:week"].used, 0.4);
-  assert.equal(w["claude:fable-week"].used, 0.57);
-  assert.equal(w["claude:fable-week"].scope, "fable");
-  assert.equal(w["claude:5h"].used, 0.12);
-  assert.ok(claudeParseComplete(w));
-});
-
-test("parseCodexStatus derives used from percent left", () => {
-  const text = fs.readFileSync(path.join(FIX, "codex-status.txt"), "utf8");
-  const w = parseCodexStatus(text);
-  assert.equal(w["codex:weekly"].used, 1);
-  assert.match(w["codex:weekly"].resets_at_raw, /23 Jul/);
-  assert.match(w["codex:weekly"].resets_at, /^\d{4}-\d{2}-\d{2}T/);
-  assert.equal(w["codex:weekly"].reset_confidence, "provider");
-});
-
-test("parseCodexStatus parses multiple limit lines including 5h above weekly", () => {
-  const text = fs.readFileSync(path.join(FIX, "codex-status-with-5h.txt"), "utf8");
-  const w = parseCodexStatus(text, { now: "2026-07-28T12:00:00Z" });
-  assert.ok(Math.abs(w["codex:5h"].used - 0.58) < 1e-9);
-  assert.match(w["codex:5h"].resets_at_raw, /28 Jul/);
-  assert.ok(Math.abs(w["codex:weekly"].used - 0.01) < 1e-9);
-  assert.match(w["codex:weekly"].resets_at_raw, /4 Aug/);
-});
-
-test("parseCodexStatus hit-limit fallback still works", () => {
-  const text = "You have hit your usage limit for this period. Please try again at 3pm on 5 Aug.";
-  const w = parseCodexStatus(text);
-  assert.equal(w["codex:weekly"].used, 1);
-  assert.match(w["codex:weekly"].resets_at_raw, /5 Aug/);
-});
 
 test("parseCursorUsage reads included/auto/api", () => {
   const text = fs.readFileSync(path.join(FIX, "cursor-usage.txt"), "utf8");
@@ -78,69 +40,4 @@ test("parseCursorUsage carries the plan reset date onto every row", () => {
     assert.match(w[key].resets_at, /^2026-09-2[67]T/);
     assert.equal(w[key].reset_confidence, "provider");
   }
-});
-
-test("parseCodexStatus reads the 5h window out of a raw PTY transcript", () => {
-  const text = fs.readFileSync(path.join(FIX, "codex-status-raw-pty.txt"), "utf8");
-  const w = parseCodexStatus(text, { now: "2026-09-02T15:00:00.000Z" });
-  assert.equal(w["codex:5h"].used, 0.32);
-  assert.equal(w["codex:weekly"].used, 0.5);
-  // Bare wall clock, no date — it used to leave resets_at null.
-  assert.equal(w["codex:5h"].resets_at_raw, "19:41");
-  assert.equal(w["codex:5h"].resets_at, "2026-09-02T17:41:00.000Z");
-  assert.equal(w["codex:weekly"].resets_at, "2026-09-07T06:03:00.000Z");
-});
-
-// codex 0.157 repaints the /status panel in place with cursor moves
-// (`(resets\e[25;72H01:55`, `100%\e[27;61Hleft`) instead of spaces. Deleting
-// those moves glued the words together, only the Weekly row still parsed, and
-// the low-quota banner's "5h limit:" claimed Weekly's 50% as the 5h reading.
-test("parseCodexStatus reads a panel repainted with cursor moves", () => {
-  const text = fs.readFileSync(path.join(FIX, "codex-status-cup-render.txt"), "utf8");
-  const w = parseCodexStatus(text, { now: "2026-09-25T20:10:25.364Z" });
-  assert.deepEqual(Object.keys(w).sort(), ["codex:5h", "codex:luna-reserve-weekly", "codex:weekly"]);
-  assert.equal(w["codex:5h"].used, 0.99);
-  assert.equal(w["codex:5h"].resets_at_raw, "01:55 on 26 Sep");
-  assert.equal(w["codex:weekly"].used, 0.5);
-  assert.equal(w["codex:weekly"].resets_at_raw, "13:05 on 28 Sep");
-  assert.equal(w["codex:luna-reserve-weekly"].used, 0);
-  assert.equal(w["codex:luna-reserve-weekly"].resets_at_raw, "22:10 on 2 Oct");
-  for (const r of Object.values(w)) assert.match(r.resets_at, /^\d{4}-\d{2}-\d{2}T/);
-});
-
-// codex diffs each repaint against the screen and jumps over cells that
-// already hold the right character. Its /status rows land on the "Limits:
-// refresh requested" placeholder, so `(\e[25;67Hesets` skipped an "r" left over
-// from "shortly": a blank there lost the 5h window, and a skipped first "9" of
-// "99%" would have read as 9% left (used 0.91) instead of 1%.
-test("parseCodexStatus reads cells a diff repaint skipped", () => {
-  const row = "│  5h limit:   [████] 99% left (resets 19:14) │";
-  const nine = row.indexOf("99%");
-  const r = row.indexOf("(resets") + 1;
-  const placeholder = "│  Limits:".padEnd(nine) + "9".padEnd(r - nine) + "refresh requested │";
-  const repaint =
-    row.slice(0, nine) +
-    `\x1b[5;${nine + 2}H` + // skips the "9" already on screen
-    row.slice(nine + 1, r) +
-    `\x1b[5;${r + 2}H` + // skips the "r" already on screen
-    row.slice(r + 1);
-  const text =
-    "\x1b[?1049h\x1b[1;1H\x1b[J" +
-    `\x1b[5;1H${placeholder}` +
-    `\x1b[5;1H${repaint}` +
-    "\x1b[6;1H│  Weekly limit: [███░] 94% left (resets 16:22 on 4 Oct) │";
-  const w = parseCodexStatus(text, { now: "2026-10-01T14:44:00.000Z" });
-  assert.equal(w["codex:5h"].used, 0.01);
-  assert.equal(w["codex:5h"].resets_at_raw, "19:14");
-  assert.equal(w["codex:weekly"].used, 0.06);
-});
-
-test("parseCodexStatus never lends one row's number to another label", () => {
-  const text =
-    "⚠ 5h limit: only 1% left · /status·weekly 50% left" +
-    "│  5h limit:   [░░░░] 1%\x1b[2m (resets" + // row cut off mid-repaint
-    "│  Weekly limit:   [██░░] 50% left (resets 13:05 on 28 Sep) │";
-  const w = parseCodexStatus(text, { now: "2026-09-25T20:10:25.364Z" });
-  assert.equal(w["codex:5h"], undefined);
-  assert.equal(w["codex:weekly"].used, 0.5);
 });

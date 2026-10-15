@@ -259,7 +259,7 @@ export function settingsFields(roster = {}) {
     for (const [key, label] of [["idle_min", "idle"], ["active_min", "active"], ["busy_min", "busy"]]) {
       add({
         group: "usage", row: `${cli} override`, path: `usage_watcher.cli_intervals.${cli}.${key}`, type: "int",
-        label, unit: "min", help: `Overrides the general pace for ${cli} (reading codex and cursor is slow).`,
+        label, unit: "min", help: `Overrides the general pace for ${cli} (cursor usage still boots a TUI).`,
         min: 1, max: 1440, default: WATCHER.cli_intervals[cli]?.[key] ?? WATCHER.intervals[key],
         effect: EFFECT.watcher, advanced: true,
       });
