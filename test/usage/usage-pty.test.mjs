@@ -7,6 +7,7 @@ import {
   redactPaneExcerpt,
   normalizeForRedaction,
   formatPtyTimeoutError,
+  paneTranscriptForTimeoutMarker,
   isClosedSpawnExit,
   shouldReturnPtyTranscript,
   CODEX_LIMIT_READY_RE,
@@ -18,6 +19,13 @@ import {
 } from "../../src/usage/usage-pty.mjs";
 
 const HOME = process.env.HOME || "/home/test";
+
+test("buildExpectScript enables rolling PTY transcript for timeout tails", () => {
+  const script = buildExpectScript("codex", 180);
+  assert.ok(script.includes("TEAM_UP_PTY_TRANSCRIPT"));
+  assert.ok(script.includes("log_file"));
+  assert.ok(script.includes("open $env(TEAM_UP_PTY_TRANSCRIPT)"));
+});
 
 test("buildExpectScript codex waits for quota patterns with retry on timeout", () => {
   const script = buildExpectScript("codex", 180);
@@ -140,6 +148,13 @@ test("redactPaneExcerpt keeps last N non-empty lines", () => {
   assert.doesNotMatch(out, /^a/m);
 });
 
+test("paneTranscriptForTimeoutMarker keeps last pane lines from captured output", () => {
+  const lines = Array.from({ length: 20 }, (_, i) => `pane-row-${String(i + 1).padStart(2, "0")}`).join("\n");
+  const tail = paneTranscriptForTimeoutMarker(`${lines}\nPTY_TIMEOUT_TAIL:\nold`);
+  assert.match(tail, /pane-row-20/);
+  assert.doesNotMatch(tail, /pane-row-01/);
+});
+
 function pidsWithCmdline(marker) {
   const hits = [];
   for (const name of fs.readdirSync("/proc")) {
@@ -169,10 +184,15 @@ expect {
   const hardTimeoutMs = 1500;
   const started = Date.now();
   try {
-    assert.throws(
-      () => runPtyCollect("cursor", { hardTimeoutMs, script }),
-      /cursor collect timed out/,
-    );
+    let err;
+    try {
+      runPtyCollect("cursor", { hardTimeoutMs, script });
+    } catch (e) {
+      err = e;
+    }
+    assert.ok(err, "expected timeout error");
+    assert.match(String(err.message), /cursor collect timed out/);
+    assert.doesNotMatch(String(err.message), /\(hard kill\)/);
     const elapsed = Date.now() - started;
     assert.ok(elapsed < hardTimeoutMs + 5000, `returned in ${elapsed}ms`);
     let left = pidsWithCmdline(marker);
@@ -190,6 +210,24 @@ expect {
       }
     }
   }
+});
+
+test("bounded hard kill includes printed pane lines in the timeout tail", { timeout: 15_000 }, () => {
+  const script = `
+set timeout 120
+spawn bash -c {for i in 1 2 3; do echo "teamup-pane-line-$i"; done; exec sleep 120}
+expect {
+  -re "never-matches-teamup" {}
+  timeout { exit 2 }
+}
+`;
+  let err;
+  try {
+    runPtyCollect("cursor", { hardTimeoutMs: 2000, script });
+  } catch (e) {
+    err = e;
+  }
+  assert.match(String(err?.message || err), /teamup-pane-line-3/);
 });
 
 test("bounded probe returns the transcript when the child answers", { timeout: 15_000 }, () => {

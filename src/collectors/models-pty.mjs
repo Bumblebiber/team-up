@@ -11,6 +11,7 @@ import {
   dialogBranches,
   fastExitBlock,
   shellEscape,
+  ptyTranscriptInit,
   spawnLine,
   timeoutTail,
 } from "../usage/pty-expect-core.mjs";
@@ -164,12 +165,13 @@ export function buildModelExpectScript(cli, timeoutSec = 90) {
   const waitAltPat = seq.waitAlt ? shellEscape(seq.waitAlt) : null;
   const exitCmd = shellEscape(seq.exit);
   const spawn = shellEscape(spawnLine(seq));
+  const transcriptInit = ptyTranscriptInit();
 
   if (cli === "codex") {
     const readyModelPat = shellEscape(CODEX_MODEL_READY);
     const readyModelAltPat = shellEscape(CODEX_MODEL_READY_ALT);
     const loadTimeout = Math.max(90, Math.floor(timeoutSec * 0.75));
-    return `set timeout ${loadTimeout}
+    return `${transcriptInit}set timeout ${loadTimeout}
 match_max 1000000
 spawn bash -c "${spawn}"
 expect {
@@ -202,7 +204,7 @@ ${timeoutTail()}}`
 ${dialogs}  -re "${waitPat}" { }
 ${timeoutTail()}}`;
 
-  return `set timeout ${bootTimeout}
+  return `${transcriptInit}set timeout ${bootTimeout}
 match_max 1000000
 spawn bash -c "${spawn}"
 expect {
@@ -225,12 +227,14 @@ export function runModelPtyCollect(cli, opts = {}) {
   const timeoutSec = opts.timeoutSec ?? 90;
   const script = buildModelExpectScript(cli, timeoutSec);
   const tmp = path.join(os.tmpdir(), `team-up-model-pty-${cli}-${process.pid}.exp`);
+  const transcriptPath = path.join(os.tmpdir(), `team-up-model-pty-transcript-${process.pid}-${Date.now()}.log`);
+  fs.rmSync(transcriptPath, { force: true });
   fs.writeFileSync(tmp, script);
   try {
     const { TEAM_UP_USAGE_COLLECT, O9K_USAGE_COLLECT, ...parentEnv } = process.env;
     return execFileSync("expect", [tmp], {
       encoding: "utf8",
-      env: { ...parentEnv, TERM: COLLECT_ENV.TERM },
+      env: { ...parentEnv, TERM: COLLECT_ENV.TERM, TEAM_UP_PTY_TRANSCRIPT: transcriptPath },
       timeout: (timeoutSec + 30) * 1000,
       maxBuffer: 4 * 1024 * 1024,
     });
@@ -248,6 +252,11 @@ export function runModelPtyCollect(cli, opts = {}) {
   } finally {
     try {
       fs.unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+    try {
+      fs.unlinkSync(transcriptPath);
     } catch {
       /* ignore */
     }

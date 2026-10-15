@@ -76,14 +76,36 @@ exit 0
 `;
 }
 
+/** Rolling spawn transcript — $expect_out(buffer) is only since the last match. */
+export function ptyTranscriptInit() {
+  return `if {[info exists env(TEAM_UP_PTY_TRANSCRIPT)] && $env(TEAM_UP_PTY_TRANSCRIPT) ne ""} {
+  catch { log_file -noappend -force $env(TEAM_UP_PTY_TRANSCRIPT) }
+}
+`;
+}
+
 export function timeoutTail() {
   return `  timeout {
-    set _buf ""
-    catch { set _buf $expect_out(buffer) }
-    set _lines [split $_buf "\\n"]
-    set _n [llength $_lines]
-    set _start [expr {$_n > 15 ? $_n - 15 : 0}]
-    set _tail [join [lrange $_lines $_start end] "\\n"]
+    set _tail ""
+    if {[info exists env(TEAM_UP_PTY_TRANSCRIPT)] && $env(TEAM_UP_PTY_TRANSCRIPT) ne ""} {
+      catch {
+        set _fh [open $env(TEAM_UP_PTY_TRANSCRIPT) r]
+        set _all [read $_fh]
+        close $_fh
+        set _lines [split $_all "\\n"]
+        set _n [llength $_lines]
+        set _start [expr {$_n > 15 ? $_n - 15 : 0}]
+        set _tail [join [lrange $_lines $_start end] "\\n"]
+      }
+    }
+    if {$_tail eq ""} {
+      set _buf ""
+      catch { set _buf $expect_out(buffer) }
+      set _lines [split $_buf "\\n"]
+      set _n [llength $_lines]
+      set _start [expr {$_n > 15 ? $_n - 15 : 0}]
+      set _tail [join [lrange $_lines $_start end] "\\n"]
+    }
     puts stderr "PTY_TIMEOUT_TAIL:\\n$_tail"
     exit 2
   }

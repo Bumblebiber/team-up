@@ -10,7 +10,8 @@ import { parseCodexStatus } from "../collectors/parse-codex-status.mjs";
 import { parseCursorUsage } from "../collectors/parse-cursor-usage.mjs";
 import { configPath, loadJson, usagePath } from "../roster/roster.mjs";
 import { usageWritePath } from "../paths.mjs";
-import { killCollectStrays } from "./usage-procs.mjs";
+import { AUTH_FAILURE_STREAK, authFailureStreak } from "./collect-failures.mjs";
+import { killCollectStrays, watcherStatePath } from "./usage-procs.mjs";
 import { withPtyLock } from "./usage-pty-lock.mjs";
 import { runPtyCollect, COLLECT_ENV } from "./usage-pty.mjs";
 import { pushSample } from "./usage-windows.mjs";
@@ -157,6 +158,20 @@ export async function collectUsageForCli(opts) {
     }
     jsonFallbackReason = jsonResult?.reason || "JSON usage produced no supported windows";
     if (cli === "agy") return { cli, ok: false, reason: jsonFallbackReason };
+  }
+
+  const watcherState = opts.watcherState ?? loadJson(watcherStatePath()) ?? {};
+  const authStreak = authFailureStreak(watcherState.collect_failures?.[cli]);
+  if (
+    authStreak >= AUTH_FAILURE_STREAK &&
+    (opts.loggedOut || loggedOut)(cli)
+  ) {
+    const reason = "not logged in";
+    return {
+      cli,
+      ok: false,
+      reason: jsonFallbackReason ? `JSON usage failed (${jsonFallbackReason}); PTY fallback: ${reason}` : reason,
+    };
   }
 
   // A PTY collect boots a whole CLI: MCP servers included (the telegram plugin's

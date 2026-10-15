@@ -43,6 +43,34 @@ test("agy collection failure stays on JSON path", async () => {
   assert.match(result.reason, /agy \/usage command failed/);
 });
 
+test("collectUsageForCli skips PTY after auth_failure streak when still logged out", async () => {
+  const { collectUsageForCli } = await import("../../src/usage/usage-collect.mjs");
+  let ptyUsed = false;
+  const result = await collectUsageForCli({
+    cli: "codex",
+    roster: { subscriptions: ["codex"] },
+    watcherState: {
+      collect_failures: {
+        codex: [
+          { at: "t1", reason: "auth_failure" },
+          { at: "t2", reason: "auth_failure" },
+          { at: "t3", reason: "auth_failure" },
+        ],
+      },
+    },
+    loggedOut: () => true,
+    collectFallback: async () => {
+      ptyUsed = true;
+      return {};
+    },
+    fileReader: () => null,
+    fetchImpl: async () => ({ ok: false, status: 401 }),
+  });
+  assert.equal(ptyUsed, false);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /not logged in/);
+});
+
 test("loggedOut reads each CLI's own status command, logged in or not", async () => {
   const { loggedOut } = await import("../../src/usage/usage-collect.mjs");
   const reply = (stdout, stderr = "") => () => ({ stdout, stderr });
