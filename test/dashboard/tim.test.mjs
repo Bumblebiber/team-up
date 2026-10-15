@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { installPackage } from "../../src/specialists/store.mjs";
 import { buildTimView, defaultPrompt, projectDirs, promptClis, startTaskSession, taskSessionName } from "../../src/dashboard/tim.mjs";
+import { tmuxPaneCommand } from "../../src/roster/command.mjs";
 
 const ROSTER = { clis: { claude: { cmd: ["claude", "--model", "{model}", "{prompt}"] } } };
 
@@ -86,7 +87,7 @@ test("startTaskSession spawns the bare binary with the entry in the prompt", (t)
   assert.equal(tmux.args[tmux.args.indexOf("-c") + 1], path.join(root, "alpha"));
   // The bare binary, not the roster's --dangerously-* template, and the prompt names the entry.
   const command = tmux.args.at(-1);
-  assert.match(command, /^claude 'Work on TIM task e-1/);
+  assert.match(command, /-- claude 'Work on TIM task e-1/);
   assert.match(command, /tim_read\("e-1"\)/);
   assert.ok(tmux.args.includes("TEAMUP_WORKER=1") === false);
 });
@@ -108,7 +109,7 @@ test("startTaskSession trusts an agy workspace before spawning its interactive s
   assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf8")), {
     trustedWorkspaces: [path.join(root, "alpha")],
   });
-  assert.match(calls.find((c) => c.cmd === "tmux").args.at(-1), /^agy -i /);
+  assert.match(calls.find((c) => c.cmd === "tmux").args.at(-1), /-- agy -i /);
 });
 
 test("two entries of one project get two sessions", (t) => {
@@ -175,7 +176,8 @@ test("a title with shell metacharacters stays one quoted argument", (t) => {
   const command = calls.find((c) => c.cmd === "tmux").args.at(-1);
   assert.equal(command.includes("$(touch /tmp/pwn)'"), false);
   assert.match(command, /\$\(touch \/tmp\/pwn\)/);
-  assert.equal(command.startsWith("claude '"), true);
+  assert.match(command, /^env -u CLAUDECODE/);
+  assert.ok(command.includes(" -- claude '"));
   assert.equal(command.endsWith("'"), true);
 });
 
@@ -199,7 +201,7 @@ test("agy task session puts edited prompt after -i", (t) => {
   });
   assert.equal(res.ok, true);
   const command = calls.find((call) => call.cmd === "tmux").args.at(-1);
-  assert.equal(command, "agy --model gemini-3.8-flash -i 'inspect tests'");
+  assert.equal(command, tmuxPaneCommand("agy --model gemini-3.8-flash -i 'inspect tests'"));
 });
 
 test("a CLI that reads its first argument as something else starts nothing", (t) => {
@@ -224,7 +226,7 @@ test("an edited prompt is what the session gets", (t) => {
     id: "e-1", cli: "claude", prompt: "just read the tests", projectsDir: root,
     roster: ROSTER, exec: execFake(calls), sessions: [],
   });
-  assert.equal(calls.find((c) => c.cmd === "tmux").args.at(-1), "claude 'just read the tests'");
+  assert.equal(calls.find((c) => c.cmd === "tmux").args.at(-1), tmuxPaneCommand("claude 'just read the tests'"));
 });
 
 test("an empty prompt falls back to the default", (t) => {
@@ -235,7 +237,7 @@ test("an empty prompt falls back to the default", (t) => {
     id: "e-1", cli: "claude", prompt: "   ", projectsDir: root,
     roster: ROSTER, exec: execFake(calls), sessions: [],
   });
-  assert.match(calls.find((c) => c.cmd === "tmux").args.at(-1), /^claude 'Work on TIM task e-1/);
+  assert.match(calls.find((c) => c.cmd === "tmux").args.at(-1), /-- claude 'Work on TIM task e-1/);
 });
 
 test("the view carries the default prompt for the dialog", (t) => {
@@ -270,7 +272,7 @@ test("--model carries the CLI's own name for the model, not the roster id", (t) 
     id: "e-1", cli: "claude", model: "claude-opus", prompt: "go", projectsDir: root,
     roster, exec: execFake(calls), sessions: [],
   });
-  assert.equal(calls.find((c) => c.cmd === "tmux").args.at(-1), "claude --model opus go");
+  assert.equal(calls.find((c) => c.cmd === "tmux").args.at(-1), tmuxPaneCommand("claude --model opus go"));
 });
 
 test("a model the roster does not run on this CLI is refused", (t) => {

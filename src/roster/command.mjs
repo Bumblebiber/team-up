@@ -118,6 +118,28 @@ export function launcherPath(session, env = process.env) {
   return path.join(teamUpHome(env), "launch", `${session.replace(/[^\w.-]/g, "_")}.sh`);
 }
 
+/**
+ * tmux copies the server's global environment into every new pane. When tmux was
+ * started from a Claude Code session, workers inherit a foreign session id and
+ * messaging credentials. `tmux -e VAR=` does not unset; prefix with env -u.
+ */
+export const TMUX_INHERITED_CLAUDE_ENV = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_PID",
+  "CLAUDE_EFFORT",
+];
+
+export function tmuxPaneCommand(command) {
+  const unset = TMUX_INHERITED_CLAUDE_ENV.flatMap((name) => ["-u", name]);
+  return ["env", ...unset, "--", command].join(" ");
+}
+
 function writeLauncher(session, command) {
   const file = launcherPath(session);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -153,7 +175,7 @@ export function tmuxArgs({ session, dir, argv, env = {} }) {
   if (Buffer.byteLength(command) > TMUX_INLINE_MAX_BYTES) {
     command = `sh ${shellQuote(writeLauncher(session, command))}`;
   }
-  return ["new-session", "-d", "-s", session, "-c", dir, ...envFlags, command];
+  return ["new-session", "-d", "-s", session, "-c", dir, ...envFlags, tmuxPaneCommand(command)];
 }
 
 /**
