@@ -1,0 +1,7 @@
+{
+  "schema": "team-up.review-effectiveness/cohorts/v1",
+  "capsule_revan_suffixes": ["4fip", "b6rw", "h54z", "z6v1", "0ioy"],
+  "plain_reviewer_suffixes": ["ypnp", "ml7q", "lpw5", "e2sf", "kq3h", "8d9u"],
+  "ultratodo_only_capsule_suffixes": ["b6rw", "h54z", "z6v1", "0ioy"],
+  "notes": "4fip reviewed TIM related-projects, not ultratodo; kept in capsule cohort for n=5 parity with the deep-review run list."
+}

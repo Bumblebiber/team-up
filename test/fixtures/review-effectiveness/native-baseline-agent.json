@@ -1,0 +1,19 @@
+{
+  "schema": "team-up.review-effectiveness/native-baseline/v1",
+  "description": "Tuned native Claude Code subagent: minimal host context, explicit tool allowlist, one MCP server, skill overrides, omitClaudeMd.",
+  "omitClaudeMd": true,
+  "tools": ["Read", "Grep", "Glob", "Bash"],
+  "mcpServers": {
+    "tim": {
+      "command": "tim-mcp",
+      "args": ["--read-only"]
+    }
+  },
+  "skillOverrides": {
+    "code-review": { "enabled": true },
+    "roster": { "enabled": false },
+    "dispatch": { "enabled": false }
+  },
+  "estimated_fixed_overhead_tokens": 4200,
+  "prompt_token_estimate_method": "utf8_bytes_div_4_ceil"
+}
