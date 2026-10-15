@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { tmuxPaneCommand } from "../../src/roster/command.mjs";
 import {
   listProjects,
   startProjectSession,
@@ -74,7 +75,7 @@ test("startProjectSession spawns the bare binary, no worker flag", (t) => {
   const [cmd, args] = calls[0];
   assert.equal(cmd, "tmux");
   assert.deepEqual(args.slice(0, 6), ["new-session", "-d", "-s", res.session, "-c", fs.realpathSync(path.join(root, "alpha"))]);
-  assert.equal(args.at(-1), "claude");
+  assert.equal(args.at(-1), tmuxPaneCommand("claude"));
   assert.ok(!args.join(" ").includes("TEAMUP_WORKER"));
 });
 

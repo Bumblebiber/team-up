@@ -14,6 +14,7 @@ import {
   wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
   resolveGitBase, isValidRunId, listAllStates, executeResumeAction,
 } from "../../src/runs/runs.mjs";
+import { tmuxPaneCommand } from "../../src/roster/command.mjs";
 import { gcRuns } from "../../src/runs/gc.mjs";
 
 const RUNS_BIN = fileURLToPath(new URL("../../src/runs/runs.mjs", import.meta.url));
@@ -776,9 +777,9 @@ test("resumeTmuxArgs marks a respawned worker with run id, never the parent", ()
   assert.deepEqual(worker, [
     "new-session", "-d", "-s", "w", "-c", "/tmp/task",
     "-e", "TEAMUP_WORKER=1", "-e", "TEAMUP_RUN_ID=r42",
-    "claude --resume s1",
+    tmuxPaneCommand("claude --resume s1"),
   ]);
 
   const parent = resumeTmuxArgs({ kind: "spawn_parent", tmux: "p", cwd: "/tmp/task" }, state, ["claude"]);
-  assert.deepEqual(parent, ["new-session", "-d", "-s", "p", "-c", "/tmp/task", "claude"]);
+  assert.deepEqual(parent, ["new-session", "-d", "-s", "p", "-c", "/tmp/task", tmuxPaneCommand("claude")]);
 });

@@ -943,7 +943,7 @@ export function resumeTmuxArgs(action, state, argv) {
     "new-session", "-d", "-s", action.tmux,
     "-c", action.cwd || process.cwd(),
     ...env,
-    argv.map(shellQuote).join(" "),
+    tmuxPaneCommand(argv.map(shellQuote).join(" ")),
   ];
 }
 
@@ -1831,7 +1831,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 
 import { writeTypedResult as writeTypedResultImpl, validateResult } from "../specialists/request.mjs";
-import { buildCommand, guardWorkerArgv } from "../roster/command.mjs";
+import { buildCommand, guardWorkerArgv, tmuxPaneCommand } from "../roster/command.mjs";
 import { configPath, loadJson } from "../roster/config.mjs";
 import { detectParent, pruneSessionRecords } from "./parent.mjs";
 import { writePendingWakeup } from "./pending.mjs";

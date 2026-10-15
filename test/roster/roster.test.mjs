@@ -7,6 +7,8 @@ import {
   parseChainEntry, firstPositional, resolveLimitWindows, resolvePickAfterRefresh,
   validateRoster, resolveDispatchDir,
 } from "../../src/roster/roster.mjs";
+import { tmuxPaneCommand } from "../../src/roster/command.mjs";
+import { execFileSync } from "node:child_process";
 
 const ROSTER = {
   clis: {
@@ -348,7 +350,7 @@ test("tmuxArgs builds a detached session with cwd and shell-quoted command", () 
   assert.deepEqual(args, [
     "new-session", "-d", "-s", "o9k-implementer-abc", "-c", "/tmp/task",
     "-e", "TEAMUP_WORKER=1",
-    `claude --model m 'it'\\''s a prompt'`,
+    tmuxPaneCommand(`claude --model m 'it'\\''s a prompt'`),
   ]);
 });
 
@@ -357,7 +359,7 @@ test("tmuxArgs marks a worker even when the caller passes no env", () => {
   assert.deepEqual(args, [
     "new-session", "-d", "-s", "s", "-c", "/tmp/task",
     "-e", "TEAMUP_WORKER=1",
-    "claude",
+    tmuxPaneCommand("claude"),
   ]);
 });
 
@@ -376,8 +378,22 @@ test("tmuxArgs passes the worker marker env before the command", () => {
   assert.deepEqual(args, [
     "new-session", "-d", "-s", "s", "-c", "/tmp/task",
     "-e", "TEAMUP_WORKER=1",
-    "claude p",
+    tmuxPaneCommand("claude p"),
   ]);
+});
+
+test("tmuxPaneCommand drops inherited Claude Code env before the worker CLI runs", () => {
+  const probe = `${process.execPath} -e "console.log([process.env.CLAUDECODE,process.env.CLAUDE_CODE_SESSION_ID].join(','))"`;
+  const out = execFileSync("bash", ["-c", tmuxPaneCommand(probe)], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CLAUDECODE: "1",
+      CLAUDE_CODE_SESSION_ID: "foreign",
+      CLAUDE_CODE_MESSAGING_TOKEN: "secret",
+    },
+  });
+  assert.equal(out.trim(), ",");
 });
 
 test("pick skips fable model when fable-week hot but opus remains", () => {

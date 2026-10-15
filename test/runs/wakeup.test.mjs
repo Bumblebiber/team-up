@@ -13,6 +13,7 @@ import {
   writeOverflow,
 } from "../../src/runs/wakeup.mjs";
 import { deliverParentWakeup } from "../../src/runs/runs.mjs";
+import { tmuxPaneCommand } from "../../src/roster/command.mjs";
 
 const P1 = { cli: "claude", sessionId: "s-1", tmux: "main", attach: "tmux", cwd: "/home/u/proj" };
 const P2 = { cli: "claude", sessionId: "s-2", tmux: null, attach: "manual", cwd: "/home/u/other" };
@@ -133,7 +134,7 @@ test("deliverParentWakeup spawns in the parent's own cwd, or leaves a pending fi
   assert.deepEqual(out, { cwd: "/home/u/proj", cwd_source: "parent" });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].slice(0, 6), ["new-session", "-d", "-s", "main", "-c", "/home/u/proj"]);
-  assert.equal(calls[0].at(-1), "claude --resume s-1 hello");
+  assert.equal(calls[0].at(-1), tmuxPaneCommand("claude --resume s-1 hello"));
   assert.ok(!calls[0].includes("TEAMUP_WORKER=1"));
 
   const codex = [];
@@ -142,7 +143,7 @@ test("deliverParentWakeup spawns in the parent's own cwd, or leaves a pending fi
     run: (args) => codex.push(args[5], args.at(-1)),
     paste: () => codex.push("paste"),
   });
-  assert.deepEqual(codex, ["/worker/cwd", "codex resume s-1 -C /worker/cwd hi"]);
+  assert.deepEqual(codex, ["/worker/cwd", tmuxPaneCommand("codex resume s-1 -C /worker/cwd hi")]);
 
   const pending = deliverParentWakeup({ parent: P2, delivery: "pending" }, "later", { writePending: (id, text) => `${id}=${text}` });
   assert.deepEqual(pending, { pending: "s-2=later" });

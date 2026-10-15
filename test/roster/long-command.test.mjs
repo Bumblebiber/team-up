@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { tmuxArgs, startInTmux, launcherPath } from "../../src/roster/command.mjs";
+import { tmuxArgs, startInTmux, launcherPath, tmuxPaneCommand } from "../../src/roster/command.mjs";
 import { createRun, cancelRun } from "../../src/runs/runs.mjs";
 import { stopTmuxSession } from "../../src/runs/tmux.mjs";
 
@@ -22,7 +22,7 @@ test("a prompt past tmux's limit reaches the CLI byte-identical through a self-d
   const command = args.at(-1);
   assert.ok(Buffer.byteLength(command) < 1024, "tmux gets the launcher, not the prompt");
   const launcher = launcherPath("team-up-long-t1");
-  assert.equal(command, `sh ${launcher}`);
+  assert.equal(command, tmuxPaneCommand(`sh ${launcher}`));
   assert.equal(fs.statSync(launcher).mode & 0o777, 0o600);
 
   execFileSync("sh", ["-c", command]);
@@ -83,6 +83,6 @@ test("a worker with a run starts behind the exit guard; a session without one do
   const calls = [];
   startInTmux({ session: "team-up-guard-t1", dir: "/tmp", argv: ["codex", "hi"], runId: state.runId, exec: (_, args) => calls.push(args) });
   startInTmux({ session: "team-up-guard-t2", dir: "/tmp", argv: ["codex", "hi"], exec: (_, args) => calls.push(args) });
-  assert.match(calls[0].at(-1), /^\/bin\/sh \S+\/scripts\/worker-exit-guard\.sh \S+\/mailbox codex hi$/);
-  assert.equal(calls[1].at(-1), "codex hi");
+  assert.match(calls[0].at(-1), /^env -u CLAUDECODE .* -- \/bin\/sh \S+\/scripts\/worker-exit-guard\.sh \S+\/mailbox codex hi$/);
+  assert.equal(calls[1].at(-1), tmuxPaneCommand("codex hi"));
 });
