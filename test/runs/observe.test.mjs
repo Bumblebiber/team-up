@@ -1158,6 +1158,43 @@ const TRUST_PANE = fs.readFileSync(
 );
 const TRUST_CWD = "/home/bbbee/projects/tasks/team-up-canary-review";
 
+test("claude workspace-trust answer is honoured when mailbox is still fresh", () => {
+  const verdict = {
+    state: "waiting_input",
+    reason: "trust",
+    action: "answer",
+    keys: ["Down", "Enter"],
+    evidence: "trust",
+  };
+  const result = verifyVerdict(verdict, TRUST_PANE, {
+    ...createObserverLoop(),
+    cwd: TRUST_CWD,
+    cli: "claude",
+    mailboxAgeSec: 0,
+    silenceSec: DEFAULT_SILENCE_SEC,
+  });
+  assert.equal(result.action, "answer");
+});
+
+test("fresh mailbox still downgrades non-trust claude answers", () => {
+  const verdict = {
+    state: "waiting_input",
+    reason: "other prompt",
+    action: "answer",
+    keys: ["Enter"],
+    evidence: "x",
+  };
+  const result = verifyVerdict(verdict, TRUST_PANE, {
+    ...createObserverLoop(),
+    cwd: TRUST_CWD,
+    cli: "claude",
+    mailboxAgeSec: 0,
+    silenceSec: DEFAULT_SILENCE_SEC,
+  });
+  assert.equal(result.action, "wait");
+  assert.match(result.reason, /mailbox fresh/);
+});
+
 test("claudeTrustPromptKeys matches only the observed dialog for the run's own cwd", () => {
   assert.deepEqual(claudeTrustPromptKeys(TRUST_PANE, TRUST_CWD), ["Down", "Enter"]);
   assert.equal(claudeTrustPromptKeys(TRUST_PANE, "/home/bbbee/projects/tasks/other"), null);

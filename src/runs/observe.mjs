@@ -172,9 +172,18 @@ export function validateVerdictShape(verdict) {
   return { ok: true };
 }
 
+function claudeTrustAnswerMatches(verdict, pane, ctx) {
+  if (ctx.cli !== "claude" || !ctx.cwd || verdict.action !== "answer") return false;
+  const trustKeys = claudeTrustPromptKeys(pane, ctx.cwd);
+  if (!trustKeys) return false;
+  const proposed = verdict.keys ?? [];
+  return proposed.length === trustKeys.length
+    && proposed.every((key, i) => key === trustKeys[i]);
+}
+
 /**
  * Code-side verification. Returns { action, reason, verdict }.
- * @param {object} ctx — { autoAnswerCount, answeredPanes: Set<string> }
+ * @param {object} ctx — { autoAnswerCount, answeredPanes: Set<string>, cwd?, cli? }
  */
 export function verifyVerdict(verdict, pane, ctx = {}) {
   const shape = validateVerdictShape(verdict);
@@ -237,7 +246,8 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
 
   const silenceSec = ctx.silenceSec ?? DEFAULT_SILENCE_SEC;
   const mailboxAgeSec = ctx.mailboxAgeSec ?? Infinity;
-  if (mailboxAgeSec < silenceSec) {
+  const trustAnswer = claudeTrustAnswerMatches(verdict, pane, ctx);
+  if (mailboxAgeSec < silenceSec && !trustAnswer) {
     return {
       action: "wait",
       reason: "mailbox fresh; worker likely alive despite frozen pane",
@@ -826,6 +836,8 @@ export function handleStall({
     ...loop,
     silenceSec,
     mailboxAgeSec: workerAgeSec,
+    cwd: state.cwd,
+    cli: state.worker?.cli,
   });
   log({
     kind: "decision",
