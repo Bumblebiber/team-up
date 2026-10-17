@@ -67,3 +67,19 @@ test("an active run with a vanished terminal is not judged on a phantom session"
     { kind: "skip" }
   );
 });
+
+test("targets are exact: gone x-abc never reaches live x-abcdef", async () => {
+  const { tmuxSessionExists, tmuxCapture, tmuxSendKeys } = await import("../../src/runs/tmux.mjs");
+  const live = "x-abcdef";
+  // Fake tmux resolving like the real one except that "=" demands equality.
+  const exec = (_cmd, args) => {
+    const t = args[args.indexOf("-t") + 1].replace(/:$/, "");
+    const hit = t.startsWith("=") ? t.slice(1) === live : live.startsWith(t);
+    if (!hit) throw new Error("can't find session");
+    return "pane";
+  };
+  assert.equal(tmuxSessionExists("x-abcdef", { exec }), true);
+  assert.equal(tmuxSessionExists("x-abc", { exec }), false);
+  assert.equal(tmuxCapture("x-abc", { exec }), null);
+  assert.equal(tmuxSendKeys("x-abc", ["y"], { exec }), false);
+});

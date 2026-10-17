@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { credentialDenyRules } from "../specialists/permissions.mjs";
+import { paneTarget } from "../runs/tmux.mjs";
 import { CLAUDE_DECLARED_CAPABILITIES } from "./capabilities.mjs";
 
 function homeChecksum(homePath) {
@@ -220,10 +221,10 @@ export const claudeAdapter = {
   },
 
   injectControl({ tmuxSession, message, execFileSync }) {
-    execFileSync("tmux", ["send-keys", "-t", tmuxSession, "-l", message], {
+    execFileSync("tmux", ["send-keys", "-t", paneTarget(tmuxSession), "-l", message], {
       stdio: "ignore",
     });
-    execFileSync("tmux", ["send-keys", "-t", tmuxSession, "Enter"], {
+    execFileSync("tmux", ["send-keys", "-t", paneTarget(tmuxSession), "Enter"], {
       stdio: "ignore",
     });
   },

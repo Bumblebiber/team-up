@@ -921,8 +921,8 @@ test("sendTmuxKeys invokes tmux send-keys per key", () => {
     execFile: (cmd, args) => calls.push([cmd, ...args]),
   });
   assert.deepEqual(calls, [
-    ["tmux", "send-keys", "-t", "sess", "Enter"],
-    ["tmux", "send-keys", "-t", "sess", "y"],
+    ["tmux", "send-keys", "-t", "=sess:", "Enter"],
+    ["tmux", "send-keys", "-t", "=sess:", "y"],
   ]);
 });
 

@@ -1,11 +1,41 @@
 import { execFileSync } from "node:child_process";
 
+/**
+ * tmux resolves a bare `-t name` by prefix: a gone "x-abc" silently addressed a
+ * live "x-abcdef" (measured, tmux 3.4). "=" makes the match exact; the trailing
+ * ":" makes it a pane target (the session's current pane) for pane commands.
+ */
+export const paneTarget = (session) => `=${session}:`;
+
+/** Pane text; "" for an empty pane, null when the session is gone. */
+export function tmuxCapture(session, { args = ["-p"], exec = execFileSync } = {}) {
+  if (!session) return null;
+  try {
+    return String(exec("tmux", ["capture-pane", "-t", paneTarget(session), ...args], { encoding: "utf8" }));
+  } catch {
+    return null;
+  }
+}
+
+/** Send each key in turn; false (and nothing typed) when the session is gone. */
+export function tmuxSendKeys(session, keys, { literal = false, exec = execFileSync } = {}) {
+  if (!session) return false;
+  try {
+    for (const key of keys) {
+      exec("tmux", ["send-keys", "-t", paneTarget(session), ...(literal ? ["-l"] : []), key], { stdio: "ignore" });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function inspectTmuxSession(session, { exec = execFileSync } = {}) {
   if (!session) return { exists: false, activityMs: null, sessionId: null, attached: false };
   try {
     const raw = exec(
       "tmux",
-      ["display-message", "-p", "-t", session, "#{window_activity} #{session_id} #{session_attached}"],
+      ["display-message", "-p", "-t", paneTarget(session), "#{window_activity} #{session_id} #{session_attached}"],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     ).trim();
     // `display-message -t` exits 0 for a session that does not exist and simply
@@ -45,7 +75,7 @@ export function stopTmuxSession(session, { exec = execFileSync } = {}) {
 export function tmuxSessionExists(sessionId, { exec = execFileSync } = {}) {
   if (!sessionId) return false;
   try {
-    exec("tmux", ["has-session", "-t", sessionId], { stdio: "ignore" });
+    exec("tmux", ["has-session", "-t", `=${sessionId}`], { stdio: "ignore" });
     return true;
   } catch {
     return false;

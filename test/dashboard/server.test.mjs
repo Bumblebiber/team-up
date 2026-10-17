@@ -721,7 +721,7 @@ test("a scrolled pane leaves copy-mode before the key is sent", () => {
   });
   // copy-mode swallows keys and send-keys still exits 0, so without this the
   // terminal looks broken and the log says everything worked.
-  assert.deepEqual(calls, ["tmux copy-mode -q -t s1", "tmux send-keys -t s1 -l q"]);
+  assert.deepEqual(calls, ["tmux copy-mode -q -t =s1:", "tmux send-keys -t =s1: -l q"]);
 });
 
 test("creating and trusting a command policy go through the audited write path", () =>

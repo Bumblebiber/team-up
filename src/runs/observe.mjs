@@ -15,6 +15,7 @@ import {
   setStatus,
 } from "./runs.mjs";
 import { pick } from "../roster/chain.mjs";
+import { tmuxCapture, tmuxSendKeys } from "./tmux.mjs";
 import { loadJson, requireRoster, usagePath } from "../roster/config.mjs";
 
 export const DEFAULT_POLL_SEC = 5;
@@ -577,17 +578,11 @@ export function escalateRun(runId, question, { source = "observer" } = {}) {
 }
 
 export function sendTmuxKeys(session, keys, { execFile = execFileSync } = {}) {
-  for (const key of keys) {
-    execFile("tmux", ["send-keys", "-t", session, key], { stdio: "ignore" });
-  }
+  tmuxSendKeys(session, keys, { exec: execFile });
 }
 
 export function defaultCapture(session, { execFile = execFileSync } = {}) {
-  try {
-    return execFile("tmux", ["capture-pane", "-t", session, "-pJ"], { encoding: "utf8" });
-  } catch {
-    return "";
-  }
+  return tmuxCapture(session, { args: ["-pJ"], exec: execFile }) ?? "";
 }
 
 function defaultJudgeCall({ argv, timeoutMs = JUDGE_TIMEOUT_MS }) {
