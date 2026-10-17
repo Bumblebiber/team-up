@@ -8,7 +8,7 @@ import { analyzeRestart, formatRestartReport } from "../telemetry/restart.mjs";
 import { telemetryConfig } from "../telemetry/config.mjs";
 import { findStaleRuns, findOrphanSessions, DEFAULT_THRESHOLD_MS } from "./stale.mjs";
 import { findUncollectedRuns, DEFAULT_UNCOLLECTED_DAYS } from "./collect.mjs";
-import { listTmuxSessions } from "./tmux.mjs";
+import { listTmuxSessions, paneTarget, tmuxCapture, tmuxSendKeys, tmuxSessionExists } from "./tmux.mjs";
 import { cleanupRunClone, sweepClones, tasksRoot } from "./clone-cleanup.mjs";
 import os from "node:os";
 import path from "node:path";
@@ -714,18 +714,9 @@ export function workerRecoveryPrompt(runId) {
   return `Host crash recovery. Read ${mb}/STATUS and ${mb}/PROMPT.md; continue the task. Do not re-init from scratch.`;
 }
 
-function defaultTmuxExists(name) {
-  try {
-    execFileSync("tmux", ["has-session", "-t", name], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Returns { actions: [...] } without spawning. */
 export function buildResumePlan(state, {
-  tmuxExists = defaultTmuxExists,
+  tmuxExists = tmuxSessionExists,
   now = new Date(),
 } = {}) {
   if (TERMINAL_RUN_STATUSES.has(state.status)) {
@@ -871,11 +862,7 @@ export function acquireResumeLock(lockPath = resumeLockPath()) {
 }
 
 export function captureTmuxPane(session) {
-  try {
-    return execFileSync("tmux", ["capture-pane", "-t", session, "-p"], { encoding: "utf8" });
-  } catch {
-    return "";
-  }
+  return tmuxCapture(session) ?? "";
 }
 
 function sleepMs(ms) {
@@ -909,14 +896,10 @@ export function pasteInject(session, text, {
   const tmp = path.join(os.tmpdir(), `team-up-inject-${session}-${process.pid}.txt`);
   fs.writeFileSync(tmp, text || "");
   try {
-    execFileSync(
-      "bash",
-      [
-        "-lc",
-        `tmux load-buffer -b team_up ${shellQuote(tmp)} && tmux paste-buffer -b team_up -t ${shellQuote(session)} && sleep 0.3 && tmux send-keys -t ${shellQuote(session)} Enter`,
-      ],
-      { stdio: "ignore" },
-    );
+    execFileSync("tmux", ["load-buffer", "-b", "team_up", tmp], { stdio: "ignore" });
+    execFileSync("tmux", ["paste-buffer", "-b", "team_up", "-t", paneTarget(session)], { stdio: "ignore" });
+    sleepMs(300);
+    tmuxSendKeys(session, ["Enter"]);
   } finally {
     try {
       fs.unlinkSync(tmp);
@@ -1074,7 +1057,7 @@ function queueSummary(item, extra = {}) {
  */
 export async function resumeAll({
   dryRun = false,
-  tmuxExists = defaultTmuxExists,
+  tmuxExists = tmuxSessionExists,
   logDir = null,
   now = new Date(),
   execute = executeResumeAction,

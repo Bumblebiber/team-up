@@ -68,8 +68,8 @@ test("claude injectControl uses tmux argv not a shell", () => {
       calls.push([cmd, ...args]);
     },
   });
-  assert.deepEqual(calls[0], ["tmux", "send-keys", "-t", "s1", "-l", "please checkpoint"]);
-  assert.deepEqual(calls[1], ["tmux", "send-keys", "-t", "s1", "Enter"]);
+  assert.deepEqual(calls[0], ["tmux", "send-keys", "-t", "=s1:", "-l", "please checkpoint"]);
+  assert.deepEqual(calls[1], ["tmux", "send-keys", "-t", "=s1:", "Enter"]);
 });
 
 test("brokered Claude launch strips legacy roster bypass before enforcing policy", () => {

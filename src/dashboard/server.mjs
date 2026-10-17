@@ -9,7 +9,7 @@ import { readRepairState, readRepairReport, spawnUsageRepair } from "./repair.mj
 import { loadJson, configPath, usagePath, saveRoster } from "../roster/config.mjs";
 import { specialistAssignment } from "../roster/profile.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
-import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
+import { listTmuxSessions, paneTarget, tmuxSessionExists } from "../runs/tmux.mjs";
 import {
   listClaudeSessions,
   stopClaudeSession,
@@ -299,7 +299,7 @@ function capturePaneLines(session, lines = 200, { exec = execFileSync, listSessi
   const known = listSessions({ exec });
   if (!known.includes(session)) return null;
   try {
-    const raw = exec("tmux", ["capture-pane", "-t", session, "-p", "-S", `-${lines}`], {
+    const raw = exec("tmux", ["capture-pane", "-t", paneTarget(session), "-p", "-S", `-${lines}`], {
       encoding: "utf8",
     });
     return raw;
@@ -324,11 +324,11 @@ export function sendPaneKeys(session, { text, key }, { exec = execFileSync } = {
   // keystroke simply never arrives. Leaving the mode first is the difference
   // between "nothing happens" and a working terminal.
   try {
-    exec("tmux", ["copy-mode", "-q", "-t", session], { stdio: "ignore" });
+    exec("tmux", ["copy-mode", "-q", "-t", paneTarget(session)], { stdio: "ignore" });
   } catch { /* not in a mode */ }
   const args = text != null
-    ? ["send-keys", "-t", session, "-l", text]
-    : ["send-keys", "-t", session, key];
+    ? ["send-keys", "-t", paneTarget(session), "-l", text]
+    : ["send-keys", "-t", paneTarget(session), key];
   exec("tmux", args, { stdio: "ignore" });
 }
 
