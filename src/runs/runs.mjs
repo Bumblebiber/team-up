@@ -757,7 +757,7 @@ export function buildResumePlan(state, {
       tmux: state.worker.tmux,
       cwd: state.cwd,
       cli: state.worker.cli,
-      sessionId: state.worker.sessionId,
+      sessionId: state.worker.sessionId || readMailboxSessionId(state.runId),
       inject: workerRecoveryPrompt(state.runId),
     });
   }
@@ -774,6 +774,15 @@ export function isSpecialistRun(state) {
     String(state.role || "").startsWith("specialist:") ||
     state.launch_descriptor
   );
+}
+
+/** The session id headless.mjs recorded in the mailbox; null when it wrote none. */
+function readMailboxSessionId(runId) {
+  try {
+    return fs.readFileSync(path.join(mailboxDir(runId), "SESSION_ID"), "utf8").trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Resume a recorded session; null when there is none to resume (cold start). */
@@ -797,7 +806,9 @@ export function coldStartArgv(state, roster, prompt, dir) {
     throw new Error(`cold start of ${state.runId}: no clis.${cli}.cmd in the roster`);
   }
   if (!model) throw new Error(`cold start of ${state.runId}: no worker.model recorded`);
-  return buildCommand({ roster, model, cli, prompt, effort, fast, dir });
+  if (!state.worker.headless) return buildCommand({ roster, model, cli, prompt, effort, fast, dir });
+  const lastMessage = path.resolve(mailboxDir(state.runId), "LAST_MESSAGE.md");
+  return headlessArgv(state.runId, cli, buildCommand({ roster, model, cli, prompt, effort, fast, dir, headless: true, lastMessage }));
 }
 
 export function resumeLockPath() {
@@ -962,7 +973,9 @@ export function executeResumeAction(action, state, {
     throw new Error(`resume of ${state.runId}: specialist capsule cannot be restored; cancel it and start a new \`specialist run\``);
   }
 
-  const resumed = buildCliArgv({ cli: action.cli, sessionId: action.sessionId });
+  // ponytail: a headless run cold-starts headless; `codex exec resume` /
+  // `cursor-agent --resume` are unverified, and `codex resume` would be a TUI.
+  const resumed = state.worker?.headless ? null : buildCliArgv({ cli: action.cli, sessionId: action.sessionId });
   // Not requireRoster: its process.exit would end the whole resume queue.
   // The prompt is rebuilt, not taken from the action: an action parked for
   // capacity by an older version still carries the relative-path text.
@@ -1831,7 +1844,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 
 import { writeTypedResult as writeTypedResultImpl, validateResult } from "../specialists/request.mjs";
-import { buildCommand, guardWorkerArgv } from "../roster/command.mjs";
+import { buildCommand, guardWorkerArgv, headlessArgv } from "../roster/command.mjs";
 import { configPath, loadJson } from "../roster/config.mjs";
 import { detectParent, pruneSessionRecords } from "./parent.mjs";
 import { writePendingWakeup } from "./pending.mjs";

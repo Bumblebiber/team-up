@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  runsRoot, runDir, atomicWriteJson, atomicWriteText, createRun, loadState, saveState, updateState,
+  runsRoot, mailboxDir, runDir, atomicWriteJson, atomicWriteText, createRun, loadState, saveState, updateState,
   classifyMailbox, writeAnswer, buildResumePlan, coldStartArgv, buildCliArgv,
   setStatus, resumeAll, linkDispatchToRun, listActiveStates,
   acquireResumeLock, resumeLockPath, waitTmuxReady,
@@ -347,6 +347,35 @@ test("buildResumePlan restores worker tmux when missing", () => {
   assert.equal(plan.actions[0].kind, "spawn_worker");
   assert.equal(plan.actions[0].tmux, "w1");
   assert.match(plan.actions[0].inject, /Host crash recovery/);
+});
+
+test("resume plan takes the session id from mailbox/SESSION_ID when the state has none", withTempRuns(async () => {
+  const runId = "20260101T000000Z-r001";
+  fs.mkdirSync(mailboxDir(runId), { recursive: true });
+  fs.writeFileSync(path.join(mailboxDir(runId), "SESSION_ID"), "thread-7\n");
+  const plan = buildResumePlan({
+    status: "watching", runId, cwd: "/tmp/p",
+    parent: { attach: "manual", cli: "claude" },
+    worker: { cli: "codex", tmux: "w1" },
+  }, { tmuxExists: () => false });
+  assert.equal(plan.actions[0].sessionId, "thread-7");
+  assert.deepEqual(buildCliArgv({ cli: "codex", sessionId: plan.actions[0].sessionId }), ["codex", "resume", "thread-7"]);
+}));
+
+test("a headless run cold-starts headless through the wrapper", () => {
+  const roster = {
+    clis: { codex: {
+      cmd: ["codex", "{prompt}"],
+      headless_cmd: ["codex", "exec", "--model", "{model}", "-o", "{last_message}", "{prompt}"],
+    } },
+    models: { "gpt-x": { cli: ["codex"] } },
+  };
+  const state = { runId: "20260101T000000Z-r001", worker: { cli: "codex", model: "gpt-x", headless: true } };
+  const argv = coldStartArgv(state, roster, "RECOVER", "/tmp/task");
+  assert.match(argv[1], /headless\.mjs$/);
+  assert.deepEqual(argv.slice(2, 5), [state.runId, "codex", "--"]);
+  assert.ok(argv.includes("exec"));
+  assert.equal(argv.at(-1), "RECOVER");
 });
 
 test("buildResumePlan noops worker when tmux exists", () => {

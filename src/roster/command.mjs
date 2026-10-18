@@ -196,6 +196,18 @@ export function startInTmux({ session, dir, argv, runId, exec = execFileSync }) 
   return { session };
 }
 
+/** A headless_cmd behind the wrapper that turns the process exit into the mailbox STATUS. */
+export function headlessArgv(runId, cli, built) {
+  return [
+    process.execPath,
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../runs/headless.mjs"),
+    runId,
+    cli,
+    "--",
+    ...built,
+  ];
+}
+
 /** Spawn a pinned CLI×model in detached tmux (no role chain / usage pick). */
 export async function spawnPinnedInTmux({
   roster,
@@ -229,16 +241,7 @@ export async function spawnPinnedInTmux({
   if (cli === "agy" && !headless) ensureAgyWorkspaceTrusted(dir);
   const lastMessage = path.resolve(mailboxDir(effectiveRunId), "LAST_MESSAGE.md");
   const built = buildCommand({ roster, model, cli, prompt, effort, fast, dir, headless, lastMessage });
-  const argv = headless
-    ? [
-      process.execPath,
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../runs/headless.mjs"),
-      effectiveRunId,
-      cli,
-      "--",
-      ...built,
-    ]
-    : built;
+  const argv = headless ? headlessArgv(effectiveRunId, cli, built) : built;
   const session = `${sessionPrefix}-${Date.now().toString(36)}`;
   // Link first: a headless wrapper whose child fails at once closes the
   // mailbox within milliseconds, and a later STATUS=watching would undo that.
