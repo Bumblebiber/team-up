@@ -21,8 +21,8 @@
     <aside class="sidebar">
       <header class="sidebar-brand"><h1>team-up</h1>
         <div class="lang-switch" role="group" aria-label="Language">
-          <button type="button" data-lang="en" lang="en" translate="no" aria-label="English">EN</button>
-          <button type="button" data-lang="de" lang="de" translate="no" aria-label="Deutsch">DE</button>
+          <button type="button" data-lang="en" lang="en" translate="no" title="English">EN</button>
+          <button type="button" data-lang="de" lang="de" translate="no" title="Deutsch">DE</button>
         </div>
         <button type="button" id="bell" class="bell" title="Notifications" aria-label="Notifications" aria-expanded="false"><span aria-hidden="true">🔔</span><span id="bell-count" class="bell-count hidden"></span></button>
       </header>
@@ -170,17 +170,17 @@
             <h1>TIM memory</h1>
             <p>What every project remembers. <em>Open work</em> lists tasks, bugs and ideas — start a session on one. <em>Explorer</em> browses the whole memory as a tree or a graph.</p>
           </header>
-          <div class="segmented" id="tim-views" role="tablist">
-            <button type="button" role="tab" class="is-active" aria-selected="true" data-tim-view="work">Open work</button>
-            <button type="button" role="tab" aria-selected="false" data-tim-view="explorer">Explorer</button>
+          <div class="segmented" id="tim-views" role="group">
+            <button type="button" class="is-active" aria-pressed="true" data-tim-view="work">Open work</button>
+            <button type="button" aria-pressed="false" data-tim-view="explorer">Explorer</button>
           </div>
           <section id="panel-tim" class="panel hidden" data-tim-pane="work">
         <h2>Open work</h2>
         <div class="toolbar">
-          <span class="segmented small" id="tim-tabs" role="tablist">
-            <button type="button" role="tab" class="tim-tab is-active" aria-selected="true" data-kind="task">Tasks</button>
-            <button type="button" role="tab" class="tim-tab" aria-selected="false" data-kind="idea">Ideas</button>
-            <button type="button" role="tab" class="tim-tab" aria-selected="false" data-kind="bug">Bugs</button>
+          <span class="segmented small" id="tim-tabs" role="group">
+            <button type="button" class="tim-tab is-active" aria-pressed="true" data-kind="task">Tasks</button>
+            <button type="button" class="tim-tab" aria-pressed="false" data-kind="idea">Ideas</button>
+            <button type="button" class="tim-tab" aria-pressed="false" data-kind="bug">Bugs</button>
           </span>
         </div>
         <p id="tim-status" class="muted"></p>
@@ -224,9 +224,9 @@
             <details id="catalogue-box">
               <summary>Add or remove models</summary>
               <div class="toolbar">
-                <span class="segmented small" id="catalogue-tabs" role="tablist">
-                  <button type="button" role="tab" class="tim-tab is-active" aria-selected="true" data-kind="subscription">Subscription</button>
-                  <button type="button" role="tab" class="tim-tab" aria-selected="false" data-kind="api">API key</button>
+                <span class="segmented small" id="catalogue-tabs" role="group">
+                  <button type="button" class="tim-tab is-active" aria-pressed="true" data-kind="subscription">Subscription</button>
+                  <button type="button" class="tim-tab" aria-pressed="false" data-kind="api">API key</button>
                 </span>
                 <input type="search" id="catalogue-search" placeholder="Filter models…">
                 <button type="button" id="models-scan" title="Ask every CLI which models it offers now (takes a minute or two)">Rescan CLIs</button>
@@ -325,7 +325,7 @@
           </div>
           <p id="settings-status" class="status-line" aria-live="polite"></p>
           <div id="settings-body" class="settings"></div>
-          <section id="panel-excluded" class="panel subtle">
+          <section id="panel-excluded" class="panel subtle" data-expert>
             <h2>Not editable here</h2>
             <ul id="settings-excluded" class="excluded"></ul>
           </section>

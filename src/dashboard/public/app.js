@@ -46,7 +46,7 @@ applyRoute();
 const dashboardMetrics = { runCounts: null, usage: null, tim: null };
 
 function usageLevelName(level) {
-  return ({ red: "Critical", amber: "Warn", ok: "OK" })[level] || "Unknown";
+  return ({ red: t("Critical"), amber: t("Warning"), ok: t("OK") })[level] || t("Unknown");
 }
 
 function updateNavBadge(id, text, tone = "", visible = Boolean(text), title = "") {
@@ -85,8 +85,8 @@ function updateDashboardMetrics() {
     : Object.values(dashboardMetrics.usage?.windows || {}).some((window) => window.level === "amber")
       ? "amber"
       : "";
-  updateNavBadge("badge-overview", usageLevel === "red" ? "Critical" : usageLevel === "amber" ? "Warn" : "",
-    usageLevel, Boolean(usageLevel), usageLevel ? `Usage level: ${usageLevelName(usageLevel)}` : "");
+  updateNavBadge("badge-overview", usageLevel ? usageLevelName(usageLevel) : "",
+    usageLevel, Boolean(usageLevel), usageLevel ? t("Usage level: {level}", { level: usageLevelName(usageLevel) }) : "");
 
   const tim = dashboardMetrics.tim;
   const installed = Boolean(tim?.installed);
@@ -177,6 +177,8 @@ function esc(s) {
  */
 function confirmDialog({ title, text, yes, no = t("Cancel") }) {
   const dialog = $("#confirm");
+  // A second click while it is open: one question, one answer.
+  if (dialog.open) return Promise.resolve(false);
   $("#confirm-title").innerHTML = title;
   $("#confirm-text").innerHTML = text;
   $("#confirm-yes").textContent = yes;
@@ -1093,7 +1095,7 @@ function renderCatalogue() {
   const kind = readStored(CATALOGUE_KIND_KEY, "subscription");
   for (const btn of $("#catalogue-tabs").querySelectorAll(".tim-tab")) {
     btn.classList.toggle("is-active", btn.dataset.kind === kind);
-    btn.setAttribute("aria-selected", String(btn.dataset.kind === kind));
+    btn.setAttribute("aria-pressed", String(btn.dataset.kind === kind));
   }
   const q = $("#catalogue-search").value.trim().toLowerCase();
   const html = catalogueData.providers.filter((p) => p.tab === kind).map((p) => {
@@ -1449,13 +1451,18 @@ $("#admin-confirm-form").addEventListener("submit", async (e) => {
 
 // ── Team ──────────────────────────────────────────────────────────────────
 // A card per installed specialist; the open one shows below the cards and
-// lives in the hash (#/specialists/<id>), so back and reload keep it. Not on
-// the five-second cycle: nothing here changes between polls, and a redraw
-// would drop a role that is picked but not saved yet.
+// lives in the hash (#/specialists/<id>), so back and reload keep it. Loaded
+// on entry, not on the five-second cycle: a redraw while you work in the
+// detail would take your place in it.
 let specialistsData = null;
 let capabilityPool = null;
+let teamSeq = 0;
 /** The specialist the detail shows: focus moves only when it changes. */
 let teamOpenId = null;
+// Left Team: coming back is a fresh visit, not a closed detail to return focus from.
+window.addEventListener("hashchange", () => {
+  if (!location.hash.startsWith("#/specialists")) teamOpenId = null;
+});
 
 const TEAM_TITLE = {
   coding: t("Developer"),
@@ -1541,15 +1548,17 @@ function teamCard(s, selected) {
 }
 
 function renderTeam() {
-  const list = specialistsData?.specialists || [];
+  if (!specialistsData) return;
+  const list = specialistsData.specialists || [];
   const selected = teamSelectedId();
+  const focused = document.activeElement?.closest?.("#team-grid .team-card")?.dataset.id;
   $("#team-grid").innerHTML = list.length
     ? `<ul class="team-grid">${list.map((s) => teamCard(s, s.id === selected)).join("")}</ul>`
     : `<div class="empty">${esc(t("No specialists installed yet."))}</div>`;
-  // Closed: back to the card it was opened from.
-  const closed = teamOpenId && !selected ? teamOpenId : null;
+  // Closed: back to the card it was opened from; a redraw: to the card that had focus.
+  const back = teamOpenId && !selected ? teamOpenId : focused;
   renderTeamDetail();
-  if (closed && location.hash.startsWith("#/specialists")) $(`#team-grid [data-id="${CSS.escape(closed)}"]`)?.focus();
+  if (back && location.hash.startsWith("#/specialists")) $(`#team-grid [data-id="${CSS.escape(back)}"]`)?.focus({ preventScroll: Boolean(focused) });
 }
 
 function teamExtras(s) {
@@ -1567,7 +1576,7 @@ function teamExtras(s) {
   return `<ul class="team-extras">${rows || `<li class="muted">${esc(t("None yet."))}</li>`}</ul>
     <div class="form-row">
       <label for="team-extra-add">${esc(t("Add an extra"))}</label>
-      <select id="team-extra-add"${pool.length ? "" : " disabled"}>${options || `<option value="">${esc(t("Nothing left to add"))}</option>`}</select>
+      <select id="team-extra-add"${pool.length ? "" : " disabled"}>${options || `<option value="">${esc(capabilityPool ? t("Nothing left to add") : t("The extras could not be loaded"))}</option>`}</select>
       <button type="button" id="team-extra-add-btn"${pool.length ? "" : " disabled"}>${esc(t("Add"))}</button>
     </div>`;
 }
@@ -1591,7 +1600,23 @@ function teamModelSection(s) {
       <button type="button" id="team-role-save" class="primary">${esc(t("Save"))}</button>
       <button type="button" id="team-chain">${esc(t("Custom model list…"))}</button>
     </div>
+    <p class="muted" id="team-role-hint" aria-live="polite"></p>
     <p class="muted">${esc(t("The role decides which AI models it works with: the first one with quota left does the job."))}</p>${chain}`;
+}
+
+/** What the picked role means: who else is in it and the model it would start with now. */
+function teamRoleHint(s, value) {
+  if (!value) return esc(t("Without a role it does not start."));
+  if (value === "chain") return esc(t("Its own list of models, set with “Custom model list…”."));
+  const r = rolesData?.roles.find((x) => x.role === value.slice(5));
+  if (!r) return "";
+  const others = (r.usedBy || []).filter((u) => u.id !== s.id).map((u) => u.name || u.id);
+  return [
+    r.pick?.label ? withNames(t("This role starts with {model} right now."), { model: r.pick.label })
+      : esc(t("No model in this role has quota right now.")),
+    others.length ? withNames(t("Also in this role: {names}."), { names: new Intl.ListFormat(LANG, { type: "conjunction" }).format(others) })
+      : esc(t("No one else is in this role.")),
+  ].join(" ");
 }
 
 function teamTechnical(s) {
@@ -1625,6 +1650,9 @@ function renderTeamDetail() {
   // unless what it runs on changed meanwhile (a saved custom model list): then the new one shows.
   const old = teamOpenId === s.id ? $("#team-role") : null;
   const picked = old && old.value !== old.dataset.current ? { value: old.value, current: old.dataset.current } : null;
+  // A redraw (after a save, an extra added or removed) puts focus back where it was, or near it.
+  const a = document.activeElement;
+  const had = teamOpenId === s.id && box.contains(a) ? (a.id ? `#${a.id}` : "#team-extra-add") : null;
   const name = teamName(s);
   const bundled = [...(s.bundled?.skills || []), ...(s.bundled?.mcps || []).map((m) => `mcp:${m}`)];
   box.innerHTML = `<div class="team-detail-head">${avatar(s)}
@@ -1657,6 +1685,10 @@ function renderTeamDetail() {
     teamOpenId = s.id;
     $("#team-detail-name").focus({ preventScroll: true });
     box.scrollIntoView({ block: "nearest" });
+  } else if (had) {
+    // A disabled control takes no focus: then the heading.
+    box.querySelector(had)?.focus({ preventScroll: true });
+    if (!box.contains(document.activeElement)) $("#team-detail-name").focus({ preventScroll: true });
   }
 }
 
@@ -1664,6 +1696,8 @@ function renderTeamDetail() {
 function teamRoleChanged() {
   const role = $("#team-role");
   $("#team-role-save").disabled = role.value === role.dataset.current;
+  const s = findSpecialist(teamSelectedId());
+  if (s) $("#team-role-hint").innerHTML = teamRoleHint(s, role.value);
 }
 
 async function assignCapability(id, pkg, checksum, action, note) {
@@ -1679,17 +1713,39 @@ async function assignCapability(id, pkg, checksum, action, note) {
   }
 }
 
+/**
+ * Never throws: a failure shows on the page. Without data yet that is the
+ * grid's place, with a retry; with data, the cards stay and a note says so.
+ * The extras list on its own failing only leaves "Add an extra" empty.
+ */
 async function refreshSpecialists() {
-  const [specialists, pool] = await Promise.all([
-    api("/api/specialists"),
-    api("/api/capability-pool"),
-  ]);
-  specialistsData = specialists;
-  capabilityPool = pool;
+  const seq = ++teamSeq;
+  const [specialists, pool] = await Promise.allSettled([api("/api/specialists"), api("/api/capability-pool")]);
+  if (seq !== teamSeq) return;
+  capabilityPool = pool.status === "fulfilled" ? pool.value : null;
+  if (specialists.status === "rejected") {
+    const text = t("Could not load the team: {error}", { error: specialists.reason.message });
+    if (specialistsData) teamNote(esc(text), "err");
+    else {
+      teamNote("");
+      $("#team-grid").innerHTML = `<div class="empty"><p>${esc(text)}</p><button type="button" id="team-retry">${esc(t("Retry"))}</button></div>`;
+    }
+    return;
+  }
+  if ($("#team-status").classList.contains("err")) teamNote("");
+  specialistsData = specialists.value;
   renderTeam();
 }
 
-onEnter.specialists = () => renderTeam();
+$("#team-grid").addEventListener("click", (e) => {
+  if (e.target.closest("#team-retry")) refreshSpecialists();
+});
+
+// The cards at once from what is loaded, then fresh: the model a launch gets moves with quota.
+onEnter.specialists = () => {
+  renderTeam();
+  refreshSpecialists();
+};
 
 async function assignSpecialist(id, body, note) {
   try {
@@ -1730,6 +1786,11 @@ $("#team-detail").addEventListener("click", async (e) => {
   if (e.target.closest("#team-role-save")) {
     const value = $("#team-role").value;
     const role = value.startsWith("role:") ? value.slice(5) : null;
+    if (!role && !await confirmDialog({
+      title: withNames(t("Turn {name} off?"), { name }),
+      text: withNames(t("Without a role {name} does not start, and nothing hands it work. Pick a role again to turn it back on."), { name }),
+      yes: t("Turn off"),
+    })) return;
     await assignSpecialist(s.id, role ? { role } : {}, role
       ? withNames(t("{name} now works in the role {role}."), { name, role })
       : withNames(t("{name} has no role now and does not start."), { name }));
@@ -1859,8 +1920,9 @@ async function pullPrefs() {
 // inbox), what is being worked on there (the runs list, resolved to its real
 // project), and a session to work in it yourself. Folders that are no project
 // of yours (clone roots, folders without git, specialist packages) fold away
-// under "Other folders". The projects folder is a per-browser preference, set
-// in Settings → General: the server takes it per request and never stores it.
+// under "Other folders". The projects folder is a synced preference (every
+// browser talks to the same server), set in Settings → General: the server
+// takes it per request and never stores it.
 const PROJECTS_DIR_KEY = "teamup.projectsDir";
 const SESSION_CLI_KEY = "teamup.sessionCli";
 const WAITING_STATUSES = new Set(["waiting_human", "waiting_decision"]);
@@ -1894,6 +1956,8 @@ async function refreshProjects() {
     projectsKey = "";
     $("#projects-status").textContent = t("Could not load the projects: {error}", { error: err.message });
     $("#projects-table").innerHTML = "";
+    $("#projects-other").classList.add("hidden");
+    $("#projects-other-list").innerHTML = "";
     return;
   }
   projectsDirShown = projectsData.dir;
@@ -1906,8 +1970,10 @@ function policyCell(p) {
   const tag = (tone, text, title = "") => `<span class="tag ${tone}"${title ? ` title="${esc(title)}"` : ""}>${esc(text)}</span>`;
   const create = `<button type="button" class="policy-create" data-dir="${esc(p.path)}">${esc(t("Create…"))}</button>`;
   if (pol.state === "valid" || pol.state === "inherited") {
+    // Approving stays a terminal step on purpose; the command is in sight, not only in a tooltip.
     const ready = pol.trusted === false
-      ? tag("warn", t("Not approved yet"), t("Changed since it was approved, or never approved. Approve it in a terminal: team-up specialist trust-policy --project {path}", { path: p.path }))
+      ? `${tag("warn", t("Not approved yet"), t("Changed since it was approved, or never approved."))}
+        <span class="policy-approve">${esc(t("Approve it in a terminal:"))} <code translate="no">team-up specialist trust-policy --project ${esc(p.path)}</code></span>`
       : tag("ok", t("Ready"));
     return pol.state === "inherited" ? `${ready} ${tag("", t("from the folder above"))}` : ready;
   }
@@ -1951,11 +2017,13 @@ function renderProjects() {
       <td class="project-action"><button type="button" class="project-open" data-dir="${esc(p.path)}">${esc(t("Open session…"))}</button></td>
     </tr>`;
   };
-  const mine = data.projects.filter((p) => !p.other);
+  // Something waiting or working first; the rest by name, as listed.
+  const busy = (p) => (waiting.get(p.name) || 0) + (working.get(p.name) || 0);
+  const mine = data.projects.filter((p) => !p.other).sort((a, b) => busy(b) - busy(a));
   const other = data.projects.filter((p) => p.other);
   const table = `<table>
-    <thead><tr><th>${esc(t("Project"))}</th><th>${esc(t("Waiting for you"))}</th><th>${esc(t("Working now"))}</th>${
-      expert ? `<th>${esc(t("Test command"))}</th><th>${esc(t("Sessions"))}</th>` : ""}<th></th></tr></thead>
+    <thead><tr><th data-col-key="Project">${esc(t("Project"))}</th><th data-col-key="Waiting for you">${esc(t("Waiting for you"))}</th><th data-col-key="Working now">${esc(t("Working now"))}</th>${
+      expert ? `<th data-col-key="Test command">${esc(t("Test command"))}</th><th data-col-key="Sessions">${esc(t("Sessions"))}</th>` : ""}<th></th></tr></thead>
     <tbody>${mine.map(row).join("") || `<tr><td colspan="${expert ? 6 : 4}">${esc(t("No projects in this folder yet."))}</td></tr>`}</tbody></table>`;
   const otherList = other.map((p) => `<li><span translate="no">${esc(p.name)}</span> <span class="muted">${esc(OTHER_REASON[p.otherReason] ?? "")}</span></li>`).join("");
   $("#projects-status").textContent = projectsNote;
@@ -1977,9 +2045,8 @@ function renderProjects() {
 $("#projects-table").addEventListener("click", (e) => {
   const inbox = e.target.closest(".project-inbox");
   if (inbox) {
-    // The link goes to the inbox; this makes it show that project only.
-    writeStored(AC_FILTER_KEY, "all");
-    writeStored(AC_PROJECT_KEY, inbox.dataset.project);
+    // The link goes to the inbox; this makes it show that project only, for this visit.
+    acVisit = { project: inbox.dataset.project };
     return;
   }
   const session = e.target.closest(".session-link");
@@ -2177,7 +2244,7 @@ async function refreshTim() {
   const kind = timKind();
   for (const tab of $("#tim-tabs").querySelectorAll(".tim-tab")) {
     tab.classList.toggle("is-active", tab.dataset.kind === kind);
-    tab.setAttribute("aria-selected", String(tab.dataset.kind === kind));
+    tab.setAttribute("aria-pressed", String(tab.dataset.kind === kind));
   }
   const closed = new Set(readStored(TIM_CLOSED_KEY, []));
 
@@ -2414,7 +2481,7 @@ function browserSettingRows(q) {
     control: `<label class="switch"><input type="checkbox" class="expert-toggle" aria-label="${esc(t("Expert view"))}"${isExpert() ? " checked" : ""}></label>`,
   }, {
     label: t("Projects folder"),
-    help: t("The folder that holds your projects: Projects lists every folder in it. Only in this browser."),
+    help: t("The folder that holds your projects: Projects lists every folder in it. The same in every browser you sign in from."),
     control: `<input type="text" id="projects-dir" class="mono" data-client="projects-dir" value="${esc(readProjectsDir())}"
       placeholder="${esc(projectsDirShown || "~/projects")}" autocomplete="off" spellcheck="false" aria-label="${esc(t("Projects folder"))}">`,
   }];
@@ -2488,12 +2555,20 @@ async function saveSetting(body, rowPaths) {
   row?.classList.add("saved");
 }
 
-$("#settings-body").addEventListener("change", (e) => {
+$("#settings-body").addEventListener("change", async (e) => {
   const el = e.target;
   if (el.dataset.client === "projects-dir") {
     // Raw, like readProjectsDir reads it; the server takes it per request and never stores it.
+    // Empty is the default folder. One the server cannot list is not saved.
+    const dir = el.value.trim();
     try {
-      localStorage.setItem(PROJECTS_DIR_KEY, el.value.trim());
+      await api(`/api/projects?dir=${encodeURIComponent(dir)}`);
+    } catch (err) {
+      settingsNote(t("Not saved: {error}", { error: err.message }), "err");
+      return;
+    }
+    try {
+      localStorage.setItem(PROJECTS_DIR_KEY, dir);
       pushPrefs();
     } catch {
       // Private mode: the folder just stops surviving reloads.
@@ -2574,31 +2649,35 @@ function fmtWhen(iso) {
 }
 
 function lastRunTag(run) {
-  if (!run) return '<span class="tag off">never ran</span>';
-  if (run.running) return `<span class="tag warn">running since ${esc(fmtWhen(run.at))}</span>`;
-  return `<span class="tag ${run.exit === 0 ? "ok" : "err"}">${run.exit === 0 ? "ok" : `exit ${run.exit}`}</span> ${esc(fmtWhen(run.at))}`;
+  if (!run) return `<span class="tag off">${esc(t("Never ran"))}</span>`;
+  if (run.running) return `<span class="tag warn">${esc(t("Running since {when}", { when: fmtWhen(run.at) }))}</span>`;
+  return `<span class="tag ${run.exit === 0 ? "ok" : "err"}">${esc(run.exit === 0 ? t("Succeeded") : t("Exit code {code}", { code: run.exit }))}</span> ${esc(fmtWhen(run.at))}`;
 }
 
+/** The on/off switch of a job, named after it for a screen reader. */
+const jobSwitch = (name, on, attr) => `<label class="switch" title="${esc(t("On: it starts on schedule"))}"><input type="checkbox" ${attr}${on ? " checked" : ""}
+  aria-label="${esc(t("{job} on schedule", { job: name }))}"></label>`;
+
 function customJobCard(j) {
-  const sync = j.inSync === false ? '<span class="tag warn" title="The crontab does not match this job; save it again">not in crontab</span>' : "";
+  const sync = j.inSync === false ? `<span class="tag warn" title="${esc(t("The crontab does not match this job; save it again"))}">${esc(t("Not in the crontab"))}</span>` : "";
   return `<article class="job${j.enabled ? "" : " is-off"}" data-job="${esc(j.name)}">
     <div class="job-head">
-      <h3>${esc(j.name)}</h3>${sync}
+      <h3 translate="no">${esc(j.name)}</h3>${sync}
       <span class="spacer"></span>
-      <label class="switch" title="On: cron starts it on schedule"><input type="checkbox" data-job-toggle${j.enabled ? " checked" : ""} aria-label="Enabled"></label>
-      <button type="button" data-job-run title="Start it now; output goes to the log">Run now</button>
-      <button type="button" data-job-edit>Edit</button>
-      <button type="button" data-job-log>Log</button>
-      <button type="button" data-job-delete class="danger">Delete</button>
+      ${jobSwitch(j.name, j.enabled, "data-job-toggle")}
+      <button type="button" data-job-run title="${esc(t("Start it now; its output goes to the log"))}">${esc(t("Run now"))}</button>
+      <button type="button" data-job-edit>${esc(t("Edit"))}</button>
+      <button type="button" data-job-log>${esc(t("Log"))}</button>
+      <button type="button" data-job-delete class="danger">${esc(t("Delete"))}</button>
     </div>
-    ${j.description ? `<p>${esc(j.description)}</p>` : ""}
+    ${j.description ? `<p translate="no">${esc(j.description)}</p>` : ""}
     <div class="job-when">
-      <span><b>When</b> ${esc(j.when?.text || j.schedule)}</span>
-      <span><b>Next</b> ${j.enabled ? esc(fmtWhen(j.when?.next)) : "off"}</span>
-      <span><b>Last</b> ${lastRunTag(j.lastRun)}</span>
-      <span><b>Model</b> ${esc(j.model || "—")}</span>
-      <span><b>Folder</b> <code>${esc((j.cwd || "").replace(/^\/home\/[^/]+/, "~"))}</code></span>
-      ${j.notify ? "<span>→ Telegram</span>" : ""}
+      <span><b>${esc(t("When"))}</b> ${esc(j.when?.text || j.schedule)}</span>
+      <span><b>${esc(t("Next|run"))}</b> ${j.enabled ? esc(fmtWhen(j.when?.next)) : esc(t("off"))}</span>
+      <span><b>${esc(t("Last run"))}</b> ${lastRunTag(j.lastRun)}</span>
+      <span><b>${esc(t("Model"))}</b> <span translate="no">${esc(j.model || "—")}</span></span>
+      <span><b>${esc(t("Folder"))}</b> <code>${esc((j.cwd || "").replace(/^\/home\/[^/]+/, "~"))}</code></span>
+      ${j.notify ? `<span>${esc(t("Reports to Telegram"))}</span>` : ""}
     </div>
   </article>`;
 }
@@ -2614,9 +2693,7 @@ function outcomeTag(o) {
 function builtinJobCard(j) {
   const state = !j.installed ? `<span class="tag off">${esc(t("not installed"))}</span>`
     : j.enabled ? `<span class="tag ok">${esc(t("on"))}</span>` : `<span class="tag off">${esc(t("off"))}</span>`;
-  const toggle = j.editable
-    ? `<label class="switch"><input type="checkbox" data-builtin-toggle${j.enabled ? " checked" : ""} aria-label="Enabled"></label>`
-    : "";
+  const toggle = j.editable ? jobSwitch(j.title, j.enabled, "data-builtin-toggle") : "";
   const modelRow = j.model ? `<label for="bm-${j.id}">${esc(j.model.label)}</label>
     <select id="bm-${j.id}" data-builtin-model="${esc(j.model.job)}">${
       (j.model.value && !automationData.options.models.includes(j.model.value) ? [j.model.value] : []).concat(automationData.options.models)
@@ -2624,11 +2701,13 @@ function builtinJobCard(j) {
   const knobs = (j.knobs || []).map((k) => k.type === "flag"
     ? `<span></span><label class="inline"><input type="checkbox" data-knob="${esc(k.key)}"${k.value ? " checked" : ""}${j.editable ? "" : " disabled"}> ${esc(k.label)}</label>`
     : `<label for="kn-${j.id}-${k.key}">${esc(k.label)}</label><span><input type="number" id="kn-${j.id}-${k.key}" data-knob="${esc(k.key)}" min="${k.min}" max="${k.max}" step="1"
-        value="${k.value ?? ""}" placeholder="${k.default}"${j.editable ? "" : " disabled"}> ${esc(k.unit || "")} <span class="muted">(default ${k.default})</span></span>`).join("");
+        value="${k.value ?? ""}" placeholder="${k.default}"${j.editable ? "" : " disabled"}> ${esc(k.unit || "")} <span class="muted">${esc(t("(default {value})", { value: k.default }))}</span></span>`).join("");
   const schedule = j.editable
-    ? `<label for="bs-${j.id}">Schedule (cron)</label><span class="form-row"><input type="text" id="bs-${j.id}" class="mono" data-builtin-schedule value="${esc(j.schedule || "")}">
-        <button type="button" data-builtin-schedule-save>Save</button></span>`
+    ? `<label for="bs-${j.id}">${esc(t("Schedule (cron)"))}</label><span class="form-row"><input type="text" id="bs-${j.id}" class="mono" data-builtin-schedule value="${esc(j.schedule || "")}">
+        <button type="button" data-builtin-schedule-save>${esc(t("Save"))}</button></span>`
     : "";
+  // The result is of the last run through ops-run; lighter activity since then is not a run.
+  const outcomeOld = j.lastOutcome && Date.parse(j.lastRun) - Date.parse(j.lastOutcome.at) > 864e5;
   return `<article class="job${j.installed && j.enabled ? "" : " is-off"}" data-builtin="${esc(j.id)}">
     <div class="job-head">
       <h3>${esc(j.title)}</h3>${state}<span class="tag">${esc(j.llm ? t("uses an LLM") : t("no LLM"))}</span>
@@ -2638,7 +2717,7 @@ function builtinJobCard(j) {
       <span><b>${esc(t("When"))}</b> ${esc(j.when?.text || "—")}</span>
       <span><b>${esc(t("Next|run"))}</b> ${j.installed && j.enabled ? esc(fmtWhen(j.when?.next)) : "—"}</span>
       <span><b>${esc(t("Last activity"))}</b> ${esc(fmtWhen(j.lastRun))}</span>
-      ${j.lastOutcome ? `<span><b>${esc(t("Last result"))}</b> ${outcomeTag(j.lastOutcome)} ${esc(fmtWhen(j.lastOutcome.at))}</span>` : ""}
+      ${j.lastOutcome ? `<span><b>${esc(outcomeOld ? t("Last full run") : t("Last result"))}</b> ${outcomeTag(j.lastOutcome)} ${esc(fmtWhen(j.lastOutcome.at))}</span>` : ""}
     </div>
     ${j.lastOutcome?.status === "failed" && j.lastOutcome.reason
       ? `<p class="job-fail">${withNames(t("Why: {reason}"), { reason: j.lastOutcome.reason })}</p>` : ""}
@@ -2647,10 +2726,10 @@ function builtinJobCard(j) {
     <details><summary>${esc(t("Details & settings"))}</summary>
       <div class="knobs">
         ${modelRow}${knobs}${schedule}
-        <span class="muted">Scheduled in</span><span>${esc(j.where)}</span>
-        ${j.output ? `<span class="muted">Output</span><code>${esc(j.output)}</code>` : ""}
-        ${j.off ? `<span class="muted">To stop it</span><span>${esc(j.off)}</span>` : ""}
-        ${j.settings ? `<span></span><a href="#/settings" data-settings-group="${esc(j.settings)}">Open its settings →</a>` : ""}
+        <span class="muted">${esc(t("Scheduled in"))}</span><span>${esc(j.where)}</span>
+        ${j.output ? `<span class="muted">${esc(t("Output"))}</span><code>${esc(j.output)}</code>` : ""}
+        ${j.off ? `<span class="muted">${esc(t("To stop it"))}</span><span>${esc(j.off)}</span>` : ""}
+        ${j.settings ? `<span></span><a href="#/settings" data-settings-group="${esc(j.settings)}">${esc(t("Open its settings"))} <span aria-hidden="true">→</span></a>` : ""}
       </div>
     </details>
   </article>`;
@@ -2659,18 +2738,20 @@ function builtinJobCard(j) {
 function renderAutomation() {
   const d = automationData;
   if (!d) return;
-  if (!d.crontab.readable) automationNote(`Cannot read your crontab: ${d.crontab.error}`, "err");
+  if (!d.crontab.readable) automationNote(t("Cannot read your crontab: {error}", { error: d.crontab.error }), "err");
   $("#custom-jobs").innerHTML = d.custom.length
     ? `<div class="job-list">${d.custom.map(customJobCard).join("")}</div>`
-    : `<div class="empty">No jobs of your own yet. A job is a prompt that a worker runs in one of your repos on a schedule —
-        say a weekly dependency check, or a nightly “read the logs and file what looks wrong”.</div>`;
+    : `<div class="empty">${esc(t("No jobs of your own yet. A job is a prompt that a helper runs in one of your projects on a schedule — say a weekly dependency check, or a nightly “read the logs and file what looks wrong”."))}</div>`;
   $("#builtin-jobs").innerHTML = d.builtin.map(builtinJobCard).join("");
   $("#services").innerHTML = `<table><thead><tr><th>Service</th><th>What it does</th><th>State</th></tr></thead><tbody>${
     d.services.map((s) => `<tr><td>${esc(s.title)}<div class="muted mono">${esc(s.unit)}</div></td><td>${esc(s.what)}</td>
       <td><span class="tag ${s.active === "active" ? "ok" : s.active === "failed" ? "err" : "off"}">${esc(s.active)}${s.sub ? ` · ${esc(s.sub)}` : ""}</span></td></tr>`).join("")
-  }</tbody></table>${d.crontab.otherLines ? `<p class="muted">Your crontab also runs ${d.crontab.otherLines} job${d.crontab.otherLines === 1 ? "" : "s"} team-up does not manage; they are left alone.</p>` : ""}`;
+  }</tbody></table>${d.crontab.otherLines ? `<p class="muted">${esc(tp(d.crontab.otherLines, {
+    one: "Your crontab also runs {n} job that team-up does not manage. It is left alone.",
+    other: "Your crontab also runs {n} jobs that team-up does not manage. They are left alone." }))}</p>` : ""}`;
   const failing = d.custom.filter((j) => j.lastRun && !j.lastRun.running && j.lastRun.exit !== 0).length;
-  updateNavBadge("badge-automation", failing ? String(failing) : "", "red", failing > 0, failing ? `${failing} job(s) failed last time` : "");
+  updateNavBadge("badge-automation", failing ? String(failing) : "", "red", failing > 0,
+    failing ? tp(failing, { one: "{n} job failed on its last run", other: "{n} jobs failed on their last run" }) : "");
 }
 
 async function refreshAutomation() {
@@ -2855,23 +2936,28 @@ async function openJobLog(name) {
 // fetched. Empty means nothing is waiting on you, and the panel hides.
 function updateAttention() {
   // Questions and problems are the "Waiting on you" tile above; not twice.
+  // html: a translated sentence with the names (a usage window, a CLI, a job) left as they are.
   const items = [];
   for (const [key, w] of Object.entries(dashboardMetrics.usage?.windows || {})) {
     if (w.level === "red" || w.level === "amber") {
-      items.push({ tone: w.level === "red" ? "red" : "", text: `${key} is at ${w.usedPct}%${w.resets_at ? ` — resets ${fmtWhen(w.resets_at)}` : ""}`, href: "#/overview" });
+      const names = { window: key, pct: w.usedPct, when: w.resets_at ? fmtWhen(w.resets_at) : "" };
+      items.push({ tone: w.level === "red" ? "red" : "", href: "#/overview",
+        html: withNames(w.resets_at ? t("{window} is at {pct}%; it resets {when}.") : t("{window} is at {pct}%."), names) });
     }
   }
   for (const [cli, c] of Object.entries(dashboardMetrics.usage?.collectors || {})) {
-    if (c?.stale) items.push({ tone: "", text: `Usage readings for ${cli} are stale — limits are not being checked`, href: "#/overview" });
+    if (c?.stale) items.push({ tone: "", href: "#/overview", html: withNames(t("The usage readings for {cli} are out of date, so its limits are not checked."), { cli }) });
   }
   const auto = dashboardMetrics.automation;
-  if (auto && !auto.crontab.readable) items.push({ tone: "red", text: "The crontab cannot be read — scheduled jobs are unknown", href: "#/automation" });
+  if (auto && !auto.crontab.readable) items.push({ tone: "red", href: "#/automation", html: esc(t("The crontab cannot be read, so it is unknown which jobs are scheduled.")) });
   for (const j of auto?.custom || []) {
-    if (j.lastRun && !j.lastRun.running && j.lastRun.exit !== 0) items.push({ tone: "red", text: `Job ${j.name} failed on its last run (exit ${j.lastRun.exit})`, href: "#/automation" });
-    if (j.inSync === false) items.push({ tone: "", text: `Job ${j.name} is not installed in the crontab — open and save it again`, href: "#/automation" });
+    if (j.lastRun && !j.lastRun.running && j.lastRun.exit !== 0) {
+      items.push({ tone: "red", href: "#/automation", html: withNames(t("The job {job} failed on its last run (exit code {code})."), { job: j.name, code: j.lastRun.exit }) });
+    }
+    if (j.inSync === false) items.push({ tone: "", href: "#/automation", html: withNames(t("The job {job} is not in the crontab: open it and save it again."), { job: j.name }) });
   }
   $("#attention-list").innerHTML = items.map((i) =>
-    `<li class="${i.tone}">${esc(i.text)}<a href="${i.href}">${esc(t("Open|verb"))} <span aria-hidden="true">→</span></a></li>`).join("");
+    `<li class="${i.tone}"><span>${i.html}</span><a href="${i.href}">${esc(t("Open|verb"))} <span aria-hidden="true">→</span></a></li>`).join("");
   $("#panel-attention").classList.toggle("hidden", items.length === 0);
 }
 
@@ -2930,15 +3016,25 @@ let acLastOpen = null;
 const acSelectedId = () => location.hash.match(/^#\/actions\/([\w.-]+)$/)?.[1] ?? null;
 const acViewActive = () => location.hash.startsWith("#/actions");
 
+/**
+ * A project's "Waiting for you" link shows that project, every kind, for this
+ * visit only: the stored filters are what you chose yourself, and leaving the
+ * inbox drops it. Choosing a filter here ends it.
+ */
+let acVisit = null;
+window.addEventListener("hashchange", () => {
+  if (!acViewActive()) acVisit = null;
+});
+
 function acFilter() {
-  const f = readStored(AC_FILTER_KEY, "all");
+  const f = acVisit ? "all" : readStored(AC_FILTER_KEY, "all");
   return AC_FILTERS.some(([k]) => k === f) ? f : "all";
 }
 
 const acProjectNames = () => [...new Set(acData.items.map((i) => i.project?.name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
 function acProject(names = acProjectNames()) {
-  const p = readStored(AC_PROJECT_KEY, "");
+  const p = acVisit?.project ?? readStored(AC_PROJECT_KEY, "");
   return names.includes(p) ? p : "";
 }
 
@@ -3075,10 +3171,13 @@ function renderInboxList() {
   const rows = acVisible().map((i) => `<li><a class="ac-row" href="#/actions/${esc(i.runId)}" data-run="${esc(i.runId)}"${i.runId === selected ? ' aria-current="true"' : ""}>
       <span class="ac-row-meta"><span class="ac-kind ${esc(i.kind)}"><span class="dot" aria-hidden="true"></span>${esc(AC_KIND[i.kind])}</span>${i.project ? `<span class="ac-row-project" translate="no">${esc(i.project.name)}</span>` : ""}<span class="ac-row-age">${esc(fmtAgo(i.ageMs ?? 0))}</span></span>
       <span class="ac-row-subject">${acSubjectHtml(i.subject)}</span></a></li>`).join("");
+  // A project filter hides items the nav badge counts: say so, with the way back.
+  const scope = project ? `<p class="ac-scope">${withNames(t("Showing only {project}."), { project })}
+    <button type="button" class="link" data-ac-allprojects>${esc(t("Show all projects"))}</button></p>` : "";
   let html;
-  if (rows) html = `<ul class="ac-rows">${rows}</ul>`;
+  if (rows) html = `${scope}<ul class="ac-rows">${rows}</ul>`;
   else if (!acData.items.length) html = `<div class="ac-empty">${esc(t("Nothing is waiting for you."))}</div>`;
-  else html = `<div class="ac-empty"><p>${esc(t("Nothing here with this filter."))}</p><button type="button" data-ac-showall>${esc(t("Show all"))}</button></div>`;
+  else html = `${scope}<div class="ac-empty"><p>${esc(t("Nothing here with this filter."))}</p><button type="button" data-ac-showall>${esc(t("Show all"))}</button></div>`;
 
   const key = filterHtml + html;
   if (key === acListKey) return;
@@ -3333,11 +3432,15 @@ function acFilterChanged() {
 $("#ac-filter").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-ac-filter]");
   if (!btn) return;
+  // From a project's link: the kind is the new choice, the project stays chosen.
+  if (acVisit) writeStored(AC_PROJECT_KEY, acVisit.project);
+  acVisit = null;
   writeStored(AC_FILTER_KEY, btn.dataset.acFilter);
   acFilterChanged();
 });
 
 $("#ac-project").addEventListener("change", (e) => {
+  acVisit = null;
   writeStored(AC_PROJECT_KEY, e.target.value);
   acFilterChanged();
 });
@@ -3353,7 +3456,16 @@ $("#ac-list").addEventListener("click", (e) => {
     }
     return;
   }
+  if (e.target.closest("[data-ac-allprojects]")) {
+    if (acVisit) writeStored(AC_FILTER_KEY, "all");
+    acVisit = null;
+    writeStored(AC_PROJECT_KEY, "");
+    acFilterChanged();
+    ($("#ac-project:not(.hidden)") || $('#ac-filter [data-ac-filter="all"]'))?.focus();
+    return;
+  }
   if (!e.target.closest("[data-ac-showall]")) return;
+  acVisit = null;
   writeStored(AC_FILTER_KEY, "all");
   writeStored(AC_PROJECT_KEY, "");
   acFilterChanged();
@@ -3449,7 +3561,7 @@ function showTimView(view) {
   writeStored(TIM_VIEW_KEY, which);
   for (const b of $("#tim-views").querySelectorAll("[data-tim-view]")) {
     b.classList.toggle("is-active", b.dataset.timView === which);
-    b.setAttribute("aria-selected", String(b.dataset.timView === which));
+    b.setAttribute("aria-pressed", String(b.dataset.timView === which));
   }
   for (const pane of document.querySelectorAll("[data-tim-pane]")) pane.classList.toggle("hidden", pane.dataset.timPane !== which);
   requestAnimationFrame(fitTimFrame);
@@ -3743,8 +3855,9 @@ function applyPanelPrefs() {
 function tagColumns(table) {
   const scope = table.closest(".table-wrap")?.id?.replace(/-table$/, "") || "t";
   const heads = [...(table.tHead?.rows[0]?.cells || [])];
+  // data-col-key: the English header of a translated one, so a hidden column stays hidden in every language.
   const keys = heads.map((th) => {
-    const text = th.textContent.trim().toLowerCase();
+    const text = (th.dataset.colKey || th.textContent).trim().toLowerCase();
     return text ? `${scope}:${text}` : null;
   });
   heads.forEach((th, i) => { if (keys[i]) th.dataset.col = keys[i]; });

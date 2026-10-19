@@ -17,15 +17,17 @@ const renderMarkdown = (() => {
     // Code spans first, so nothing inside them is formatted; an unclosed backtick stays a backtick.
     // \u0000 marks a code span below; the agent's own would pull in another span's text.
     const codes = [];
-    let s = escape(text.replace(/\u0000/g, "")).replace(/`([^`\n]+)`/g, (m, code) => `\u0000${codes.push(code) - 1}\u0000`);
+    let s = escape(text.replace(/[\u0000\u0001]/g, "")).replace(/`([^`\n]+)`/g, (m, code) => `\u0000${codes.push(code) - 1}\u0000`);
     // Bounded and without "[" in the label, so a run of brackets stays linear. An image is its link.
+    // \u0001 holds the href until the end: the emphasis passes below must not reach into it.
+    const hrefs = [];
     s = s.replace(/!?\[([^[\]\n]{1,300})\]\((https?:\/\/[^\s)]{1,2000})\)/gi,
-      (m, label, href) => `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`);
+      (m, label, href) => `<a href="\u0001${hrefs.push(href) - 1}\u0001" target="_blank" rel="noopener noreferrer">${label}</a>`);
     // No `_` emphasis: identifiers like todo_participants are everywhere in agent text.
     // A list item's continuation lines arrive joined by \n, so emphasis may span them.
     s = s.replace(/\*\*(?=\S)([^*]+?)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/(^|[^*\w])\*([\p{L}\p{N}](?:[^*]*?[\p{L}\p{N}.)!?])?)\*(?![*\w])/gu, "$1<em>$2</em>");
-    return s.replace(/\u0000(\d+)\u0000/g, (m, i) => `<code>${codes[i]}</code>`);
+    return s.replace(/\u0001(\d+)\u0001/g, (m, i) => hrefs[i]).replace(/\u0000(\d+)\u0000/g, (m, i) => `<code>${codes[i]}</code>`);
   }
 
   const FENCE = /^\s{0,3}(`{3,}|~{3,})/;

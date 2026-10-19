@@ -105,3 +105,9 @@ test("headings drop closing hashes; an image is its link; HTTPS in capitals link
   assert.match(md("[x](HTTPS://e.com)"), /<a href="HTTPS:\/\/e\.com"/);
   assert.equal(md("`a` \u00000\u0000"), "<p><code>a</code> 0</p>");
 });
+
+test("emphasis markers inside a link's URL stay in the URL", () => {
+  const html = md("see [the doc](https://example.com/a**b**c/*x*/) and **this**");
+  assert.match(html, /<a href="https:\/\/example\.com\/a\*\*b\*\*c\/\*x\*\/" target="_blank"/);
+  assert.match(html, /<strong>this<\/strong>/);
+});

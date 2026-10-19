@@ -11,6 +11,7 @@
   --amber: #d97706;
   --green: #16a34a;
   --orphan: #9333ea;
+  --pink: #db2777;
   --radius: 10px;
   --shadow: 0 1px 2px rgb(16 24 40 / 5%);
   color-scheme: light;
@@ -30,6 +31,7 @@
     --amber: #fbbf24;
     --green: #4ade80;
     --orphan: #c084fc;
+    --pink: #f472b6;
     --shadow: none;
     color-scheme: dark;
   }
@@ -165,7 +167,6 @@ body {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.nav-trending { margin-top: auto; }
 .nav-badge {
   flex: 0 0 auto;
   margin-left: auto;
@@ -421,12 +422,10 @@ tr.greyed td { opacity: 0.55; }
   .nav-group { display: block; padding: 0; border: 0; white-space: nowrap; }
   .nav-group > summary { display: inline; padding: 0 0.2rem; }
   .sidebar-nav .nav-group a { display: inline-flex; padding: 0.4rem 0.45rem; }
-  .nav-trending { margin-top: 0; }
   main { padding: 0.75rem; }
 }
 
-/* Specialists: chips for the capability names, a two-column list for the
-   permission facts. */
+/* Chips: capability names, model ids. */
 .chip {
   display: inline-block;
   padding: 0.1rem 0.4rem;
@@ -435,9 +434,6 @@ tr.greyed td { opacity: 0.55; }
   border-radius: 10px;
   font-size: 0.78rem;
 }
-#panel-specialists ul { margin: 0.25rem 0; padding-left: 1.1rem; font-size: 0.85rem; }
-#panel-specialists .caps { margin: 0.4rem 0; }
-.chip.assigned { border-color: var(--accent); }
 .chip button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 0 0 0.2rem; }
 details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 .kv {
@@ -769,6 +765,7 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .ac-kind.result .dot { background: var(--accent); }
 .ac-empty { padding: 2rem 1rem; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
 .ac-empty p { margin: 0 0 0.6rem; }
+.ac-scope { margin: 0 0 0.5rem; font-size: 0.88rem; color: var(--muted); }
 /* Not a .panel: its overflow would stop the sticky pane. The height leaves room for
    the page head, so the send button is in view before the page scrolls. A shadow
    at the bottom says there is more below (the answer box, often); the first
@@ -854,18 +851,19 @@ button.chip-btn { justify-self: start; border-radius: 999px; font-size: 0.85rem;
 /* Projects */
 .project-name { font-weight: 600; margin-right: 0.2rem; }
 /* The inbox badge's look: questions and problems, the number says how many. */
+/* #dc2626, not var(--red): white on the dark-mode red is 2.8:1, like .badge.red. */
 .project-inbox { display: inline-block; min-width: 1.6rem; padding: 0.05rem 0.45rem; border-radius: 999px; background: #dc2626; color: #fff; font-weight: 700; text-align: center; text-decoration: none; }
 .project-inbox:hover { filter: brightness(1.1); }
 .project-action { text-align: right; white-space: nowrap; }
 #projects-table td { vertical-align: middle; }
 .projects-explain { margin: 0.6rem 0 0; max-width: 52rem; }
+.policy-approve { display: block; margin-top: 0.25rem; max-width: 22rem; white-space: normal; font-size: 0.8rem; color: var(--muted); }
+.policy-approve code { overflow-wrap: anywhere; }
 .projects-other { margin-top: 0.75rem; }
 .projects-other ul { margin: 0.3rem 0 0; padding-left: 1.2rem; font-size: 0.88rem; }
 .projects-other li { margin: 0.15rem 0; }
 
 /* Team: a card per specialist, the open one below them. */
-:root { --pink: #db2777; }
-@media (prefers-color-scheme: dark) { :root { --pink: #f472b6; } }
 .team-grid { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 0.75rem; }
 .team-card { display: flex; flex-direction: column; gap: 0.45rem; height: 100%; padding: 0.85rem 1rem; color: var(--text); text-decoration: none; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 .team-card:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
