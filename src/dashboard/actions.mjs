@@ -14,7 +14,7 @@ import { atomicWriteJson } from "../json-store.mjs";
 import { resetCap } from "../admission/admission.mjs";
 import { cancelRun, loadState, mailboxDir, markCollected, setOutcome, setStatus, writeAnswer } from "../runs/runs.mjs";
 import { isValidRunId } from "./data.mjs";
-import { answeredAfterQuestion, inboxItem } from "./action-center.mjs";
+import { answeredAfterQuestion, inboxItem, questionBlocks } from "./action-center.mjs";
 import { readSpenderLedger } from "./run-project.mjs";
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../bin/team-up.mjs");
@@ -111,6 +111,12 @@ export function runAction(runId, action, { reason, env = process.env } = {}) {
     }
     // waiting_decision is a capacity park: an answer would knock it out of its wait.
     if (state.status !== "waiting_human") throw new Error(`run is no longer waiting (${state.status})`);
+    // Nothing to answer on a technical stop: the run would go back on watch with nobody watching
+    // (a spender run then holds the spender's one slot), and the observer reads an answer to a
+    // credential or billing prompt as approval of it.
+    if (action === "answer" && questionBlocks(questions?.text).at(-1)?.source === "observer") {
+      throw new Error("a technical problem is retried or cancelled, not answered");
+    }
     if (action === "retry") {
       // The Inbox's own rule, so the button and the action never disagree.
       const item = inboxItem(state, { read: (id, name) => file(name), ledger: readSpenderLedger(env) });

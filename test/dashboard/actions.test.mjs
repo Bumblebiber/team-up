@@ -74,6 +74,8 @@ test("retry answers only a parked run's technical stop, with a fixed text; anyth
     ({ run_id: `20261019T120000Z-${s}`, parked: "2026-10-19T12:10:00Z" }))));
 
   assert.throws(() => runAction("20261019T120000Z-askd", "retry"), /a question needs an answer/);
+  assert.throws(() => runAction("20261019T120000Z-live", "answer", { reason: "go on" }), /retried or cancelled, not answered/);
+  assert.throws(() => runAction("20261019T120000Z-deny", "answer", { reason: "yes" }), /retried or cancelled, not answered/);
   assert.throws(() => runAction("20261019T120000Z-live", "retry"), /only a run the usage-spender parked/);
   assert.throws(() => runAction("20261019T120000Z-deny", "retry"), /credential or billing prompt: cancel it instead/);
   assert.ok(!fs.existsSync(path.join(mb("20261019T120000Z-live"), "ANSWER.md")), "a refused retry writes nothing");
