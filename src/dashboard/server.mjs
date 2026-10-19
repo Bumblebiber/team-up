@@ -1297,10 +1297,9 @@ export function createDashboardServer({
         appendAudit({ actor: "127.0.0.1", action, target: isSettings ? body.path : target, result: "ok" }, { env });
         memo.invalidate("pick");
         memo.invalidate("roles");
-        if (isSettings && body.path === "language") {
-          // Cached views carry text in the old language.
-          for (const m of [memo, clisMemo, timMemo]) m.invalidatePrefix("");
-        }
+        // Cached views carry text in the old language. ponytail: only `memo`
+        // so far; widen when a clisMemo/timMemo view holds translated text.
+        if (isSettings && body.path === "language") memo.invalidatePrefix("");
         jsonResponse(res, 200, {
           ok: true,
           backup: written ? path.basename(written.backup) : null,

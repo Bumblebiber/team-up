@@ -43,11 +43,11 @@ const I18N_UNITS = [
   ["year", 365 * 864e5], ["month", 30 * 864e5], ["day", 864e5], ["hour", 36e5], ["minute", 6e4], ["second", 1e3],
 ];
 
-/** An age in ms as "3 minutes ago" / "vor 3 Minuten"; negative = in the future. */
+/** An age in ms as "3 minutes ago" / "vor 3 Minuten", rounded down; negative = in the future. */
 function fmtAgo(ms) {
   const abs = Math.abs(ms);
   const [unit, size] = I18N_UNITS.find(([, s]) => abs >= s) ?? I18N_UNITS.at(-1);
-  return new Intl.RelativeTimeFormat(LANG, { numeric: "auto" }).format(-Math.round(ms / size) || 0, unit);
+  return new Intl.RelativeTimeFormat(LANG, { numeric: "auto" }).format(-Math.trunc(ms / size) || 0, unit);
 }
 
 /** An ISO timestamp as a short local date and time ("19.10.26, 14:05"). */

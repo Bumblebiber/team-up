@@ -2283,6 +2283,8 @@ function settingsNote(text, tone = "") {
 async function saveSetting(body, rowPaths) {
   try {
     const res = await api("/api/settings", { method: "POST", body: JSON.stringify(body) });
+    // The whole page is in the old language; the effect text promises a reload.
+    if (body.path === "language") return location.reload();
     const f = settingsData.fields.find((x) => x.path === body.path);
     settingsNote(`${f?.row ? `${f.row} · ` : ""}${f?.label || body.path}: ${body.reset ? "back to default" : "saved"}${res.backup ? ` · backup ${res.backup}` : ""}`, "ok");
     refreshRoles().catch(() => {});

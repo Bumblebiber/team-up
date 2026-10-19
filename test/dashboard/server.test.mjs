@@ -894,7 +894,16 @@ test("a bad collecting folder still lists waiting runs, under Other runs", () =>
 
 test("the page carries the roster language in <html lang>, and /i18n.js loads before app.js", () =>
   withHome(async ({ home, token }) => {
-    const { server } = createDashboardServer({ token });
+    // A bot of our own, so the communication view never imports the host's.
+    const botEnv = path.join(home, "bot.env");
+    fs.writeFileSync(botEnv, `TELEGRAM_BOT_TOKEN=1:${"A".repeat(35)}\nTELEGRAM_CHAT_ID=42\n`);
+    fs.writeFileSync(path.join(home, "communication.json"), JSON.stringify({ default: "b", routes: {}, bots: [{ id: "b", env: botEnv }] }));
+    const sent = [];
+    const fetchFn = async (url, init) => {
+      sent.push(JSON.parse(init.body));
+      return { json: async () => ({ ok: true }) };
+    };
+    const { server } = createDashboardServer({ token, exec: () => "", fetchFn });
     const port = await listen(server);
     try {
       assert.match((await req(port, "/")).text, /<html lang="en">/, "no language set = English");
@@ -909,6 +918,15 @@ test("the page carries the roster language in <html lang>, and /i18n.js loads be
       assert.match(script.headers.get("content-type"), /javascript/);
       const preview = await req(port, "/api/automation/preview?schedule=0%206%20*%20*%20*", { cookie });
       assert.equal(preview.json.text, "täglich um 06:00");
+      // Every route that builds text passes the roster language on.
+      const spender = (await req(port, "/api/automation", { cookie })).json.builtin.find((j) => j.id === "usage-spender");
+      assert.equal(spender.title, "Usage-Spender");
+      assert.equal(spender.where, "Nicht in deiner Crontab");
+      const comm = await req(port, "/api/communication", { cookie });
+      assert.ok(comm.json.senders.some((s) => s.title === "TIM-Backups"), comm.text);
+      const test = await req(port, "/api/communication/bots/b/test", { method: "POST", cookie, csrf: true, body: {} });
+      assert.equal(test.status, 200, test.text);
+      assert.deepEqual(sent, [{ chat_id: "42", text: "Test aus dem team-up-Dashboard (Kommunikation)." }]);
       // A broken roster must not take the login page down.
       fs.writeFileSync(path.join(home, "roster.json"), "{");
       assert.match((await req(port, "/")).text, /<html lang="en">/);

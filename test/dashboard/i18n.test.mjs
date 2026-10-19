@@ -14,8 +14,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const read = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
 
 // ── Coverage: every English key has a German entry ───────────────────────
-// To cover app.js later: add it to a source list checked against the
-// browser dictionary (clientDictionary()), and index.html's static texts.
+// index.html's static texts join this check with the front-end pass, which
+// calls translateStatic(); today the page is not translated at all.
 
 /** Server modules whose text goes through t(lang, "…"). */
 const SERVER_SOURCES = [
@@ -28,14 +28,23 @@ const SERVER_SOURCES = [
 /** Keys that are the same in every language (identifiers); none yet. */
 const ALLOW = new Set([]);
 
+const STRING = String.raw`(["'\`])((?:\\.|(?!\1)[^\\])*)\1`;
+const strings = (source, prefix) =>
+  [...source.matchAll(new RegExp(prefix + STRING, "g"))].map((m) => m[2].replace(/\\(.)/g, "$1"));
+
 /**
- * The literal first text argument of every t(…) call in `source`: t("…") in
- * the browser, t(lang, "…") on the server. A template literal comes back with
- * its ${…} in it, which no dictionary holds, so the check below flags it.
+ * The literal text keys in `source`: the first text argument of t("…") in
+ * the browser and t(lang, "…") / t(opts.lang, "…") on the server, and the
+ * forms of tp(n, { one: "…", other: "…" }). A template literal comes back
+ * with its ${…} in it, which no dictionary holds, so the check below flags it.
  */
 function literalKeys(source) {
-  return [...source.matchAll(/\bt\(\s*(?:lang\s*,\s*)?(["'`])((?:\\.|(?!\1)[^\\])*)\1/g)]
-    .map((m) => m[2].replace(/\\(.)/g, "$1"));
+  const forms = [...source.matchAll(/\btp\([^{;]*(\{[^;]*?\})\s*\)/g)].map((m) => m[1]);
+  assert.equal(forms.length, (source.match(/\btp\(/g) || []).length, "tp(n, { one, other }) with the forms written out");
+  return [
+    ...strings(source, String.raw`\bt\(\s*(?:[\w.]+\s*,\s*)?`),
+    ...forms.flatMap((f) => strings(f, String.raw`\b(?:one|other)\s*:\s*`)),
+  ];
 }
 
 /** Text fields of the registry tables; views translate them with t(lang, row.field). */
@@ -71,6 +80,18 @@ test("every t(lang, …) key in the server modules has a German entry, and no ke
     assert.deepEqual(keys.filter((k) => k.includes("${")), [], `${file}: whole sentences with {placeholders}`);
     assert.deepEqual(untranslated(keys, DE), [], `${file}: missing in DE`);
   }
+});
+
+test("every t(…) and tp(…) key in app.js has an entry in the browser dictionary", () => {
+  const keys = literalKeys(read("src/dashboard/public/app.js"));
+  assert.deepEqual(keys.filter((k) => k.includes("${")), [], "whole sentences with {placeholders}");
+  assert.deepEqual(untranslated(keys, clientI18n("de").I18N_DE), []);
+});
+
+test("the key extraction sees every call shape the sources use", () => {
+  const src = `t("A"); t(lang, 'B'); t(opts.lang, "C {n}", { n }); x.t(\`D\`); tp(items.length, { one: "{n} item", other: "{n} items" });`;
+  assert.deepEqual(literalKeys(src), ["A", "B", "C {n}", "D", "{n} item", "{n} items"]);
+  assert.throws(() => literalKeys("tp(n, forms)"), /forms written out/);
 });
 
 test("every text of the settings, jobs and senders tables has a German entry", () => {
@@ -126,6 +147,8 @@ test("browser t, tp, fmtAgo and fmtDateTime follow <html lang>", () => {
   assert.equal(en.tp(3, forms), "3 questions");
   assert.equal(en.fmtAgo(0), "now");
   assert.equal(en.fmtAgo(5 * 60e3), "5 minutes ago");
+  assert.equal(en.fmtAgo(59.6e3), "59 seconds ago", "never 60 seconds");
+  assert.equal(en.fmtAgo(23.6 * 36e5), "23 hours ago", "never 24 hours");
   assert.equal(de.fmtAgo(3 * 864e5), "vor 3 Tagen");
   assert.equal(de.fmtAgo(864e5), "gestern");
   assert.equal(de.fmtAgo(-2 * 36e5), "in 2 Stunden");
