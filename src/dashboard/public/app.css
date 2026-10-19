@@ -243,7 +243,6 @@ tr.orphan td:first-child { color: var(--orphan); }
   border-radius: 3px;
   font-size: 0.75rem;
   font-weight: 600;
-  white-space: nowrap;
 }
 .badge.red { background: #dc2626; color: #fff; } /* not var(--red): white on the dark-mode red is 2.8:1 */
 .badge.amber { background: var(--amber); color: #000; }
@@ -283,6 +282,7 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
 .usage-row .marked-item { margin: 0; white-space: nowrap; text-align: right; }
 /* The level and an "out of date" button stack rather than squeeze into one line. */
 .usage-row .badges { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.usage-row .badge { white-space: nowrap; }
 .bar {
   height: 0.6rem;
   border-radius: 3px;
