@@ -743,7 +743,8 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .comm-new { margin-top: 1rem; }
 .comm-new textarea { width: 100%; max-width: 40rem; }
 
-/* Inbox: short rows and the open item beside them; below 760px one or the other. */
+/* Inbox: short rows and the open item beside them; below 1000px one or the other
+   (isNarrow() in app.js uses the same width). */
 .inbox { display: grid; grid-template-columns: minmax(17rem, 2fr) minmax(0, 3fr); gap: 1rem; align-items: start; }
 .inbox-list { min-width: 0; }
 .inbox-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
@@ -769,8 +770,17 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .ac-empty { padding: 2rem 1rem; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
 .ac-empty p { margin: 0 0 0.6rem; }
 /* Not a .panel: its overflow would stop the sticky pane. The height leaves room for
-   the page head, so the send button is in view before the page scrolls. */
-.inbox-detail { position: sticky; top: 1rem; min-width: 0; max-height: calc(100vh - 6.5rem); overflow-y: auto; padding: 1rem 1.25rem 1.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+   the page head, so the send button is in view before the page scrolls. A shadow
+   at the bottom says there is more below (the answer box, often); the first
+   layer scrolls with the content and covers it once the end is in view. */
+.inbox-detail {
+  position: sticky; top: 1rem; min-width: 0; max-height: calc(100vh - 6.5rem); overflow-y: auto; padding: 1rem 1.25rem 1.25rem;
+  background:
+    linear-gradient(transparent, var(--surface) 70%) bottom / 100% 2.5rem no-repeat local,
+    radial-gradient(farthest-side at 50% 100%, color-mix(in srgb, var(--text) 22%, transparent), transparent) bottom / 100% 0.9rem no-repeat scroll,
+    var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
 .inbox-detail:empty { display: none; }
 .inbox-hint { margin: 0; color: var(--muted); }
 .ac-back { display: none; align-items: center; gap: 0.3rem; margin-bottom: 0.75rem; padding: 0.4rem 0; color: var(--accent); text-decoration: none; font-weight: 600; }
@@ -791,6 +801,8 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 /* 16px: iOS zooms into smaller inputs. */
 .ac-answer textarea { width: 100%; min-height: 7rem; resize: vertical; font-size: 1rem; }
 .ac-answer-foot, .ac-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+/* No keyboard shortcut to tell a touch screen about. */
+@media (pointer: coarse) { .ac-keys { display: none; } }
 button.chip-btn { justify-self: start; border-radius: 999px; font-size: 0.85rem; }
 .ac-error { margin: 0.5rem 0 0; color: var(--red); }
 .ac-expert { margin: 0.75rem 0 0; font-size: 0.85rem; }
@@ -819,10 +831,10 @@ button.chip-btn { justify-self: start; border-radius: 999px; font-size: 0.85rem;
 .md a { color: var(--accent); }
 /* Toast: says what an action did; empty, it takes no room. */
 .toast:not(:empty) { position: fixed; z-index: 60; bottom: 1rem; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 2rem); padding: 0.65rem 1rem; color: var(--bg); background: var(--text); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 25%); }
-@media (max-width: 759px) {
+@media (max-width: 999px) {
   .inbox { grid-template-columns: minmax(0, 1fr); }
   .inbox.has-selection .inbox-list, .inbox:not(.has-selection) .inbox-detail { display: none; }
   .view[data-view="actions"]:has(.inbox.has-selection) .page-head { display: none; }
-  .inbox-detail { position: static; max-height: none; overflow: visible; padding: 0.9rem 1rem 1.1rem; }
+  .inbox-detail { position: static; max-height: none; overflow: visible; padding: 0.9rem 1rem 1.1rem; background: var(--surface); }
   .ac-back { display: inline-flex; }
 }

@@ -88,3 +88,20 @@ test("a long body stays fast", () => {
   md(big);
   assert.ok(Date.now() - start < 1000);
 });
+
+test("hostile shapes stay linear: long space runs in a heading, a run of brackets", () => {
+  for (const input of [`# a${" ".repeat(4000)}x`, `# a${" ".repeat(4000)}x`, "[".repeat(50000), "[x](https://".repeat(5000)]) {
+    const start = performance.now();
+    md(input);
+    // Was 1–10 s before; the margin keeps a loaded test run from flaking.
+    assert.ok(performance.now() - start < 250, `${JSON.stringify(input.slice(0, 12))}… took ${performance.now() - start} ms`);
+  }
+});
+
+test("headings drop closing hashes; an image is its link; HTTPS in capitals links; NUL cannot spoof code", () => {
+  assert.equal(md("## Title ##"), "<h4>Title</h4>");
+  assert.equal(md("# C#"), "<h3>C#</h3>");
+  assert.equal(md("![shot](https://e.com/a.png)"), '<p><a href="https://e.com/a.png" target="_blank" rel="noopener noreferrer">shot</a></p>');
+  assert.match(md("[x](HTTPS://e.com)"), /<a href="HTTPS:\/\/e\.com"/);
+  assert.equal(md("`a` \u00000\u0000"), "<p><code>a</code> 0</p>");
+});

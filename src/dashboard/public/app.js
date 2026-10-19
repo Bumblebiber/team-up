@@ -12,7 +12,7 @@ const ROUTE_ALIASES = { cron: "automation" };
 const onEnter = {};
 
 function applyRoute() {
-  const match = location.hash.match(/^#\/([^/?#]+)(?:\/([\w.-]+))?$/);
+  const match = location.hash.match(/^#\/([^/?#]+)(?:\/([\w.-]*))?$/);
   const wanted = match ? ROUTE_ALIASES[match[1]] || match[1] : null;
   const route = wanted && VIEW_NAMES.has(wanted) ? wanted : "overview";
   // Only the inbox has a second part: the open item (#/actions/<runId>).
@@ -1616,15 +1616,17 @@ const EXPERT_KEY = "teamup.expert";
 const LOCAL_ONLY_KEYS = new Set(["teamup.acFilter", "teamup.acProject", "teamup.timView", "teamup.timKind",
   "teamup.trendingSection", "teamup.catalogueKind", "teamup.rolesTab", EXPERT_KEY]);
 const isLocalOnly = (key) => LOCAL_ONLY_KEYS.has(key) || key.startsWith("teamup.draft.");
+// Keys nothing reads any more: they leave this browser and the server copy.
+const DEAD_KEYS = [LEGACY_LAYOUT_KEY, "teamup.acClosed"];
 
 function localPrefs() {
   const out = {};
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key.startsWith(PREF_PREFIX) && key !== LEGACY_LAYOUT_KEY && !isLocalOnly(key)) out[key] = localStorage.getItem(key);
+      if (key.startsWith(PREF_PREFIX) && !DEAD_KEYS.includes(key) && !isLocalOnly(key)) out[key] = localStorage.getItem(key);
     }
-    localStorage.removeItem(LEGACY_LAYOUT_KEY);
+    for (const key of DEAD_KEYS) localStorage.removeItem(key);
   } catch {
     // storage blocked: nothing local to sync
   }
@@ -1641,8 +1643,8 @@ function pushPrefs() {
 /** Adopt the server's prefs; reloads once when they differ from this browser's. */
 async function pullPrefs() {
   const remote = await api("/api/prefs");
-  // The old layout key, and per-browser keys an older page synced: they leave the server copy too.
-  const stale = Object.keys(remote).filter((key) => key === LEGACY_LAYOUT_KEY || isLocalOnly(key));
+  // Dead keys, and per-browser keys an older page synced: they leave the server copy too.
+  const stale = Object.keys(remote).filter((key) => DEAD_KEYS.includes(key) || isLocalOnly(key));
   for (const key of stale) delete remote[key];
   const local = localPrefs();
   if (!Object.keys(remote).length) {
@@ -2687,8 +2689,19 @@ const AC_SERVER_SUBJECTS = {
   [AC_DENIED]: t("Needs you: a credential or billing prompt"),
   Failed: t("Failed|subject"),
 };
-const AC_RECOMMENDS = /recommend|empfehl/i;
-const isNarrow = () => matchMedia("(max-width: 759px)").matches;
+// A recommendation the agent made; "I do not recommend" or "nicht empfehlenswert" is none.
+const AC_RECOMMENDS = /\*\*(?:my |meine )?(?:recommendation|recommended|empfehlung|empfohlen)\b|^\s*(?:my |meine )?(?:recommendation|empfehlung)\s*:|\b(?:I|I'd|I would) recommend\b|\bich empfehle\b|\bmeine empfehlung\b/im;
+// Server errors a person can hit from the inbox, in their words.
+const AC_ERRORS = [
+  [/^already answered/, t("Already answered.")],
+  [/^run is already /, t("This task has already ended.")],
+  [/^run is no longer waiting/, t("This task is no longer waiting for you.")],
+  [/^run is still /, t("This task is still running.")],
+];
+const acErrorText = (message) => AC_ERRORS.find(([re]) => re.test(message))?.[1] ?? message;
+// List or item, not both, below 1000px: with the sidebar, two panes leave the item too narrow
+// for a table. The same width as the @media rule for .inbox in app.css.
+const isNarrow = () => matchMedia("(max-width: 999px)").matches;
 const isExpert = () => readStored(EXPERT_KEY, false) === true;
 const hour = (h) => String(h).padStart(2, "0");
 
@@ -2700,9 +2713,13 @@ let acProjectsKey = "";
 let acDetail = null;
 let acDetailSeq = 0;
 // Focus moves to the item's heading when it opens as a page of its own (below
-// 760px) or replaces one that was just dealt with; a click on a row on a wide
-// screen keeps focus on the row.
+// 1000px), replaces one that was just dealt with, or was opened by keyboard; a
+// click on a row on a wide screen keeps focus on the row.
 let acFocusDetail = false;
+/** The item opened from the bare list: "Back to inbox" steps back instead of piling up history. */
+let acFromList = null;
+/** Runs with an action on its way: Ctrl+Enter twice must not send twice. */
+const acBusy = new Set();
 let acLastOpen = null;
 
 const acSelectedId = () => location.hash.match(/^#\/actions\/([\w.-]+)$/)?.[1] ?? null;
@@ -2731,6 +2748,8 @@ function acSubjectHtml(subject) {
   if (Object.hasOwn(AC_SERVER_SUBJECTS, s)) return esc(AC_SERVER_SUBJECTS[s]);
   const agent = (text) => `<span translate="no">${esc(text)}</span>`;
   const failed = s.match(/^Failed: ([\s\S]*)$/);
+  // The watcher's reason is for whoever set team-up up; it stays under "Technical details".
+  if (failed?.[1].startsWith("observer:")) return esc(t("Stopped by the watcher"));
   if (failed) return esc(t("Failed: {reason}")).replace("{reason}", () => agent(failed[1]));
   return agent(s);
 }
@@ -2765,10 +2784,25 @@ async function refreshActions() {
   if (seq !== acSeq) return;
   acData = data;
   $("#ac-status").textContent = "";
+  acDropDrafts();
   acCountsChanged();
   renderInbox();
   const selected = acSelectedId();
   if (selected && acDetail?.runId === selected && acDetail.key) loadDetail(selected);
+}
+
+/** Drafts of items that left the inbox (answered here or elsewhere); the open one keeps its text. */
+function acDropDrafts() {
+  const keep = new Set(acData.items.map((i) => i.runId));
+  keep.add(acSelectedId());
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key.startsWith(AC_DRAFT_PREFIX) && !keep.has(key.slice(AC_DRAFT_PREFIX.length))) localStorage.removeItem(key);
+    }
+  } catch {
+    // storage blocked: no drafts to drop
+  }
 }
 
 function acCountsChanged() {
@@ -2794,6 +2828,7 @@ function renderInbox() {
   renderInboxList();
   if (!selected) {
     acDetail = null;
+    acFocusDetail = false;
     $("#ac-detail").innerHTML = acVisible().length ? `<p class="inbox-hint">${esc(t("Choose an item to read it."))}</p>` : "";
     // Back from an item on a narrow screen: to the row it came from.
     const row = acLastOpen && $(`#ac-list [data-run="${CSS.escape(acLastOpen)}"]`);
@@ -2879,12 +2914,20 @@ async function loadDetail(runId) {
 
 const acBackHtml = () => `<a class="ac-back" href="#/actions"><span aria-hidden="true">←</span> ${esc(t("Back to inbox"))}</a>`;
 
-/** The question without a first heading that only repeats the subject. */
-function acBody(body, subject) {
-  const [first, ...rest] = String(body ?? "").split("\n");
-  const heading = first.match(/^#{1,6}\s+(.+)/)?.[1].replace(/\*\*|`/g, "");
-  const core = String(subject ?? "").replace(/…$/, "").trim();
-  return heading && core && heading.includes(core) ? rest.join("\n") : String(body ?? "");
+/**
+ * A question's subject and body. A first heading that repeats the subject
+ * leaves the body; it also stands in for a subject the server cut at 90
+ * characters, so the whole of it stays readable.
+ */
+function acQuestion(body, subject) {
+  const text = String(body ?? "");
+  const s = String(subject ?? "");
+  const [first, ...rest] = text.split("\n");
+  // As the server reads it: no ** or `, one space, without a "Question:" prefix.
+  const heading = first.match(/^#{1,6}\s+(.+)/)?.[1].replace(/\*\*|`/g, "").replace(/\s+/g, " ").trim()
+    .replace(/^(?:frage|question|decision needed)\s*:\s*/i, "");
+  const same = heading && (heading === s || (s.endsWith("…") && heading.startsWith(s.slice(0, -1))));
+  return same ? { subject: heading, body: rest.join("\n") } : { subject: s, body: text };
 }
 
 const acMd = (text) => `<div class="md" translate="no">${renderMarkdown(text)}</div>`;
@@ -2908,11 +2951,11 @@ function acProblemHtml(item) {
   let next;
   if (failed) next = t("Nothing to answer here. Mark it as read once you have seen it.");
   else if (item.retryable) next = t("Retry lets it continue tonight from {start}:00. Or cancel the task.", { start: hour(item.resumeWindow?.start ?? 23) });
-  else next = t("This one cannot be retried from here. You can cancel the task.");
+  else next = t("This one cannot be retried from here: someone has to answer the prompt in the helper's terminal. Or cancel the task.");
   const raw = failed ? [reason, item.result?.markdown].filter(Boolean).join("\n\n") : item.body;
   return `<p class="ac-explain">${esc(explain)}</p><p>${esc(next)}</p>${raw
     ? `<details class="ac-more-info"><summary>${esc(t("Technical details"))}</summary><pre class="ac-raw" translate="no">${esc(raw)}</pre>${cut
-      ? `<p class="muted">${esc(t("Shortened here; the full text is in the task's FAILURE.md."))}</p>` : ""}</details>` : ""}`;
+      ? `<p class="muted">${esc(t("Only the beginning is shown here."))}</p>` : ""}</details>` : ""}`;
 }
 
 function acResultHtml(item) {
@@ -2930,7 +2973,7 @@ function acActionsHtml(item) {
       <label for="ac-answer-text">${esc(t("Your answer"))}</label>
       ${AC_RECOMMENDS.test(item.body || "") ? `<button type="button" class="chip-btn" data-ac-recommend>${esc(t("Go with the recommendation"))}</button>` : ""}
       <textarea id="ac-answer-text" rows="5" required></textarea>
-      <div class="ac-answer-foot"><button type="submit" class="primary">${esc(t("Send answer"))}</button><span class="muted">${esc(t("Ctrl+Enter or ⌘+Enter sends"))}</span></div>
+      <div class="ac-answer-foot"><button type="submit" class="primary">${esc(t("Send answer"))}</button><span class="muted ac-keys">${esc(t("Ctrl+Enter or ⌘+Enter sends"))}</span></div>
       <p class="ac-error" role="alert"></p>
     </form>`;
   }
@@ -2959,11 +3002,13 @@ function renderDetail(item, key) {
     item.project ? `<span translate="no">${esc(item.project.name)}</span>` : "",
     item.kind ? `<span class="ac-ago">${acWhenHtml(item)}</span>` : "",
   ].filter(Boolean).join('<span aria-hidden="true">·</span>');
+  const question = item.kind === "problem" || item.kind === "result" ? { subject: item.subject, body: "" }
+    : acQuestion(item.body, item.subject);
   let body = "";
   if (!item.kind && !item.answer) body += `<p class="ac-note">${esc(t("This is no longer waiting for you."))}</p>`;
   if (item.kind === "problem") body += acProblemHtml(item);
   else if (item.kind === "result") body += acResultHtml(item);
-  else if (item.body) body += acMd(acBody(item.body, item.subject));
+  else if (question.body) body += acMd(question.body);
   if (item.task) {
     body += `<details class="ac-more-info"><summary>${esc(t("What the helper was doing"))}</summary>${acMd(item.task)}</details>`;
   }
@@ -2977,7 +3022,7 @@ function renderDetail(item, key) {
   if (isExpert()) body += `<p class="ac-expert"><a href="#/runs" data-ac-open-run>${esc(t("Open run"))}</a></p>`;
   const box = $("#ac-detail");
   box.innerHTML = `${acBackHtml()}${meta ? `<p class="ac-detail-meta">${meta}</p>` : ""}
-    <h2 class="ac-subject" tabindex="-1">${acSubjectHtml(item.subject)}</h2>${body}`;
+    <h2 class="ac-subject" tabindex="-1">${acSubjectHtml(question.subject)}</h2>${body}`;
   const answer = $("#ac-answer-text");
   if (answer) answer.value = acDraft(item.runId);
   if (fresh) {
@@ -3017,27 +3062,33 @@ function toast(text) {
 }
 
 async function acAct(runId, action, reason, btn) {
+  if (acBusy.has(runId) || btn.disabled) return;
+  acBusy.add(runId);
   const item = acDetail?.runId === runId ? acDetail.data : acData?.items.find((i) => i.runId === runId);
   const label = btn.textContent;
   const error = $("#ac-detail .ac-error");
   btn.disabled = true;
-  if (action === "answer") btn.textContent = t("Sending…");
+  btn.textContent = action === "answer" ? t("Sending…") : t("Working…");
   if (error) error.textContent = "";
   try {
     await api(`/api/runs/${encodeURIComponent(runId)}/action`, { method: "POST", body: JSON.stringify({ action, reason }) });
   } catch (err) {
-    btn.disabled = false;
     btn.textContent = label;
-    if (err.status === 409) {
-      // Answered elsewhere (another tab, Telegram): say so instead of the answer box.
-      acDraft(runId, "");
-      const form = $("#ac-detail .ac-answer");
-      if (form) form.outerHTML = acAnsweredHtml({});
+    btn.disabled = false;
+    const form = acDetail?.runId === runId && err.status === 409 && $("#ac-detail .ac-answer");
+    if (form) {
+      // Answered elsewhere (another tab, Telegram). The typed text stays where it is,
+      // and with text in the box the poll leaves the form alone.
+      form.insertAdjacentHTML("beforebegin", acAnsweredHtml({}));
+      btn.disabled = true;
+      if (error) error.textContent = t("Your answer was not sent.");
       refreshActions();
       return;
     }
-    if (error) error.textContent = t("That did not work: {error}", { error: err.message });
+    if (error) error.textContent = t("That did not work: {error}", { error: acErrorText(err.message) });
     return;
+  } finally {
+    acBusy.delete(runId);
   }
   if (action === "answer") acDraft(runId, "");
   toast(acDoneText(action, item));
@@ -3051,30 +3102,56 @@ async function acAct(runId, action, reason, btn) {
     acCountsChanged();
   }
   acSeq++;
-  acLastOpen = next?.runId ?? null;
-  acFocusDetail = !isNarrow();
-  history.replaceState(null, "", next && !isNarrow() ? `#/actions/${next.runId}` : "#/actions");
+  // Someone who opened another item while this was sending stays there.
+  if (acSelectedId() === runId) {
+    acLastOpen = next?.runId ?? null;
+    acFocusDetail = !isNarrow();
+    if (isNarrow() && acFromList === runId) {
+      // Back to the list it came from; the hashchange draws it and refreshes.
+      acFromList = null;
+      history.back();
+      return;
+    }
+    history.replaceState(null, "", next && !isNarrow() ? `#/actions/${next.runId}` : "#/actions");
+  }
   renderInbox();
   refreshActions();
+}
+
+/** A filter that hides the open item on a wide screen: the first item it shows opens instead. */
+function acFilterChanged() {
+  const selected = acSelectedId();
+  if (selected && !isNarrow() && !acVisible().some((i) => i.runId === selected)) history.replaceState(null, "", "#/actions");
+  renderInbox();
 }
 
 $("#ac-filter").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-ac-filter]");
   if (!btn) return;
   writeStored(AC_FILTER_KEY, btn.dataset.acFilter);
-  renderInbox();
+  acFilterChanged();
 });
 
 $("#ac-project").addEventListener("change", (e) => {
   writeStored(AC_PROJECT_KEY, e.target.value);
-  renderInbox();
+  acFilterChanged();
 });
 
 $("#ac-list").addEventListener("click", (e) => {
+  const row = e.target.closest(".ac-row");
+  if (row) {
+    acFromList = acSelectedId() ? null : row.dataset.run;
+    // Opened by keyboard (Enter has no click count): the reader goes to the item, not the next row.
+    if (e.detail === 0) {
+      acFocusDetail = true;
+      if (row.dataset.run === acSelectedId()) $("#ac-detail .ac-subject")?.focus();
+    }
+    return;
+  }
   if (!e.target.closest("[data-ac-showall]")) return;
   writeStored(AC_FILTER_KEY, "all");
   writeStored(AC_PROJECT_KEY, "");
-  renderInbox();
+  acFilterChanged();
   $('#ac-filter [data-ac-filter="all"]')?.focus();
 });
 
@@ -3088,6 +3165,16 @@ acDetailBox.addEventListener("keydown", (e) => {
     e.preventDefault();
     e.target.form.requestSubmit();
   }
+  // The expert "More" menu closes like a menu: Escape, or a click outside (below).
+  const menu = e.key === "Escape" && e.target.closest(".ac-menu[open]");
+  if (menu) {
+    menu.removeAttribute("open");
+    menu.querySelector("summary").focus();
+  }
+});
+
+document.addEventListener("click", (e) => {
+  for (const menu of document.querySelectorAll(".ac-menu[open]")) if (!menu.contains(e.target)) menu.removeAttribute("open");
 });
 
 acDetailBox.addEventListener("submit", (e) => {
@@ -3107,11 +3194,19 @@ acDetailBox.addEventListener("click", (e) => {
     selectRun(acDetail.runId);
     return;
   }
+  if (e.target.closest(".ac-back") && acFromList && acFromList === acSelectedId()) {
+    e.preventDefault();
+    history.back();
+    return;
+  }
   if (e.target.closest("[data-ac-recommend]")) {
     const box = $("#ac-answer-text");
-    box.value = t("Go with your recommendation.");
+    const sentence = t("Go with your recommendation.");
+    // Never over what is typed: the sentence goes below it.
+    if (!box.value.includes(sentence)) box.value = box.value.trim() ? `${box.value.trimEnd()}\n${sentence}` : sentence;
     acDraft(acDetail.runId, box.value);
     box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
     return;
   }
   const btn = e.target.closest("[data-ac-act]");
@@ -3134,7 +3229,7 @@ acCancelDialog.addEventListener("close", () => {
 });
 
 onEnter.actions = () => {
-  acFocusDetail = isNarrow();
+  acFocusDetail ||= isNarrow();
   renderInbox();
   refreshActions().catch(() => {});
 };

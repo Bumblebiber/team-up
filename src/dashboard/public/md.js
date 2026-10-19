@@ -4,8 +4,8 @@
 // Everything is escaped first; the only tags in the output are the ones made
 // here: headings (h1 becomes h3, the page owns h1 and h2), bold, italic,
 // inline code, fenced code, ordered and unordered lists, tables with a
-// separator row, hr and paragraphs. No raw HTML, no images; a link only when
-// it is http(s), opening in a new tab without an opener.
+// separator row, hr and paragraphs. No raw HTML, no images (one becomes its
+// link); a link only when it is http(s), opening in a new tab without an opener.
 // ponytail: flat lists, no blockquotes or nesting; add when agents write them.
 
 // eslint-disable-next-line no-unused-vars
@@ -15,9 +15,11 @@ const renderMarkdown = (() => {
 
   function inline(text) {
     // Code spans first, so nothing inside them is formatted; an unclosed backtick stays a backtick.
+    // \u0000 marks a code span below; the agent's own would pull in another span's text.
     const codes = [];
-    let s = escape(text).replace(/`([^`\n]+)`/g, (m, code) => `\u0000${codes.push(code) - 1}\u0000`);
-    s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    let s = escape(text.replace(/\u0000/g, "")).replace(/`([^`\n]+)`/g, (m, code) => `\u0000${codes.push(code) - 1}\u0000`);
+    // Bounded and without "[" in the label, so a run of brackets stays linear. An image is its link.
+    s = s.replace(/!?\[([^[\]\n]{1,300})\]\((https?:\/\/[^\s)]{1,2000})\)/gi,
       (m, label, href) => `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`);
     // No `_` emphasis: identifiers like todo_participants are everywhere in agent text.
     // A list item's continuation lines arrive joined by \n, so emphasis may span them.
@@ -27,7 +29,8 @@ const renderMarkdown = (() => {
   }
 
   const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
-  const HEADING = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+  // Linear on purpose: a lazy text before optional closing #s backtracks cubically on long space runs.
+  const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
   const RULE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
   const ITEM = /^\s*([-*+]|\d{1,9}[.)])\s+(.*)$/;
   const TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
@@ -59,7 +62,8 @@ const renderMarkdown = (() => {
       const heading = line.match(HEADING);
       if (heading) {
         const level = Math.min(heading[1].length + 2, 6);
-        out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+        const text = heading[2].trimEnd().replace(/(?:^|\s)#+$/, "").trimEnd();
+        out.push(`<h${level}>${inline(text)}</h${level}>`);
         i++;
         continue;
       }

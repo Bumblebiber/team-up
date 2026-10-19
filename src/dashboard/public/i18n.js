@@ -31,7 +31,7 @@ const I18N_DE = {
     "Alles, was auf dich wartet: Rückfragen beantworten, Probleme ansehen, Ergebnisse lesen.",
   "Waiting on you": "Wartet auf dich",
   "Questions and problems": "Rückfragen und Probleme",
-  "Finished, not collected": "Fertig, noch nicht gelesen",
+  "Finished, not read yet": "Fertig, noch nicht gelesen",
   "Results you have not read yet": "Ergebnisse, die du noch nicht gelesen hast",
   "{n} question is waiting for your answer": "{n} Rückfrage wartet auf deine Antwort",
   "{n} questions are waiting for your answer": "{n} Rückfragen warten auf deine Antwort",
@@ -62,6 +62,7 @@ const I18N_DE = {
   "Needs you: a credential or billing prompt": "Braucht dich: eine Abfrage zu Zugangsdaten oder Bezahlung",
   "Failed|subject": "Fehlgeschlagen",
   "Failed: {reason}": "Fehlgeschlagen: {reason}",
+  "Stopped by the watcher": "Vom Aufpasser gestoppt",
   "A helper asked {ago}": "Ein Helfer hat {ago} gefragt",
   "{who} asked {ago}": "{who} hat {ago} gefragt",
   "Stopped {ago}": "Angehalten {ago}",
@@ -79,6 +80,11 @@ const I18N_DE = {
   "Answer sent — continues tonight from {start}:00.": "Antwort gesendet – geht heute Nacht ab {start}:00 weiter.",
   "Answer sent — the helper continues now.": "Antwort gesendet – der Helfer macht jetzt weiter.",
   "That did not work: {error}": "Das hat nicht geklappt: {error}",
+  "Your answer was not sent.": "Deine Antwort wurde nicht gesendet.",
+  "This task has already ended.": "Dieser Auftrag ist schon beendet.",
+  "This task is no longer waiting for you.": "Dieser Auftrag wartet nicht mehr auf dich.",
+  "This task is still running.": "Dieser Auftrag läuft noch.",
+  "Working…": "Einen Moment…",
   "The helper got stuck on a technical prompt and could not continue.":
     "Der Helfer ist an einer technischen Abfrage hängen geblieben und kam nicht weiter.",
   "The helper stopped at a prompt about a password, a login or a payment. team-up never answers those for you.":
@@ -88,12 +94,12 @@ const I18N_DE = {
   "This task ended with an error and did not finish.": "Dieser Auftrag ist mit einem Fehler abgebrochen und nicht fertig geworden.",
   "Retry lets it continue tonight from {start}:00. Or cancel the task.":
     "Mit „Erneut versuchen“ geht es heute Nacht ab {start}:00 weiter. Oder du brichst den Auftrag ab.",
-  "This one cannot be retried from here. You can cancel the task.":
-    "Das lässt sich von hier aus nicht erneut versuchen. Du kannst den Auftrag abbrechen.",
+  "This one cannot be retried from here: someone has to answer the prompt in the helper's terminal. Or cancel the task.":
+    "Einen neuen Versuch kannst du von hier aus nicht starten: Jemand muss die Abfrage im Terminal des Helfers beantworten. Oder du brichst den Auftrag ab.",
   "Nothing to answer here. Mark it as read once you have seen it.":
     "Hier gibt es nichts zu beantworten. Markiere es als gelesen, sobald du es gesehen hast.",
   "Technical details": "Technische Details",
-  "Shortened here; the full text is in the task's FAILURE.md.": "Hier gekürzt; der ganze Text steht in der FAILURE.md des Auftrags.",
+  "Only the beginning is shown here.": "Hier steht nur der Anfang.",
   "Open run": "Auftrag öffnen",
   "The helper left no report.": "Der Helfer hat keinen Bericht hinterlassen.",
   "Full report": "Vollständiger Bericht",
