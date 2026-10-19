@@ -753,7 +753,7 @@ const I18N_DE = {
     "Scan gestartet: Jede CLI wird nach ihren Modellen gefragt; die Liste aktualisiert sich in etwa zwei Minuten.",
   "Starting the TIM viewer…": "Der TIM-Viewer startet…",
   // Communication, AI trending, panel help, notifications
-  "Where messages from {job} go": "Ziel der Nachrichten von {job}",
+  "Where messages from {job} go": "Ziel der Nachrichten aus „{job}“",
   "Where all other messages go": "Ziel aller anderen Nachrichten",
   "Only the bell in this dashboard": "Nur die Glocke in diesem Dashboard",
   "Job: what it sends": "Aufgabe: was sie schickt",

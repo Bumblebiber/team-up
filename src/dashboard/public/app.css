@@ -301,7 +301,8 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
 @media (max-width: 900px) {
   .usage-row { grid-template-columns: 3rem 10.5rem 1fr; }
   .usage-row .key, .usage-row .bar { grid-column: 1 / -1; }
-  .usage-row .marked-item { white-space: normal; }
+  /* The reset date gets its own line under the badges: date and time stay together. */
+  .usage-row .marked-item { grid-column: 2 / -1; text-align: left; white-space: normal; }
 }
 
 .detail, .pane {
