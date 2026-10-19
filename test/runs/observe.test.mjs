@@ -1194,6 +1194,8 @@ test("claudeTrustPromptKeys joins a path Claude Code wrapped at the pane width",
   assert.equal(claudeTrustWorkspace(ALLOWLIST_PANE), ALLOWLIST_CWD);
   // Quoted in a worker's pane, with its own UI below: not the dialog.
   assert.equal(claudeTrustWorkspace(`${TRUST_PANE}\n> next prompt\n`), null);
+  // A stale dialog scrolled above the live one is not the one on screen.
+  assert.equal(claudeTrustWorkspace(`${ALLOWLIST_PANE}\n${WRAPPED_PANE}`), WRAPPED_CWD);
 });
 
 function trustRun({ cli = "claude", cwd = TRUST_CWD } = {}) {
@@ -1266,6 +1268,10 @@ function assertTrustFailure(runId) {
   assert.equal(state.status, "failed");
   assert.match(state.failure.error, /^observer: .*workspace-trust dialog/);
   assert.equal(fs.existsSync(path.join(runs.mailboxDir(runId), "QUESTIONS.md")), false, "never a question for the human");
+  // runs wait and ops-run.sh (the Telegram report) read the reason from FAILURE.md.
+  assert.equal(fs.readFileSync(path.join(runs.mailboxDir(runId), "FAILURE.md"), "utf8").trim(), state.failure.error);
+  assert.equal(runs.classifyMailbox(runId).error, state.failure.error);
+  return state.failure.error;
 }
 
 test("a trust dialog for another folder fails the run once it stalls: no judge, no question", withTempRuns(async () => {
@@ -1273,8 +1279,17 @@ test("a trust dialog for another folder fails the run once it stalls: no judge, 
   const { sent, judgeCalls } = await observeTrust(runId, { ticks: 8 });
   assert.deepEqual(sent, []);
   assert.equal(judgeCalls, 0);
-  assertTrustFailure(runId);
-  assert.match(runs.loadState(runId).failure.error, /team-up-canary-review \(run cwd \/home\/bbbee\/projects\/tasks\/other\)/);
+  const error = assertTrustFailure(runId);
+  assert.match(error, /team-up-canary-review \(run cwd \/home\/bbbee\/projects\/tasks\/other\): it names a folder other than/);
+  assert.match(error, /open Claude Code there once, trust it, then retry the run\.$/);
+}));
+
+test("another cli's pane is never failed as a Claude trust dialog: it goes to the judge as before", withTempRuns(async () => {
+  const runId = trustRun({ cli: "cursor" });
+  const { sent, judgeCalls } = await observeTrust(runId, { ticks: 8 });
+  assert.deepEqual(sent, []);
+  assert.ok(judgeCalls >= 1);
+  assert.notEqual(runs.loadState(runId).status, "failed");
 }));
 
 test("a trust dialog still on screen after the fast path answered fails the run", withTempRuns(async () => {
@@ -1282,12 +1297,12 @@ test("a trust dialog still on screen after the fast path answered fails the run"
   const { sent, judgeCalls } = await observeTrust(runId, { ticks: 8 });
   assert.deepEqual(sent, [["Down", "Enter"]], "answered once, never again");
   assert.equal(judgeCalls, 0);
-  assertTrustFailure(runId);
+  assert.match(assertTrustFailure(runId), /: it was confirmed once and is still showing\./);
 }));
 
 test("the judge writes its question for the human in the roster language", withTempRuns(async () => {
   const prompt = (language) => buildJudgePrompt({ pane: "p", cli: "cursor", runId: "r", role: "w", elapsedSec: 1, language });
-  for (const language of [undefined, null, "en", "xx"]) {
+  for (const language of [undefined, null, "en", "xx", "constructor", "toString"]) {
     assert.match(prompt(language), /"question":"text when action=escalate, in English for a non-technical reader"/);
   }
   assert.match(prompt("de"), /in German \(Deutsch, informal du\) for a non-technical reader/);
