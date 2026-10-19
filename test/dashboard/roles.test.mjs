@@ -39,7 +39,11 @@ test("a chain naming a model on the wrong CLI is refused", () => {
 test("delete is refused while a specialist runs on the role, or team-up's own code asks for it", () => {
   const r = { ...roster, roles: { ...roster.roles, scout: { chain: ["claude:claude-opus"] }, triage: { chain: ["claude:claude-opus"] } },
     specialists: { "code-writer": { role: "triage" } } };
-  assert.throws(() => applyRoleEdit(r, { role: "triage", delete: true }), /code-writer run on triage — reassign them first/);
+  assert.throws(() => applyRoleEdit(r, { role: "triage", delete: true }, { nameOf: () => "Codey" }),
+    /^Error: Codey still uses the role triage\. Give Codey a different role first\.$/);
+  const two = { ...r, specialists: { ...r.specialists, "research.reanna": { role: "triage" } } };
+  assert.throws(() => applyRoleEdit(two, { role: "triage", delete: true }),
+    /code-writer and research\.reanna still use the role triage\. Give them a different role first\./);
   assert.throws(() => applyRoleEdit(r, { role: "implementer", delete: true }), /used by the insights job/);
   assert.throws(() => applyRoleEdit(r, { role: "planner", delete: true }), /change its chain instead/);
   assert.equal(applyRoleEdit(r, { role: "scout", delete: true }).roles.scout, undefined);
@@ -60,6 +64,13 @@ test("roles view carries pick, chain state and labels", () => {
   const planner = view.roles.find((r) => r.role === "planner");
   assert.equal(planner.chain[0].label, "claude-opus-5.5");
   assert.equal(planner.chain[0].state, "ok");
+});
+
+test("a role names the specialists that run on it", () => {
+  const names = { "code-writer": "Codey" };
+  const view = buildRolesView(roster, {}, store, Date.now(), { nameOf: (id) => names[id] ?? id });
+  assert.deepEqual(view.roles.find((r) => r.role === "implementer").usedBy, ["Codey"]);
+  assert.deepEqual(view.roles.find((r) => r.role === "planner").usedBy, []);
 });
 
 test("prototype keys never resolve as roles or accounts", () => {

@@ -20,6 +20,7 @@ import {
   buildSpecialistsView,
   buildCapabilityPoolView,
   installSpecialistFromGithub,
+  specialistName,
 } from "./specialists.mjs";
 import {
   listProjects,
@@ -1281,7 +1282,7 @@ export function createDashboardServer({
         let changes;
         let added;
         let removed;
-        if (roleMatch) next = applyRoleEdit(roster, { ...body, role: target });
+        if (roleMatch) next = applyRoleEdit(roster, { ...body, role: target }, { nameOf: (id) => specialistName(id, { env }) });
         else if (isSettings) next = applySettingsEdit(roster, body);
         else ({ next, changes, added, removed } = bringToLatest(roster, loadModelsStore(env)));
         const written = changes?.length === 0 && added?.length === 0 && removed?.length === 0 ? null : saveRoster(next, { env });
@@ -1683,7 +1684,8 @@ export function createDashboardServer({
       const data = memo.get("roles", () => {
         const roster = loadRoster(env);
         const usage = loadJson(usagePath(env)) || {};
-        return sanitizeForDashboard(buildRolesView(roster, usage, loadModelsStore(env), ts), { stripAccounts: true });
+        return sanitizeForDashboard(buildRolesView(roster, usage, loadModelsStore(env), ts,
+          { nameOf: (id) => specialistName(id, { env }) }), { stripAccounts: true });
       });
       jsonResponse(res, 200, data);
       return;

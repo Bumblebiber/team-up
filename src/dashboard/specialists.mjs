@@ -154,6 +154,16 @@ function describe(id, { env, assignments, installedCaps, versions, roster, usage
   };
 }
 
+/** A specialist's display name, or its id when it is not installed. */
+export function specialistName(id, { env = process.env } = {}) {
+  try {
+    return loadInstalledManifest(id, { env })?.manifest?.display_name || id;
+  } catch {
+    // A roster key that is no safe id has no manifest either.
+    return id;
+  }
+}
+
 /**
  * `states` is the run list the caller already holds (runs are read once, not
  * per specialist); `roster`, `usage` and `store` feed the model label.

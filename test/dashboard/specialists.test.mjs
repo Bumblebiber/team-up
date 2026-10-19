@@ -8,6 +8,7 @@ import {
   buildCapabilityPoolView,
   parseGithubSource,
   installSpecialistFromGithub,
+  specialistName,
 } from "../../src/dashboard/specialists.mjs";
 
 const CHECKSUM = "sha256:" + "a".repeat(64);
@@ -144,6 +145,13 @@ test("legacy specialist rows do not appear in the Specialists panel", () =>
     const [codey] = buildSpecialistsView().specialists;
     assert.equal(Object.hasOwn(codey, "approved_for"), false);
     assert.equal(Object.hasOwn(codey, "approved_everywhere"), false);
+  }));
+
+test("a specialist is named by its display name, an unknown one by its id", () =>
+  withHome(() => {
+    assert.equal(specialistName("coding.codey"), "Codey");
+    assert.equal(specialistName("testing.ghost"), "testing.ghost");
+    assert.equal(specialistName("../escape"), "../escape");
   }));
 
 // ── Team page: model now, category, last run ──

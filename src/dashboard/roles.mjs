@@ -52,7 +52,12 @@ function chainView(roster, store, chain, now) {
   });
 }
 
-export function buildRolesView(roster, usage, store, now = Date.now()) {
+/** The specialists that run on `role`, by id. */
+const roleUsers = (roster, role) =>
+  Object.entries(roster?.specialists || {}).filter(([, s]) => s?.role === role).map(([id]) => id);
+
+/** `nameOf` turns a specialist id into the name the panel shows. */
+export function buildRolesView(roster, usage, store, now = Date.now(), { nameOf = (id) => id } = {}) {
   const roles = Object.entries(roster?.roles || {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([role, spec]) => {
@@ -60,6 +65,7 @@ export function buildRolesView(roster, usage, store, now = Date.now()) {
       return {
         role,
         protected: own(PROTECTED_ROLES, role) ? PROTECTED_ROLES[role] : null,
+        usedBy: roleUsers(roster, role).map(nameOf),
         effort: spec?.effort ?? null,
         chain: chainView(roster, store, spec?.chain || [], now),
         pick: result.model
@@ -129,8 +135,9 @@ export const ROLE_EFFORTS = ["low", "medium", "high", "max"];
  * - `{ role, chain }` creates or replaces a chain
  * - `{ role, effort }` sets the role-wide effort; null or "" clears it
  * - `{ role, delete: true }` removes it, refused while a specialist runs on it
+ *   (the refusal names it by `nameOf(id)`)
  */
-export function applyRoleEdit(roster, { role, chain, effort, delete: remove } = {}) {
+export function applyRoleEdit(roster, { role, chain, effort, delete: remove } = {}, { nameOf = (id) => id } = {}) {
   if (!ROLE_NAME.test(String(role || ""))) {
     throw new Error("role name: lowercase letters, digits, . _ - (max 64)");
   }
@@ -139,8 +146,12 @@ export function applyRoleEdit(roster, { role, chain, effort, delete: remove } = 
   if (remove) {
     if (!own(next.roles, role)) throw new Error(`unknown role: ${role}`);
     if (own(PROTECTED_ROLES, role)) throw new Error(`${role} is used by ${PROTECTED_ROLES[role]} — change its chain instead`);
-    const users = Object.entries(next.specialists || {}).filter(([, s]) => s?.role === role).map(([id]) => id);
-    if (users.length) throw new Error(`${users.join(", ")} run on ${role} — reassign them first`);
+    const users = roleUsers(next, role).map(nameOf);
+    if (users.length) {
+      const who = new Intl.ListFormat("en", { type: "conjunction" }).format(users);
+      const one = users.length === 1;
+      throw new Error(`${who} still ${one ? "uses" : "use"} the role ${role}. Give ${one ? who : "them"} a different role first.`);
+    }
     delete next.roles[role];
     return next;
   }
