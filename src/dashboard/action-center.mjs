@@ -8,6 +8,7 @@
 // `read(runId, name) → { text, mtimeMs } | null`.
 
 import { buildRunRow } from "./data.mjs";
+import { t } from "./i18n.mjs";
 
 /** Order of the kinds in the list; inside a kind the newest comes first. */
 export const KIND_RANK = { question: 0, problem: 1, result: 2 };
@@ -112,10 +113,14 @@ export function spenderWindow(roster, defaults) {
  * stuck in a prompt never reads ANSWER.md and nothing would watch it again, and
  * the observer reads any answer to a credential or billing prompt as the
  * human's approval of it: those get Cancel only.
- * @param ctx { read, projectOf, ledger, resumeWindow, now }
+ *
+ * A problem's subject is the server's own sentence in the roster language
+ * (`lang`); `denied` and `reason` (a failed run's reason line) carry what the
+ * page needs to explain it, so it never parses the subject.
+ * @param ctx { read, projectOf, ledger, resumeWindow, now, lang }
  */
 export function inboxItem(state, ctx) {
-  const { read, projectOf = () => null, ledger = new Map(), resumeWindow = null, now = Date.now() } = ctx;
+  const { read, projectOf = () => null, ledger = new Map(), resumeWindow = null, now = Date.now(), lang = "en" } = ctx;
   if (isCron(state)) return null;
   const row = buildRunRow(state, { now });
   const role = String(state.role ?? "run").replace(/^specialist:/, "");
@@ -123,7 +128,7 @@ export function inboxItem(state, ctx) {
   // The project only for a listed run: resolving it can cost a git call, and most runs wait on nobody.
   const item = (fields) => ({
     id: `run:${state.runId}`, runId: state.runId, project: projectOf(state), worker: row.worker, role,
-    status: state.status, parked: false, resumeWindow: null, source: null, retryable: false, ...fields,
+    status: state.status, parked: false, resumeWindow: null, source: null, retryable: false, denied: false, reason: null, ...fields,
   });
   const since = (ms) => (Number.isFinite(ms) ? now - ms : row.ageMs);
 
@@ -137,10 +142,10 @@ export function inboxItem(state, ctx) {
     // The spender stopped this run's worker; an answer resumes it in the next window.
     const parked = Boolean(spender?.parked);
     let subject;
-    if (denied) subject = "Needs you: a credential or billing prompt";
-    else if (source === "observer") subject = "Stuck on a technical prompt";
+    if (denied) subject = t(lang, "Needs you: a credential or billing prompt");
+    else if (source === "observer") subject = t(lang, "Stuck on a technical prompt");
     else if (last) subject = questionSubject(last.text, [state.title, spender?.title]);
-    else subject = clip(state.title || spender?.title || `${role} is waiting for your answer`, SUBJECT_MAX);
+    else subject = clip(state.title || spender?.title || t(lang, "{role} is waiting for your answer", { role }), SUBJECT_MAX);
     return item({
       kind: source === "observer" ? "problem" : "question",
       subject,
@@ -149,16 +154,21 @@ export function inboxItem(state, ctx) {
       resumeWindow: parked ? resumeWindow : null,
       source,
       retryable: source === "observer" && !denied && parked,
+      denied,
     });
   }
   if (!row.uncollected) return null;
   const ageMs = since(Date.parse(state.finishedAt ?? ""));
   if (state.status === "failed") {
     const reason = reasonLine(state, read);
-    return item({ kind: "problem", subject: clip(reason ? `Failed: ${reason}` : "Failed", SUBJECT_MAX), ageMs });
+    // The watcher's own reason is for whoever set team-up up: the page shows it under "Technical details".
+    let subject = t(lang, "Failed|subject");
+    if (reason?.startsWith("observer:")) subject = t(lang, "Stopped by the watcher");
+    else if (reason) subject = t(lang, "Failed: {reason}", { reason });
+    return item({ kind: "problem", subject: clip(subject, SUBJECT_MAX), ageMs, reason });
   }
   const title = state.title || spender?.title;
-  return item({ kind: "result", ageMs, subject: clip(title || reasonLine(state, read) || `${role} finished`, SUBJECT_MAX) });
+  return item({ kind: "result", ageMs, subject: clip(title || reasonLine(state, read) || t(lang, "{role} finished", { role }), SUBJECT_MAX) });
 }
 
 /** Every inbox item, questions first, then problems, then results; newest first inside a kind. */

@@ -2978,13 +2978,6 @@ const AC_PROJECT_KEY = "teamup.acProject";
 const AC_DRAFT_PREFIX = "teamup.draft.";
 const AC_FILTERS = [["all", t("All")], ["question", t("Questions")], ["problem", t("Problems")], ["result", t("Results")]];
 const AC_KIND = { question: t("Question"), problem: t("Problem"), result: t("Result") };
-// Subjects the server writes in English for problems; an agent's own subject stays as written.
-const AC_DENIED = "Needs you: a credential or billing prompt";
-const AC_SERVER_SUBJECTS = {
-  "Stuck on a technical prompt": t("Stuck on a technical prompt"),
-  [AC_DENIED]: t("Needs you: a credential or billing prompt"),
-  Failed: t("Failed|subject"),
-};
 // A recommendation the agent made; "I do not recommend" or "nicht empfehlenswert" is none.
 // [ \t], not \s: with the m flag, \s* spans newlines and a run of blank lines turns quadratic.
 const AC_RECOMMENDS = /\*\*(?:my |meine )?(?:recommendation|recommended|empfehlung|empfohlen)\b|^[ \t]*(?:my |meine )?(?:recommendation|empfehlung)[ \t]*:|\b(?:I|I'd|I would) recommend\b|\bich empfehle\b|\bmeine empfehlung\b/im;
@@ -3049,16 +3042,8 @@ function acVisible() {
   return acData.items.filter((i) => (filter === "all" || i.kind === filter) && (!project || i.project?.name === project));
 }
 
-function acSubjectHtml(subject) {
-  const s = String(subject ?? "");
-  if (Object.hasOwn(AC_SERVER_SUBJECTS, s)) return esc(AC_SERVER_SUBJECTS[s]);
-  const agent = (text) => `<span translate="no">${esc(text)}</span>`;
-  const failed = s.match(/^Failed: ([\s\S]*)$/);
-  // The watcher's reason is for whoever set team-up up; it stays under "Technical details".
-  if (failed?.[1].startsWith("observer:")) return esc(t("Stopped by the watcher"));
-  if (failed) return esc(t("Failed: {reason}")).replace("{reason}", () => agent(failed[1]));
-  return agent(s);
-}
+/** An agent's subject, or the server's own sentence for a problem, already in the UI language: never translated again. */
+const acSubjectHtml = (subject) => `<span translate="no">${esc(subject ?? "")}</span>`;
 
 function acWhenHtml(item) {
   const ago = fmtAgo(item.ageMs ?? 0);
@@ -3243,12 +3228,11 @@ const acMd = (text) => `<div class="md" translate="no">${renderMarkdown(text)}</
 
 function acProblemHtml(item) {
   const failed = item.status === "failed";
-  // A run that left no RESULT has its reason only in the subject, cut to one line.
-  const fromSubject = String(item.subject ?? "").match(/^Failed: ([\s\S]*)$/)?.[1] ?? "";
-  const reason = item.result?.reason || fromSubject;
+  // The item's reason line is cut to 300 characters; RESULT's is the whole first line.
+  const reason = item.result?.reason || item.reason || "";
   const cut = !item.result?.reason && reason.endsWith("…");
   let explain;
-  if (item.subject === AC_DENIED) {
+  if (item.denied) {
     explain = t("The helper stopped at a prompt about a password, a login or a payment. team-up never answers those for you.");
   } else if (failed && reason.startsWith("observer:")) {
     explain = t("The watcher stopped this task because the helper was stuck on a technical prompt.");

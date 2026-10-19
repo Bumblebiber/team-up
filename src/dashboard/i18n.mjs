@@ -195,7 +195,7 @@ export const DE = {
     "…und hielt team-up dabei mindestens diesen Anteil des belegten Speichers, gilt team-up als Ursache.",
 
   // automation.mjs — built-in jobs
-  "Spends subscription quota that would otherwise expire unused. Every 10 minutes it holds each weekly window against a pacing curve; between its start and end time it starts one task after another — a PR review, a code audit, or a fix for a TIM task or GitHub issue in one of your repos. A task that needs a decision waits in the Action Center; once answered, it resumes the next night. A host session collects the results and reports via Telegram.":
+  "Spends subscription quota that would otherwise expire unused. Every 10 minutes it holds each weekly window against a pacing curve; between its start and end time it starts one task after another — a PR review, a code audit, or a fix for a TIM task or GitHub issue in one of your repos. A task that needs a decision waits in the Inbox; once answered, it resumes the next night. A host session collects the results and reports via Telegram.":
     "Verbraucht Abo-Kontingent, das sonst ungenutzt verfallen würde. Alle 10 Minuten hält er jedes Wochenfenster gegen eine Verbrauchskurve; zwischen Start- und Endzeit startet er eine Aufgabe nach der anderen — ein PR-Review, ein Code-Audit oder einen Fix für eine TIM-Aufgabe oder ein GitHub-Issue in einem deiner Repos. Eine Aufgabe, die eine Entscheidung braucht, wartet im Posteingang; sobald du antwortest, geht sie in der nächsten Nacht weiter. Eine Host-Session sammelt die Ergebnisse ein und berichtet per Telegram.",
   "Each morning after a spend night: what the night's workers did and what is left for you.":
     "Jeden Morgen nach einer Spender-Nacht: was die Agenten in der Nacht erledigt haben und was für dich übrig bleibt.",
@@ -289,4 +289,13 @@ export const DE = {
   "every {days} at {time}": "jeden {days} um {time}",
   "weekdays at {time}": "montags bis freitags um {time}",
   "monthly on the {day}{suffix} at {time}": "am {day}. jedes Monats um {time}",
+
+  // action-center.mjs — the subject of an inbox item the server words itself
+  "Needs you: a credential or billing prompt": "Braucht dich: eine Abfrage zu Zugangsdaten oder Bezahlung",
+  "Stuck on a technical prompt": "Hängt an einer technischen Abfrage fest",
+  "{role} is waiting for your answer": "{role} wartet auf deine Antwort",
+  "Failed|subject": "Fehlgeschlagen",
+  "Stopped by the watcher": "Vom Aufpasser gestoppt",
+  "Failed: {reason}": "Fehlgeschlagen: {reason}",
+  "{role} finished": "{role} ist fertig",
 };

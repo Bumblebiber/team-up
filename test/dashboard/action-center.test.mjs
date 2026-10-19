@@ -52,12 +52,13 @@ test("questions, then problems, then results, newest first; cron jobs and capaci
   const byId = Object.fromEntries(ac.items.map((i) => [i.runId, i]));
   assert.deepEqual(byId["q-old"], {
     id: "run:q-old", runId: "q-old", project: null, worker: "claude:opus", role: "reviewer", status: "waiting_human",
-    parked: false, resumeWindow: null, source: "worker", retryable: false, kind: "question", subject: "A or B?",
-    ageMs: now - at("2026-10-11T00:00:00Z"),
+    parked: false, resumeWindow: null, source: "worker", retryable: false, denied: false, reason: null, kind: "question",
+    subject: "A or B?", ageMs: now - at("2026-10-11T00:00:00Z"),
   });
   assert.equal(byId.stuck.source, "observer");
   assert.equal(byId.stuck.subject, "Stuck on a technical prompt");
   assert.equal(byId.failed.subject, "Failed: FAILED-PREFLIGHT: tree not clean");
+  assert.equal(byId.failed.reason, "FAILED-PREFLIGHT: tree not clean", "the page explains a failure from the reason, not the subject");
   assert.equal(byId.failed.ageMs, 3_600_000);
   assert.equal(byId.done.subject, "Fix the login");
 });
@@ -119,6 +120,34 @@ test("retryable: only a parked run's technical stop; a credential or billing pro
   ]);
   assert.equal(byId.parked.subject, "Stuck on a technical prompt", "an earlier finding the human answered does not count");
   assert.equal(byId.denied.subject, "Needs you: a credential or billing prompt");
+  assert.deepEqual(ids.map((id) => byId[id].denied), [false, false, true, false]);
+});
+
+test("the server's own subjects come in the roster language; an agent's subject stays as written", () => {
+  const states = [
+    { runId: "stuck", role: "reviewer", status: "waiting_human" },
+    { runId: "failed", role: "writer", status: "failed", finishedAt: "2026-10-13T11:00:00Z" },
+    { runId: "watched", role: "writer", status: "failed", finishedAt: "2026-10-13T11:00:00Z" },
+    { runId: "silent", role: "writer", status: "failed", finishedAt: "2026-10-13T11:00:00Z" },
+    { runId: "done", role: "writer", status: "done", finishedAt: "2026-10-13T11:00:00Z" },
+    { runId: "asks", role: "planner", status: "waiting_human" },
+  ];
+  const read = reader({
+    stuck: { "QUESTIONS.md": [observerBlock("Trust this folder?"), "2026-10-13T09:00:00Z"] },
+    failed: { "FAILURE.md": ["tree not clean", "2026-10-13T11:00:00Z"] },
+    watched: { "FAILURE.md": ["observer: stuck on a prompt", "2026-10-13T11:00:00Z"] },
+    asks: { "QUESTIONS.md": ["Subject: Welche Datenbank?\n\nA oder B?", "2026-10-13T09:00:00Z"] },
+  });
+  const subject = (lang) => Object.fromEntries(buildActionCenter({ states, read, now, lang }).items.map((i) => [i.runId, i.subject]));
+  assert.deepEqual(subject("de"), {
+    stuck: "Hängt an einer technischen Abfrage fest",
+    failed: "Fehlgeschlagen: tree not clean",
+    watched: "Vom Aufpasser gestoppt",
+    silent: "Fehlgeschlagen",
+    done: "writer ist fertig",
+    asks: "Welche Datenbank?",
+  });
+  assert.equal(subject("en").watched, "Stopped by the watcher");
 });
 
 test("the project is resolved only for a run that is listed", () => {

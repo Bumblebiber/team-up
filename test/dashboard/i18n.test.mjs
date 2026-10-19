@@ -23,6 +23,7 @@ const SERVER_SOURCES = [
   "src/dashboard/automation.mjs",
   "src/dashboard/communication.mjs",
   "src/dashboard/cron-schedule.mjs",
+  "src/dashboard/action-center.mjs",
 ];
 
 /** Keys that are the same in every language (identifiers); none yet. */

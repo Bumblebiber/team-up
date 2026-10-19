@@ -483,6 +483,7 @@ export function createDashboardServer({
       ledger,
       resumeWindow: spenderWindow(roster, SPENDER_DEFAULTS),
       now: now(),
+      lang: langOf(roster),
     };
   }
 
