@@ -74,6 +74,13 @@ if [[ "$STATUS" == done ]]; then
   exit 0
 fi
 echo "ops-run: run $RUN [$JOB] on $MODEL ended $STATUS"
+# The why goes into the report: a failed run usually explains itself in RESULT.md.
+cat "$MB/RESULT.md" 2>/dev/null || cat "$MB/RESULT.json" 2>/dev/null || true
 cat "$MB/FAILURE.md" 2>/dev/null || true
 cat "$MB/QUESTIONS.md" 2>/dev/null || true
+# Reported on stdout, so it is read: no intake ever comes for a scheduled job. A question is no
+# end state and stays open.
+if [[ "$STATUS" == failed || "$STATUS" == cancelled ]]; then
+  "${TEAMUP[@]}" runs collect "$RUN" --note "ops-run: $STATUS, reported on stdout" >/dev/null 2>&1 || true
+fi
 exit 1
