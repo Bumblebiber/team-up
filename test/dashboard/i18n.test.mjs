@@ -130,7 +130,12 @@ test("browser t, tp, fmtAgo and fmtDateTime follow <html lang>", () => {
   assert.equal(de.fmtAgo(864e5), "gestern");
   assert.equal(de.fmtAgo(-2 * 36e5), "in 2 Stunden");
   assert.equal(de.fmtDateTime("not a date"), "—");
-  assert.match(de.fmtDateTime("2026-10-19T12:05:00Z"), /^19\.10\.26, \d\d:05$/);
+  assert.equal(de.fmtDateTime(new Date(2026, 9, 19, 14, 5).toISOString()), "19.10.26, 14:05");
+});
+
+test("i18n.js and app.js share one global scope without a clash", () => {
+  // Classic scripts: a name both declare at top level stops app.js from running.
+  assert.doesNotThrow(() => new vm.Script(`${read("src/dashboard/public/i18n.js")}\n;\n${read("src/dashboard/public/app.js")}`));
 });
 
 // ── The views in German ─────────────────────────────────────────────────
