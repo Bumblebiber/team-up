@@ -1568,7 +1568,7 @@ export function createDashboardServer({
       return;
     }
 
-    if (pathname === "/app.js" || pathname === "/app.css" || pathname === "/i18n.js") {
+    if (["/app.js", "/app.css", "/i18n.js", "/md.js"].includes(pathname)) {
       const file = path.join(PUBLIC_DIR, path.basename(pathname));
       const ext = pathname.endsWith(".css") ? "text/css" : "application/javascript";
       res.writeHead(200, { "Content-Type": `${ext}; charset=utf-8` });

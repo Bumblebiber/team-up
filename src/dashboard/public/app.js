@@ -12,10 +12,11 @@ const ROUTE_ALIASES = { cron: "automation" };
 const onEnter = {};
 
 function applyRoute() {
-  const match = location.hash.match(/^#\/([^/?#]+)$/);
+  const match = location.hash.match(/^#\/([^/?#]+)(?:\/([\w.-]+))?$/);
   const wanted = match ? ROUTE_ALIASES[match[1]] || match[1] : null;
   const route = wanted && VIEW_NAMES.has(wanted) ? wanted : "overview";
-  const canonicalHash = `#/${route}`;
+  // Only the inbox has a second part: the open item (#/actions/<runId>).
+  const canonicalHash = route === "actions" && match?.[2] ? `#/actions/${match[2]}` : `#/${route}`;
   if (location.hash !== canonicalHash) history.replaceState(null, "", canonicalHash);
   document.querySelectorAll(".view").forEach((view) => {
     view.classList.toggle("is-active", view.dataset.view === route);
@@ -30,9 +31,11 @@ function applyRoute() {
 }
 
 window.addEventListener("hashchange", applyRoute);
+// Before the first route: the page title is read from the view's translated h1.
+translateStatic();
 applyRoute();
 
-const dashboardMetrics = { runCounts: null, usage: null, tim: null };
+const dashboardMetrics = { runCounts: null, usage: null, tim: null, inbox: null };
 
 function usageLevelName(level) {
   return ({ red: "Critical", amber: "Warn", ok: "OK" })[level] || "Unknown";
@@ -51,10 +54,8 @@ function updateNavBadge(id, text, tone = "", visible = Boolean(text), title = ""
 const URGENT_PRIORITIES = new Set(["P0", "P1", "0", "1", "CRITICAL", "HIGH"]);
 
 function updateDashboardMetrics() {
-  const { active = 0, waiting = 0, uncollected = 0, failedUncollected: failed = 0 } = dashboardMetrics.runCounts || {};
+  const { active = 0, waiting = 0, failedUncollected: failed = 0 } = dashboardMetrics.runCounts || {};
   $("#kpi-active-runs").textContent = String(active);
-  $("#kpi-waiting-runs").textContent = String(waiting);
-  $("#kpi-uncollected-runs").textContent = String(uncollected);
 
   const runsTone = waiting || failed ? "red" : "";
   const runsBadge = active ? String(active) : failed ? "!" : "";
@@ -104,7 +105,7 @@ async function api(path, opts = {}) {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || res.statusText);
+    throw Object.assign(new Error(err.error || res.statusText), { status: res.status });
   }
   return res.json();
 }
@@ -1610,13 +1611,18 @@ $("#specialist-install").addEventListener("click", async () => {
 // to change something wins.
 const PREF_PREFIX = "teamup.";
 const LEGACY_LAYOUT_KEY = "teamup.layout";
+const EXPERT_KEY = "teamup.expert";
+// Per browser, never synced: a filter, tab or view choice, and a half-typed answer.
+const LOCAL_ONLY_KEYS = new Set(["teamup.acFilter", "teamup.acProject", "teamup.timView", "teamup.timKind",
+  "teamup.trendingSection", "teamup.catalogueKind", "teamup.rolesTab", EXPERT_KEY]);
+const isLocalOnly = (key) => LOCAL_ONLY_KEYS.has(key) || key.startsWith("teamup.draft.");
 
 function localPrefs() {
   const out = {};
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key.startsWith(PREF_PREFIX) && key !== LEGACY_LAYOUT_KEY) out[key] = localStorage.getItem(key);
+      if (key.startsWith(PREF_PREFIX) && key !== LEGACY_LAYOUT_KEY && !isLocalOnly(key)) out[key] = localStorage.getItem(key);
     }
     localStorage.removeItem(LEGACY_LAYOUT_KEY);
   } catch {
@@ -1635,16 +1641,17 @@ function pushPrefs() {
 /** Adopt the server's prefs; reloads once when they differ from this browser's. */
 async function pullPrefs() {
   const remote = await api("/api/prefs");
-  const hadLegacyLayout = Object.hasOwn(remote, LEGACY_LAYOUT_KEY);
-  delete remote[LEGACY_LAYOUT_KEY];
+  // The old layout key, and per-browser keys an older page synced: they leave the server copy too.
+  const stale = Object.keys(remote).filter((key) => key === LEGACY_LAYOUT_KEY || isLocalOnly(key));
+  for (const key of stale) delete remote[key];
   const local = localPrefs();
   if (!Object.keys(remote).length) {
     // First device after the switch to server prefs: seed it from here.
-    if (Object.keys(local).length || hadLegacyLayout) pushPrefs();
+    if (Object.keys(local).length || stale.length) pushPrefs();
     return;
   }
   if (sameKeys(remote, local)) {
-    if (hadLegacyLayout) pushPrefs();
+    if (stale.length) pushPrefs();
     return;
   }
   try {
@@ -1653,7 +1660,7 @@ async function pullPrefs() {
   } catch {
     return; // storage blocked: keep what is on screen
   }
-  if (hadLegacyLayout) {
+  if (stale.length) {
     await api("/api/prefs", { method: "POST", body: JSON.stringify(localPrefs()) }).catch(() => {});
   }
   location.reload();
@@ -1969,7 +1976,7 @@ function readStored(key, fallback) {
 function writeStored(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-    pushPrefs();
+    if (!isLocalOnly(key)) pushPrefs();
   } catch {
     // Private mode: the choice just stops surviving reloads.
   }
@@ -2634,9 +2641,14 @@ async function openJobLog(name) {
 // fetched. Empty means nothing is waiting on you, and the panel hides.
 function updateAttention() {
   const items = [];
-  const runs = dashboardMetrics.runCounts || {};
-  if (runs.waiting) items.push({ tone: "red", text: `${runs.waiting} run${runs.waiting === 1 ? " is" : "s are"} waiting for your answer`, href: "#/runs" });
-  if (runs.failedUncollected) items.push({ tone: "red", text: `${runs.failedUncollected} failed run${runs.failedUncollected === 1 ? "" : "s"} not looked at yet`, href: "#/runs" });
+  const inbox = dashboardMetrics.inbox || {};
+  if (inbox.question) {
+    items.push({ tone: "red", href: "#/actions",
+      text: tp(inbox.question, { one: "{n} question is waiting for your answer", other: "{n} questions are waiting for your answer" }) });
+  }
+  if (inbox.problem) {
+    items.push({ tone: "red", href: "#/actions", text: tp(inbox.problem, { one: "{n} problem needs a look", other: "{n} problems need a look" }) });
+  }
   for (const [key, w] of Object.entries(dashboardMetrics.usage?.windows || {})) {
     if (w.level === "red" || w.level === "amber") {
       items.push({ tone: w.level === "red" ? "red" : "", text: `${key} is at ${w.usedPct}%${w.resets_at ? ` — resets ${fmtWhen(w.resets_at)}` : ""}`, href: "#/overview" });
@@ -2651,175 +2663,465 @@ function updateAttention() {
     if (j.lastRun && !j.lastRun.running && j.lastRun.exit !== 0) items.push({ tone: "red", text: `Job ${j.name} failed on its last run (exit ${j.lastRun.exit})`, href: "#/automation" });
     if (j.inSync === false) items.push({ tone: "", text: `Job ${j.name} is not installed in the crontab — open and save it again`, href: "#/automation" });
   }
-  $("#attention-list").innerHTML = items.map((i) => `<li class="${i.tone}">${esc(i.text)}<a href="${i.href}">Open →</a></li>`).join("");
+  $("#attention-list").innerHTML = items.map((i) =>
+    `<li class="${i.tone}">${esc(i.text)}<a href="${i.href}">${esc(t("Open|verb"))} <span aria-hidden="true">→</span></a></li>`).join("");
   $("#panel-attention").classList.toggle("hidden", items.length === 0);
 }
 
-// ── Action Center ─────────────────────────────────────────────────────────
-// Everything waiting on the human, grouped by project, most urgent first. The
-// server sorts; the browser filters, renders, and keeps half-typed answers
-// alive across the five-second refresh.
+// ── Inbox ─────────────────────────────────────────────────────────────────
+// Everything that waits on the human, like an e-mail inbox: short rows (kind,
+// project, age, subject) and the open item beside them, or instead of them
+// below 760px. The open item lives in the hash (#/actions/<runId>), so back
+// and reload keep the place. The five-second poll redraws the list; the item
+// redraws only when its content changed, and never takes away an answer that
+// is being typed.
 const AC_FILTER_KEY = "teamup.acFilter";
-const AC_CLOSED_KEY = "teamup.acClosed";
-const AC_FILTERS = [
-  ["all", "All", null],
-  ["question", "Questions", ["question"]],
-  ["decision", "Decisions", ["decision"]],
-  ["result", "Results", ["result"]],
-];
-const AC_KIND_LABEL = { question: "Question", decision: "Decision", result: "Result" };
-const acDrafts = {};
-let acData = null;
-let acRendered = "";
+const AC_PROJECT_KEY = "teamup.acProject";
+const AC_DRAFT_PREFIX = "teamup.draft.";
+const AC_FILTERS = [["all", t("All")], ["question", t("Questions")], ["problem", t("Problems")], ["result", t("Results")]];
+const AC_KIND = { question: t("Question"), problem: t("Problem"), result: t("Result") };
+// Subjects the server writes in English for problems; an agent's own subject stays as written.
+const AC_DENIED = "Needs you: a credential or billing prompt";
+const AC_SERVER_SUBJECTS = {
+  "Stuck on a technical prompt": t("Stuck on a technical prompt"),
+  [AC_DENIED]: t("Needs you: a credential or billing prompt"),
+  Failed: t("Failed|subject"),
+};
+const AC_RECOMMENDS = /recommend|empfehl/i;
+const isNarrow = () => matchMedia("(max-width: 759px)").matches;
+const isExpert = () => readStored(EXPERT_KEY, false) === true;
+const hour = (h) => String(h).padStart(2, "0");
 
-async function refreshActions() {
-  try {
-    acData = await api(`/api/action-center?dir=${encodeURIComponent(readProjectsDir())}`);
-  } catch (err) {
-    $("#ac-status").textContent = err.message;
-    return;
-  }
-  const c = acData.counts;
-  const urgent = c.question + c.decision;
-  updateNavBadge("badge-actions", urgent ? String(urgent) : c.result ? String(c.result) : "", urgent ? "red" : "",
-    urgent + c.result > 0, `${c.question} question(s), ${c.decision} decision(s), ${c.result} unread result(s)`);
-  renderActions();
-}
+let acData = null;
+let acSeq = 0;
+let acListKey = "";
+let acProjectsKey = "";
+/** The open item: { runId, key, data }; key is its content without the age. */
+let acDetail = null;
+let acDetailSeq = 0;
+// Focus moves to the item's heading when it opens as a page of its own (below
+// 760px) or replaces one that was just dealt with; a click on a row on a wide
+// screen keeps focus on the row.
+let acFocusDetail = false;
+let acLastOpen = null;
+
+const acSelectedId = () => location.hash.match(/^#\/actions\/([\w.-]+)$/)?.[1] ?? null;
+const acViewActive = () => location.hash.startsWith("#/actions");
 
 function acFilter() {
   const f = readStored(AC_FILTER_KEY, "all");
   return AC_FILTERS.some(([k]) => k === f) ? f : "all";
 }
 
-function acItem(item) {
-  const meta = esc([item.worker, item.age && `${item.age} ago`].filter(Boolean).join(" · "));
-  let body = "";
-  let actions = `<button type="button" data-ac-open="${esc(item.runId)}">Open run</button>`;
-  if (item.kind === "result") {
-    actions += `<button type="button" class="primary" data-ac-run="${esc(item.runId)}" data-action="collect" title="You have read the result; it leaves this list">Done reading</button>`
-      + `<button type="button" data-ac-run="${esc(item.runId)}" data-action="merged" title="The work landed">Merged</button>`
-      + `<button type="button" data-ac-run="${esc(item.runId)}" data-action="discarded" title="The work was not kept">Discarded</button>`;
-  } else {
-    body = `<div class="ac-body">
-      ${item.detail ? `<div class="ac-question">${esc(item.detail)}</div>` : '<p class="muted">The run left no question text — open the run to see what it needs.</p>'}
-      <form class="ac-answer" data-ac-answer="${esc(item.runId)}">
-        <textarea placeholder="Your answer… (Ctrl+Enter sends)" aria-label="Answer" required></textarea>
-        <button type="submit" class="primary">Send answer</button>
-      </form></div>`;
-  }
-  return `<li class="ac-item">
-    <span class="tag ac-kind ${item.kind}">${AC_KIND_LABEL[item.kind]}</span>
-    <div><span class="ac-title">${esc(item.title)}</span>${meta ? `<span class="ac-meta">${meta}</span>` : ""}</div>
-    <div class="ac-do">${actions}</div>
-    ${body}
-  </li>`;
+const acProjectNames = () => [...new Set(acData.items.map((i) => i.project?.name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+function acProject(names = acProjectNames()) {
+  const p = readStored(AC_PROJECT_KEY, "");
+  return names.includes(p) ? p : "";
 }
 
-function renderActions() {
-  if (!acData) return;
+function acVisible() {
   const filter = acFilter();
-  const kinds = AC_FILTERS.find(([k]) => k === filter)[2];
+  const project = acProject();
+  return acData.items.filter((i) => (filter === "all" || i.kind === filter) && (!project || i.project?.name === project));
+}
+
+function acSubjectHtml(subject) {
+  const s = String(subject ?? "");
+  if (Object.hasOwn(AC_SERVER_SUBJECTS, s)) return esc(AC_SERVER_SUBJECTS[s]);
+  const agent = (text) => `<span translate="no">${esc(text)}</span>`;
+  const failed = s.match(/^Failed: ([\s\S]*)$/);
+  if (failed) return esc(t("Failed: {reason}")).replace("{reason}", () => agent(failed[1]));
+  return agent(s);
+}
+
+function acWhenHtml(item) {
+  const ago = fmtAgo(item.ageMs ?? 0);
+  if (item.kind === "result") return esc(t("Finished {ago}", { ago }));
+  if (item.status === "failed") return esc(t("Failed {ago}", { ago }));
+  if (item.kind === "problem") return esc(t("Stopped {ago}", { ago }));
+  if (!isExpert()) return esc(t("A helper asked {ago}", { ago }));
+  return esc(t("{who} asked {ago}", { ago })).replace("{who}", () => `<span translate="no">${esc(`${item.role} (${item.worker})`)}</span>`);
+}
+
+function acCountsText(c) {
+  return new Intl.ListFormat(LANG, { type: "conjunction" }).format([
+    tp(c.question, { one: "{n} question", other: "{n} questions" }),
+    tp(c.problem, { one: "{n} problem", other: "{n} problems" }),
+    tp(c.result, { one: "{n} result", other: "{n} results" }),
+  ]);
+}
+
+async function refreshActions() {
+  const seq = ++acSeq;
+  let data;
+  try {
+    data = await api(`/api/action-center?dir=${encodeURIComponent(readProjectsDir())}`);
+  } catch (err) {
+    if (seq === acSeq) $("#ac-status").textContent = t("Could not load the inbox: {error}", { error: err.message });
+    return;
+  }
+  // An action finished while this was on its way: its item would come back.
+  if (seq !== acSeq) return;
+  acData = data;
+  $("#ac-status").textContent = "";
+  acCountsChanged();
+  renderInbox();
+  const selected = acSelectedId();
+  if (selected && acDetail?.runId === selected && acDetail.key) loadDetail(selected);
+}
+
+function acCountsChanged() {
   const c = acData.counts;
-  const n = { all: c.question + c.decision + c.result, ...c };
+  const urgent = c.question + c.problem;
+  updateNavBadge("badge-actions", urgent ? String(urgent) : c.result ? String(c.result) : "", urgent ? "red" : "",
+    urgent + c.result > 0, acCountsText(c));
+  $("#kpi-waiting-runs").textContent = String(urgent);
+  $("#kpi-uncollected-runs").textContent = String(c.result);
+  dashboardMetrics.inbox = c;
+  updateAttention();
+}
+
+function renderInbox() {
+  if (!acData) return;
+  let selected = acSelectedId();
+  // A wide screen has room for the item: open the first one rather than an empty pane.
+  if (!selected && acViewActive() && !isNarrow() && acVisible()[0]) {
+    selected = acVisible()[0].runId;
+    history.replaceState(null, "", `#/actions/${selected}`);
+  }
+  $("#inbox").classList.toggle("has-selection", Boolean(selected));
+  renderInboxList();
+  if (!selected) {
+    acDetail = null;
+    $("#ac-detail").innerHTML = acVisible().length ? `<p class="inbox-hint">${esc(t("Choose an item to read it."))}</p>` : "";
+    // Back from an item on a narrow screen: to the row it came from.
+    const row = acLastOpen && $(`#ac-list [data-run="${CSS.escape(acLastOpen)}"]`);
+    if (row && isNarrow()) row.focus();
+    acLastOpen = null;
+    return;
+  }
+  acLastOpen = selected;
+  if (acDetail?.runId !== selected) {
+    acDetail = { runId: selected, key: null, data: null };
+    $("#ac-detail").innerHTML = `<p class="inbox-hint">${esc(t("Loading…"))}</p>`;
+    loadDetail(selected);
+  }
+}
+
+function renderInboxList() {
+  const c = acData.counts;
+  const n = { all: c.question + c.problem + c.result, ...c };
+  const filter = acFilter();
+  const names = acProjectNames();
+  const project = acProject(names);
+  const select = $("#ac-project");
+  if (JSON.stringify(names) !== acProjectsKey) {
+    acProjectsKey = JSON.stringify(names);
+    select.innerHTML = `<option value="">${esc(t("All projects"))}</option>`
+      + names.map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("");
+  }
+  select.value = project;
+  select.classList.toggle("hidden", names.length < 2);
+
   const filterHtml = AC_FILTERS.map(([k, label]) =>
-    `<button type="button" role="tab" data-ac-filter="${k}" class="${k === filter ? "is-active" : ""}">${label} <span class="muted">${n[k]}</span></button>`).join("");
-  const closed = new Set(readStored(AC_CLOSED_KEY, []));
-  const groups = acData.projects
-    .map((p) => ({ ...p, items: p.items.filter((i) => (kinds ? kinds.includes(i.kind) : true)) }))
-    .filter((p) => p.items.length);
-  const html = groups.map((p) => {
-    const counts = {};
-    for (const i of p.items) counts[i.kind] = (counts[i.kind] || 0) + 1;
-    const chips = Object.entries(counts).map(([k, v]) =>
-      `<span class="tag ac-kind ${k}">${v} ${AC_KIND_LABEL[k].toLowerCase()}${v === 1 ? "" : "s"}</span>`).join("");
-    return `<details class="ac-project" data-project="${esc(p.label)}"${closed.has(p.label) ? "" : " open"}>
-      <summary>${esc(p.title)} <span class="ac-counts">${chips}</span></summary>
-      <ul class="ac-items">${p.items.map((i) => acItem(i)).join("")}</ul>
-    </details>`;
-  }).join("") || `<div class="ac-empty">${filter === "all" ? "Nothing is waiting on you." : "Nothing in this group."}</div>`;
+    `<button type="button" data-ac-filter="${k}" aria-pressed="${k === filter}">${esc(label)} <span class="count">${n[k]}</span></button>`).join("");
+  const selected = acSelectedId();
+  const rows = acVisible().map((i) => `<li><a class="ac-row" href="#/actions/${esc(i.runId)}" data-run="${esc(i.runId)}"${i.runId === selected ? ' aria-current="true"' : ""}>
+      <span class="ac-row-meta"><span class="ac-kind ${esc(i.kind)}"><span class="dot" aria-hidden="true"></span>${esc(AC_KIND[i.kind])}</span>${i.project ? `<span class="ac-row-project" translate="no">${esc(i.project.name)}</span>` : ""}<span class="ac-row-age">${esc(fmtAgo(i.ageMs ?? 0))}</span></span>
+      <span class="ac-row-subject">${acSubjectHtml(i.subject)}</span></a></li>`).join("");
+  let html;
+  if (rows) html = `<ul class="ac-rows">${rows}</ul>`;
+  else if (!n.all) html = `<div class="ac-empty">${esc(t("Nothing is waiting for you."))}</div>`;
+  else html = `<div class="ac-empty"><p>${esc(t("Nothing here with this filter."))}</p><button type="button" data-ac-showall>${esc(t("Show all"))}</button></div>`;
 
   const key = filterHtml + html;
-  // A re-render would wipe focus and a half-typed answer; skip it when nothing changed.
-  // Drafts stay out of the markup, so typing alone never changes `key`.
-  if (key === acRendered) return;
-  const ta = document.activeElement?.matches?.("[data-ac-answer] textarea") ? document.activeElement : null;
-  const focused = ta && { runId: ta.form.dataset.acAnswer, start: ta.selectionStart, end: ta.selectionEnd, top: ta.scrollTop };
-  acRendered = key;
+  if (key === acListKey) return;
+  acListKey = key;
+  // The ages change every few seconds; a keyboard user's place in the list must not.
+  const active = document.activeElement;
+  const focus = active?.closest?.("#ac-filter, #ac-list") && (active.dataset.run ? `[data-run="${CSS.escape(active.dataset.run)}"]`
+    : active.dataset.acFilter ? `[data-ac-filter="${active.dataset.acFilter}"]` : active.matches("[data-ac-showall]") ? "[data-ac-showall]" : null);
   $("#ac-filter").innerHTML = filterHtml;
   $("#ac-list").innerHTML = html;
-  for (const form of $("#ac-list").querySelectorAll("[data-ac-answer]")) {
-    form.querySelector("textarea").value = acDrafts[form.dataset.acAnswer] || "";
+  if (focus) $(`#ac-filter ${focus}, #ac-list ${focus}`)?.focus({ preventScroll: true });
+}
+
+async function loadDetail(runId) {
+  const seq = ++acDetailSeq;
+  let data;
+  try {
+    data = await api(`/api/action-center/item/${encodeURIComponent(runId)}?dir=${encodeURIComponent(readProjectsDir())}`);
+  } catch (err) {
+    if (seq !== acDetailSeq || acDetail?.runId !== runId || acDetail.key) return;
+    $("#ac-detail").innerHTML = `${acBackHtml()}<p class="status-line err">${esc(t("Could not open this item: {error}", { error: err.message }))}</p>`;
+    return;
   }
-  const urgent = c.question + c.decision;
-  $("#ac-status").textContent = urgent
-    ? `${urgent} item${urgent === 1 ? "" : "s"} blocked until you answer.`
-    : "Nothing is blocked on you right now.";
-  const back = focused && $(`[data-ac-answer="${CSS.escape(focused.runId)}"] textarea`);
-  if (back) {
-    back.focus();
-    back.setSelectionRange(focused.start, focused.end);
-    back.scrollTop = focused.top;
+  if (seq !== acDetailSeq || acDetail?.runId !== runId) return;
+  const { ageMs, ...content } = data;
+  const key = JSON.stringify(content);
+  const ago = $("#ac-detail .ac-ago");
+  if (key === acDetail.key) {
+    acDetail.data = data;
+    if (ago) ago.innerHTML = acWhenHtml(data);
+    return;
   }
+  // Never rebuild the answer box while it is in use; the next poll tries again.
+  const box = $("#ac-answer-text");
+  if (acDetail.key && box && (box.value.trim() || document.activeElement === box)) return;
+  renderDetail(data, key);
+}
+
+const acBackHtml = () => `<a class="ac-back" href="#/actions"><span aria-hidden="true">←</span> ${esc(t("Back to inbox"))}</a>`;
+
+/** The question without a first heading that only repeats the subject. */
+function acBody(body, subject) {
+  const [first, ...rest] = String(body ?? "").split("\n");
+  const heading = first.match(/^#{1,6}\s+(.+)/)?.[1].replace(/\*\*|`/g, "");
+  const core = String(subject ?? "").replace(/…$/, "").trim();
+  return heading && core && heading.includes(core) ? rest.join("\n") : String(body ?? "");
+}
+
+const acMd = (text) => `<div class="md" translate="no">${renderMarkdown(text)}</div>`;
+
+function acProblemHtml(item) {
+  const failed = item.status === "failed";
+  const reason = item.result?.reason || "";
+  let explain;
+  if (item.subject === AC_DENIED) {
+    explain = t("The helper stopped at a prompt about a password, a login or a payment. team-up never answers those for you.");
+  } else if (failed && reason.startsWith("observer:")) {
+    explain = t("The watcher stopped this task because the helper was stuck on a technical prompt.");
+  } else if (failed) {
+    explain = t("This task ended with an error and did not finish.");
+  } else {
+    explain = t("The helper got stuck on a technical prompt and could not continue.");
+  }
+  let next;
+  if (failed) next = t("Nothing to answer here. Mark it as read once you have seen it.");
+  else if (item.retryable) next = t("Retry lets it continue tonight from {start}:00. Or cancel the task.", { start: hour(item.resumeWindow?.start ?? 23) });
+  else next = t("This one cannot be retried from here. You can cancel the task.");
+  const raw = failed ? [reason, item.result?.markdown].filter(Boolean).join("\n\n") : item.body;
+  return `<p class="ac-explain">${esc(explain)}</p><p>${esc(next)}</p>${raw
+    ? `<details class="ac-more-info"><summary>${esc(t("Technical details"))}</summary><pre class="ac-raw" translate="no">${esc(raw)}</pre></details>` : ""}`;
+}
+
+function acResultHtml(item) {
+  const r = item.result;
+  if (!r) return `<p class="muted">${esc(t("The helper left no report."))}</p>`;
+  if (!r.summary) return acMd(r.markdown);
+  return acMd(r.summary) + (r.markdown
+    ? `<details class="ac-more-info"><summary>${esc(t("Full report"))}</summary>${acMd(r.markdown)}</details>` : "");
+}
+
+function acActionsHtml(item) {
+  const button = (action, label, cls = "") => `<button type="button" data-ac-act="${action}"${cls ? ` class="${cls}"` : ""}>${esc(label)}</button>`;
+  if (item.kind === "question") {
+    return `<form class="ac-answer" data-run="${esc(item.runId)}">
+      <label for="ac-answer-text">${esc(t("Your answer"))}</label>
+      ${AC_RECOMMENDS.test(item.body || "") ? `<button type="button" class="chip-btn" data-ac-recommend>${esc(t("Go with the recommendation"))}</button>` : ""}
+      <textarea id="ac-answer-text" rows="5" required></textarea>
+      <div class="ac-answer-foot"><button type="submit" class="primary">${esc(t("Send answer"))}</button><span class="muted">${esc(t("Ctrl+Enter or ⌘+Enter sends"))}</span></div>
+      <p class="ac-error" role="alert"></p>
+    </form>`;
+  }
+  let buttons = "";
+  if (item.kind === "problem" && item.status !== "failed") {
+    if (item.retryable) buttons += button("retry", t("Retry"), "primary");
+    buttons += button("cancel", t("Cancel task"), "danger");
+  } else if (item.kind === "problem" || item.kind === "result") {
+    buttons += button("collect", t("Mark as read"), "primary");
+  }
+  if (item.kind === "result" && isExpert()) {
+    buttons += `<details class="ac-menu"><summary>${esc(t("More"))}</summary><div>${button("merged", t("Kept"))}${button("discarded", t("Discarded"))}</div></details>`;
+  }
+  return buttons ? `<div class="ac-actions">${buttons}</div><p class="ac-error" role="alert"></p>` : "";
+}
+
+function acAnsweredHtml(item) {
+  return `<div class="ac-note"><p><strong>${esc(t("Already answered."))}</strong></p>${item.answer ? acMd(item.answer) : ""}</div>`;
+}
+
+function renderDetail(item, key) {
+  const fresh = acDetail?.data?.runId !== item.runId;
+  acDetail = { runId: item.runId, key, data: item };
+  const meta = [
+    item.kind ? `<span class="ac-kind ${esc(item.kind)}"><span class="dot" aria-hidden="true"></span>${esc(AC_KIND[item.kind])}</span>` : "",
+    item.project ? `<span translate="no">${esc(item.project.name)}</span>` : "",
+    item.kind ? `<span class="ac-ago">${acWhenHtml(item)}</span>` : "",
+  ].filter(Boolean).join('<span aria-hidden="true">·</span>');
+  let body = "";
+  if (!item.kind && !item.answer) body += `<p class="ac-note">${esc(t("This is no longer waiting for you."))}</p>`;
+  if (item.kind === "problem") body += acProblemHtml(item);
+  else if (item.kind === "result") body += acResultHtml(item);
+  else if (item.body) body += acMd(acBody(item.body, item.subject));
+  if (item.task) {
+    body += `<details class="ac-more-info"><summary>${esc(t("What the helper was doing"))}</summary>${acMd(item.task)}</details>`;
+  }
+  const history = (item.history || []).filter((h) => h.question || h.answer);
+  if (history.length) {
+    body += `<details class="ac-more-info"><summary>${esc(t("Earlier questions and answers"))}</summary>${history.map((h) =>
+      `<div class="ac-history">${h.question ? acMd(h.question) : ""}${h.answer
+        ? `<p class="ac-history-label">${esc(t("Your answer"))}</p>${acMd(h.answer)}` : ""}</div>`).join("")}</details>`;
+  }
+  body += item.answer ? acAnsweredHtml(item) : acActionsHtml(item);
+  const box = $("#ac-detail");
+  box.innerHTML = `${acBackHtml()}${meta ? `<p class="ac-detail-meta">${meta}</p>` : ""}
+    <h2 class="ac-subject" tabindex="-1">${acSubjectHtml(item.subject)}</h2>${body}`;
+  const answer = $("#ac-answer-text");
+  if (answer) answer.value = acDraft(item.runId);
+  if (fresh) {
+    box.scrollTop = 0;
+    if (acFocusDetail) box.querySelector(".ac-subject").focus({ preventScroll: !isNarrow() });
+  }
+  acFocusDetail = false;
+}
+
+function acDraft(runId, text) {
+  try {
+    if (text === undefined) return localStorage.getItem(AC_DRAFT_PREFIX + runId) || "";
+    if (text.trim()) localStorage.setItem(AC_DRAFT_PREFIX + runId, text);
+    else localStorage.removeItem(AC_DRAFT_PREFIX + runId);
+  } catch {
+    // storage blocked: the draft lives as long as the page
+  }
+  return "";
+}
+
+function acDoneText(action, item) {
+  const start = item?.parked && item.resumeWindow ? hour(item.resumeWindow.start) : null;
+  if (action === "answer") return start ? t("Answer sent — continues tonight from {start}:00.", { start }) : t("Answer sent — the helper continues now.");
+  if (action === "retry") return start ? t("Retry sent — continues tonight from {start}:00.", { start }) : t("Retry sent.");
+  if (action === "cancel") return t("Task cancelled.");
+  if (action === "merged") return t("Marked as kept.");
+  if (action === "discarded") return t("Marked as discarded.");
+  return t("Marked as read.");
+}
+
+let toastTimer = null;
+function toast(text) {
+  const el = $("#toast");
+  el.textContent = text;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.textContent = ""; }, 7000);
+}
+
+async function acAct(runId, action, reason, btn) {
+  const item = acDetail?.runId === runId ? acDetail.data : acData?.items.find((i) => i.runId === runId);
+  const label = btn.textContent;
+  const error = $("#ac-detail .ac-error");
+  btn.disabled = true;
+  if (action === "answer") btn.textContent = t("Sending…");
+  if (error) error.textContent = "";
+  try {
+    await api(`/api/runs/${encodeURIComponent(runId)}/action`, { method: "POST", body: JSON.stringify({ action, reason }) });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = label;
+    if (err.status === 409) {
+      // Answered elsewhere (another tab, Telegram): say so instead of the answer box.
+      acDraft(runId, "");
+      const form = $("#ac-detail .ac-answer");
+      if (form) form.outerHTML = acAnsweredHtml({});
+      refreshActions();
+      return;
+    }
+    if (error) error.textContent = t("That did not work: {error}", { error: err.message });
+    return;
+  }
+  if (action === "answer") acDraft(runId, "");
+  toast(acDoneText(action, item));
+  // The item leaves the list now, and the next one opens in its place.
+  const visible = acData ? acVisible() : [];
+  const at = visible.findIndex((i) => i.runId === runId);
+  const next = at === -1 ? null : visible[at + 1] ?? visible[at - 1] ?? null;
+  if (acData && at !== -1) {
+    acData.items = acData.items.filter((i) => i.runId !== runId);
+    acData.counts[visible[at].kind] -= 1;
+    acCountsChanged();
+  }
+  acSeq++;
+  acLastOpen = next?.runId ?? null;
+  acFocusDetail = !isNarrow();
+  history.replaceState(null, "", next && !isNarrow() ? `#/actions/${next.runId}` : "#/actions");
+  renderInbox();
+  refreshActions();
 }
 
 $("#ac-filter").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-ac-filter]");
   if (!btn) return;
   writeStored(AC_FILTER_KEY, btn.dataset.acFilter);
-  renderActions();
+  renderInbox();
 });
 
-$("#ac-list").addEventListener("toggle", (e) => {
-  const el = e.target;
-  if (!el.classList?.contains("ac-project")) return;
-  const shut = new Set(readStored(AC_CLOSED_KEY, []));
-  if (el.open) shut.delete(el.dataset.project);
-  else shut.add(el.dataset.project);
-  writeStored(AC_CLOSED_KEY, [...shut]);
-}, true);
-
-$("#ac-list").addEventListener("input", (e) => {
-  const form = e.target.closest("[data-ac-answer]");
-  if (form) acDrafts[form.dataset.acAnswer] = e.target.value;
+$("#ac-project").addEventListener("change", (e) => {
+  writeStored(AC_PROJECT_KEY, e.target.value);
+  renderInbox();
 });
 
-$("#ac-list").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.target.closest("[data-ac-answer]")) {
+$("#ac-list").addEventListener("click", (e) => {
+  if (!e.target.closest("[data-ac-showall]")) return;
+  writeStored(AC_FILTER_KEY, "all");
+  writeStored(AC_PROJECT_KEY, "");
+  renderInbox();
+  $('#ac-filter [data-ac-filter="all"]')?.focus();
+});
+
+const acDetailBox = $("#ac-detail");
+acDetailBox.addEventListener("input", (e) => {
+  if (e.target.id === "ac-answer-text") acDraft(acDetail.runId, e.target.value);
+});
+
+acDetailBox.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.target.id === "ac-answer-text") {
     e.preventDefault();
     e.target.form.requestSubmit();
   }
 });
 
-async function acRunAction(runId, action, reason, btn) {
-  btn.disabled = true;
-  try {
-    await api(`/api/runs/${encodeURIComponent(runId)}/action`, { method: "POST", body: JSON.stringify({ action, reason }) });
-    delete acDrafts[runId];
-    await refreshActions();
-  } catch (err) {
-    btn.disabled = false;
-    alert(`refused: ${err.message}`);
-  }
-}
-
-$("#ac-list").addEventListener("submit", (e) => {
-  const form = e.target.closest("[data-ac-answer]");
+acDetailBox.addEventListener("submit", (e) => {
+  const form = e.target.closest(".ac-answer");
   if (!form) return;
   e.preventDefault();
-  acRunAction(form.dataset.acAnswer, "answer", form.querySelector("textarea").value, form.querySelector("button"));
+  acAct(form.dataset.run, "answer", form.querySelector("textarea").value, form.querySelector('[type="submit"]'));
 });
 
-$("#ac-list").addEventListener("click", (e) => {
-  const run = e.target.closest("[data-ac-run]");
-  if (run) return acRunAction(run.dataset.acRun, run.dataset.action, null, run);
-  const open = e.target.closest("[data-ac-open]");
-  if (open) {
-    location.hash = "#/runs";
-    selectRun(open.dataset.acOpen);
+const acCancelDialog = $("#ac-cancel");
+let acCancelTarget = null;
+
+acDetailBox.addEventListener("click", (e) => {
+  if (e.target.closest("[data-ac-recommend]")) {
+    const box = $("#ac-answer-text");
+    box.value = t("Go with your recommendation.");
+    acDraft(acDetail.runId, box.value);
+    box.focus();
+    return;
   }
+  const btn = e.target.closest("[data-ac-act]");
+  if (!btn || !acDetail) return;
+  if (btn.dataset.acAct === "cancel") {
+    acCancelTarget = { runId: acDetail.runId, btn };
+    acCancelDialog.returnValue = "";
+    acCancelDialog.showModal();
+    return;
+  }
+  acAct(acDetail.runId, btn.dataset.acAct, null, btn);
 });
 
-onEnter.actions = () => refreshActions().catch(() => {});
+acCancelDialog.addEventListener("close", () => {
+  const target = acCancelTarget;
+  acCancelTarget = null;
+  if (!target) return;
+  if (acCancelDialog.returnValue === "cancel") acAct(target.runId, "cancel", null, target.btn);
+  else target.btn.focus();
+});
+
+onEnter.actions = () => {
+  acFocusDetail = isNarrow();
+  renderInbox();
+  refreshActions().catch(() => {});
+};
 
 // ── TIM: open work | explorer ─────────────────────────────────────────────
 const TIM_VIEW_KEY = "teamup.timView";

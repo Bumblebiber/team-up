@@ -28,7 +28,7 @@
       </section>
       <nav class="sidebar-nav" aria-label="Dashboard views">
         <a href="#/overview" data-route="overview"><span class="nav-ico" aria-hidden="true">◎</span>Overview<span id="badge-overview" class="nav-badge hidden"></span></a>
-        <a href="#/actions" data-route="actions"><span class="nav-ico" aria-hidden="true">✓</span>Action Center<span id="badge-actions" class="nav-badge hidden"></span></a>
+        <a href="#/actions" data-route="actions"><span class="nav-ico" aria-hidden="true">✓</span>Inbox<span id="badge-actions" class="nav-badge hidden"></span></a>
         <details class="nav-group" open>
           <summary>Work</summary>
           <a href="#/runs" data-route="runs"><span class="nav-ico" aria-hidden="true">▶</span>Sessions &amp; Runs<span id="badge-runs" class="nav-badge hidden"></span></a>
@@ -76,11 +76,11 @@
             <a class="kpi-tile" href="#/runs">
               <span>Active runs</span><strong id="kpi-active-runs">—</strong><small>Sessions &amp; Runs</small>
             </a>
-            <a class="kpi-tile" href="#/runs">
-              <span>Waiting on you</span><strong id="kpi-waiting-runs">—</strong><small>Runs waiting on the human</small>
+            <a class="kpi-tile" href="#/actions">
+              <span>Waiting on you</span><strong id="kpi-waiting-runs">—</strong><small>Questions and problems</small>
             </a>
-            <a class="kpi-tile" href="#/runs">
-              <span>Finished, not collected</span><strong id="kpi-uncollected-runs">—</strong><small>Done or failed runs</small>
+            <a class="kpi-tile" href="#/actions">
+              <span>Finished, not collected</span><strong id="kpi-uncollected-runs">—</strong><small>Results you have not read yet</small>
             </a>
             <a class="kpi-tile" href="#/overview">
               <span>Worst usage window</span><strong id="kpi-worst-usage">—</strong><small id="kpi-worst-usage-detail">No usage windows</small>
@@ -114,12 +114,22 @@
 
         <section class="view" data-view="actions">
           <header class="page-head">
-            <h1>Action Center</h1>
-            <p>Runs waiting on you, most urgent first: questions to answer, decisions to make, results to read. Tasks, bugs and ideas live in TIM memory.</p>
+            <h1>Inbox</h1>
+            <p>Everything that waits for you: questions to answer, problems to look at, results to read.</p>
           </header>
-          <div class="segmented" id="ac-filter" role="tablist" aria-label="Show"></div>
-          <p id="ac-status" class="muted" aria-live="polite"></p>
-          <div id="ac-list"></div>
+          <div class="inbox" id="inbox">
+            <div class="inbox-list">
+              <div class="inbox-filters">
+                <div class="chips" id="ac-filter" role="group" aria-label="Show"></div>
+                <select id="ac-project" class="hidden" aria-label="Project"></select>
+              </div>
+              <p id="ac-status" class="status-line" aria-live="polite"></p>
+              <div id="ac-list"></div>
+            </div>
+            <div class="inbox-detail" id="ac-detail">
+              <p class="inbox-hint">Choose an item to read it.</p>
+            </div>
+          </div>
         </section>
 
         <section class="view" data-view="runs">
@@ -549,6 +559,19 @@
     </form>
   </dialog>
 
+  <dialog id="ac-cancel" class="launch-dialog">
+    <form method="dialog">
+      <h2>Cancel this task?</h2>
+      <p>The helper stops for good and the task leaves your inbox. This cannot be undone.</p>
+      <menu>
+        <button type="submit" value="keep" autofocus>Keep it</button>
+        <button type="submit" value="cancel" class="danger">Cancel task</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
   <dialog id="panel-editor" class="launch-dialog">
     <form id="panel-editor-form" method="dialog">
       <h2 id="panel-editor-title"></h2>
@@ -566,6 +589,7 @@
   </dialog>
 
   <script src="/i18n.js"></script>
+  <script src="/md.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

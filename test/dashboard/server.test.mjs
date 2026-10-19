@@ -982,7 +982,7 @@ test("the Team and Roles routes carry model, last run and who uses a role", () =
     }
   }));
 
-test("the page carries the roster language in <html lang>, and /i18n.js loads before app.js", () =>
+test("the page carries the roster language in <html lang>, and /i18n.js and /md.js load before app.js", () =>
   withHome(async ({ home, token }) => {
     // A bot of our own, so the communication view never imports the host's.
     const botEnv = path.join(home, "bot.env");
@@ -1003,9 +1003,12 @@ test("the page carries the roster language in <html lang>, and /i18n.js loads be
       const page = (await req(port, "/")).text;
       assert.match(page, /<html lang="de">/);
       assert.ok(page.indexOf('src="/i18n.js"') < page.indexOf('src="/app.js"'));
-      const script = await req(port, "/i18n.js");
-      assert.equal(script.status, 200);
-      assert.match(script.headers.get("content-type"), /javascript/);
+      assert.ok(page.indexOf('src="/md.js"') < page.indexOf('src="/app.js"'));
+      for (const file of ["/i18n.js", "/md.js"]) {
+        const script = await req(port, file);
+        assert.equal(script.status, 200, file);
+        assert.match(script.headers.get("content-type"), /javascript/);
+      }
       const preview = await req(port, "/api/automation/preview?schedule=0%206%20*%20*%20*", { cookie });
       assert.equal(preview.json.text, "täglich um 06:00");
       // Every route that builds text passes the roster language on.
