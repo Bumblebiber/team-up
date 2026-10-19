@@ -94,6 +94,19 @@ test("runs view counts every run and the open filter keeps uncollected ones", ()
     ["asking", "deciding", "done-open", "failed-open", "running"]);
 });
 
+test("runs view names each row's resolved project, and resolves only the rows it returns", () => {
+  const states = [
+    { runId: "clone", status: "watching", project: null, cwd: "/c/tim-x" },
+    { runId: "labelled", status: "watching", project: "P0063" },
+    { runId: "old", status: "done", project: "P1", collected: true },
+  ];
+  const asked = [];
+  const projectOf = (s) => (asked.push(s.runId), s.runId === "clone" ? { label: "P0063", name: "tim" } : null);
+  const view = buildRunsView(states, { activeOnly: true, projectOf });
+  assert.deepEqual(view.runs.map((r) => [r.runId, r.project]).sort(), [["clone", "tim"], ["labelled", "P0063"]]);
+  assert.deepEqual(asked.sort(), ["clone", "labelled"]);
+});
+
 test("joinTmuxSessions links sessions to runs and flags orphans", () => {
   const sessions = ["team-up-worker-1", "team-up-orphan", "other-session"];
   const states = [

@@ -158,10 +158,28 @@ export function resolveGitBase(cwd, timeoutMs = 5000) {
   return { base_commit, base_dirty };
 }
 
+/**
+ * The TIM label of the repo holding `dir`: the nearest `.tim-project` marker
+ * on the way up, below $HOME. A `.tim-ignore` stops the walk — that directory
+ * deliberately belongs to no project (golden-task).
+ */
+export function timProjectOf(dir, home = os.homedir()) {
+  if (!dir) return null;
+  for (let d = path.resolve(dir); d !== home && d !== path.dirname(d); d = path.dirname(d)) {
+    try {
+      const label = JSON.parse(fs.readFileSync(path.join(d, ".tim-project"), "utf8"))?.project;
+      if (typeof label === "string" && label) return label;
+    } catch { /* no marker here */ }
+    if (fs.existsSync(path.join(d, ".tim-ignore"))) return null;
+  }
+  return null;
+}
+
 export function createRun({
   cwd, project, role, parent, worker, prompt, now = new Date(),
   result_protocol,
   verify,
+  title,
 }) {
   const runId = newRunId(now);
   const attach = parent.attach || (parent.tmux ? "tmux" : "manual");
@@ -174,7 +192,9 @@ export function createRun({
     cwd,
     base_commit,
     base_dirty,
-    project: project || null,
+    // A caller that names none: the marker the clone carries, while it exists.
+    // A clone without one is resolved when it is read (dashboard run-project.mjs).
+    project: project || timProjectOf(cwd),
     role,
     status: "starting",
     _stateRevision: 0,
@@ -197,6 +217,8 @@ export function createRun({
     mailbox: "mailbox/",
   };
   if (result_protocol) state.result_protocol = result_protocol;
+  // The task in a few human words, for the dashboard's Inbox subject.
+  if (title) state.title = String(title).replace(/\s+/g, " ").trim().slice(0, 200);
   if (verify?.command?.length) {
     state.verify = {
       command: verify.command,
@@ -1374,7 +1396,7 @@ function cmdCreate(args) {
       "usage: runs.mjs create --cwd <dir> --role <role> [--parent-cli <cli> --parent-attach <mode>]"
       + " [--parent-session <id>] [--parent-tmux <name>] --worker-cli <cli>"
       + " [--worker-model <model>] [--worker-tmux <name>] --prompt-file <file> [--project <id>]"
-      + " [--verify-command <shell words>] [--verify-runs N]",
+      + " [--title <text>] [--verify-command <shell words>] [--verify-runs N]",
     );
     process.exit(1);
   }
@@ -1412,6 +1434,7 @@ function cmdCreate(args) {
     },
     prompt,
     verify,
+    title: argValue(args, "--title"),
   });
   console.log(`runId: ${state.runId}`);
   console.log(`dir: ${runDir(state.runId)}`);

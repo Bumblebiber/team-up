@@ -12,8 +12,10 @@ import { usagePath, usageWritePath, teamUpHome } from "../paths.mjs";
 import { markLimited } from "../roster/chain.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import { resetCap } from "../admission/admission.mjs";
-import { cancelRun, loadState, markCollected, setOutcome, setStatus, writeAnswer } from "../runs/runs.mjs";
+import { cancelRun, loadState, mailboxDir, markCollected, setOutcome, setStatus, writeAnswer } from "../runs/runs.mjs";
 import { isValidRunId } from "./data.mjs";
+import { answeredAfterQuestion, inboxItem, questionBlocks } from "./action-center.mjs";
+import { readSpenderLedger } from "./run-project.mjs";
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../bin/team-up.mjs");
 
@@ -48,11 +50,23 @@ export function admissionResetAction({ env = process.env } = {}) {
   return { lifted: resetCap({ env }) };
 }
 
+/**
+ * Retry of a problem — a run the observer stopped on something technical (a
+ * TUI prompt, a stall, a judge failure) and the usage-spender parked. There is
+ * nothing to decide, so the retry is an answer that says so, and the spender
+ * resumes the task in a fresh run in the next spawn window. A live run is not
+ * retried (see inboxItem): its worker would never read this, and the dashboard
+ * presses no keys.
+ */
+export const RETRY_ANSWER = "Retry: the stop was a technical problem in the worker's terminal (a prompt or a stall), "
+  + "not a decision for the human, so there is nothing to choose. Continue the task from where it stopped.";
+
 const RUN_ACTIONS = {
   cancel: (id) => cancelRun(id),
   collect: (id) => markCollected(id, { note: "collected in the dashboard" }),
-  merged: (id) => setOutcome(id, "merged", { note: "dashboard" }),
-  discarded: (id) => setOutcome(id, "discarded", { note: "dashboard" }),
+  merged: (id) => recordOutcome(id, "merged"),
+  discarded: (id) => recordOutcome(id, "discarded"),
+  retry: (id) => writeAnswer(id, RETRY_ANSWER, { source: "human (dashboard retry)" }),
   fail: (id, reason) => {
     const why = String(reason || "").replace(/[\r\n]+/g, " ").trim().slice(0, 300);
     if (!why) throw new Error("a failed run needs a reason — the insights job counts failures by it");
@@ -67,15 +81,50 @@ const RUN_ACTIONS = {
 };
 export const RUN_ACTION_NAMES = Object.keys(RUN_ACTIONS);
 
-export function runAction(runId, action, { reason } = {}) {
+/** Kept or thrown away, the result has been read: it leaves the Inbox too. An intake's own collected note stays. */
+function recordOutcome(id, value) {
+  if (!setOutcome(id, value, { note: "dashboard" }).collected) markCollected(id, { note: `dashboard: ${value}` });
+}
+
+export function runAction(runId, action, { reason, env = process.env } = {}) {
   if (!isValidRunId(runId)) throw new Error("invalid run id");
   if (!Object.hasOwn(RUN_ACTIONS, action)) throw new Error(`unknown action: ${action}`);
   const state = loadState(runId);
   if (!state) throw new Error(`unknown run ${runId}`);
   const terminal = ["done", "failed", "cancelled"].includes(state.status);
   if ((action === "cancel" || action === "fail") && terminal) throw new Error(`run is already ${state.status}`);
-  if (action === "answer" && !["waiting_human", "waiting_decision"].includes(state.status)) {
-    throw new Error(`run is no longer waiting (${state.status})`);
+  // An outcome on a running run would half-apply: recorded, but not collectable.
+  if ((action === "merged" || action === "discarded") && !terminal) throw new Error(`run is still ${state.status}`);
+  if (action === "answer" || action === "retry") {
+    const file = (name) => {
+      try {
+        const p = path.join(mailboxDir(runId), name);
+        return { text: fs.readFileSync(p, "utf8"), mtimeMs: fs.statSync(p).mtimeMs };
+      } catch {
+        return null;
+      }
+    };
+    const questions = file("QUESTIONS.md");
+    // A second send would resume a parked run twice or overwrite the first answer.
+    if (answeredAfterQuestion(questions, file("ANSWER.md"))) {
+      throw Object.assign(new Error("already answered"), { httpStatus: 409 });
+    }
+    // waiting_decision is a capacity park: an answer would knock it out of its wait.
+    if (state.status !== "waiting_human") throw new Error(`run is no longer waiting (${state.status})`);
+    // Nothing to answer on a technical stop: the run would go back on watch with nobody watching
+    // (a spender run then holds the spender's one slot), and the observer reads an answer to a
+    // credential or billing prompt as approval of it.
+    if (action === "answer" && questionBlocks(questions?.text).at(-1)?.source === "observer") {
+      throw new Error("a technical problem is retried or cancelled, not answered");
+    }
+    if (action === "retry") {
+      // The Inbox's own rule, so the button and the action never disagree.
+      const item = inboxItem(state, { read: (id, name) => file(name), ledger: readSpenderLedger(env) });
+      if (item?.kind !== "problem") throw new Error("only a technical problem can be retried; a question needs an answer");
+      if (!item.retryable) {
+        throw new Error("only a run the usage-spender parked can be retried, never one stopped on a credential or billing prompt: cancel it instead");
+      }
+    }
   }
   RUN_ACTIONS[action](runId, reason);
   return { status: loadState(runId)?.status ?? null };

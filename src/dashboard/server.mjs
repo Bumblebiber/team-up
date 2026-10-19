@@ -30,11 +30,12 @@ import {
   createProject,
 } from "./projects.mjs";
 import { buildTimView, promptClis, readOpenWork, startTaskSession } from "./tim.mjs";
-import { buildActionCenter } from "./action-center.mjs";
+import { buildActionCenter, buildActionItem, spenderWindow } from "./action-center.mjs";
+import { createProjectResolver, readSpenderLedger } from "./run-project.mjs";
 import { readTrending, trendingDir } from "./trending.mjs";
 import { buildCatalogueView, applyCatalogueToggle } from "./catalogue.mjs";
 import { buildRolesView, applyRoleEdit, modelLabel, applySpecialistAssignment } from "./roles.mjs";
-import { applySettingsEdit, buildSettingsView } from "./settings.mjs";
+import { applySettingsEdit, buildSettingsView, SPENDER_DEFAULTS } from "./settings.mjs";
 import { bringToLatest } from "../roster/latest.mjs";
 import { loadModelsStore } from "../collectors/models-store.mjs";
 import { subscriptionsFromRoster } from "../usage/usage-collect.mjs";
@@ -256,13 +257,12 @@ function heartbeatMtimes() {
   return out;
 }
 
-/** The newest block of a run's QUESTIONS.md: earlier ones were already answered. */
-function latestQuestion(runId) {
+/** A mailbox file with its mtime, for the Inbox and the job cards; null when missing or unsafe. */
+function readMailbox(runId, name, maxBytes = 256 * 1024) {
   try {
-    const raw = safeReadMailboxFile("QUESTIONS.md", runDir(runId), 16 * 1024);
-    // Only escalateRun's separator: a question's own markdown `---` stays in it.
-    const last = String(raw ?? "").split(/\n---\n\n(?=<!-- source:)/).pop();
-    return last.replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, 2000) || null;
+    const root = runDir(runId);
+    const text = safeReadMailboxFile(name, root, maxBytes);
+    return text == null ? null : { text, mtimeMs: fs.statSync(path.join(root, "mailbox", name)).mtimeMs };
   } catch {
     return null;
   }
@@ -373,6 +373,7 @@ export function createDashboardServer({
   const memo = createMemo();
   const clisMemo = createMemo(30_000);
   const timMemo = createMemo(30_000);
+  const projectsIn = createProjectResolver({ exec, env });
   const openrouterValidation = {};
   const auditedJobCompletion = new Set();
   const keyAuditAt = new Map();
@@ -457,6 +458,22 @@ export function createDashboardServer({
       return false;
     }
     return true;
+  }
+
+  /** What every Inbox read needs besides the run: mailbox, projects, the spender's ledger and window. */
+  function inboxContext(dir) {
+    const ledger = readSpenderLedger(env);
+    let roster = null;
+    try {
+      roster = loadJson(configPath(env));
+    } catch { /* a broken roster: the default window */ }
+    return {
+      read: readMailbox,
+      projectOf: projectsIn(dir, { ledger }),
+      ledger,
+      resumeWindow: spenderWindow(roster, SPENDER_DEFAULTS),
+      now: now(),
+    };
   }
 
   async function handle(req, res) {
@@ -1161,7 +1178,7 @@ export function createDashboardServer({
         let result;
         if (runActionMatch) {
           target = `${target} ${body.action}`;
-          result = runAction(decodeURIComponent(runActionMatch[1]), String(body.action || ""), { reason: body.reason });
+          result = runAction(decodeURIComponent(runActionMatch[1]), String(body.action || ""), { reason: body.reason, env });
           memo.invalidate(`run:${decodeURIComponent(runActionMatch[1])}`);
           memo.invalidate("runs:true");
           memo.invalidate("runs:false");
@@ -1184,7 +1201,7 @@ export function createDashboardServer({
         jsonResponse(res, 200, { ok: true, ...result });
       } catch (e) {
         appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
-        jsonResponse(res, 400, { error: String(e.message || e) });
+        jsonResponse(res, e.httpStatus ?? 400, { error: String(e.message || e) });
       }
       return;
     }
@@ -1390,23 +1407,30 @@ export function createDashboardServer({
     if (pathname === "/api/action-center") {
       try {
         const dir = url.searchParams.get("dir") || "";
-        const data = memo.get(`action-center:${dir}`, () => {
-          let timView;
-          try {
-            timView = buildTimView(dir, {
-              exec,
-              work: timMemo.get("open-work", () => readOpenWork({ exec })),
-            });
-          } catch {
-            // A bad collecting-folder pref must not hide the runs: they go under "Other runs".
-            timView = { installed: false };
-          }
-          return buildActionCenter({ timView, states: listAllStates(), questionOf: (runId) => latestQuestion(runId) });
-        });
+        const data = memo.get(`action-center:${dir}`, () =>
+          buildActionCenter({ states: listAllStates(), ...inboxContext(dir) }));
         jsonResponse(res, 200, sanitizeForDashboard(data));
       } catch (e) {
         jsonResponse(res, 400, { error: String(e.message || e) });
       }
+      return;
+    }
+
+    const acItemMatch = pathname.match(/^\/api\/action-center\/item\/([^/]+)$/);
+    if (acItemMatch) {
+      const runId = decodeURIComponent(acItemMatch[1]);
+      if (!isValidRunId(runId)) {
+        jsonResponse(res, 400, { error: "invalid run id" });
+        return;
+      }
+      const state = loadState(runId);
+      if (!state) {
+        jsonResponse(res, 404, { error: "run not found" });
+        return;
+      }
+      const dir = url.searchParams.get("dir") || "";
+      const data = memo.get(`action-center:item:${runId}:${dir}`, () => buildActionItem(state, inboxContext(dir)));
+      jsonResponse(res, 200, sanitizeForDashboard(data));
       return;
     }
 
@@ -1555,7 +1579,7 @@ export function createDashboardServer({
       const data = memo.get(`runs:${activeOnly}`, () => {
         const states = listAllStates();
         const heartbeats = heartbeatMtimes();
-        return buildRunsView(states, { activeOnly, heartbeats, now: ts });
+        return buildRunsView(states, { activeOnly, heartbeats, now: ts, projectOf: projectsIn("") });
       });
       jsonResponse(res, 200, data);
       return;
@@ -1583,7 +1607,7 @@ export function createDashboardServer({
         return sanitizeForDashboard({
           state,
           mailbox,
-          row: buildRunsView([state], { heartbeats, now: ts }).runs[0],
+          row: buildRunsView([state], { heartbeats, now: ts, projectOf: projectsIn("") }).runs[0],
         });
       });
       jsonResponse(res, 200, data);
@@ -1711,7 +1735,9 @@ export function createDashboardServer({
     }
 
     if (pathname === "/api/automation") {
-      jsonResponse(res, 200, buildAutomationView({ env, exec, modelOptions: cronModelOptions(loadRoster(env)) }));
+      jsonResponse(res, 200, buildAutomationView({
+        env, exec, modelOptions: cronModelOptions(loadRoster(env)), states: listAllStates(), read: readMailbox,
+      }));
       return;
     }
 

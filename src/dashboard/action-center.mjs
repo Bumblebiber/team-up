@@ -1,75 +1,217 @@
-// The Action Center: every run that waits on Benni — a question to answer, a
-// decision to make, a result nobody has read — grouped by project, most urgent
-// first. TIM entries (tasks, bugs, ideas, reviews) stay in the TIM panel.
+// The Inbox: every run that waits on Benni, one flat list like an e-mail inbox.
+// A question is a worker asking for a decision; a problem is a run stuck on
+// something technical (an observer escalation) or a run that failed; a result
+// is finished work nobody has read. waiting_decision is a capacity park, not
+// Benni's, and scheduled jobs (role cron-*) report on their job card instead.
 //
-// Pure: the server hands in the TIM view (buildTimView) and the run states.
+// Pure: the server hands in the run states and a mailbox reader,
+// `read(runId, name) → { text, mtimeMs } | null`.
 
-import path from "node:path";
 import { buildRunRow } from "./data.mjs";
 
-/** Which group an item sits in; lower is shown first. */
-export const KIND_RANK = { question: 0, decision: 1, result: 2 };
+/** Order of the kinds in the list; inside a kind the newest comes first. */
+export const KIND_RANK = { question: 0, problem: 1, result: 2 };
 
-const NO_PROJECT = { label: "-", title: "Other runs", dir: null };
+const SUBJECT_MAX = 90;
+const TASK_MAX = 4 * 1024;
+const RESULT_MAX = 64 * 1024;
 
-/**
- * A run's project: its own TIM label when it names one, else the TIM project
- * whose repo holds its cwd (worktrees inside the repo included).
- */
-function runProject(state, projects) {
-  const byLabel = projects.find((p) => p.label === state.project);
-  if (byLabel) return byLabel;
-  const cwd = String(state.cwd || "");
-  return projects.find((p) => p.dir && (cwd === p.dir || cwd.startsWith(p.dir + path.sep))) ?? NO_PROJECT;
+const isCron = (state) => String(state.role ?? "").startsWith("cron-");
+
+function clip(text, max) {
+  const s = String(text ?? "").replace(/\s+/g, " ").trim();
+  return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
 }
 
 /**
- * @param timView   buildTimView() result, or { installed: false } — only for run → project
- * @param states    every run STATE
- * @param questionOf runId → the question text a waiting run asked (or null)
+ * QUESTIONS.md as blocks, oldest first. escalateRun joins blocks with `---`
+ * before a source marker, so a question's own `---` rules stay inside it; a
+ * block without a marker is the worker's own.
  */
-export function buildActionCenter({ timView, states, questionOf = () => null, now = Date.now() }) {
-  const projects = timView?.installed ? timView.projects : [];
-  const groups = new Map();
-  const add = (project, item) => {
-    const g = groups.get(project.label)
-      ?? { label: project.label, title: String(project.title).split(/ \| | — /)[0], dir: project.dir, items: [] };
-    g.items.push(item);
-    groups.set(project.label, g);
-  };
+export function questionBlocks(raw) {
+  return String(raw ?? "").split(/\n---\n\n(?=<!-- source:)/).map((block) => ({
+    source: [...block.matchAll(/<!-- source: (\S+) -->/g)].at(-1)?.[1] ?? "worker",
+    text: block.replace(/<!--[\s\S]*?-->/g, "").trim(),
+  })).filter((b) => b.text);
+}
 
-  for (const state of states) {
-    const row = buildRunRow(state, { now });
-    const role = String(state.role ?? "run").replace(/^specialist:/, "");
-    const base = { runId: state.runId, role, worker: row.worker, age: row.age, priority: null, prank: 0 };
-    if (state.status === "waiting_human" || state.status === "waiting_decision") {
-      const kind = state.status === "waiting_human" ? "question" : "decision";
-      add(runProject(state, projects), {
-        ...base, kind, id: `run:${state.runId}`,
-        title: `${role} is waiting for ${kind === "question" ? "your answer" : "a decision"}`,
-        detail: questionOf(state.runId) || null,
-      });
-    } else if (row.uncollected) {
-      add(runProject(state, projects), {
-        ...base, kind: "result", id: `run:${state.runId}`, status: state.status,
-        // A failed run first: it is the result most likely to need a reaction.
-        prank: state.status === "failed" ? 0 : 1,
-        title: `${role} ${state.status === "failed" ? "failed" : "finished"} — result not read yet`,
-      });
-    }
+const SUBJECT_LINE = /^subject:[ \t]*(.+)$/i;
+const QUESTION_PREFIX = /^(?:frage|question|decision needed)\s*:\s*/i;
+const plain = (s) => s.replace(/\*\*|`/g, "");
+
+/** A `Subject:` first line, a first heading, the task's title, or the first sentence. */
+export function questionSubject(text, titles = []) {
+  const lines = String(text ?? "").split("\n");
+  const subject = lines[0]?.trim().match(SUBJECT_LINE)?.[1];
+  if (subject) return clip(plain(subject), SUBJECT_MAX);
+  const heading = lines.map((l) => l.match(/^#{1,6}\s+(.+)/)?.[1]).find(Boolean);
+  if (heading) return clip(plain(heading).replace(QUESTION_PREFIX, ""), SUBJECT_MAX);
+  const title = titles.find((t) => typeof t === "string" && t.trim());
+  if (title) return clip(title, SUBJECT_MAX);
+  const first = lines.map((l) => l.trim()).find(Boolean) ?? "";
+  return clip(plain(first).split(/(?<=[.?!])\s/)[0], SUBJECT_MAX);
+}
+
+/** The question without its `Subject:` line: the subject is shown as the heading. */
+const questionBody = (text) => String(text ?? "").replace(/^\s*subject:[^\n]*\n?/i, "").trim();
+
+function resultJson(state, read) {
+  try {
+    return JSON.parse(read(state.runId, "RESULT.json")?.text ?? "");
+  } catch {
+    return null;
   }
+}
 
-  const order = (a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || a.prank - b.prank;
-  const result = [...groups.values()].map((g) => {
-    g.items.sort(order);
-    g.top = g.items[0];
-    return g;
+const firstLine = (text) => String(text ?? "").split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find(Boolean) ?? null;
+
+/**
+ * One line on how a finished run ended: the worker's FAILURE.md, its RESULT
+ * summary, the first line of RESULT.md, or the reason STATE recorded.
+ * `STATUS=failed` says nothing the status does not.
+ */
+export function reasonLine(state, read) {
+  const failure = state.status === "failed" ? firstLine(read(state.runId, "FAILURE.md")?.text) : null;
+  const recorded = state.failure?.error && state.failure.error !== "STATUS=failed" ? state.failure.error : null;
+  const line = failure ?? firstLine(resultJson(state, read)?.summary) ?? firstLine(read(state.runId, "RESULT.md")?.text) ?? recorded;
+  return line ? clip(line, 300) : null;
+}
+
+/** Answered once ANSWER.md is at least as new as QUESTIONS.md — the rule of classifyMailbox. */
+export function answeredAfterQuestion(questions, answer) {
+  return Boolean(answer && questions) && answer.mtimeMs >= questions.mtimeMs;
+}
+
+/**
+ * The observer's newest escalation in OBSERVATION.log. Every escalation path
+ * logs a decision; only a deny pattern (credential or billing wording) sets
+ * its `finding`.
+ */
+export function lastEscalation(log) {
+  return String(log ?? "").split("\n").map((line) => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      return null;
+    }
+  }).filter((e) => e?.kind === "decision" && e.action === "escalate").at(-1) ?? null;
+}
+
+/** The spender's spawn window, where an answer to a parked run takes effect. */
+export function spenderWindow(roster, defaults) {
+  const hour = (v, d) => (Number.isInteger(v) && v >= 0 && v <= 23 ? v : d);
+  const knobs = roster?.usage_spender ?? {};
+  return { start: hour(knobs.spawn_from, defaults.spawn_from), end: hour(knobs.spawn_until, defaults.spawn_until) };
+}
+
+/**
+ * The inbox item of one run, or null when it waits on nobody.
+ *
+ * Retry is offered only on a technical stop of a run the usage-spender parked:
+ * the spender resumes it as a fresh run with the stop explained. A live worker
+ * stuck in a prompt never reads ANSWER.md and nothing would watch it again, and
+ * the observer reads any answer to a credential or billing prompt as the
+ * human's approval of it: those get Cancel only.
+ * @param ctx { read, projectOf, ledger, resumeWindow, now }
+ */
+export function inboxItem(state, ctx) {
+  const { read, projectOf = () => null, ledger = new Map(), resumeWindow = null, now = Date.now() } = ctx;
+  if (isCron(state)) return null;
+  const row = buildRunRow(state, { now });
+  const role = String(state.role ?? "run").replace(/^specialist:/, "");
+  const spender = ledger.get(state.runId);
+  // The project only for a listed run: resolving it can cost a git call, and most runs wait on nobody.
+  const item = (fields) => ({
+    id: `run:${state.runId}`, runId: state.runId, project: projectOf(state), worker: row.worker, role,
+    status: state.status, parked: false, resumeWindow: null, source: null, retryable: false, ...fields,
   });
-  // A project ranks by its most urgent item; ties go alphabetically.
-  result.sort((a, b) => order(a.top, b.top) || a.title.localeCompare(b.title));
-  for (const g of result) delete g.top;
+  const since = (ms) => (Number.isFinite(ms) ? now - ms : row.ageMs);
 
-  const counts = { question: 0, decision: 0, result: 0 };
-  for (const g of result) for (const i of g.items) counts[i.kind] += 1;
-  return { projects: result, counts };
+  if (state.status === "waiting_human") {
+    const questions = read(state.runId, "QUESTIONS.md");
+    // The answer is in and the run's status has not caught up yet: nothing to do here.
+    if (answeredAfterQuestion(questions, read(state.runId, "ANSWER.md"))) return null;
+    const last = questionBlocks(questions?.text).at(-1);
+    const source = last?.source === "observer" ? "observer" : "worker";
+    const denied = source === "observer" && Boolean(lastEscalation(read(state.runId, "OBSERVATION.log")?.text)?.finding);
+    // The spender stopped this run's worker; an answer resumes it in the next window.
+    const parked = Boolean(spender?.parked);
+    let subject;
+    if (denied) subject = "Needs you: a credential or billing prompt";
+    else if (source === "observer") subject = "Stuck on a technical prompt";
+    else if (last) subject = questionSubject(last.text, [state.title, spender?.title]);
+    else subject = clip(state.title || spender?.title || `${role} is waiting for your answer`, SUBJECT_MAX);
+    return item({
+      kind: source === "observer" ? "problem" : "question",
+      subject,
+      ageMs: since(questions?.mtimeMs ?? Date.parse(state.updatedAt ?? "")),
+      parked,
+      resumeWindow: parked ? resumeWindow : null,
+      source,
+      retryable: source === "observer" && !denied && parked,
+    });
+  }
+  if (!row.uncollected) return null;
+  const ageMs = since(Date.parse(state.finishedAt ?? ""));
+  if (state.status === "failed") {
+    const reason = reasonLine(state, read);
+    return item({ kind: "problem", subject: clip(reason ? `Failed: ${reason}` : "Failed", SUBJECT_MAX), ageMs });
+  }
+  const title = state.title || spender?.title;
+  return item({ kind: "result", ageMs, subject: clip(title || reasonLine(state, read) || `${role} finished`, SUBJECT_MAX) });
+}
+
+/** Every inbox item, questions first, then problems, then results; newest first inside a kind. */
+export function buildActionCenter({ states, ...ctx }) {
+  const items = states.map((s) => inboxItem(s, ctx)).filter(Boolean);
+  items.sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || (a.ageMs ?? Infinity) - (b.ageMs ?? Infinity));
+  const counts = { question: 0, problem: 0, result: 0 };
+  for (const i of items) counts[i.kind] += 1;
+  return { items, counts };
+}
+
+/** The task as the worker got it: PROMPT.md below the mailbox protocol's `## Task` heading. */
+function taskExcerpt(prompt) {
+  const text = String(prompt ?? "");
+  const at = text.search(/^## Task[ \t]*$/m);
+  const task = (at === -1 ? text : text.slice(at).replace(/^## Task[ \t]*\n/, "")).trim();
+  return task.length > TASK_MAX ? `${task.slice(0, TASK_MAX).trimEnd()}\n…` : task || null;
+}
+
+/**
+ * One item in full: the newest question untruncated, the earlier ones, the
+ * task, and the result. ANSWER.md is overwritten by every answer, so only the
+ * newest answer is known: it answers the newest question when it is newer
+ * than QUESTIONS.md, else the one before.
+ */
+export function buildActionItem(state, ctx) {
+  const { read } = ctx;
+  const item = inboxItem(state, ctx);
+  const questions = read(state.runId, "QUESTIONS.md");
+  const answer = read(state.runId, "ANSWER.md");
+  const blocks = questionBlocks(questions?.text);
+  const last = blocks.at(-1) ?? null;
+  const answerText = answer ? answer.text.replace(/<!--[\s\S]*?-->/g, "").trim() : null;
+  const answeredNow = answeredAfterQuestion(questions, answer);
+  const history = blocks.slice(0, -1).map((b) => ({ source: b.source, question: b.text, answer: null }));
+  if (answerText && !answeredNow && questions) {
+    if (history.length) history.at(-1).answer = answerText;
+    else history.push({ source: null, question: null, answer: answerText });
+  }
+  let result = null;
+  if (["done", "failed"].includes(state.status)) {
+    const markdown = read(state.runId, "RESULT.md", RESULT_MAX)?.text ?? null;
+    const summary = resultJson(state, read)?.summary ?? null;
+    if (markdown || summary) result = { summary: summary == null ? null : String(summary), markdown, reason: reasonLine(state, read) };
+  }
+  return {
+    ...(item ?? { id: `run:${state.runId}`, runId: state.runId, kind: null, status: state.status }),
+    subject: item?.subject ?? (last ? questionSubject(last.text, [state.title]) : state.title ?? null),
+    body: last ? questionBody(last.text) : null,
+    source: last?.source ?? item?.source ?? null,
+    answer: answeredNow ? answerText : null,
+    history,
+    task: taskExcerpt(read(state.runId, "PROMPT.md")?.text),
+    result,
+  };
 }

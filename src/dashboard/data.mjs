@@ -72,19 +72,23 @@ export function buildRunRow(state, { heartbeatMtimeMs = null, now = Date.now() }
   };
 }
 
-export function buildRunsView(states, { activeOnly = false, heartbeats = {}, now = Date.now() } = {}) {
-  let rows = states.map((s) =>
-    buildRunRow(s, { heartbeatMtimeMs: heartbeats[s.runId] ?? null, now }),
-  );
+/**
+ * @param projectOf state → { label, name } | null (createProjectResolver): the
+ *   row's project becomes that name — a clone's run otherwise names none.
+ */
+export function buildRunsView(states, { activeOnly = false, heartbeats = {}, now = Date.now(), projectOf = null } = {}) {
+  let pairs = states.map((s) => [s, buildRunRow(s, { heartbeatMtimeMs: heartbeats[s.runId] ?? null, now })]);
+  const all = pairs.map(([, r]) => r);
   // Counted over every run, so the overview needs no full list on each poll.
   const counts = {
-    active: rows.filter((r) => r.active).length,
-    waiting: rows.filter((r) => WAITING_HUMAN.has(r.status)).length,
-    uncollected: rows.filter((r) => r.uncollected).length,
-    failedUncollected: rows.filter((r) => r.uncollected && r.status === "failed").length,
+    active: all.filter((r) => r.active).length,
+    waiting: all.filter((r) => WAITING_HUMAN.has(r.status)).length,
+    uncollected: all.filter((r) => r.uncollected).length,
+    failedUncollected: all.filter((r) => r.uncollected && r.status === "failed").length,
   };
   // "Open" = still running or finished with nobody having read the result.
-  if (activeOnly) rows = rows.filter((r) => r.active || r.uncollected);
+  if (activeOnly) pairs = pairs.filter(([, r]) => r.active || r.uncollected);
+  const rows = pairs.map(([s, r]) => (projectOf ? { ...r, project: projectOf(s)?.name ?? r.project } : r));
   rows.sort((a, b) => (b.ageMs ?? 0) - (a.ageMs ?? 0));
   return { runs: rows, counts, now: new Date(now).toISOString() };
 }

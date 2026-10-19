@@ -304,6 +304,15 @@ def ghjson(*args):
 
 # --- task sources ---------------------------------------------------------------------------
 
+def tim_label(repo):
+    """The repo's TIM project label from its .tim-project marker, or None."""
+    try:
+        v = json.loads((Path(repo) / ".tim-project").read_text()).get("project")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return v if isinstance(v, str) and v else None  # it goes into argv: a number or list would end the tick
+
+
 def local_repos():
     """{path: {'gh': 'owner/name' or None, 'tim': 'P00xx' or None, 'last': commit ts}} under ~/projects."""
     out = {}
@@ -312,11 +321,7 @@ def local_repos():
         last = sh("git", "-C", str(p), "log", "-1", "--format=%ct").stdout.strip()
         url = sh("git", "-C", str(p), "remote", "get-url", "origin").stdout.strip()
         m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
-        tim = None
-        try:
-            tim = json.loads((p / ".tim-project").read_text()).get("project")
-        except (OSError, ValueError):
-            pass
+        tim = tim_label(p)
         gh = m.group(1) if m and m.group(1).split("/")[0] in OWNERS else None
         # Archived: its tasks are history. Unreachable: unknown this tick. Neither may fall back
         # to a triage in Benni's own checkout (archived o9k was first in line on 2026-10-14).
@@ -515,6 +520,13 @@ def spawn(a, day_dir):
             shutil.rmtree(a["clone"], ignore_errors=True)
 
 
+def task_title(a):
+    """The task in a few human words: the dashboard's Inbox shows it as the subject."""
+    if a["kind"] == "pr-review":
+        return f"Review: {a.get('title') or a.get('ref')}"
+    return a.get("title") or f"{a['kind'].replace('-', ' ').capitalize()} of {Path(a['repo']).name}"
+
+
 def _spawn(a, day_dir, text=None):
     cwd = a.get("clone") or a["repo"]
     prompt = day_dir / f"{slug(a['key'])}{'-resumed' if text else ''}.md"
@@ -522,9 +534,12 @@ def _spawn(a, day_dir, text=None):
     a["prompt"] = str(prompt)
     model = a["model"].split(":", 1)[1]
     verify = ["--verify-command", a["verify"], "--verify-runs", "1"] if a.get("verify") else []
+    # The clone's path names no project: the dashboard groups the run by the repo it came from.
+    # The title (an issue or PR title) goes last: a title spelled like a flag then shadows none.
     r = teamup("runs", "create", "--cwd", cwd, "--role", a["role"], "--worker-cli", a["cli"],
                "--worker-model", model, "--prompt-file", str(prompt),
-               "--parent-cli", "claude", "--parent-attach", "manual", *verify)
+               "--parent-cli", "claude", "--parent-attach", "manual", *verify,
+               "--project", tim_label(a["repo"]) or Path(a["repo"]).name, "--title", task_title(a))
     run_id = next((ln.split()[1] for ln in r.stdout.splitlines() if ln.startswith("runId:")), None)
     if r.returncode or not run_id:
         a.update(spawned=False, rc=r.returncode, error=f"runs create rc={r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
@@ -675,7 +690,11 @@ def host_alive(host):
     return sh("tmux", "has-session", "-t", host).returncode == 0
 
 
-def host_prompt(runs, verdicts, date, host):
+# roster.json "language": what the human reads. Everything else the host writes stays English.
+LANGUAGES = {"en": "English", "de": "German (Deutsch, informal du)"}
+
+
+def host_prompt(runs, verdicts, date, host, language="en"):
     def line(e):
         extra = [e.get("ref"), e.get("branch") and f"branch {e['branch']} in {e['clone']}",
                  e.get("pr") and f"draft PR {e['pr']}", e.get("publish"),
@@ -684,7 +703,8 @@ def host_prompt(runs, verdicts, date, host):
                 + "".join(f" — {x}" for x in extra if x))
     windows = "\n".join(f"- {k}: {v}" for k, v in verdicts.items())
     return HOST_PROMPT.format(date=date, teamup=" ".join(TEAMUP), runs="\n".join(map(line, runs)), host=host,
-                              windows=windows, telegram=TELEGRAM, label=LABEL)
+                              windows=windows, telegram=TELEGRAM, label=LABEL,
+                              language=LANGUAGES.get(language, LANGUAGES["en"]))
 
 
 def cron_model(job, default, path=CRON_JOBS):
@@ -717,11 +737,11 @@ def build_command(model, prompt):
     return json.loads(r.stdout)
 
 
-def start_host(runs, verdicts, day_dir, host, model):
+def start_host(runs, verdicts, day_dir, host, model, language="en"):
     """The chosen host CLI in detached tmux, told to follow host.md. The runs are already finished
     (later ticks reconcile them), so the host waits for nothing. Returns an error string or None."""
     prompt, settings = day_dir / f"{host}.md", day_dir / f"{host}-settings.json"
-    prompt.write_text(host_prompt(runs, verdicts, day_dir.name, host))
+    prompt.write_text(host_prompt(runs, verdicts, day_dir.name, host, language))
     settings.write_text(json.dumps({"permissions": {"allow": HOST_ALLOW}}, indent=2) + "\n")
     try:
         argv = host_argv(build_command(model, f"Read {prompt} and follow it."), model.split(":", 1)[0], settings)
@@ -769,7 +789,8 @@ def main(argv):
         host_model = cron_model("usage-spender-host", HOST_DEFAULT)
         tick["intake"] = {"tmux": host, "model": host_model, "runs": [e["run_id"] for e in intake]}
         if not dry:
-            tick["intake"]["error"] = start_host(intake, verdicts, day_dir, host, host_model)
+            tick["intake"]["error"] = start_host(intake, verdicts, day_dir, host, host_model,
+                                                 roster.get("language") or "en")
             for e in intake:
                 e["intake_host"], e["intake_tries"] = host, e.get("intake_tries", 0) + 1
 
@@ -892,6 +913,9 @@ def selftest():
                        "role": "implementer", "resume_error": "runs create rc=1: boom"}], {}, "d", "h")
     assert "(cancelled): implement on /r (codex:x, role implementer) — Benni answered its question; resume failed: " \
            "runs create rc=1: boom" in hp, hp
+    # the Telegram summary is in the roster's language; an unknown one falls back to English
+    assert "written in English" in hp and "written in German" in host_prompt([], {}, "d", "h", "de")
+    assert "written in English" in host_prompt([], {}, "d", "h", "xx")
 
     # answered parked runs: in order; rc 2 blocks that cli and tries the next, rc 3 or a spawn ends the tick;
     # a cli switched off or implement off keeps its row parked
@@ -945,6 +969,31 @@ def selftest():
         publish(e, {"verification": {"verdict": "fail"}})
         assert "fail" in e["publish"] and "pr" not in e
     assert slug("pr:o/r#9@abc") == "pr-o-r-9-abc"
+
+    # runs create names the source repo's project (marker, else its name) and the task in human words;
+    # a resume goes through _spawn too
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "tim").mkdir()
+        (d / "tim" / ".tim-project").write_text('{"project": "P0063"}')
+        seen, saved_tu = [], globals()["teamup"]
+        globals()["teamup"] = lambda *a, **k: seen.append(a) or subprocess.CompletedProcess(a, 0, "runId: R1\n", "")
+        try:
+            pr = {"key": "pr:o/r#1@x", "kind": "pr-review", "role": "reviewer", "repo": str(d / "tim"),
+                  "title": "Fix it", "cli": "claude", "model": "claude:claude-opus"}
+            _spawn(pr, d, "task")
+            _spawn({"key": "code-audit:x", "kind": "code-audit", "role": "reviewer", "repo": str(d / "x"),
+                    "cli": "codex", "model": "codex:m"}, d, "task")
+        finally:
+            globals()["teamup"] = saved_tu
+        flag = lambda argv, f: argv[argv.index(f) + 1]
+        assert (flag(seen[0], "--project"), flag(seen[0], "--title")) == ("P0063", "Review: Fix it"), seen[0]
+        assert (flag(seen[2], "--project"), flag(seen[2], "--title")) == ("x", "Code audit of x"), seen[2]
+        assert pr["spawned"] and pr["run_id"] == "R1", pr
+        assert seen[0][-2:] == ("--title", "Review: Fix it"), "a title spelled like a flag shadows nothing last"
+        (d / "n").mkdir()
+        (d / "n" / ".tim-project").write_text('{"project": 7}')
+        assert tim_label(d / "n") is None and tim_label(d / "tim") == "P0063"
 
     # host CLI from cron-jobs.ini (main 16f0f68)
     built = ["claude", "--dangerously-skip-permissions", "--model", "opus", "Read x"]

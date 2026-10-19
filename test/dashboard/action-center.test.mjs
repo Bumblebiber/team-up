@@ -1,44 +1,177 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildActionCenter } from "../../src/dashboard/action-center.mjs";
+import {
+  answeredAfterQuestion, buildActionCenter, buildActionItem, questionBlocks, questionSubject, reasonLine, spenderWindow,
+} from "../../src/dashboard/action-center.mjs";
 
 const now = Date.parse("2026-10-13T12:00:00Z");
-const tim = (id, kind, status, priority, extra = {}) =>
-  ({ id, kind, status, priority, title: id, sessions: [], prompt: "p", ...extra });
+const at = (iso) => Date.parse(iso);
 
-test("groups by project, questions first, projects ranked by their most urgent item; TIM entries stay out", () => {
-  const timView = {
-    installed: true,
-    projects: [
-      { label: "P1", title: "Alpha | long", dir: "/r/alpha", items: [
-        tim("a-idea", "idea", "new", null),
-        tim("a-low", "task", "todo", "low"),
-        tim("a-p0", "bug", "open", "P0"),
-        tim("a-busy", "task", "in_progress", "P0", { sessions: ["s"] }),
-        tim("a-review", "task", "review", "P2"),
-      ] },
-      { label: "P2", title: "Beta", dir: "/r/beta", items: [tim("b-task", "task", "todo", "P1")] },
-    ],
+// Mailbox files by run id: name → [text, mtime ISO].
+function reader(files) {
+  return (runId, name) => {
+    const f = files[runId]?.[name];
+    return f ? { text: f[0], mtimeMs: at(f[1]) } : null;
   };
-  const states = [
-    { runId: "q1", role: "specialist:reviewer", status: "waiting_human", cwd: "/r/beta/.worktrees/x" },
-    { runId: "r1", role: "writer", status: "done", project: "P1", finishedAt: "2026-10-12T00:00:00Z" },
-    { runId: "old", role: "writer", status: "done", project: "P1", finishedAt: "2026-01-01T00:00:00Z" },
-    { runId: "n1", role: "writer", status: "failed", cwd: "/elsewhere", finishedAt: "2026-10-13T00:00:00Z" },
-  ];
-  const ac = buildActionCenter({ timView, states, questionOf: (id) => (id === "q1" ? "A or B?" : null), now });
+}
 
-  assert.deepEqual(ac.projects.map((p) => p.title), ["Beta", "Other runs", "Alpha"]);
-  const beta = ac.projects[0];
-  assert.deepEqual(beta.items.map((i) => [i.kind, i.id]), [["question", "run:q1"]]);
-  assert.equal(beta.items[0].detail, "A or B?");
-  assert.equal(beta.items[0].role, "reviewer");
-  assert.deepEqual(ac.projects[2].items.map((i) => i.id),
-    ["run:r1"], "no TIM entry, review included; old results expire");
-  assert.deepEqual(ac.counts, { question: 1, decision: 0, result: 2 });
+const observerBlock = (q) => `<!-- source: observer -->\n\n${q}\n`;
+
+test("questions, then problems, then results, newest first; cron jobs and capacity parks stay out", () => {
+  const states = [
+    { runId: "q-old", role: "specialist:reviewer", status: "waiting_human", worker: { cli: "claude", model: "opus" } },
+    { runId: "q-new", role: "planner", status: "waiting_human" },
+    { runId: "stuck", role: "reviewer", status: "waiting_human" },
+    { runId: "answered", role: "planner", status: "waiting_human" },
+    { runId: "failed", role: "writer", status: "failed", finishedAt: "2026-10-13T11:00:00Z",
+      failure: { error: "STATUS=failed" } },
+    { runId: "done", role: "writer", status: "done", finishedAt: "2026-10-12T00:00:00Z", title: "Fix the login" },
+    { runId: "old", role: "writer", status: "done", finishedAt: "2026-01-01T00:00:00Z" },
+    { runId: "read", role: "writer", status: "done", finishedAt: "2026-10-13T00:00:00Z", collected: { at: "x" } },
+    { runId: "cron", role: "cron-golden-task", status: "failed", finishedAt: "2026-10-13T00:00:00Z" },
+    { runId: "cron-q", role: "cron-insights", status: "waiting_human" },
+    { runId: "capacity", role: "planner", status: "waiting_decision" },
+  ];
+  const read = reader({
+    "q-old": { "QUESTIONS.md": ["# Frage: A or B?\n\nlong text", "2026-10-11T00:00:00Z"] },
+    "q-new": { "QUESTIONS.md": ["Which store?", "2026-10-13T10:00:00Z"] },
+    stuck: { "QUESTIONS.md": [`Real question?\n\n---\n\n${observerBlock("Trust this folder?")}`, "2026-10-13T09:00:00Z"] },
+    answered: {
+      "QUESTIONS.md": ["Which store?", "2026-10-13T09:00:00Z"],
+      "ANSWER.md": ["<!-- source: human (dashboard) -->\nSQLite", "2026-10-13T09:30:00Z"],
+    },
+    failed: { "RESULT.md": ["# FAILED-PREFLIGHT: tree not clean\n\nmore", "2026-10-13T11:00:00Z"] },
+    "cron-q": { "QUESTIONS.md": ["?", "2026-10-13T09:00:00Z"] },
+  });
+  const ac = buildActionCenter({ states, read, now });
+
+  assert.deepEqual(ac.items.map((i) => [i.kind, i.runId]), [
+    ["question", "q-new"], ["question", "q-old"], ["problem", "failed"], ["problem", "stuck"], ["result", "done"],
+  ]);
+  assert.deepEqual(ac.counts, { question: 2, problem: 2, result: 1 });
+  const byId = Object.fromEntries(ac.items.map((i) => [i.runId, i]));
+  assert.deepEqual(byId["q-old"], {
+    id: "run:q-old", runId: "q-old", project: null, worker: "claude:opus", role: "reviewer", status: "waiting_human",
+    parked: false, resumeWindow: null, source: "worker", retryable: false, kind: "question", subject: "A or B?",
+    ageMs: now - at("2026-10-11T00:00:00Z"),
+  });
+  assert.equal(byId.stuck.source, "observer");
+  assert.equal(byId.stuck.subject, "Stuck on a technical prompt");
+  assert.equal(byId.failed.subject, "Failed: FAILED-PREFLIGHT: tree not clean");
+  assert.equal(byId.failed.ageMs, 3_600_000);
+  assert.equal(byId.done.subject, "Fix the login");
 });
 
-test("no TIM: runs still show up", () => {
-  const ac = buildActionCenter({ timView: { installed: false }, states: [{ runId: "q", status: "waiting_decision" }], now });
-  assert.equal(ac.projects[0].items[0].kind, "decision");
+test("subject: a Subject line, a heading without its prefix, the task title, then the first sentence", () => {
+  assert.equal(questionSubject("Subject: Keep the old login?\n# Heading"), "Keep the old login?");
+  assert.equal(questionSubject("intro\n## Decision needed: **mirror** + `staging`"), "mirror + staging");
+  assert.equal(questionSubject("Just text. More text.", [null, "From the ledger"]), "From the ledger");
+  assert.equal(questionSubject("Trust this clone and continue? It lists rules."), "Trust this clone and continue?");
+  assert.equal(questionSubject(`# ${"x".repeat(200)}`).length, 90);
+});
+
+test("question blocks: escalateRun's separator only, the last marker names the source", () => {
+  const blocks = questionBlocks(`Worker asks?\n\n---\n\ntable rule\n\n---\n\n${observerBlock("Stuck?")}`);
+  assert.deepEqual(blocks, [
+    { source: "worker", text: "Worker asks?\n\n---\n\ntable rule" },
+    { source: "observer", text: "Stuck?" },
+  ]);
+});
+
+test("parked: only a run the spender parked, since only those does it resume; the window comes from the roster", () => {
+  const window = spenderWindow({ usage_spender: { spawn_from: 22, spawn_until: 24 } }, { spawn_from: 23, spawn_until: 3 });
+  assert.deepEqual(window, { start: 22, end: 3 }, "an invalid hour keeps the default");
+  const states = ["marked", "gone", "own"].map((runId) =>
+    ({ runId, role: "implementer", status: "waiting_human", worker: { tmux: `t-${runId}` } }));
+  const ledger = new Map([
+    ["marked", { run_id: "marked", parked: "2026-10-13T00:00:00Z", title: "Ledger title" }],
+    // Its worker may be gone, but until the spender's next tick parks it, nothing would resume it.
+    ["gone", { run_id: "gone" }],
+  ]);
+  const read = () => null;
+  const items = buildActionCenter({ states, read, ledger, resumeWindow: window, now }).items;
+  const parked = Object.fromEntries(items.map((i) => [i.runId, [i.parked, i.resumeWindow]]));
+  assert.deepEqual(parked, {
+    marked: [true, window], gone: [false, null], own: [false, null],
+  }, "a run outside the ledger has nobody to resume it");
+  assert.equal(items.find((i) => i.runId === "marked").subject, "Ledger title");
+});
+
+test("retryable: only a parked run's technical stop; a credential or billing prompt and a live run get Cancel only", () => {
+  const ids = ["parked", "live", "denied", "asks"];
+  const states = ids.map((runId) => ({ runId, role: "reviewer", status: "waiting_human" }));
+  const ledger = new Map(["parked", "denied", "asks"].map((id) => [id, { run_id: id, parked: "2026-10-13T00:00:00Z" }]));
+  const log = (finding) => [
+    JSON.stringify({ kind: "decision", action: "escalate", reason: "deny pattern matched in pane", finding: "API key:" }),
+    JSON.stringify({ kind: "decision", action: "escalate", reason: "judge error", finding }),
+    JSON.stringify({ kind: "decision", proposed_action: "escalate", action: "wait", finding: null }),
+  ].join("\n");
+  const stuck = ["<!-- source: observer -->\n\nTrust this folder?", "2026-10-13T09:00:00Z"];
+  const read = reader({
+    parked: { "QUESTIONS.md": stuck, "OBSERVATION.log": [log(null), "2026-10-13T09:00:00Z"] },
+    live: { "QUESTIONS.md": stuck },
+    denied: { "QUESTIONS.md": stuck, "OBSERVATION.log": [log("Billing: add credits"), "2026-10-13T09:00:00Z"] },
+    asks: { "QUESTIONS.md": ["# A or B?", "2026-10-13T09:00:00Z"] },
+  });
+  const byId = Object.fromEntries(buildActionCenter({ states, read, ledger, now }).items.map((i) => [i.runId, i]));
+  assert.deepEqual(ids.map((id) => [byId[id].kind, byId[id].retryable]), [
+    ["problem", true], ["problem", false], ["problem", false], ["question", false],
+  ]);
+  assert.equal(byId.parked.subject, "Stuck on a technical prompt", "an earlier finding the human answered does not count");
+  assert.equal(byId.denied.subject, "Needs you: a credential or billing prompt");
+});
+
+test("the project is resolved only for a run that is listed", () => {
+  const states = [
+    { runId: "q", status: "waiting_human" },
+    { runId: "busy", status: "watching" },
+    { runId: "read", status: "done", finishedAt: "2026-10-13T00:00:00Z", collected: { at: "x" } },
+  ];
+  const asked = [];
+  const projectOf = (s) => (asked.push(s.runId), { label: null, name: "p" });
+  const ac = buildActionCenter({ states, read: () => null, projectOf, now });
+  assert.deepEqual(ac.items.map((i) => [i.runId, i.project?.name]), [["q", "p"]]);
+  assert.deepEqual(asked, ["q"]);
+});
+
+test("answered needs a question: an ANSWER.md from an earlier round answers no QUESTIONS.md that is gone", () => {
+  const f = (iso) => ({ text: "x", mtimeMs: at(iso) });
+  assert.equal(answeredAfterQuestion(null, f("2026-10-13T00:00:00Z")), false);
+  assert.equal(answeredAfterQuestion(f("2026-10-13T00:00:00Z"), f("2026-10-13T00:00:00Z")), true);
+  assert.equal(answeredAfterQuestion(f("2026-10-13T01:00:00Z"), f("2026-10-13T00:00:00Z")), false);
+});
+
+test("reason line: FAILURE.md, RESULT summary, RESULT.md, recorded reason; never the bare STATUS=failed", () => {
+  const state = { runId: "r", status: "failed", failure: { error: "STATUS=failed" } };
+  assert.equal(reasonLine(state, () => null), null);
+  assert.equal(reasonLine({ ...state, failure: { error: "verify failed" } }, () => null), "verify failed");
+  assert.equal(reasonLine(state, reader({ r: { "RESULT.json": ['{"summary":"tests red\\nmore"}', "2026-10-13T00:00:00Z"] } })), "tests red");
+  assert.equal(reasonLine(state, reader({ r: {
+    "FAILURE.md": ["\nworker gave up\n", "2026-10-13T00:00:00Z"], "RESULT.md": ["# other", "2026-10-13T00:00:00Z"],
+  } })), "worker gave up");
+});
+
+test("item detail: the whole newest question, the earlier one with its answer, the task, the result", () => {
+  const long = `Subject: Pick a topology\n\n${"option text ".repeat(400)}END`;
+  const prompt = "# Worker task (mailbox protocol)\n\nprotocol…\n\n## Task\nReview PR #2.\n\n## PR\nbody";
+  const read = reader({
+    w: {
+      "QUESTIONS.md": [`First question?\n\n---\n\n<!-- source: worker -->\n\n${long}`, "2026-10-13T10:00:00Z"],
+      "ANSWER.md": ["<!-- source: human (dashboard) -->\nUse B.\n", "2026-10-13T09:00:00Z"],
+      "PROMPT.md": [prompt, "2026-10-13T08:00:00Z"],
+    },
+    d: { "RESULT.md": ["# Done\n\nall green", "2026-10-13T08:00:00Z"], "PROMPT.md": ["bare task", "2026-10-13T08:00:00Z"] },
+  });
+  const item = buildActionItem({ runId: "w", role: "planner", status: "waiting_human" }, { read, now });
+  assert.equal(item.kind, "question");
+  assert.equal(item.subject, "Pick a topology");
+  assert.ok(item.body.endsWith("END") && item.body.length > 4000 && !item.body.startsWith("Subject:"), item.body.slice(0, 40));
+  assert.deepEqual(item.history, [{ source: "worker", question: "First question?", answer: "Use B." }]);
+  assert.equal(item.answer, null);
+  assert.equal(item.task, "Review PR #2.\n\n## PR\nbody");
+
+  const done = buildActionItem({ runId: "d", role: "writer", status: "done", finishedAt: "2026-10-13T08:00:00Z" }, { read, now });
+  assert.equal(done.kind, "result");
+  assert.deepEqual(done.result, { summary: null, markdown: "# Done\n\nall green", reason: "Done" });
+  assert.equal(done.task, "bare task");
 });

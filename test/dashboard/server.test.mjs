@@ -837,56 +837,71 @@ test("claude sessions: the socket stays server-side, stop is audited, long text 
   }));
 
 // A run left waiting on a human, one QUESTIONS.md block per question, the way
-// escalateRun appends them.
+// escalateRun appends them — as the worker's own questions.
 function waitingRun(...questions) {
   const { runId } = createRun({
     cwd: "/tmp", role: "planner", parent: { cli: "claude", attach: "manual" }, worker: { cli: "claude" }, prompt: "p",
   });
-  for (const q of questions) escalateRun(runId, q);
+  for (const q of questions) escalateRun(runId, q, { source: "worker" });
   return runId;
 }
-const acItem = (r, runId) => r.json.projects.flatMap((p) => p.items).find((i) => i.runId === runId);
+const acItem = (r, runId) => r.json.items.find((i) => i.runId === runId);
 
-test("action center shows the whole newest question, its own --- rules included", () =>
+test("inbox: a one-line subject in the list, the whole newest question in the item, its own --- rules included", () =>
   withHome(async ({ token }) => {
-    const runId = waitingRun("Old, answered question?", "Which store?\n\n---\n\n1. Postgres\n2. SQLite");
+    const long = `Which store?\n\n---\n\n1. Postgres\n2. SQLite\n\n${"Consequences. ".repeat(300)}END`;
+    const runId = waitingRun("Old, answered question?", long);
     const { server } = createDashboardServer({ token, exec: () => "" });
     const port = await listen(server);
     try {
-      const r = await req(port, "/api/action-center", { token });
-      assert.equal(acItem(r, runId).detail, "Which store?\n\n---\n\n1. Postgres\n2. SQLite");
+      const list = await req(port, "/api/action-center", { token });
+      assert.deepEqual(list.json.counts, { question: 1, problem: 0, result: 0 });
+      assert.equal(acItem(list, runId).subject, "Which store?");
+      const item = await req(port, `/api/action-center/item/${runId}`, { token });
+      assert.equal(item.status, 200, item.text);
+      assert.equal(item.json.body, long);
+      assert.deepEqual(item.json.history.map((h) => h.question), ["Old, answered question?"]);
+      assert.equal((await req(port, "/api/action-center/item/..%2Fetc", { token })).status, 400);
+      assert.equal((await req(port, "/api/action-center/item/not-a-run-id", { token })).status, 400, "the route's own id check");
+      assert.equal((await req(port, "/api/action-center/item/20200101T000000Z-none", { token })).status, 404);
     } finally {
       server.close();
     }
   }));
 
-test("an answered question leaves the action center at once, not after the memo expires", () =>
+test("an answered question leaves the inbox at once; a second answer is refused, not sent twice", () =>
   withHome(async ({ token }) => {
     const runId = waitingRun("Which store?");
     const { server } = createDashboardServer({ token, exec: () => "" });
     const port = await listen(server);
+    const answer = (reason) => req(port, `/api/runs/${runId}/action`, {
+      method: "POST", token, csrf: true, body: { action: "answer", reason },
+    });
     try {
       assert.ok(acItem(await req(port, "/api/action-center", { token }), runId));
-      const answer = await req(port, `/api/runs/${runId}/action`, {
-        method: "POST", token, csrf: true, body: { action: "answer", reason: "SQLite" },
-      });
-      assert.equal(answer.status, 200, answer.text);
+      const first = await answer("SQLite");
+      assert.equal(first.status, 200, first.text);
       assert.equal(acItem(await req(port, "/api/action-center", { token }), runId), undefined);
+      const second = await answer("Postgres");
+      assert.equal(second.status, 409);
+      assert.equal(second.json.error, "already answered");
+      assert.equal((await req(port, `/api/action-center/item/${runId}`, { token })).json.answer, "SQLite");
     } finally {
       server.close();
     }
   }));
 
-test("a bad collecting folder still lists waiting runs, under Other runs", () =>
+test("a bad collecting folder still lists waiting runs; runs carry a project name", () =>
   withHome(async ({ token }) => {
     const runId = waitingRun("Which store?");
-    // TIM answers, so the view gets as far as resolving the folder.
-    const { server } = createDashboardServer({ token, exec: () => JSON.stringify({ items: [], projects: [] }) });
+    const { server } = createDashboardServer({ token, exec: () => "" });
     const port = await listen(server);
     try {
       const r = await req(port, "/api/action-center?dir=not-absolute", { token });
       assert.equal(r.status, 200, r.text);
-      assert.equal(r.json.projects.find((p) => p.items.some((i) => i.runId === runId))?.title, "Other runs");
+      assert.deepEqual(acItem(r, runId).project, { label: null, name: "tmp" });
+      const runs = await req(port, "/api/runs", { token });
+      assert.equal(runs.json.runs.find((row) => row.runId === runId).project, "tmp");
     } finally {
       server.close();
     }
