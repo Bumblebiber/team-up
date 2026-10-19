@@ -68,9 +68,10 @@ function updateDashboardMetrics() {
 
   const runsTone = waiting || failed ? "red" : "";
   const runsBadge = active ? String(active) : failed ? "!" : "";
-  updateNavBadge("badge-runs", runsBadge, runsTone, Boolean(runsBadge),
-    [waiting ? `${waiting} waiting on the human` : "", failed ? `${failed} failed, not collected` : ""]
-      .filter(Boolean).join("; "));
+  updateNavBadge("badge-runs", runsBadge, runsTone, Boolean(runsBadge), [
+    waiting ? tp(waiting, { one: "{n} run waiting for you", other: "{n} runs waiting for you" }) : "",
+    failed ? tp(failed, { one: "{n} failed run not read yet", other: "{n} failed runs not read yet" }) : "",
+  ].filter(Boolean).join(" · "));
 
   const windows = Object.entries(dashboardMetrics.usage?.windows || {})
     .filter(([, window]) => typeof window.usedPct === "number")
@@ -97,7 +98,7 @@ function updateDashboardMetrics() {
   $("#kpi-tim-tile").classList.toggle("hidden", !installed);
   $("#kpi-tim-tasks").textContent = String(p1p2);
   updateNavBadge("badge-tim", p1p2 ? String(p1p2) : "", "", p1p2 > 0,
-    p1p2 ? `${p1p2} open high-priority TIM tasks` : "");
+    p1p2 ? tp(p1p2, { one: "{n} open high-priority TIM task", other: "{n} open high-priority TIM tasks" }) : "");
 }
 
 async function api(path, opts = {}) {
@@ -142,7 +143,7 @@ $("#login-form").addEventListener("submit", async (e) => {
       body: JSON.stringify({ token }),
     });
     if (!res.ok) {
-      errEl.textContent = "Invalid token";
+      errEl.textContent = t("This access key is not valid.");
       errEl.classList.remove("hidden");
       return;
     }
@@ -151,7 +152,7 @@ $("#login-form").addEventListener("submit", async (e) => {
     showApp();
     startPolling();
   } catch {
-    errEl.textContent = "Login failed";
+    errEl.textContent = t("Could not sign in. Try again.");
     errEl.classList.remove("hidden");
   }
 });
@@ -194,20 +195,6 @@ function confirmDialog({ title, text, yes, no = t("Cancel") }) {
   });
 }
 
-function fmtTime(iso) {
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return iso || "—";
-  const d = new Date(ms);
-  const p2 = (n) => String(n).padStart(2, "0");
-  const time = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
-  const today = new Date();
-  const sameDay = d.getFullYear() === today.getFullYear()
-    && d.getMonth() === today.getMonth()
-    && d.getDate() === today.getDate();
-  if (sameDay) return time;
-  return `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()} - ${time}`;
-}
-
 // Brand colours live in app.css; this only decides which one a string earns.
 // Last match wins, so "cursor:grok-4.5-high" is xAI and "hermes:deepseek-v4-pro"
 // is DeepSeek — the model says more than the CLI that runs it.
@@ -240,9 +227,8 @@ function providerAttr(...hints) {
 }
 
 function levelBadge(level) {
-  if (level === "red") return '<span class="badge red">RED</span>';
-  if (level === "amber") return '<span class="badge amber">WARN</span>';
-  return '<span class="badge ok">OK</span>';
+  const tone = level === "red" ? "red" : level === "amber" ? "amber" : "ok";
+  return `<span class="badge ${tone}">${esc(usageLevelName(tone))}</span>`;
 }
 
 /**
@@ -255,7 +241,10 @@ function collectorBadge(key, collector, stale) {
   // "FIX IT" would dispatch a repair agent that cannot log in for you.
   if (collector?.auth_failure) {
     const n = collector.auth_failure_streak;
-    return ` <span class="badge red" title="collector could not authenticate${n > 1 ? ` (${n}x in a row)` : ""} — re-login at the CLI">LOGIN FAILED</span>`;
+    const cli = key.split(":")[0];
+    const title = n > 1 ? t("The usage reader could not sign in, {n} times in a row: sign in to {cli} again.", { n, cli })
+      : t("The usage reader could not sign in: sign in to {cli} again.", { cli });
+    return ` <span class="badge red" title="${esc(title)}">${esc(t("Sign-in failed"))}</span>`;
   }
   return stale ? staleBadge(key, collector) : "";
 }
@@ -263,11 +252,11 @@ function collectorBadge(key, collector, stale) {
 function staleBadge(key, collector) {
   const cli = key.split(":")[0];
   const reason = collector?.last_reason;
-  const title = reason ? ` title="last collector failure: ${esc(reason)}"` : "";
+  const title = reason ? ` title="${esc(t("Last reading failed: {reason}", { reason }))}"` : "";
   if (collector?.repair?.running) {
-    return ` <button class="badge stale" data-repair-session="${esc(collector.repair.session)}"${title}>FIXING…</button>`;
+    return ` <button class="badge stale" data-repair-session="${esc(collector.repair.session)}"${title}>${esc(t("Being fixed…"))}</button>`;
   }
-  return ` <button class="badge stale" data-repair="${esc(cli)}"${title}>STALE · FIX IT</button>`;
+  return ` <button class="badge stale" data-repair="${esc(cli)}"${title}>${esc(t("Out of date · fix it"))}</button>`;
 }
 
 /** Derived from /api/usage, so a reload shows the same thing. */
@@ -277,23 +266,24 @@ function repairStatusLine(collectors = {}) {
   // usage.json at all, and then no row exists to carry the warning.
   const dead = entries.filter(([, c]) => c?.suggest_disable).map(([cli]) => cli);
   if (dead.length) {
-    const today = new Date().toISOString().slice(0, 10);
-    return dead.map((cli) =>
-      `⚠ ${cli}: login failed ${collectors[cli].auth_failure_streak}x in a row. If the subscription is gone, set accounts.${cli} in ~/.team-up/roster.json to "enabled": false with "$comment": "${cli} sub dead ${today}. Flip enabled:true to bring the chain entries back." — nothing is switched automatically.`,
-    ).join(" ");
+    return dead.map((cli) => t("⚠ {cli}: sign-in failed {n} times in a row. If the subscription is gone, switch the account off under Settings → Accounts; nothing is switched off by itself.",
+      { cli, n: collectors[cli].auth_failure_streak })).join(" ");
   }
   const running = entries.filter(([, c]) => c?.repair?.running).map(([cli]) => cli);
   if (running.length) {
-    return `⟳ updating usage limits for ${running.join(", ")} — this widget refreshes itself every 5s`;
+    return t("⟳ Fixing the usage reading for {clis}. This panel updates itself.", { clis: new Intl.ListFormat(LANG, { type: "conjunction" }).format(running) });
   }
   const DAY = 24 * 3600 * 1000;
   const reported = entries.filter(([, c]) =>
     c?.repair?.report && Date.now() - Date.parse(c.repair.started_at || 0) < DAY);
   if (reported.length) {
-    return `last repair wrote ~/.team-up/usage-repair-${reported[0][0]}.report.md`;
+    return t("The last repair wrote a report: {file}", { file: `~/.team-up/usage-repair-${reported[0][0]}.report.md` });
   }
   return "";
 }
+
+/** A header cell under its English key: saved hidden columns (tagColumns) stay hidden in every language. */
+const th = (key, label) => `<th data-col-key="${esc(key)}">${esc(label)}</th>`;
 
 async function refreshRuns() {
   const data = await api(`/api/runs?active=${$("#active-only").checked ? "1" : "0"}`);
@@ -315,8 +305,9 @@ async function refreshRuns() {
       <td>${esc(r.heartbeatAge || "—")}</td>
     </tr>`).join("");
   $("#runs-table").innerHTML = `<table>
-    <thead><tr><th>Run</th><th>Role</th><th>Status</th><th>Worker</th><th>Project</th><th>CWD</th><th>Age</th><th>HB</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="8">No runs</td></tr>'}</tbody></table>`;
+    <thead><tr>${th("Run", t("Run"))}${th("Role", t("Role"))}${th("Status", t("Status"))}${th("Worker", t("Worker"))}${
+      th("Project", t("Project"))}${th("CWD", t("Folder"))}${th("Age", t("Age"))}${th("HB", t("Last sign of life"))}</tr></thead>
+    <tbody>${rows || `<tr><td colspan="8">${esc(t("No runs"))}</td></tr>`}</tbody></table>`;
   $("#runs-table").querySelectorAll("tr[data-run]").forEach((tr) => {
     tr.addEventListener("click", () => selectRun(tr.dataset.run));
   });
@@ -324,11 +315,11 @@ async function refreshRuns() {
 }
 
 const RUN_BUTTONS = [
-  { action: "cancel", label: "Cancel", when: (s) => !TERMINAL_RUN.has(s), title: "Mark cancelled and stop the worker's terminal" },
-  { action: "fail", label: "Mark failed…", when: (s) => !TERMINAL_RUN.has(s), title: "With a reason — the insights job counts failures by reason" },
-  { action: "collect", label: "Mark collected", when: (s, r) => TERMINAL_RUN.has(s) && !r.collected, title: "You have read the result; it leaves the open list" },
-  { action: "merged", label: "Outcome: merged", when: (s, r) => TERMINAL_RUN.has(s) && !r.outcome, title: "The work landed" },
-  { action: "discarded", label: "Outcome: discarded", when: (s, r) => TERMINAL_RUN.has(s) && !r.outcome, title: "The work was not kept" },
+  { action: "cancel", label: t("Cancel run"), when: (s) => !TERMINAL_RUN.has(s), title: t("Mark it cancelled and stop the worker's terminal") },
+  { action: "fail", label: t("Mark failed…"), when: (s) => !TERMINAL_RUN.has(s), title: t("With a reason: the insights job counts failures by reason") },
+  { action: "collect", label: t("Mark as read"), when: (s, r) => TERMINAL_RUN.has(s) && !r.collected, title: t("You have read the result; it leaves the open list") },
+  { action: "merged", label: t("Outcome: merged"), when: (s, r) => TERMINAL_RUN.has(s) && !r.outcome, title: t("The work landed") },
+  { action: "discarded", label: t("Outcome: discarded"), when: (s, r) => TERMINAL_RUN.has(s) && !r.outcome, title: t("The work was not kept") },
 ];
 const TERMINAL_RUN = new Set(["done", "failed", "cancelled"]);
 
@@ -336,8 +327,8 @@ function renderRunActions(runId, state) {
   const el = $("#run-actions");
   const status = state?.status || "unknown";
   const buttons = RUN_BUTTONS.filter((b) => b.when(status, state || {}));
-  el.innerHTML = `<strong><code>${esc(runId.slice(-8))}</code> · ${esc(status)}${state?.collected ? " · collected" : ""}${
-    state?.outcome?.value ? ` · ${esc(state.outcome.value)}` : ""}</strong>${buttons.map((b) =>
+  el.innerHTML = `<strong><code>${esc(runId.slice(-8))}</code> · <span translate="no">${esc(status)}</span>${state?.collected ? ` · ${esc(t("read"))}` : ""}${
+    state?.outcome?.value ? ` · <span translate="no">${esc(state.outcome.value)}</span>` : ""}</strong>${buttons.map((b) =>
     `<button type="button" data-run-action="${b.action}" title="${esc(b.title)}"${b.action === "cancel" || b.action === "fail" ? ' class="danger"' : ""}>${esc(b.label)}</button>`).join("")}`;
   el.dataset.run = runId;
   el.classList.remove("hidden");
@@ -350,16 +341,16 @@ $("#run-actions").addEventListener("click", async (e) => {
   const action = btn.dataset.runAction;
   let reason;
   if (action === "fail") {
-    reason = prompt("Why did this run fail? (one line)");
+    reason = prompt(t("Why did this run fail? (one line)"));
     if (!reason) return;
-  } else if (action === "cancel" && !confirm("Cancel this run and stop its worker?")) {
+  } else if (action === "cancel" && !confirm(t("Cancel this run and stop its worker?"))) {
     return;
   }
   btn.disabled = true;
   try {
     await api(`/api/runs/${encodeURIComponent(runId)}/action`, { method: "POST", body: JSON.stringify({ action, reason }) });
   } catch (err) {
-    alert(`refused: ${err.message}`);
+    alert(t("Refused: {error}", { error: err.message }));
   }
   await refreshRuns();
 });
@@ -374,7 +365,7 @@ async function selectRun(runId) {
   if (data.mailbox?.["PROMPT.md"]) parts.push(`=== PROMPT.md ===\n${data.mailbox["PROMPT.md"]}`);
   if (data.mailbox?.["RESULT.md"]) parts.push(`=== RESULT.md ===\n${data.mailbox["RESULT.md"]}`);
   const el = $("#run-detail");
-  el.textContent = parts.join("\n\n") || "No mailbox files";
+  el.textContent = parts.join("\n\n") || t("No mailbox files");
   el.classList.remove("hidden");
 }
 
@@ -388,8 +379,8 @@ async function refreshTmux() {
       <td>${esc(s.status || "—")}</td>
     </tr>`).join("");
   $("#tmux-table").innerHTML = `<table>
-    <thead><tr><th>Session</th><th>Run</th><th>Role</th><th>Status</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="4">No sessions</td></tr>'}</tbody></table>`;
+    <thead><tr>${th("Session", t("Session"))}${th("Run", t("Run"))}${th("Role", t("Role"))}${th("Status", t("Status"))}</tr></thead>
+    <tbody>${rows || `<tr><td colspan="4">${esc(t("No sessions"))}</td></tr>`}</tbody></table>`;
   $("#tmux-table").querySelectorAll("tr[data-session]").forEach((tr) => {
     tr.addEventListener("click", () => selectSession(tr.dataset.session));
   });
@@ -399,24 +390,25 @@ async function refreshClaudeSessions() {
   const data = await api("/api/claude-sessions");
   const home = /^\/home\/[^/]+/;
   const rows = data.sessions.map((s) => {
-    const where = s.tmux ? `tmux ${s.tmux}` : s.entrypoint === "claude-desktop" ? "desktop" : (s.entrypoint || "—");
+    const where = s.tmux ? `tmux ${s.tmux}` : s.entrypoint === "claude-desktop" ? t("desktop app") : (s.entrypoint || "—");
     // A session in tmux has a real keyboard in the terminal overlay; the
     // message inbox is only for the ones without one.
     const steer = s.tmux
-      ? `<button type="button" data-claude-open="${esc(s.tmux)}">Terminal</button>`
-      : s.canMessage ? `<button type="button" data-claude-message>Message</button>` : "";
+      ? `<button type="button" data-claude-open="${esc(s.tmux)}">${esc(t("Terminal"))}</button>`
+      : s.canMessage ? `<button type="button" data-claude-message>${esc(t("Message"))}</button>` : "";
     return `<tr data-pid="${s.pid}" data-name="${esc(s.name || "")}" data-status="${esc(s.status || "")}">
       <td>${esc(s.name || "—")}</td>
       <td>${esc(where)}</td>
       <td>${esc(s.status || "—")}</td>
       <td title="${esc(s.cwd || "")}">${esc((s.cwd || "—").replace(home, "~"))}</td>
-      <td>${s.updatedAt ? esc(fmtTime(new Date(s.updatedAt).toISOString())) : "—"}</td>
-      <td class="row-actions">${steer} <button type="button" data-claude-stop class="danger">Stop</button></td>
+      <td>${s.updatedAt ? esc(fmtDateTime(new Date(s.updatedAt).toISOString())) : "—"}</td>
+      <td class="row-actions">${steer} <button type="button" data-claude-stop class="danger">${esc(t("Stop"))}</button></td>
     </tr>`;
   }).join("");
   $("#claude-table").innerHTML = `<table>
-    <thead><tr><th>Name</th><th>Where</th><th>Status</th><th>CWD</th><th>Last active</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="6">No sessions</td></tr>'}</tbody></table>`;
+    <thead><tr>${th("Name", t("Name"))}${th("Where", t("Where"))}${th("Status", t("Status"))}${th("CWD", t("Folder"))}${
+      th("Last active", t("Last active"))}<th></th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="6">${esc(t("No sessions"))}</td></tr>`}</tbody></table>`;
 }
 
 $("#claude-table").addEventListener("click", async (e) => {
@@ -427,14 +419,16 @@ $("#claude-table").addEventListener("click", async (e) => {
     selectSession(btn.dataset.claudeOpen);
     return;
   }
-  const label = `${tr.dataset.name || "this session"} (pid ${tr.dataset.pid})`;
+  const who = { name: tr.dataset.name || t("this session"), pid: tr.dataset.pid };
   try {
     if (btn.dataset.claudeStop !== undefined) {
-      const busy = tr.dataset.status === "busy" ? "\n\nIt is working right now: the running turn is cut off." : "";
-      if (!confirm(`Stop ${label}?${busy}\n\nThe conversation is kept and can be resumed.`)) return;
+      const ask = [t("Stop {name} (pid {pid})?", who),
+        tr.dataset.status === "busy" ? t("It is working right now: the running turn is cut off.") : "",
+        t("The conversation is kept and can be resumed.")];
+      if (!confirm(ask.filter(Boolean).join("\n\n"))) return;
       await api(`/api/claude-sessions/${tr.dataset.pid}/stop`, { method: "POST", body: "{}" });
     } else if (btn.dataset.claudeMessage !== undefined) {
-      const text = prompt(`Message to ${label}:\n\nIt arrives as a note from another session.`);
+      const text = prompt(`${t("Message to {name} (pid {pid}):", who)}\n\n${t("It arrives as a note from another session.")}`);
       if (!text?.trim()) return;
       await api(`/api/claude-sessions/${tr.dataset.pid}/message`, {
         method: "POST",
@@ -443,7 +437,7 @@ $("#claude-table").addEventListener("click", async (e) => {
     }
     await refreshClaudeSessions();
   } catch (err) {
-    alert(err.message);
+    alert(t("That did not work: {error}", { error: err.message }));
   }
 });
 
@@ -474,7 +468,7 @@ async function sendKey(body) {
     });
     await refreshPane();
   } catch (err) {
-    $("#term-state").textContent = err.message;
+    $("#term-state").textContent = t("That did not work: {error}", { error: err.message });
   }
 }
 
@@ -484,10 +478,10 @@ async function refreshPane() {
     const data = await api(`/api/tmux/${encodeURIComponent(selectedSession)}/pane`);
     // Trailing blank lines are the unused rest of the pane; they push the
     // prompt off the top of a scrolled screen for no reason.
-    $("#pane-output").textContent = (data.pane || "").replace(/\s+$/, "") || "(empty)";
+    $("#pane-output").textContent = (data.pane || "").replace(/\s+$/, "") || t("(empty)");
     $("#term-state").textContent = "";
   } catch {
-    $("#term-state").textContent = "session gone";
+    $("#term-state").textContent = t("The session has ended.");
     closeTerm();
   }
 }
@@ -552,17 +546,17 @@ async function refreshUsage() {
       <div class="bar"><span style="width:${w.usedPct != null ? Math.min(100, w.usedPct) : 0}%"></span></div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
       <div>${levelBadge(w.level)}${collectorBadge(key, data.collectors?.[key.split(":")[0]], w.stale)}</div>
-      <div class="marked-item">↻ ${esc(w.resets_at ? fmtTime(w.resets_at) : "—")}</div>
+      <div class="marked-item">${w.resets_at ? esc(t("Resets {when}", { when: fmtDateTime(w.resets_at) })) : "—"}</div>
     </div>`).join("");
-  $("#usage-grid").innerHTML = rows || "<p>No usage data</p>";
+  $("#usage-grid").innerHTML = rows || `<p>${esc(t("No usage readings yet"))}</p>`;
   const status = repairStatusLine(data.collectors);
   const statusEl = $("#usage-repair-status");
   statusEl.textContent = status;
   statusEl.classList.toggle("hidden", !status);
   $("#marked-list").innerHTML = data.marked.length
-    ? `<h3>Marked as limited</h3>${data.marked.map((m) => `<div class="marked-item">
-        <strong>${esc(m.key)}</strong> until ${esc(fmtTime(m.until))}${m.reason ? ` · ${esc(m.reason)}` : ""}
-        <button type="button" class="link" data-clear-mark="${esc(m.key)}">Lift now</button></div>`).join("")}`
+    ? `<h3>${esc(t("Marked as limited"))}</h3>${data.marked.map((m) => `<div class="marked-item">
+        ${withNames(t("{target} is limited until {when}.", { when: fmtDateTime(m.until) }), { target: m.key })}${m.reason ? ` · <span translate="no">${esc(m.reason)}</span>` : ""}
+        <button type="button" class="link" data-clear-mark="${esc(m.key)}">${esc(t("Lift now"))}</button></div>`).join("")}`
     : "";
   const select = $("#mark-target");
   const targets = data.mark_targets || [];
@@ -582,7 +576,7 @@ $("#marked-list").addEventListener("click", async (e) => {
   try {
     await api("/api/actions/clear-mark", { method: "POST", body: JSON.stringify({ target: btn.dataset.clearMark }) });
   } catch (err) {
-    alert(`could not lift the mark: ${err.message}`);
+    alert(t("Could not lift the mark: {error}", { error: err.message }));
   }
   await refreshUsage();
 });
@@ -593,10 +587,10 @@ $("#mark-form").addEventListener("submit", async (e) => {
   const body = { target: $("#mark-target").value, hours: Number($("#mark-hours").value), reason: $("#mark-reason").value };
   try {
     const res = await api("/api/actions/mark-limited", { method: "POST", body: JSON.stringify(body) });
-    status.textContent = `${body.target} is out of every chain until ${fmtTime(res.until)}.`;
+    status.textContent = t("{target} is out of every chain until {when}.", { target: body.target, when: fmtDateTime(res.until) });
     $("#mark-reason").value = "";
   } catch (err) {
-    status.textContent = `refused: ${err.message}`;
+    status.textContent = t("Refused: {error}", { error: err.message });
   }
   await refreshUsage();
 });
@@ -612,7 +606,7 @@ $("#usage-grid").addEventListener("click", async (e) => {
   }
   const cli = btn.dataset.repair;
   btn.disabled = true;
-  btn.textContent = "starting…";
+  btn.textContent = t("Starting…");
   try {
     const res = await api(`/api/usage/${encodeURIComponent(cli)}/repair`, {
       method: "POST",
@@ -623,8 +617,8 @@ $("#usage-grid").addEventListener("click", async (e) => {
     void res;
   } catch (err) {
     btn.disabled = false;
-    btn.textContent = "STALE · FIX IT";
-    alert(`repair failed to start: ${err.message}`);
+    btn.textContent = t("Out of date · fix it");
+    alert(t("The repair did not start: {error}", { error: err.message }));
   }
   await refreshUsage();
 });
@@ -644,27 +638,28 @@ let rolesKeyDrawn = "";
 let rolesSaving = false;
 
 const CELL_STATE = {
-  gone: ["red", "gone — the CLI no longer offers it"],
-  missing: ["red", "not in the roster's models"],
-  unknown: ["", "no fresh scan of this CLI — availability unknown"],
+  gone: ["red", t("gone: the CLI no longer offers it")],
+  missing: ["red", t("not in the roster's models")],
+  unknown: ["", t("no fresh scan of this CLI: availability unknown")],
 };
 
 function chainChip(c, i, r) {
-  if (c.invalid) return `<span class="chip missing" title="${esc(c.invalid)}">invalid</span>`;
+  if (c.invalid) return `<span class="chip missing" title="${esc(c.invalid)}">${esc(t("invalid"))}</span>`;
   const [cls, why] = c.state === "gone" && !c.newest
-    ? ["red", "gone — the CLI no longer offers it and no newer version of this model exists. Delete it from the chain or pick another model"]
+    ? ["red", t("gone: the CLI no longer offers it and no newer version of this model exists. Delete it from the chain or pick another model.")]
     : CELL_STATE[c.state] || ["", ""];
   // pick walks the chain in order and records one skip per entry it passes,
   // so skipped[i] belongs to chain[i] and the pick sits right after them.
   const skip = i < r.skipped.length ? r.skipped[i].reason : "";
   const now = r.pick && i === r.skipped.length;
-  const notes = [now ? "pick now" : "", skip ? `skipped now: ${skip}` : "", why, c.newest ? `newer: ${c.newest}` : "",
-    c.pinned ? "version pinned" : "", c.effort ? `effort ${c.effort}` : "", c.fast ? "fast (more quota)" : ""].filter(Boolean).join(" · ");
+  const notes = [now ? t("picked now") : "", skip ? t("skipped now: {reason}", { reason: skip }) : "", why,
+    c.newest ? t("newer: {model}", { model: c.newest }) : "", c.pinned ? t("version pinned") : "",
+    c.effort ? t("effort {effort}", { effort: c.effort }) : "", c.fast ? t("fast (more quota)") : ""].filter(Boolean).join(" · ");
   const movable = !r.chain.some((x) => x.invalid);
   return `<span class="chip chain-chip ${cls}${now ? " is-pick" : ""}${skip ? " is-skipped" : ""}"${providerAttr(c.cli, c.model)}${
-    movable ? ` draggable="true" data-index="${i}"` : ""} title="${esc(`${c.cli}:${c.model}${notes ? ` — ${notes}` : ""}${movable ? "\nDouble-click to change CLI, model or effort" : ""}`)}">${
+    movable ? ` draggable="true" data-index="${i}"` : ""} title="${esc(`${c.cli}:${c.model}${notes ? ` — ${notes}` : ""}${movable ? `\n${t("Double-click to change CLI, model or effort")}` : ""}`)}">${
     i + 1}. ${esc(c.label)}${c.effort ? ` <small>${esc(c.effort)}</small>` : ""}${c.fast ? " ⚡" : ""}${c.pinned ? " 📌" : ""}${c.newest ? " ⬆" : ""}${
-    c.state === "gone" ? " ✗" : ""}${movable ? `<button type="button" class="chip-x" data-index="${i}" title="Remove from the chain" aria-label="Remove ${esc(c.label)}">✕</button>` : ""}</span>`;
+    c.state === "gone" ? " ✗" : ""}${movable ? `<button type="button" class="chip-x" data-index="${i}" title="${esc(t("Remove from the chain"))}" aria-label="${esc(t("Remove {model}", { model: c.label }))}">✕</button>` : ""}</span>`;
 }
 
 function roleRow(r) {
@@ -674,14 +669,14 @@ function roleRow(r) {
   const usedBy = users.length
     ? `<small class="role-used">${withNames(t("Used by: {names}"), { names: new Intl.ListFormat(LANG, { type: "conjunction" }).format(users) })}</small>` : "";
   return `<div class="role-row" data-role="${esc(r.role)}">
-    <div class="role-name"><strong>${esc(r.role)}</strong>${r.effort ? ` <span class="muted" title="Effort for the whole role">${esc(r.effort)}</span>` : ""}${usedBy}</div>
-    <div class="chain-drop" data-role="${esc(r.role)}"${broken ? ' data-locked="1" title="This chain has an entry team-up cannot read — fix it with ✎ first"' : ""}>${
-      r.chain.map((c, i) => chainChip(c, i, r)).join("")}${r.pick ? "" : '<span class="badge red" title="Every model in the chain is skipped right now">exhausted</span>'}</div>
+    <div class="role-name"><strong>${esc(r.role)}</strong>${r.effort ? ` <span class="muted" title="${esc(t("Effort for the whole role"))}">${esc(r.effort)}</span>` : ""}${usedBy}</div>
+    <div class="chain-drop" data-role="${esc(r.role)}"${broken ? ` data-locked="1" title="${esc(t("This chain has an entry team-up cannot read: fix it with ✎ first"))}"` : ""}>${
+      r.chain.map((c, i) => chainChip(c, i, r)).join("")}${r.pick ? "" : `<span class="badge red" title="${esc(t("Every model in the chain is skipped right now"))}">${esc(t("exhausted"))}</span>`}</div>
     <div class="row-actions">
-      <button type="button" class="role-edit" data-role="${esc(r.role)}" title="Effort, pinning, chain as a form" aria-label="${esc(t("Edit {role}", { role: r.role }))}">✎</button>
+      <button type="button" class="role-edit" data-role="${esc(r.role)}" title="${esc(t("Effort, pinning, chain as a form"))}" aria-label="${esc(t("Edit {role}", { role: r.role }))}">✎</button>
       ${r.protected
-        ? `<span class="role-pin" title="Used by ${esc(r.protected)} — cannot be deleted" role="img" aria-label="${esc(t("Cannot be deleted"))}">🔒</span>`
-        : `<button type="button" class="role-delete" data-role="${esc(r.role)}" title="Delete role" aria-label="${esc(t("Delete {role}", { role: r.role }))}">🗑</button>`}
+        ? `<span class="role-pin" title="${esc(t("Used by {names}: it cannot be deleted", { names: r.protected }))}" role="img" aria-label="${esc(t("Cannot be deleted"))}">🔒</span>`
+        : `<button type="button" class="role-delete" data-role="${esc(r.role)}" title="${esc(t("Delete role"))}" aria-label="${esc(t("Delete {role}", { role: r.role }))}">🗑</button>`}
     </div>
   </div>`;
 }
@@ -696,11 +691,11 @@ function renderPalette() {
     const chips = rolesData.models.filter((m) => m.clis.includes(cli)).map((m) => {
       const roles = used.get(`${cli}:${m.id}`) || [];
       return `<span class="chip palette-chip${roles.length ? "" : " unused"}" draggable="true" data-cli="${esc(cli)}" data-model="${esc(m.id)}"${
-        providerAttr(cli, m.id)} title="${esc(`${cli}:${m.id} — ${roles.length ? `in ${roles.join(", ")}` : "in no chain yet"}`)}">${esc(m.label)}</span>`;
+        providerAttr(cli, m.id)} title="${esc(`${cli}:${m.id} — ${roles.length ? t("in {roles}", { roles: roles.join(", ") }) : t("in no chain yet")}`)}">${esc(m.label)}</span>`;
     }).join("");
     return chips ? `<div class="palette-group"><span class="palette-cli">${esc(cli)}</span><div>${chips}</div></div>` : "";
   }).join("");
-  $("#roster-palette").innerHTML = groups || '<p class="muted">No models in the roster — add some below.</p>';
+  $("#roster-palette").innerHTML = groups || `<p class="muted">${esc(t("No models in the roster yet: add some below."))}</p>`;
 }
 
 let specialistRolesKey = "";
@@ -725,11 +720,11 @@ async function refreshRoles() {
   const addable = data.addable || [];
   const btn = $("#roles-upgrade");
   btn.classList.toggle("hidden", !upgrades.length && !addable.length);
-  btn.textContent = `⬆ Bring to newest versions (${[
-    addable.length ? `${addable.length} new: ${addable.map((a) => a.id).join(", ")}` : "",
-    upgrades.length ? `${upgrades.length} chain entr${upgrades.length === 1 ? "y" : "ies"}` : "",
-  ].filter(Boolean).join(" · ")})`;
-  $("#roles-list").innerHTML = data.roles.map(roleRow).join("") || '<p class="muted">No roles yet.</p>';
+  btn.textContent = t("⬆ Bring to the newest versions ({changes})", { changes: [
+    addable.length ? t("{n} new: {models}", { n: addable.length, models: addable.map((a) => a.id).join(", ") }) : "",
+    upgrades.length ? tp(upgrades.length, { one: "{n} chain entry", other: "{n} chain entries" }) : "",
+  ].filter(Boolean).join(" · ") });
+  $("#roles-list").innerHTML = data.roles.map(roleRow).join("") || `<p class="muted">${esc(t("No roles yet."))}</p>`;
   renderPalette();
 }
 
@@ -737,11 +732,11 @@ async function roleWrite(role, body, note) {
   const status = $("#roles-status");
   try {
     const res = await api(`/api/roles/${encodeURIComponent(role)}`, { method: "POST", body: JSON.stringify(body) });
-    status.textContent = `${note} · backup ${res.backup}`;
+    status.textContent = `${note} · ${t("Backup: {file}", { file: res.backup })}`;
     await refreshRoles();
     return true;
   } catch (err) {
-    status.textContent = `refused: ${err.message}`;
+    status.textContent = t("Refused: {error}", { error: err.message });
     return false;
   }
 }
@@ -750,7 +745,7 @@ $("#roles-list").addEventListener("click", async (e) => {
   const x = e.target.closest(".chip-x");
   if (x) {
     const role = x.closest(".chain-drop").dataset.role;
-    saveChain(role, (chain) => `${chainEntryLabel(chain.splice(Number(x.dataset.index), 1)[0])} removed`);
+    saveChain(role, (chain) => t("{entry} removed", { entry: chainEntryLabel(chain.splice(Number(x.dataset.index), 1)[0]) }));
     return;
   }
   const btn = e.target.closest("button[data-role]");
@@ -763,7 +758,7 @@ $("#roles-list").addEventListener("click", async (e) => {
     text: withNames(t("Anything that still runs team-up pick --role {role} will fail."), { role }),
     yes: t("Delete role"),
   })) {
-    roleWrite(role, { delete: true }, `${role} deleted`);
+    roleWrite(role, { delete: true }, t("{role} deleted", { role }));
   }
 });
 
@@ -780,7 +775,7 @@ function saveChain(role, edit) {
   const note = edit(chain);
   if (JSON.stringify(chain) === before) return;
   if (!chain.length) {
-    $("#roles-status").textContent = `${role} needs at least one model — delete the role instead`;
+    $("#roles-status").textContent = t("{role} needs at least one model: delete the role instead", { role });
     return;
   }
   rolesSaving = true;
@@ -825,7 +820,7 @@ board.addEventListener("dragstart", (e) => {
   if (!chip) return;
   if (rolesSaving) {
     e.preventDefault();
-    $("#roles-status").textContent = "still saving the last change…";
+    $("#roles-status").textContent = t("Still saving the last change…");
     return;
   }
   if (chip.classList.contains("palette-chip")) {
@@ -879,10 +874,10 @@ board.addEventListener("drop", (e) => {
         if (at > from) at -= 1;
       }
       chain.splice(at, 0, entry);
-      return `${chainEntryLabel(entry)} at ${at + 1}`;
+      return t("{entry} at place {n}", { entry: chainEntryLabel(entry), n: at + 1 });
     });
   } else if (drag.from && dragEl(e).closest("#panel-roster")) {
-    saveChain(drag.from, (chain) => `${chainEntryLabel(chain.splice(drag.index, 1)[0])} removed`);
+    saveChain(drag.from, (chain) => t("{entry} removed", { entry: chainEntryLabel(chain.splice(drag.index, 1)[0]) }));
   }
   endRolesDrag();
 });
@@ -895,16 +890,16 @@ function createRole(entry) {
   const input = $("#role-new-name");
   const role = input.value.trim();
   if (!input.checkValidity() || !role) {
-    $("#roles-status").textContent = "name the role first: lowercase letters, digits, . _ -";
+    $("#roles-status").textContent = t("Name the role first: lowercase letters, digits, . _ -");
     input.focus();
     return;
   }
   if (rolesData?.roles.some((r) => r.role === role)) {
-    $("#roles-status").textContent = `${role} already exists — drop the model on its row instead`;
+    $("#roles-status").textContent = t("{role} already exists: drop the model on its row instead", { role });
     return;
   }
   rolesSaving = true;
-  roleWrite(role, { chain: [entry] }, `${role} created`).then((ok) => {
+  roleWrite(role, { chain: [entry] }, t("{role} created", { role })).then((ok) => {
     if (ok) $("#role-new").classList.add("hidden");
   }).finally(() => { rolesSaving = false; });
 }
@@ -925,12 +920,13 @@ $("#roles-upgrade").addEventListener("click", async () => {
   const status = $("#roles-status");
   try {
     const res = await api("/api/roles-upgrade", { method: "POST", body: JSON.stringify({}) });
-    const done = [...res.added.map((a) => `added ${a.id}`), ...(res.removed || []).map((r) => `removed ${r.id}`), ...res.changes.map((c) => `${c.role}: ${c.from} → ${c.to}`)];
-    status.textContent = done.length ? `${done.join(", ")} · backup ${res.backup}` : "already on the newest versions";
+    const done = [...res.added.map((a) => t("added {model}", { model: a.id })), ...(res.removed || []).map((r) => t("removed {model}", { model: r.id })),
+      ...res.changes.map((c) => `${c.role}: ${c.from} → ${c.to}`)];
+    status.textContent = done.length ? `${done.join(", ")} · ${t("Backup: {file}", { file: res.backup })}` : t("Already on the newest versions.");
     refreshSpecialists().catch(() => {});
     await refreshRoles();
   } catch (err) {
-    status.textContent = `refused: ${err.message}`;
+    status.textContent = t("Refused: {error}", { error: err.message });
   }
 });
 
@@ -943,12 +939,12 @@ function chainRow(entry = {}) {
   const row = document.createElement("div");
   row.className = "chain-row";
   row.innerHTML = `
-    <select class="ce-cli">${(rolesData?.clis || []).map((c) =>
+    <select class="ce-cli" aria-label="CLI">${(rolesData?.clis || []).map((c) =>
       `<option${c === cli ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
-    <select class="ce-model"></select>
-    <select class="ce-effort" title="Overrides the model's default effort for this role"></select>
-    <label class="ce-fast-label"><input type="checkbox" class="ce-fast"${entry.fast ? " checked" : ""}> ⚡ fast</label>
-    <label title="Stay on exactly this version; never move to a newer one"><input type="checkbox" class="ce-pinned"${entry.pinned ? " checked" : ""}> pin version</label>
+    <select class="ce-model" aria-label="${esc(t("Model"))}"></select>
+    <select class="ce-effort" title="${esc(t("Overrides the model's default effort for this role"))}" aria-label="${esc(t("Effort"))}"></select>
+    <label class="ce-fast-label"><input type="checkbox" class="ce-fast"${entry.fast ? " checked" : ""}> ⚡ ${esc(t("fast"))}</label>
+    <label title="${esc(t("Stay on exactly this version; never move to a newer one"))}"><input type="checkbox" class="ce-pinned"${entry.pinned ? " checked" : ""}> ${esc(t("pin version"))}</label>
     <button type="button" class="ce-up" title="${esc(t("Move up"))}" aria-label="${esc(t("Move up"))}">↑</button>
     <button type="button" class="ce-down" title="${esc(t("Move down"))}" aria-label="${esc(t("Move down"))}">↓</button>
     <button type="button" class="ce-remove" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))}">✕</button>`;
@@ -968,13 +964,13 @@ function chainRow(entry = {}) {
     const same = m?.id === entry.model;
     const keep = sel.dataset.touched ? sel.value : same ? entry.effort || "" : "";
     const values = [...new Set([...(m?.efforts || []), ...(keep && same ? [keep] : [])])];
-    sel.innerHTML = `<option value="">default${m?.default_effort ? ` (${esc(m.default_effort)})` : ""}</option>`
+    sel.innerHTML = `<option value="">${esc(m?.default_effort ? t("default ({effort})", { effort: m.default_effort }) : t("default|effort"))}</option>`
       + values.map((v) => `<option${v === keep ? " selected" : ""}>${esc(v)}</option>`).join("");
     // Fast only where the CLI can do it for this model; hidden means off.
     const note = m?.fast?.[row.querySelector(".ce-cli").value];
     const canFast = note !== undefined;
     row.querySelector(".ce-fast-label").hidden = !canFast;
-    row.querySelector(".ce-fast-label").title = `Fast mode — ${note || "uses more quota"}`;
+    row.querySelector(".ce-fast-label").title = note ? t("Fast mode: {note}", { note }) : t("Fast mode: uses more quota");
     if (!canFast) row.querySelector(".ce-fast").checked = false;
   };
   row.querySelector(".ce-cli").addEventListener("change", fill);
@@ -990,12 +986,13 @@ let specialistChainTarget = null;
 function openRoleEditor(role, specialist = null) {
   specialistChainTarget = specialist;
   roleTarget = specialist ? null : role?.role || null;
-  $("#role-editor-title").textContent = specialist ? `Own chain for ${specialist}` : role ? `Edit ${role.role}` : "New role";
+  $("#role-editor-title").textContent = specialist ? t("Own model list for {name}", { name: specialist })
+    : role ? t("Edit {role}", { role: role.role }) : t("New role");
   $("#role-editor-name").value = specialist || role?.role || "";
   $("#role-editor-name").readOnly = !!(role || specialist);
   $("#role-editor-status").textContent = "";
   const effort = $("#role-editor-effort");
-  effort.innerHTML = [`<option value="">per model (default)</option>`,
+  effort.innerHTML = [`<option value="">${esc(t("per model (default)"))}</option>`,
     ...(rolesData?.efforts || []).map((x) => `<option value="${esc(x)}">${esc(x)}</option>`)].join("");
   effort.value = role?.effort || "";
   effort.dataset.current = role?.effort || "";
@@ -1023,7 +1020,7 @@ $("#roles-list").addEventListener("dblclick", (e) => {
   const entry = rolesData?.roles.find((r) => r.role === role)?.chain[index];
   if (!entry) return;
   chipTarget = { role, index };
-  $("#chip-editor-title").textContent = `${role} · entry ${index + 1}`;
+  $("#chip-editor-title").textContent = t("{role} · entry {n}", { role, n: index + 1 });
   $("#chip-editor-row").replaceChildren(chainRow(entry));
   chipDialog.showModal();
 });
@@ -1041,7 +1038,7 @@ $("#chip-editor-form").addEventListener("submit", (e) => {
   const { role, index } = chipTarget;
   saveChain(role, (chain) => {
     chain[index] = entry;
-    return `entry ${index + 1} → ${chainEntryLabel(entry)}${entry.effort ? ` · ${entry.effort}` : ""}${entry.fast ? " · fast" : ""}`;
+    return `${t("entry {n} → {entry}", { n: index + 1, entry: chainEntryLabel(entry) })}${entry.effort ? ` · ${entry.effort}` : ""}${entry.fast ? ` · ${t("fast")}` : ""}`;
   });
   chipDialog.close();
 });
@@ -1056,7 +1053,7 @@ $("#role-editor-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const role = $("#role-editor-name").value.trim();
   if (!roleTarget && rolesData?.roles.some((r) => r.role === role)) {
-    $("#role-editor-status").textContent = `${role} already exists — edit it instead`;
+    $("#role-editor-status").textContent = t("{role} already exists: edit it instead", { role });
     return;
   }
   const chain = [...$("#role-editor-chain").querySelectorAll(".chain-row")].map((row) => ({
@@ -1072,10 +1069,10 @@ $("#role-editor-form").addEventListener("submit", async (e) => {
     else $("#role-editor-status").textContent = $("#team-status").textContent;
     return;
   }
-  let ok = await roleWrite(role, { chain }, `${role} saved`);
+  let ok = await roleWrite(role, { chain }, t("{role} saved", { role }));
   const effort = $("#role-editor-effort");
   if (ok && effort.value !== effort.dataset.current) {
-    ok = await roleWrite(role, { effort: effort.value || null }, `${role} saved`);
+    ok = await roleWrite(role, { effort: effort.value || null }, t("{role} saved", { role }));
   }
   if (ok) roleDialog.close();
   else $("#role-editor-status").textContent = $("#roles-status").textContent;
@@ -1107,15 +1104,15 @@ function renderCatalogue() {
         data-cli-id="${esc(m.cli_id)}"${m.checked ? " checked" : ""}></td>
       <td class="mono">${esc(m.cli_id.replace("-{effort}", ""))}</td>
       <td>${m.name && m.name !== m.cli_id && m.name !== m.cli_id.replace("-{effort}", "") ? esc(m.name) : ""}${
-        m.efforts ? `<span class="muted" title="Picked per role or specialist, not here">effort: ${esc(m.efforts.join(" · "))}</span>` : ""}</td>
-      <td class="muted">${esc(m.cli)}${m.unscanned ? " · not in any scan" : ""}</td>
+        m.efforts ? `<span class="muted" title="${esc(t("Picked per role or specialist, not here"))}">${esc(t("effort: {efforts}", { efforts: m.efforts.join(" · ") }))}</span>` : ""}</td>
+      <td class="muted">${esc(m.cli)}${m.unscanned ? ` · ${esc(t("not in any scan"))}` : ""}</td>
     </tr>`).join("");
     return `<details class="catalogue-provider" data-provider="${esc(p.tab)}:${esc(p.id)}"${catalogueOpen.has(`${p.tab}:${p.id}`) || q ? " open" : ""}>
-      <summary><strong>${esc(p.label)}</strong> <span class="muted">${inRoster} of ${p.models.length} in roster</span></summary>
-      <table><thead><tr><th></th><th>Model</th><th>Name</th><th>CLI</th></tr></thead><tbody>${rows}</tbody></table>
+      <summary><strong>${esc(p.label)}</strong> <span class="muted">${esc(t("{n} of {total} in the roster", { n: inRoster, total: p.models.length }))}</span></summary>
+      <table><thead><tr><th></th>${th("Model", t("Model"))}${th("Name", t("Name"))}${th("CLI", "CLI")}</tr></thead><tbody>${rows}</tbody></table>
     </details>`;
   }).join("");
-  $("#catalogue-list").innerHTML = html || '<p class="muted">No models — run <code>team-up models scan</code>.</p>';
+  $("#catalogue-list").innerHTML = html || `<p class="muted">${esc(t("No models yet. Run this in a terminal:"))} <code>team-up models scan</code></p>`;
 }
 
 async function refreshCatalogue() {
@@ -1125,7 +1122,7 @@ async function refreshCatalogue() {
 
 $("#catalogue-box").addEventListener("toggle", (e) => {
   writeStored(CATALOGUE_OPEN_KEY, e.target.open ? "1" : "");
-  if (e.target.open) refreshCatalogue().catch((err) => { $("#catalogue-status").textContent = err.message; });
+  if (e.target.open) refreshCatalogue().catch((err) => { $("#catalogue-status").textContent = t("That did not work: {error}", { error: err.message }); });
 });
 $("#catalogue-tabs").addEventListener("click", (e) => {
   const kind = e.target.closest(".tim-tab")?.dataset.kind;
@@ -1156,7 +1153,8 @@ async function catalogueToggle(body) {
 /** Ask what replaces the model in those chains: { model, cli }, "strike", or null for cancel. */
 function askReplacement(cliId, cli, roles) {
   const dialog = $("#model-replace");
-  $("#model-replace-msg").textContent = `${cliId} (${cli}) is in the chain of ${roles.join(", ")}. Pick a replacement, or remove it from those chains.`;
+  $("#model-replace-msg").textContent = t("{model} ({cli}) is in the chain of {roles}. Pick a replacement, or remove it from those chains.",
+    { model: cliId, cli, roles: roles.join(", ") });
   const gone = new Set((catalogueData?.providers || []).flatMap((p) => p.models)
     .filter((m) => m.cli === cli && m.cli_id === cliId).flatMap((m) => m.roster_ids));
   const options = (rolesData?.models || []).flatMap((m) => m.clis
@@ -1202,9 +1200,10 @@ $("#catalogue-list").addEventListener("change", async (e) => {
       r = await catalogueToggle({ ...body, resolve });
     }
     if (r.status !== 200) throw new Error(r.data.error || `HTTP ${r.status}`);
-    status.textContent = `${body.cli_id} ${body.on ? "added to" : "removed from"} the roster · backup ${r.data.backup}`;
+    const done = body.on ? t("{model} added to the roster", { model: body.cli_id }) : t("{model} removed from the roster", { model: body.cli_id });
+    status.textContent = `${done} · ${t("Backup: {file}", { file: r.data.backup })}`;
   } catch (err) {
-    status.textContent = `refused: ${err.message}`;
+    status.textContent = t("Refused: {error}", { error: err.message });
   } finally {
     await Promise.allSettled([refreshCatalogue(), refreshRoles(), refreshSpecialists()]);
   }
@@ -1212,15 +1211,15 @@ $("#catalogue-list").addEventListener("change", async (e) => {
 
 function providerStatus(p) {
   if (p.class === "A") {
-    if (!p.configured) return '<span class="badge stale">not connected</span>';
-    const bits = [esc(p.hint || ""), p.label ? esc(p.label) : "", p.last_verdict === "ok" ? "valid" : ""].filter(Boolean);
+    if (!p.configured) return `<span class="badge stale">${esc(t("not connected"))}</span>`;
+    const bits = [esc(t("connected")), esc(p.hint || ""), p.label ? esc(p.label) : "", p.last_verdict === "ok" ? esc(t("valid")) : ""].filter(Boolean);
     const src = p.source_file ? ` · ${esc(p.source_file)}` : p.source ? ` · ${esc(p.source)}` : "";
-    return `<span class="badge ok">connected · ${bits.join(" · ")}${src}</span>`;
+    return `<span class="badge ok">${bits.join(" · ")}${src}</span>`;
   }
   if (p.class === "B") {
-    return `<span class="badge ${p.configured ? "ok" : "stale"}">subscription login</span>`;
+    return `<span class="badge ${p.configured ? "ok" : "stale"}">${esc(t("subscription login"))}</span>`;
   }
-  return `<span class="badge ${p.configured ? "ok" : "stale"}">CLI-owned key</span>`;
+  return `<span class="badge ${p.configured ? "ok" : "stale"}">${esc(t("key kept by the CLI"))}</span>`;
 }
 
 async function refreshProviders() {
@@ -1234,19 +1233,19 @@ async function refreshProviders() {
     let body = `<div class="provider-card"${providerAttr(p.id)} data-row="${esc(p.id)}"><strong>${esc(p.id)}</strong> ${providerStatus(p)}`;
     if (p.class === "A" && p.writable) {
       body += `<form class="provider-form" data-id="${esc(p.id)}">
-        <input type="password" name="key" placeholder="OpenRouter API key" autocomplete="off">
-        <button type="submit">${p.configured ? "Rotate" : "Connect"}</button>
-        ${p.configured ? '<button type="button" class="remove-key">Remove</button>' : ""}
-        <button type="button" class="validate-key">Validate</button>
+        <input type="password" name="key" placeholder="${esc(t("OpenRouter API key"))}" aria-label="${esc(t("OpenRouter API key"))}" autocomplete="off">
+        <button type="submit">${esc(p.configured ? t("Replace key") : t("Connect"))}</button>
+        ${p.configured ? `<button type="button" class="remove-key">${esc(t("Remove"))}</button>` : ""}
+        <button type="button" class="validate-key">${esc(t("Check"))}</button>
       </form>`;
     } else if (p.class === "A" && p.configured) {
-      body += ` <span class="muted">read-only (${esc(p.source || "external")})</span>`;
+      body += ` <span class="muted">${esc(p.source ? t("read-only ({source})", { source: p.source }) : t("read-only"))}</span>`;
     } else if (p.login_command) {
       body += ` <span class="muted mono">${esc(p.login_command)}</span>`;
     }
     return `${body}</div>`;
   }).join("");
-  $("#providers-list").innerHTML = html || "<p>No providers</p>";
+  $("#providers-list").innerHTML = html || `<p>${esc(t("No providers"))}</p>`;
   $("#providers-list").querySelectorAll(".provider-form").forEach((form) => {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -1257,7 +1256,7 @@ async function refreshProviders() {
         form.querySelector('input[name="key"]').value = "";
         await refreshProviders();
       } catch (err) {
-        alert(err.message);
+        alert(t("That did not work: {error}", { error: err.message }));
       }
     });
     form.querySelector(".validate-key")?.addEventListener("click", async () => {
@@ -1265,7 +1264,7 @@ async function refreshProviders() {
         await api("/api/providers/openrouter/validate", { method: "POST", body: JSON.stringify({}) });
         await refreshProviders();
       } catch (err) {
-        alert(err.message);
+        alert(t("That did not work: {error}", { error: err.message }));
       }
     });
     form.querySelector(".remove-key")?.addEventListener("click", async () => {
@@ -1273,7 +1272,7 @@ async function refreshProviders() {
         await api("/api/providers/openrouter/remove", { method: "POST", body: JSON.stringify({}) });
         await refreshProviders();
       } catch (err) {
-        alert(err.message);
+        alert(t("That did not work: {error}", { error: err.message }));
       }
     });
   });
@@ -1284,11 +1283,11 @@ let cliLogTimer = null;
 
 function verdictBadge(v) {
   if (!v) return "—";
-  if (v.verdict === "verified") return '<span class="badge ok">verified</span>';
+  if (v.verdict === "verified") return `<span class="badge ok">${esc(t("verified"))}</span>`;
   if (v.verdict === "harness_verification_unsupported") {
-    return `<span class="badge stale">unsupported${v.reason ? ` · ${esc(v.reason)}` : ""}</span>`;
+    return `<span class="badge stale">${esc(t("not checkable"))}${v.reason ? ` · <span translate="no">${esc(v.reason)}</span>` : ""}</span>`;
   }
-  return `<span class="badge red">failed${v.reason ? ` · ${esc(v.reason)}` : ""}</span>`;
+  return `<span class="badge red">${esc(t("Failed|job"))}${v.reason ? ` · <span translate="no">${esc(v.reason)}</span>` : ""}</span>`;
 }
 
 async function refreshCliLog(cli) {
@@ -1296,9 +1295,9 @@ async function refreshCliLog(cli) {
   try {
     const data = await api(`/api/clis/${encodeURIComponent(cli)}/install/log`);
     const lines = (data.lines || []).join("\n");
-    const verdict = data.post_update_verdict ? `verdict: ${data.post_update_verdict.verdict}` : "";
+    const verdict = data.post_update_verdict ? t("Check: {verdict}", { verdict: data.post_update_verdict.verdict }) : "";
     const el = $("#cli-log");
-    el.textContent = [lines, verdict].filter(Boolean).join("\n\n") || "(no log yet)";
+    el.textContent = [lines, verdict].filter(Boolean).join("\n\n") || t("(no log yet)");
     el.classList.remove("hidden");
   } catch {
     /* ignore */
@@ -1322,26 +1321,26 @@ async function refreshClis() {
     const state = c.install_state || "idle";
     const actions = [];
     if (c.update_available) {
-      actions.push(`<button type="button" class="cli-update" data-cli="${esc(c.cli)}">Update</button>`);
+      actions.push(`<button type="button" class="cli-update" data-cli="${esc(c.cli)}">${esc(t("Update"))}</button>`);
     }
     if (c.present) {
       if (c.uninstall_command) {
-        actions.push(`<button type="button" class="cli-uninstall" data-cli="${esc(c.cli)}">Uninstall</button>`);
+        actions.push(`<button type="button" class="cli-uninstall" data-cli="${esc(c.cli)}">${esc(t("Uninstall"))}</button>`);
       }
     } else if (c.install_available) {
-      actions.push(`<button type="button" class="cli-install" data-cli="${esc(c.cli)}">Install</button>`);
+      actions.push(`<button type="button" class="cli-install" data-cli="${esc(c.cli)}">${esc(t("Install"))}</button>`);
     } else if (c.install_disabled_reason) {
       actions.push(`<span class="muted">${esc(c.install_disabled_reason)}</span>`);
     }
     if (c.login_available && c.present) {
-      actions.push(`<button type="button" class="cli-login" data-cli="${esc(c.cli)}">Start login</button>`);
+      actions.push(`<button type="button" class="cli-login" data-cli="${esc(c.cli)}">${esc(t("Start login"))}</button>`);
     }
     // A CLI the roster doesn't run is a row the user switches on in ✎.
     return `
     <tr class="clickable ${selectedCli === c.cli ? "selected" : ""}" data-cli="${esc(c.cli)}" data-row="clis:${esc(c.cli)}"${
       c.in_roster ? "" : ' data-row-default="hidden"'}${providerAttr(c.cli)}>
-      <td title="${esc(c.path || "not on PATH")}">${esc(c.cli)}</td>
-      <td>${c.present ? '<span class="badge ok">installed</span>' : '<span class="badge stale">missing</span>'}</td>
+      <td title="${esc(c.path || t("not on PATH"))}">${esc(c.cli)}</td>
+      <td>${c.present ? `<span class="badge ok">${esc(t("installed"))}</span>` : `<span class="badge stale">${esc(t("missing"))}</span>`}</td>
       <td class="mono">${esc(c.version || "—")}</td>
       <td>${esc(c.harness_label || c.harness?.status || "—")}</td>
       <td>${verdictBadge(c.post_update_verdict)}</td>
@@ -1350,8 +1349,9 @@ async function refreshClis() {
     </tr>`;
   }).join("");
   $("#clis-table").innerHTML = `<table>
-    <thead><tr><th>CLI</th><th>Present</th><th>Version</th><th>Harness</th><th>Verify</th><th>Job</th><th>Actions</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="7">No CLIs</td></tr>'}</tbody></table>`;
+    <thead><tr>${th("CLI", "CLI")}${th("Present", t("Present"))}${th("Version", t("Version"))}${th("Harness", "Harness")}${
+      th("Verify", t("Check"))}${th("Job", t("Job"))}${th("Actions", t("Actions"))}</tr></thead>
+    <tbody>${rows || `<tr><td colspan="7">${esc(t("No CLIs"))}</td></tr>`}</tbody></table>`;
   $("#clis-table").querySelectorAll("tr[data-cli]").forEach((tr) => {
     tr.addEventListener("click", (e) => {
       if (e.target.closest("button")) return;
@@ -1364,12 +1364,12 @@ async function refreshClis() {
       const cli = btn.dataset.cli;
       try {
         const cmd = data.clis.find((c) => c.cli === cli)?.update_command;
-        if (cmd && !confirm(`Run update + verify?\n\n${cmd}`)) return;
+        if (cmd && !confirm(`${t("Run the update and check it?")}\n\n${cmd}`)) return;
         await api(`/api/clis/${encodeURIComponent(cli)}/update`, { method: "POST", body: JSON.stringify({}) });
         selectCli(cli);
         await refreshClis();
       } catch (err) {
-        alert(err.message);
+        alert(t("That did not work: {error}", { error: err.message }));
       }
     });
   });
@@ -1379,12 +1379,12 @@ async function refreshClis() {
       const cli = btn.dataset.cli;
       try {
         const row = data.clis.find((c) => c.cli === cli);
-        if (row?.install_command && !confirm(`Run install?\n\n${row.install_command}`)) return;
+        if (row?.install_command && !confirm(`${t("Run the install?")}\n\n${row.install_command}`)) return;
         await api(`/api/clis/${encodeURIComponent(cli)}/install`, { method: "POST", body: JSON.stringify({}) });
         selectCli(cli);
         await refreshClis();
       } catch (err) {
-        alert(err.message);
+        alert(t("That did not work: {error}", { error: err.message }));
       }
     });
   });
@@ -1394,12 +1394,12 @@ async function refreshClis() {
       const cli = btn.dataset.cli;
       try {
         const row = data.clis.find((c) => c.cli === cli);
-        if (!confirm(`Uninstall ${cli}?\n\n${row?.uninstall_command}`)) return;
+        if (!confirm(`${t("Uninstall {cli}?", { cli })}\n\n${row?.uninstall_command}`)) return;
         await api(`/api/clis/${encodeURIComponent(cli)}/uninstall`, { method: "POST", body: JSON.stringify({}) });
         selectCli(cli);
         await refreshClis();
       } catch (err) {
-        alert(err.message);
+        alert(t("That did not work: {error}", { error: err.message }));
       }
     });
   });
@@ -1409,12 +1409,12 @@ async function refreshClis() {
       const cli = btn.dataset.cli;
       try {
         const row = data.clis.find((c) => c.cli === cli);
-        if (row?.login_command && !confirm(`Start login in tmux?\n\n${row.login_command}\n\nFinish in terminal: tmux attach -t team-up-install-${cli}`)) return;
+        if (row?.login_command && !confirm(`${t("Start the login in tmux?")}\n\n${row.login_command}\n\n${t("Finish it in a terminal:")} tmux attach -t team-up-install-${cli}`)) return;
         await api(`/api/clis/${encodeURIComponent(cli)}/login`, { method: "POST", body: JSON.stringify({}) });
         selectCli(cli);
         await refreshClis();
       } catch (err) {
-        alert(err.message);
+        alert(t("That did not work: {error}", { error: err.message }));
       }
     });
   });
@@ -1429,9 +1429,9 @@ $("#admin-challenge-btn").addEventListener("click", async () => {
     const data = await api("/api/admin/challenge", { method: "POST", body: JSON.stringify({}) });
     adminChallengeId = data.challenge_id;
     $("#admin-confirm-form").classList.remove("hidden");
-    $("#admin-status").textContent = "Enter the code printed in your terminal.";
+    $("#admin-status").textContent = t("Enter the code your terminal shows.");
   } catch (err) {
-    $("#admin-status").textContent = err.message;
+    $("#admin-status").textContent = t("That did not work: {error}", { error: err.message });
   }
 });
 
@@ -1443,9 +1443,9 @@ $("#admin-confirm-form").addEventListener("submit", async (e) => {
       body: JSON.stringify({ challenge_id: adminChallengeId, code: $("#admin-code-input").value.trim() }),
     });
     $("#admin-gate").classList.add("hidden");
-    $("#admin-status").textContent = "Admin confirmed for 10 minutes.";
+    $("#admin-status").textContent = t("Confirmed: changes work for the next 10 minutes.");
   } catch (err) {
-    $("#admin-status").textContent = err.message;
+    $("#admin-status").textContent = t("That did not work: {error}", { error: err.message });
   }
 });
 
@@ -1852,7 +1852,7 @@ $("#specialist-install-form").addEventListener("submit", async (e) => {
     teamNote(withNames(t("Installed {name}."), { name: `${result.id}@${result.version}` }), "ok");
     await refreshSpecialists();
   } catch (err) {
-    status.textContent = err.message;
+    status.textContent = t("That did not work: {error}", { error: err.message });
   } finally {
     btn.disabled = false;
   }
@@ -2183,7 +2183,7 @@ $("#policy-editor-form").addEventListener("submit", async (e) => {
     projectsNote = t("Test command written into {project} (not committed).", { project: policyTarget.name });
     await refreshProjects();
   } catch (err) {
-    status.textContent = err.message;
+    status.textContent = t("That did not work: {error}", { error: err.message });
   }
 });
 
@@ -2194,7 +2194,16 @@ $("#policy-editor-form").addEventListener("submit", async (e) => {
 // Projects panel's — the same repos, read through the .tim-project markers.
 const TIM_KIND_KEY = "teamup.timKind";
 const TIM_CLOSED_KEY = "teamup.timClosed";
-const TIM_KINDS = { task: "Tasks", idea: "Ideas", bug: "Bugs" };
+// How many are open, per kind, in whole words.
+const TIM_KINDS = {
+  task: (n) => tp(n, { one: "{n} open task", other: "{n} open tasks" }),
+  idea: (n) => tp(n, { one: "{n} open idea", other: "{n} open ideas" }),
+  bug: (n) => tp(n, { one: "{n} open bug", other: "{n} open bugs" }),
+};
+// TIM's status words; one TIM does not know stays as it is.
+const TIM_STATUS = {
+  todo: t("to do"), open: t("open"), in_progress: t("in progress"), review: t("in review"), blocked: t("blocked"), done: t("done"),
+};
 
 function readStored(key, fallback) {
   try {
@@ -2230,7 +2239,7 @@ async function refreshTim() {
   try {
     data = await api(`/api/tim?dir=${encodeURIComponent(readProjectsDir())}`);
   } catch (err) {
-    status.textContent = err.message;
+    status.textContent = t("That did not work: {error}", { error: err.message });
     return;
   }
   dashboardMetrics.tim = data;
@@ -2257,22 +2266,22 @@ async function refreshTim() {
     .map((p) => ({ ...p, items: p.items.filter((i) => i.kind === kind) }))
     .filter((p) => p.items.length > 0);
   const total = groups.reduce((n, p) => n + p.items.length, 0);
-  status.textContent = `${total} open ${TIM_KINDS[kind].toLowerCase()} in ${groups.length} project${groups.length === 1 ? "" : "s"}`;
+  status.textContent = `${TIM_KINDS[kind](total)} · ${tp(groups.length, { one: "{n} project", other: "{n} projects" })}`;
 
   $("#tim-list").innerHTML = groups.map((p) => `
     <details class="tim-project" data-project="${esc(p.label)}"${closed.has(p.label) ? "" : " open"}>
-      <summary>${esc(p.title.split(" | ")[0])} <span class="muted">${p.items.length}</span></summary>
+      <summary><span translate="no">${esc(p.title.split(" | ")[0])}</span> <span class="muted">${p.items.length}</span></summary>
       <ul class="tim-items">${p.items.map((item) => `
         <li>
-          <span class="muted">${esc(item.status)}${item.priority ? ` <span class="tag ${priorityTone(item.priority)}">${esc(item.priority)}</span>` : ""}</span>
-          ${esc(item.title)}
+          <span class="muted">${esc(TIM_STATUS[item.status] ?? item.status)}${item.priority ? ` <span class="tag ${priorityTone(item.priority)}">${esc(item.priority)}</span>` : ""}</span>
+          <span translate="no">${esc(item.title)}</span>
           ${item.sessions.length
-            ? item.sessions.map((sess) => `<a href="#" class="session-link" data-session="${esc(sess)}">running</a>`).join(" ")
+            ? item.sessions.map((sess) => `<a href="#" class="session-link" data-session="${esc(sess)}">${esc(t("running"))}</a>`).join(" ")
             : p.dir
-              ? `<button type="button" class="tim-start" data-id="${esc(item.id)}">Start</button>`
-              : '<span class="muted">no repo</span>'}
+              ? `<button type="button" class="tim-start" data-id="${esc(item.id)}">${esc(t("Start…"))}</button>`
+              : `<span class="muted">${esc(t("no project folder"))}</span>`}
         </li>`).join("")}</ul>
-    </details>`).join("") || `<p class="muted">Nothing open.</p>`;
+    </details>`).join("") || `<p class="muted">${esc(t("Nothing open."))}</p>`;
 
   $("#tim-list").querySelectorAll(".tim-project").forEach((el) => {
     el.addEventListener("toggle", () => {
@@ -2303,7 +2312,7 @@ let timModels = [];
 function fillModels() {
   const cli = $("#tim-launch-cli").value;
   fillSelect($("#tim-launch-model"), [
-    { value: "", label: "— CLI default —" },
+    { value: "", label: t("— the CLI's default —") },
     ...timModels
       .filter((m) => !cli || (m.clis || []).includes(cli))
       .map((m) => ({ value: m.id, label: m.label || m.id })),
@@ -2330,8 +2339,7 @@ function showRemit() {
     return;
   }
   $("#tim-launch-remit").textContent =
-    `${spec.display_name || spec.id}: ${(spec.remit || []).join("; ")}.`
-    + " Interactive session — no sandbox, approval or RESULT.json.";
+    `${spec.display_name || spec.id}: ${(spec.remit || []).join("; ")}. ${t("An interactive session: no sandbox, no approval, no RESULT.json.")}`;
 }
 
 $("#tim-launch-specialist").addEventListener("change", showRemit);
@@ -2346,7 +2354,7 @@ function openLaunchDialog(item) {
   // contributes its remit as prompt framing, built server-side from the
   // manifest — the browser never authors a specialist's contract text.
   fillSelect($("#tim-launch-specialist"), [
-    { value: "", label: "— none —" },
+    { value: "", label: t("— none —") },
     ...(specialistsData?.specialists || [])
       .filter((s) => !s.error)
       .map((s) => ({ value: s.id, label: s.display_name || s.id })),
@@ -2364,7 +2372,7 @@ $("#tim-launch-form").addEventListener("submit", async (event) => {
   // typed prompt still in it.
   event.preventDefault();
   const status = $("#tim-launch-status");
-  status.textContent = "starting…";
+  status.textContent = t("Starting…");
   try {
     const res = await api("/api/tim/session", {
       method: "POST",
@@ -2381,7 +2389,7 @@ $("#tim-launch-form").addEventListener("submit", async (event) => {
     await refreshTim();
     selectSession(res.session);
   } catch (err) {
-    status.textContent = err.message;
+    status.textContent = t("That did not work: {error}", { error: err.message });
   }
 });
 
@@ -2626,7 +2634,7 @@ $("#settings-advanced").addEventListener("change", () => {
   writeStored(SETTINGS_ADVANCED_KEY, $("#settings-advanced").checked);
   renderSettings();
 });
-onEnter.settings = () => refreshSettings().catch((err) => settingsNote(err.message, "err"));
+onEnter.settings = () => refreshSettings().catch((err) => settingsNote(t("That did not work: {error}", { error: err.message }), "err"));
 
 // ── Automation ────────────────────────────────────────────────────────────
 // Built-in jobs (explained, switchable where they live in the crontab) and
@@ -2748,9 +2756,9 @@ function renderAutomation() {
     ? `<div class="job-list">${d.custom.map(customJobCard).join("")}</div>`
     : `<div class="empty">${esc(t("No jobs of your own yet. A job is a prompt that a helper runs in one of your projects on a schedule — say a weekly dependency check, or a nightly “read the logs and file what looks wrong”."))}</div>`;
   $("#builtin-jobs").innerHTML = d.builtin.map(builtinJobCard).join("");
-  $("#services").innerHTML = `<table><thead><tr><th>Service</th><th>What it does</th><th>State</th></tr></thead><tbody>${
+  $("#services").innerHTML = `<table><thead><tr>${th("Service", t("Service"))}${th("What it does", t("What it does"))}${th("State", t("State"))}</tr></thead><tbody>${
     d.services.map((s) => `<tr><td>${esc(s.title)}<div class="muted mono">${esc(s.unit)}</div></td><td>${esc(s.what)}</td>
-      <td><span class="tag ${s.active === "active" ? "ok" : s.active === "failed" ? "err" : "off"}">${esc(s.active)}${s.sub ? ` · ${esc(s.sub)}` : ""}</span></td></tr>`).join("")
+      <td><span class="tag ${s.active === "active" ? "ok" : s.active === "failed" ? "err" : "off"}" translate="no">${esc(s.active)}${s.sub ? ` · ${esc(s.sub)}` : ""}</span></td></tr>`).join("")
   }</tbody></table>${d.crontab.otherLines ? `<p class="muted">${esc(tp(d.crontab.otherLines, {
     one: "Your crontab also runs {n} job that team-up does not manage. It is left alone.",
     other: "Your crontab also runs {n} jobs that team-up does not manage. They are left alone." }))}</p>` : ""}`;
@@ -2765,15 +2773,15 @@ async function refreshAutomation() {
   renderAutomation();
   updateAttention();
 }
-onEnter.automation = () => refreshAutomation().catch((err) => automationNote(err.message, "err"));
+onEnter.automation = () => refreshAutomation().catch((err) => automationNote(t("That did not work: {error}", { error: err.message }), "err"));
 
 async function automationWrite(url, body, done) {
   try {
     const res = await api(url, { method: "POST", body: JSON.stringify(body) });
-    automationNote(`${done}${res.backup ? ` · crontab backup ${res.backup}` : ""}`, "ok");
+    automationNote(`${done}${res.backup ? ` · ${t("Crontab backup: {file}", { file: res.backup })}` : ""}`, "ok");
     return true;
   } catch (err) {
-    automationNote(`Refused — ${err.message}`, "err");
+    automationNote(t("Refused: {error}", { error: err.message }), "err");
     return false;
   } finally {
     await refreshAutomation().catch(() => {});
@@ -2786,19 +2794,21 @@ $("#builtin-jobs").addEventListener("change", async (e) => {
   const id = card.dataset.builtin;
   const title = automationData.builtin.find((j) => j.id === id)?.title || id;
   if (e.target.matches("[data-builtin-toggle]")) {
-    await automationWrite(`/api/automation/builtin/${id}`, { enabled: e.target.checked }, `${title} switched ${e.target.checked ? "on" : "off"}`);
+    await automationWrite(`/api/automation/builtin/${id}`, { enabled: e.target.checked },
+      e.target.checked ? t("{job} switched on", { job: title }) : t("{job} switched off", { job: title }));
   } else if (e.target.matches("[data-builtin-model]")) {
     try {
       await api(`/api/cron-jobs/${encodeURIComponent(e.target.dataset.builtinModel)}`, { method: "POST", body: JSON.stringify({ model: e.target.value }) });
-      automationNote(`${title} now runs on ${e.target.value}`, "ok");
+      automationNote(t("{job} now runs on {model}", { job: title, model: e.target.value }), "ok");
     } catch (err) {
-      automationNote(`Refused — ${err.message}`, "err");
+      automationNote(t("Refused: {error}", { error: err.message }), "err");
     }
     await refreshAutomation().catch(() => {});
   } else if (e.target.matches("[data-knob]")) {
     const key = e.target.dataset.knob;
     const value = e.target.type === "checkbox" ? e.target.checked : e.target.value.trim() === "" ? null : Number(e.target.value);
-    await automationWrite(`/api/automation/builtin/${id}`, { knob: { key, value } }, `${title}: ${key} saved`);
+    const knob = automationData.builtin.find((j) => j.id === id)?.knobs?.find((k) => k.key === key)?.label || key;
+    await automationWrite(`/api/automation/builtin/${id}`, { knob: { key, value } }, t("{job}: {setting} saved", { job: title, setting: knob }));
   }
 });
 
@@ -2811,13 +2821,14 @@ $("#builtin-jobs").addEventListener("click", async (e) => {
   if (!e.target.matches("[data-builtin-schedule-save]")) return;
   const card = e.target.closest("[data-builtin]");
   const schedule = card.querySelector("[data-builtin-schedule]").value;
-  await automationWrite(`/api/automation/builtin/${card.dataset.builtin}`, { schedule }, "Schedule saved");
+  await automationWrite(`/api/automation/builtin/${card.dataset.builtin}`, { schedule }, t("Schedule saved."));
 });
 
 $("#custom-jobs").addEventListener("change", async (e) => {
   if (!e.target.matches("[data-job-toggle]")) return;
   const name = e.target.closest("[data-job]").dataset.job;
-  await automationWrite(`/api/automation/jobs/${name}/enabled`, { enabled: e.target.checked }, `${name} switched ${e.target.checked ? "on" : "off"}`);
+  await automationWrite(`/api/automation/jobs/${name}/enabled`, { enabled: e.target.checked },
+    e.target.checked ? t("{job} switched on", { job: name }) : t("{job} switched off", { job: name }));
 });
 
 $("#custom-jobs").addEventListener("click", async (e) => {
@@ -2828,7 +2839,7 @@ $("#custom-jobs").addEventListener("click", async (e) => {
   if (e.target.matches("[data-job-edit]")) openJobEditor(job);
   else if (e.target.matches("[data-job-log]")) openJobLog(name);
   else if (e.target.matches("[data-job-run]")) {
-    if (await automationWrite(`/api/automation/jobs/${name}/run`, {}, `${name} started — its output lands in the log`)) {
+    if (await automationWrite(`/api/automation/jobs/${name}/run`, {}, t("{job} started: its output goes to the log", { job: name }))) {
       setTimeout(() => refreshAutomation().catch(() => {}), 3000);
     }
   } else if (e.target.matches("[data-job-delete]") && await confirmDialog({
@@ -2836,7 +2847,7 @@ $("#custom-jobs").addEventListener("click", async (e) => {
     text: esc(t("Its prompt goes too. This cannot be undone.")),
     yes: t("Delete job"),
   })) {
-    await automationWrite(`/api/automation/jobs/${name}/delete`, {}, `${name} deleted`);
+    await automationWrite(`/api/automation/jobs/${name}/delete`, {}, t("{job} deleted", { job: name }));
   }
 });
 
@@ -2855,16 +2866,16 @@ function schedulePreview() {
     }
     try {
       const p = await api(`/api/automation/preview?schedule=${encodeURIComponent(schedule)}`);
-      out.textContent = p.error ? `✗ ${p.error}` : `${p.text} · next run ${fmtWhen(p.next)}`;
+      out.textContent = p.error ? `✗ ${p.error}` : `${p.text} · ${t("next run {when}", { when: fmtWhen(p.next) })}`;
     } catch (err) {
-      out.textContent = err.message;
+      out.textContent = t("That did not work: {error}", { error: err.message });
     }
   }, 250);
 }
 
 function openJobEditor(job = null) {
   jobOriginal = job?.name || null;
-  $("#job-editor-title").textContent = job ? `Edit ${job.name}` : "New job";
+  $("#job-editor-title").textContent = job ? t("Edit {job}", { job: job.name }) : t("New job");
   $("#job-editor-status").textContent = "";
   $("#job-name").value = job?.name || "";
   $("#job-description").value = job?.description || "";
@@ -2916,23 +2927,23 @@ $("#job-editor-form").addEventListener("submit", async (e) => {
   try {
     const res = await api("/api/automation/jobs", { method: "POST", body: JSON.stringify(body) });
     jobDialog.close();
-    automationNote(`${body.name} saved${res.backup ? ` · crontab backup ${res.backup}` : ""}`, "ok");
+    automationNote(`${t("{job} saved", { job: body.name })}${res.backup ? ` · ${t("Crontab backup: {file}", { file: res.backup })}` : ""}`, "ok");
   } catch (err) {
-    $("#job-editor-status").textContent = `Not saved — ${err.message}`;
+    $("#job-editor-status").textContent = t("Not saved: {error}", { error: err.message });
   }
   await refreshAutomation().catch(() => {});
 });
 
 async function openJobLog(name) {
-  $("#job-log-title").textContent = `Log · ${name}`;
-  $("#job-log-body").textContent = "loading…";
+  $("#job-log-title").textContent = `${t("Log")} · ${name}`;
+  $("#job-log-body").textContent = t("Loading…");
   $("#job-log").showModal();
   try {
     const { log } = await api(`/api/automation/jobs/${name}/log`);
-    $("#job-log-body").textContent = log || "No runs yet.";
+    $("#job-log-body").textContent = log || t("No runs yet.");
     $("#job-log-body").scrollTop = $("#job-log-body").scrollHeight;
   } catch (err) {
-    $("#job-log-body").textContent = err.message;
+    $("#job-log-body").textContent = t("That did not work: {error}", { error: err.message });
   }
 }
 
@@ -3557,7 +3568,7 @@ function showTimView(view) {
   if (which === "explorer") {
     const frame = $("#tim-frame");
     if (!frame.src) {
-      $("#tim-explorer-status").textContent = "Starting the TIM viewer…";
+      $("#tim-explorer-status").textContent = t("Starting the TIM viewer…");
       frame.addEventListener("load", () => {
         $("#tim-explorer-status").textContent = "";
         frame.classList.remove("hidden");
@@ -3589,13 +3600,13 @@ $("#models-scan").addEventListener("click", async () => {
   btn.disabled = true;
   try {
     await api("/api/actions/models-scan", { method: "POST", body: "{}" });
-    $("#catalogue-status").textContent = "Scan started — every CLI is asked for its models; the list refreshes in about two minutes.";
+    $("#catalogue-status").textContent = t("Scan started: every CLI is asked for its models; the list updates in about two minutes.");
     setTimeout(() => {
       btn.disabled = false;
       refreshCatalogue().catch(() => {});
     }, 120_000);
   } catch (err) {
-    $("#catalogue-status").textContent = `Refused — ${err.message}`;
+    $("#catalogue-status").textContent = t("Refused: {error}", { error: err.message });
     btn.disabled = false;
   }
 });
@@ -3613,7 +3624,7 @@ async function refreshTrending() {
     trendingData = await api("/api/trending");
   } catch (err) {
     trendingData = null;
-    $("#trending-status").textContent = err.message;
+    $("#trending-status").textContent = t("That did not work: {error}", { error: err.message });
   }
   renderTrending();
 }
@@ -3629,82 +3640,93 @@ function commNote(text, tone = "") {
 
 function commDestSelect(value, label) {
   const d = commData;
-  return `<select class="comm-dest" data-comm-dest aria-label="Where ${esc(label)} goes">${
-    d.bots.map((b) => `<option value="${esc(b.id)}"${value === b.id ? " selected" : ""}>📱 Telegram · @${esc(b.username)}</option>`).join("")
-  }<option value="bell"${value === "bell" ? " selected" : ""}>🔔 Dashboard bell only</option></select>`;
+  return `<select class="comm-dest" data-comm-dest aria-label="${esc(t("Where {job} goes", { job: label }))}">${
+    d.bots.map((b) => `<option value="${esc(b.id)}"${value === b.id ? " selected" : ""} translate="no">📱 Telegram · @${esc(b.username)}</option>`).join("")
+  }<option value="bell"${value === "bell" ? " selected" : ""}>🔔 ${esc(t("Only the bell in this dashboard"))}</option></select>`;
 }
 
 function renderCommunication() {
   const d = commData;
   if (!d) return;
-  const groups = ["team-up", "TIM", "Your jobs"];
-  const table = (rows) => `<table class="comm-table"><thead><tr><th>Job — what it sends</th><th class="comm-dest-col">Goes to</th></tr></thead><tbody>${
+  // The server's group ids; only "Your jobs" is a word to translate.
+  const groups = [["team-up", "team-up"], ["TIM", "TIM"], ["Your jobs", t("Your jobs")]];
+  const table = (rows) => `<table class="comm-table"><thead><tr>${th("Job — what it sends", t("Job: what it sends"))}<th class="comm-dest-col" data-col-key="Goes to">${
+    esc(t("Goes to"))}</th></tr></thead><tbody>${
     rows.map((s) => `<tr data-sender="${esc(s.key)}">
-      <td>${esc(s.title)}${!s.scheduled ? ' <span class="tag off">not scheduled</span>' : s.enabled ? "" : ' <span class="tag off">switched off</span>'}
+      <td>${esc(s.title)}${!s.scheduled ? ` <span class="tag off">${esc(t("not scheduled"))}</span>` : s.enabled ? "" : ` <span class="tag off">${esc(t("switched off"))}</span>`}
         <div class="muted">${esc(s.notifies)}</div></td>
       <td>${commDestSelect(s.dest ?? d.default, s.title)}</td></tr>`).join("")}</tbody></table>`;
-  $("#comm-routes").innerHTML = groups.map((g) => {
+  $("#comm-routes").innerHTML = groups.map(([g, title]) => {
     const rows = d.senders.filter((s) => s.group === g);
-    return rows.length ? `<h3 class="comm-group">${esc(g)}</h3>${table(rows)}` : "";
-  }).join("") + `<h3 class="comm-group">Everything else</h3>
+    return rows.length ? `<h3 class="comm-group">${esc(title)}</h3>${table(rows)}` : "";
+  }).join("") + `<h3 class="comm-group">${esc(t("Everything else"))}</h3>
     <table class="comm-table"><tbody><tr data-sender="*">
-      <td>Anything not listed above<div class="muted">Any other script that calls <code>send-cron-telegram</code>, and new jobs until you choose for them.</div></td>
-      <td>${commDestSelect(d.default, "everything else")}</td></tr></tbody></table>`;
+      <td>${esc(t("Anything not listed above"))}<div class="muted">${esc(t("Any other script that sends to Telegram, and new jobs until you choose a place for them."))}</div></td>
+      <td>${commDestSelect(d.default, t("everything else"))}</td></tr></tbody></table>`;
 
   // Replies: which bots listen, and how a new session starts.
   const listening = d.bots.filter((b) => b.listen);
   const usedBots = new Set(d.senders.map((s) => s.dest ?? d.default).concat(d.default));
   const deaf = d.bots.filter((b) => usedBots.has(b.id) && !b.listen && !b.owner);
   const owned = d.bots.filter((b) => usedBots.has(b.id) && b.owner);
+  const handles = (bots) => bots.map((b) => `@${b.username}`).join(", ");
   const ownedNote = owned.length
-    ? `<div class="comm-notice">Messages now arrive through ${owned.map((b) => `@${esc(b.username)}`).join(", ")}. Replies there are read by ${esc(owned[0].owner)}, not by team-up — they do not continue the session in the footer. Send the jobs through a bot team-up listens to for that.</div>` : "";
+    ? `<div class="comm-notice">${withNames(t("Messages now arrive through {bots}. Replies there are read by {owner}, not by team-up, so they do not continue the session in the footer. To continue sessions, send the jobs through a bot team-up listens to."),
+      { bots: handles(owned), owner: owned[0].owner })}</div>` : "";
+  const imported = deaf.find((b) => b.imported);
   const notice = !listening.length && !(owned.length && !deaf.length)
-    ? `<div class="comm-notice"><strong>No bot listens yet, so replying does nothing.</strong> Switch on listening for the bot your messages come from${
-        deaf.some((b) => b.imported) ? ` — for @${esc(deaf.find((b) => b.imported).username)} that ends its old send-only rule (it was kept so that no second program would compete for its replies; team-up is the only reader here). Or add a bot of its own for this.` : "."}</div>`
-    : deaf.length ? `<div class="comm-notice">Messages also arrive through ${deaf.map((b) => `@${esc(b.username)}`).join(", ")}, which do${deaf.length === 1 ? "es" : ""} not listen: replies there do nothing.</div>` : "";
+    ? `<div class="comm-notice"><strong>${esc(t("No bot listens yet, so replying does nothing."))}</strong> ${imported
+      ? withNames(t("Switch on listening for the bot your messages come from. For {bot} that ends its old send-only rule (it was kept so that no second program would compete for its replies; team-up is the only reader here). Or add a bot of its own for this."), { bot: `@${imported.username}` })
+      : esc(t("Switch on listening for the bot your messages come from."))}</div>`
+    : deaf.length ? `<div class="comm-notice">${withNames(tp(deaf.length, {
+      one: "Messages also arrive through {bots}, which does not listen: replies there do nothing.",
+      other: "Messages also arrive through {bots}, which do not listen: replies there do nothing." }), { bots: handles(deaf) })}</div>` : "";
   const botRows = d.bots.map((b) => {
-    const poll = b.poll ? (b.poll.ok ? '<span class="tag ok">listening</span>' : `<span class="tag err" title="${esc(b.poll.error || "")}">cannot read replies: ${esc(b.poll.error || "")}</span>`) : "";
+    const poll = b.poll ? (b.poll.ok ? `<span class="tag ok">${esc(t("listening"))}</span>`
+      : `<span class="tag err" title="${esc(b.poll.error || "")}">${esc(t("cannot read replies: {error}", { error: b.poll.error || "" }))}</span>`) : "";
     const ctl = b.owner
-      ? `<span class="muted">Replies are read by ${esc(b.owner)} — Telegram gives each reply to one reader only.</span>`
-      : `<label class="switch"><input type="checkbox" data-comm-listen${b.listen ? " checked" : ""}> Listen for replies</label>${poll}`;
-    return `<div class="comm-bot-row" data-bot="${esc(b.id)}"><span class="name">@${esc(b.username)}</span>${ctl}</div>`;
+      ? `<span class="muted">${withNames(t("Replies are read by {owner}: Telegram gives each reply to one reader only."), { owner: b.owner })}</span>`
+      : `<label class="switch"><input type="checkbox" data-comm-listen${b.listen ? " checked" : ""}> ${esc(t("Listen for replies"))}</label>${poll}`;
+    return `<div class="comm-bot-row" data-bot="${esc(b.id)}"><span class="name" translate="no">@${esc(b.username)}</span>${ctl}</div>`;
   }).join("");
   const r = d.replies;
   const models = (d.modelOptions.includes(r.model) ? [] : [r.model]).concat(d.modelOptions);
   $("#comm-replies").innerHTML = `${notice}${ownedNote}${botRows}
     <div class="comm-new job">
-      <h3>New sessions</h3>
-      <p class="muted">Used when you reply to a script's report, or write to a bot without replying to a message. A reply to a message with a 🧵 claude session always continues that session, in its own folder and with its own model.</p>
+      <h3>${esc(t("New sessions"))}</h3>
+      <p class="muted">${esc(t("Used when you reply to a script's report, or write to a bot without replying to a message. A reply to a message with a 🧵 claude session always continues that session, in its own folder and with its own model."))}</p>
       <div class="knobs">
-        <label for="comm-r-model">Model</label>
-        <select id="comm-r-model">${models.map((m) => `<option value="${esc(m)}"${m === r.model ? " selected" : ""}>${esc(m)}</option>`).join("")}</select>
-        <label for="comm-r-cwd">Folder</label>
+        <label for="comm-r-model">${esc(t("Model"))}</label>
+        <select id="comm-r-model" translate="no">${models.map((m) => `<option value="${esc(m)}"${m === r.model ? " selected" : ""}>${esc(m)}</option>`).join("")}</select>
+        <label for="comm-r-cwd">${esc(t("Folder"))}</label>
         <input id="comm-r-cwd" class="mono" type="text" value="${esc(r.cwd)}" size="40">
-        <label for="comm-r-instr">Extra instructions</label>
-        <textarea id="comm-r-instr" rows="3" placeholder="Optional, e.g. “You may cancel stuck runs with team-up runs cancel.”">${esc(r.instructions || "")}</textarea>
-        <span></span><span><button type="button" class="primary" id="comm-r-save">Save</button></span>
+        <label for="comm-r-instr">${esc(t("Extra instructions"))}</label>
+        <textarea id="comm-r-instr" rows="3" placeholder="${esc(t("Optional, e.g. “You may cancel stuck runs with team-up runs cancel.”"))}">${esc(r.instructions || "")}</textarea>
+        <span></span><span><button type="button" class="primary" id="comm-r-save">${esc(t("Save"))}</button></span>
       </div>
     </div>`;
 
   $("#comm-bots").innerHTML = d.bots.length
-    ? `<table><thead><tr><th>Bot</th><th>Token</th><th>Carries</th><th></th></tr></thead><tbody>${
+    ? `<table><thead><tr>${th("Bot", t("Bot"))}${th("Token", t("Token"))}${th("Carries", t("Sends"))}<th></th></tr></thead><tbody>${
       d.bots.map((b) => `<tr data-bot="${esc(b.id)}">
-        <td>@${esc(b.username)}<div class="muted mono">${esc(b.env)}</div></td>
-        <td class="mono">${b.missing ? '<span class="tag err">token file missing</span>' : esc(b.tokenTail || "—")}</td>
-        <td>${[b.jobs ? `${b.jobs} job${b.jobs === 1 ? "" : "s"}` : "", b.isDefault ? "everything else" : ""].filter(Boolean).join(" + ") || '<span class="muted">nothing</span>'}</td>
-        <td class="row-actions"><button type="button" data-comm-test>Send test</button>
-          <button type="button" data-comm-remove${b.jobs || b.isDefault ? ' disabled title="Send its messages elsewhere first"' : ""}>Remove</button></td>
+        <td translate="no">@${esc(b.username)}<div class="muted mono">${esc(b.env)}</div></td>
+        <td class="mono">${b.missing ? `<span class="tag err">${esc(t("token file missing"))}</span>` : esc(b.tokenTail || "—")}</td>
+        <td>${[b.jobs ? esc(tp(b.jobs, { one: "{n} job", other: "{n} jobs" })) : "", b.isDefault ? esc(t("everything else")) : ""].filter(Boolean).join(" + ")
+          || `<span class="muted">${esc(t("nothing"))}</span>`}</td>
+        <td class="row-actions"><button type="button" data-comm-test>${esc(t("Send test"))}</button>
+          <button type="button" data-comm-remove${b.jobs || b.isDefault ? ` disabled title="${esc(t("Send its messages elsewhere first"))}"` : ""}>${esc(t("Remove"))}</button></td>
       </tr>`).join("")}</tbody></table>`
-    : '<div class="empty">No bots yet — add one below.</div>';
+    : `<div class="empty">${esc(t("No bots yet: add one below."))}</div>`;
   const broken = d.bots.filter((b) => b.missing || (b.poll && !b.poll.ok)).length;
-  updateNavBadge("badge-communication", broken ? String(broken) : "", "red", broken > 0, broken ? `${broken} bot(s) need attention` : "");
+  updateNavBadge("badge-communication", broken ? String(broken) : "", "red", broken > 0,
+    broken ? tp(broken, { one: "{n} bot needs attention", other: "{n} bots need attention" }) : "");
 }
 
 async function refreshCommunication() {
   commData = await api("/api/communication");
   renderCommunication();
 }
-onEnter.communication = () => refreshCommunication().catch((err) => commNote(err.message, "err"));
+onEnter.communication = () => refreshCommunication().catch((err) => commNote(t("That did not work: {error}", { error: err.message }), "err"));
 
 async function commWrite(url, body, done) {
   try {
@@ -3712,7 +3734,7 @@ async function commWrite(url, body, done) {
     commNote(done, "ok");
     return true;
   } catch (err) {
-    commNote(`Refused — ${err.message}`, "err");
+    commNote(t("Refused: {error}", { error: err.message }), "err");
     return false;
   } finally {
     await refreshCommunication().catch(() => {});
@@ -3723,28 +3745,31 @@ $("#comm-routes").addEventListener("change", async (e) => {
   if (!e.target.matches("[data-comm-dest]")) return;
   const sender = e.target.closest("[data-sender]").dataset.sender;
   const label = e.target.selectedOptions[0]?.textContent || e.target.value;
-  await commWrite("/api/communication/routes", { sender, dest: e.target.value }, `Saved — ${sender === "*" ? "everything else" : sender} → ${label}`);
+  const job = sender === "*" ? t("everything else") : commData.senders.find((s) => s.key === sender)?.title || sender;
+  await commWrite("/api/communication/routes", { sender, dest: e.target.value }, t("Saved: {job} → {place}", { job, place: label }));
 });
 
 $("#comm-replies").addEventListener("change", async (e) => {
   if (!e.target.matches("[data-comm-listen]")) return;
   const id = e.target.closest("[data-bot]").dataset.bot;
   const on = e.target.checked;
-  await commWrite(`/api/communication/bots/${id}/listen`, { listen: on }, on ? "Listening — replies to this bot now continue their session" : "Stopped listening");
+  await commWrite(`/api/communication/bots/${id}/listen`, { listen: on },
+    on ? t("Listening: replies to this bot now continue their session.") : t("Stopped listening."));
 });
 
 $("#comm-replies").addEventListener("click", async (e) => {
   if (e.target.id !== "comm-r-save") return;
   await commWrite("/api/communication/replies", {
     model: $("#comm-r-model").value, cwd: $("#comm-r-cwd").value.trim(), instructions: $("#comm-r-instr").value,
-  }, "New-session settings saved");
+  }, t("Settings for new sessions saved."));
 });
 
 $("#comm-add").addEventListener("submit", async (e) => {
   e.preventDefault();
-  commNote("Checking the token with Telegram …");
+  commNote(t("Checking the token with Telegram…"));
   const chat = $("#comm-chat").value.trim();
-  if (await commWrite("/api/communication/bots", { token: $("#comm-token").value.trim(), chat_id: chat || undefined }, "Bot added — send it a test, then route jobs to it above")) {
+  if (await commWrite("/api/communication/bots", { token: $("#comm-token").value.trim(), chat_id: chat || undefined },
+    t("Bot added: send it a test, then send jobs to it above."))) {
     $("#comm-token").value = "";
     $("#comm-chat").value = "";
     $("#comm-add-box").open = false;
@@ -3755,9 +3780,9 @@ $("#comm-bots").addEventListener("click", async (e) => {
   const id = e.target.closest("[data-bot]")?.dataset.bot;
   if (!id) return;
   if (e.target.matches("[data-comm-test]")) {
-    await commWrite(`/api/communication/bots/${id}/test`, {}, "Test message sent — check Telegram");
-  } else if (e.target.matches("[data-comm-remove]") && confirm("Remove this bot from the list?")) {
-    await commWrite(`/api/communication/bots/${id}/remove`, {}, "Bot removed");
+    await commWrite(`/api/communication/bots/${id}/test`, {}, t("Test message sent: check Telegram."));
+  } else if (e.target.matches("[data-comm-remove]") && confirm(t("Remove this bot from the list?"))) {
+    await commWrite(`/api/communication/bots/${id}/remove`, {}, t("Bot removed."));
   }
 });
 
@@ -3776,16 +3801,16 @@ function renderTrending() {
     || sections.find((s) => s.repos.length) || sections[0];
   fillSelect($("#trending-section"), sections.map((s) => ({ value: s.title, label: `${s.title} (${s.repos.length})` })));
   if (section) $("#trending-section").value = section.title;
-  $("#trending-status").textContent = !section ? "The report has no sections."
-    : section.repos.length ? "" : "No repos in this section.";
+  $("#trending-status").textContent = !section ? t("The report has no sections.")
+    : section.repos.length ? "" : t("No repositories in this section.");
   $("#trending-table").innerHTML = section?.repos.length ? `<table>
-    <thead><tr><th>Repo</th><th>⭐</th><th>Lang</th><th>Created</th><th>Description</th></tr></thead>
+    <thead><tr>${th("Repo", t("Repository"))}<th aria-label="${esc(t("Stars"))}">⭐</th>${th("Lang", t("Language"))}${th("Created", t("Created"))}${th("Description", t("Description"))}</tr></thead>
     <tbody>${section.repos.map((r) => `<tr>
-      <td>${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.name)}</a>` : esc(r.name)}</td>
-      <td>${r.stars == null ? "" : r.stars.toLocaleString()}</td>
+      <td translate="no">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.name)}</a>` : esc(r.name)}</td>
+      <td>${r.stars == null ? "" : r.stars.toLocaleString(LANG)}</td>
       <td>${esc(r.lang)}</td>
       <td>${esc(r.created)}</td>
-      <td class="desc" title="${esc(r.description)}">${esc(r.description)}</td>
+      <td class="desc" translate="no" title="${esc(r.description)}">${esc(r.description)}</td>
     </tr>`).join("")}</tbody></table>` : "";
 }
 
@@ -3801,17 +3826,15 @@ $("#trending-section").addEventListener("change", (e) => {
 // data-col / data-row, so the five-second redraw keeps the choice without any
 // renderer knowing about it.
 const PANEL_HELP = {
-  "panel-usage": "Usage windows of every subscription: share used, warn level and when it resets. STALE means the collector stopped reading — one click sends an agent to fix it.",
-  "panel-sessions": "Live tmux sessions (click one to open its terminal), every live Claude Code session including the desktop app's (message or stop it), and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
+  "panel-usage": t("How much of each subscription is used, how close it is to its limit, and when it resets. “Out of date” means the readings stopped coming in; one click sends a helper to fix it."),
+  "panel-sessions": t("Live tmux sessions (click one to open its terminal), every live Claude Code session including the desktop app's (message or stop it), and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT)."),
   "panel-projects": t("Your projects: what waits for you in each, what is being worked on there, and a session to work in one yourself."),
-  "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
-  "panel-roles": "Every role and its fallback chain. The outlined chip is what `team-up pick` would choose right now; faded chips are skipped right now (hover for why). Drag chips to reorder, drop a model from the roster to add it, ✕ to remove; dragging a chip onto another role copies it. ✎ sets effort and pinning. ⬆ marks a newer version, ✗ a model the CLI no longer offers.",
-  "panel-roster": "Every model in the roster, grouped by the CLI it runs on — the drag sources for the chains. Dashed: in no chain yet. Under 'Add or remove models' each provider lists what it offers; a checked model is in the roster.",
-  "panel-settings": "Roster switches: accounts on/off, subscriptions, usage-spender quota, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
-  "panel-cron-jobs": "Which CLI×model runs each scheduled LLM job (~/.team-up/cron-jobs.ini). No fallback: if that CLI is at its limit, the job fails and says so.",
-  "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",
-  "panel-trending": "New AI repos on GitHub from the newest daily report of the hermes trending scraper (~/.hermes/cron-outputs/framework-scout). Pick a section; hover a description for all of it.",
-  "panel-clis": "Agent CLIs: version, harness verification, update/install/login. CLIs team-up can install but the roster doesn't run yet are rows you switch on in ✎. Hover a CLI name for its path; click a row for the job log.",
+  "panel-tim": t("Open tasks, ideas and bugs of every project in the folder. Start opens a session with the item as its prompt."),
+  "panel-roles": t("Every role and its fallback chain. The outlined chip is what `team-up pick` would choose right now; faded chips are skipped right now (hover for why). Drag chips to reorder, drop a model from the roster to add it, ✕ to remove; dragging a chip onto another role copies it. ✎ sets effort and pinning. ⬆ marks a newer version, ✗ a model the CLI no longer offers."),
+  "panel-roster": t("Every model in the roster, grouped by the CLI it runs on: the drag sources for the chains. Dashed: in no chain yet. Under “Add or remove models” each provider lists what it offers; a checked model is in the roster."),
+  "panel-providers": t("How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself."),
+  "panel-trending": t("New AI repositories on GitHub from the newest daily report of the hermes trending scraper (~/.hermes/cron-outputs/framework-scout). Pick a section; hover a description for all of it."),
+  "panel-clis": t("Agent CLIs: version, harness check, update, install and login. CLIs team-up can install but the roster does not run yet are rows you switch on in ✎. Hover a CLI name for its path; click a row for the job log."),
 };
 // Only panels with an id: prefs are keyed by it, and `# [data-…]` would be an
 // invalid selector that voids the whole hiding rule.
@@ -3867,7 +3890,8 @@ function openPanelEditor(panel) {
   $("#panel-editor-title").textContent = panel.querySelector("h2 .title").textContent;
   $("#panel-editor-color").value = mine.color || "#2563eb";
   const cols = new Map();
-  panel.querySelectorAll("th[data-col]").forEach((th) => cols.set(th.dataset.col, th.dataset.col));
+  // A column by its header as shown; the key under it stays English (tagColumns).
+  panel.querySelectorAll("th[data-col]").forEach((cell) => cols.set(cell.dataset.col, cell.textContent.trim() || cell.dataset.col));
   const rows = new Map();
   panel.querySelectorAll("[data-row]").forEach((el) => rows.set(el.dataset.row, el.dataset.row));
   // Rows that start hidden (a CLI team-up can install but the roster doesn't
@@ -3877,13 +3901,13 @@ function openPanelEditor(panel) {
   const hiddenCols = new Set(mine.cols || []);
   const hiddenRows = new Set([...(mine.rows || []), ...[...offByDefault].filter((r) => !shownRows.has(r))]);
   const list = (kind, items, hidden, label) => items.size
-    ? `<label>${label}</label><div class="pref-list">${[...items.keys()].map((k) =>
+    ? `<label>${esc(label)}</label><div class="pref-list">${[...items].map(([k, name]) =>
       `<label><input type="checkbox" data-kind="${kind}" value="${esc(k)}"${
         offByDefault.has(k) ? " data-default-off" : ""}${hidden.has(k) ? "" : " checked"}> ${
-        esc(k.replace(":", " › "))}</label>`).join("")}</div>`
+        esc(kind === "cols" ? name : name.replace(":", " › "))}</label>`).join("")}</div>`
     : "";
-  $("#panel-editor-items").innerHTML = list("cols", cols, hiddenCols, "Visible columns")
-    + list("rows", rows, hiddenRows, "Visible rows");
+  $("#panel-editor-items").innerHTML = list("cols", cols, hiddenCols, t("Visible columns"))
+    + list("rows", rows, hiddenRows, t("Visible rows"));
   dialog.showModal();
 }
 
@@ -3944,9 +3968,9 @@ async function refreshNotifications() {
 function renderBell() {
   $("#bell-list").innerHTML = notifications.map((n) => `<li class="${n.read ? "" : "unread"}">
     <strong>${esc(n.title)}</strong><p>${esc(n.text || "")}</p>
-    <small class="muted">${esc(new Date(n.at).toLocaleString())}</small>${
-      n.link?.startsWith("#/") ? ` <a href="${esc(n.link)}" class="bell-link">open</a>` : ""}</li>`).join("")
-    || '<li class="muted">Nothing new.</li>';
+    <small class="muted">${esc(fmtDateTime(n.at))}</small>${
+      n.link?.startsWith("#/") ? ` <a href="${esc(n.link)}" class="bell-link">${esc(t("Open|verb"))}</a>` : ""}</li>`).join("")
+    || `<li class="muted">${esc(t("Nothing new."))}</li>`;
 }
 
 async function markBellRead(ids) {
