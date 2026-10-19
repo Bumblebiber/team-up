@@ -471,7 +471,6 @@ export function createDashboardServer({
       read: readMailbox,
       projectOf: projectsIn(dir, { ledger }),
       ledger,
-      liveSessions: memo.get("tmux-sessions", () => listSessions()),
       resumeWindow: spenderWindow(roster, SPENDER_DEFAULTS),
       now: now(),
     };
@@ -1179,7 +1178,7 @@ export function createDashboardServer({
         let result;
         if (runActionMatch) {
           target = `${target} ${body.action}`;
-          result = runAction(decodeURIComponent(runActionMatch[1]), String(body.action || ""), { reason: body.reason });
+          result = runAction(decodeURIComponent(runActionMatch[1]), String(body.action || ""), { reason: body.reason, env });
           memo.invalidate(`run:${decodeURIComponent(runActionMatch[1])}`);
           memo.invalidate("runs:true");
           memo.invalidate("runs:false");
@@ -1202,7 +1201,7 @@ export function createDashboardServer({
         jsonResponse(res, 200, { ok: true, ...result });
       } catch (e) {
         appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
-        jsonResponse(res, e.status ?? 400, { error: String(e.message || e) });
+        jsonResponse(res, e.httpStatus ?? 400, { error: String(e.message || e) });
       }
       return;
     }

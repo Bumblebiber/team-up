@@ -43,12 +43,13 @@ function opsRun(status) {
   return { ...r, calls };
 }
 
-test("ops-run puts a failed run's RESULT.md in the report and collects it; a question stays open", () => {
+test("ops-run puts a failed run's RESULT.md in the report and collects it; a question is reported and closed", () => {
   const failed = opsRun("failed");
   assert.equal(failed.status, 1, failed.stderr);
   assert.match(failed.stdout, /ended failed\nFAILED-PREFLIGHT: tree not clean/);
   assert.match(failed.calls, new RegExp(`^runs collect ${RUN_ID} --note ops-run: failed, reported on stdout$`, "m"));
   const asking = opsRun("waiting_human");
   assert.equal(asking.status, 1, asking.stderr);
-  assert.doesNotMatch(asking.calls, /runs collect/);
+  // Nobody answers a scheduled job's question (the Inbox leaves cron runs out): its worker and slot are freed.
+  assert.match(asking.calls, new RegExp(`^runs cancel ${RUN_ID}\nruns collect ${RUN_ID} --note ops-run: waiting_human, reported on stdout$`, "m"));
 });

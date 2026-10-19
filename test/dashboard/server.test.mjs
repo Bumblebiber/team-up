@@ -862,6 +862,7 @@ test("inbox: a one-line subject in the list, the whole newest question in the it
       assert.equal(item.json.body, long);
       assert.deepEqual(item.json.history.map((h) => h.question), ["Old, answered question?"]);
       assert.equal((await req(port, "/api/action-center/item/..%2Fetc", { token })).status, 400);
+      assert.equal((await req(port, "/api/action-center/item/not-a-run-id", { token })).status, 400, "the route's own id check");
       assert.equal((await req(port, "/api/action-center/item/20200101T000000Z-none", { token })).status, 404);
     } finally {
       server.close();

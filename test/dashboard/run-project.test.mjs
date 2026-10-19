@@ -85,3 +85,33 @@ test("a bad collecting folder resolves to names instead of failing", () => {
   assert.deepEqual(projectOf({ cwd: "/a/b" }), { label: null, name: "b" });
   assert.equal(projectOf({}), null);
 });
+
+test("the repos' origins are asked once per 10 minutes, though the folder is rescanned every minute", () => {
+  repo("tim", { label: "P0063" });
+  const clones = [1, 2, 3].map((n) => clone(".team-up", "spender", "clones", `ttl-${n}`));
+  const asked = [];
+  const exec = (cmd, args) => {
+    asked.push(args[1]);
+    return `https://github.com/x/${clones.includes(args[1]) ? "tim" : path.basename(args[1])}\n`;
+  };
+  let t = 0;
+  const resolver = createProjectResolver({ exec, now: () => t });
+  const repoCalls = () => asked.filter((d) => d.startsWith(projects + path.sep)).length;
+  const resolve = (cwd) => resolver("", { ledger: new Map() })({ cwd });
+
+  assert.equal(resolve(clones[0]).name, "tim");
+  const first = repoCalls();
+  assert.ok(first > 0);
+  t = 61_000;
+  assert.equal(resolve(clones[1]).name, "tim");
+  assert.equal(repoCalls(), first, "a folder rescan keeps the origins");
+  t = 10 * 60_000 + 62_000;
+  assert.equal(resolve(clones[2]).name, "tim");
+  assert.equal(repoCalls(), 2 * first, "after 10 minutes every repo is asked again");
+});
+
+test("a task clone that is gone is named by its task, not by its checkout folder", () => {
+  const projectOf = createProjectResolver({ exec: () => "" })("");
+  assert.deepEqual(projectOf({ cwd: "/gone/projects/tasks/fix-sync/repo" }), { label: null, name: "fix-sync" });
+  assert.deepEqual(projectOf({ cwd: "/gone/projects/tasks/fix-sync/wt" }), { label: null, name: "fix-sync" });
+});

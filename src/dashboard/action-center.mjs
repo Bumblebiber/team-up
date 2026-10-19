@@ -77,9 +77,24 @@ export function reasonLine(state, read) {
   return line ? clip(line, 300) : null;
 }
 
-/** Answered once ANSWER.md is at least as new as the question — the rule of classifyMailbox. */
+/** Answered once ANSWER.md is at least as new as QUESTIONS.md — the rule of classifyMailbox. */
 export function answeredAfterQuestion(questions, answer) {
-  return Boolean(answer) && (!questions || answer.mtimeMs >= questions.mtimeMs);
+  return Boolean(answer && questions) && answer.mtimeMs >= questions.mtimeMs;
+}
+
+/**
+ * The observer's newest escalation in OBSERVATION.log. Every escalation path
+ * logs a decision; only a deny pattern (credential or billing wording) sets
+ * its `finding`.
+ */
+export function lastEscalation(log) {
+  return String(log ?? "").split("\n").map((line) => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      return null;
+    }
+  }).filter((e) => e?.kind === "decision" && e.action === "escalate").at(-1) ?? null;
 }
 
 /** The spender's spawn window, where an answer to a parked run takes effect. */
@@ -91,18 +106,25 @@ export function spenderWindow(roster, defaults) {
 
 /**
  * The inbox item of one run, or null when it waits on nobody.
- * @param ctx { read, projectOf, ledger, liveSessions, resumeWindow, now }
+ *
+ * Retry is offered only on a technical stop of a run the usage-spender parked:
+ * the spender resumes it as a fresh run with the stop explained. A live worker
+ * stuck in a prompt never reads ANSWER.md and nothing would watch it again, and
+ * the observer reads any answer to a credential or billing prompt as the
+ * human's approval of it: those get Cancel only.
+ * @param ctx { read, projectOf, ledger, resumeWindow, now }
  */
 export function inboxItem(state, ctx) {
-  const { read, projectOf = () => null, ledger = new Map(), liveSessions = null, resumeWindow = null, now = Date.now() } = ctx;
+  const { read, projectOf = () => null, ledger = new Map(), resumeWindow = null, now = Date.now() } = ctx;
   if (isCron(state)) return null;
   const row = buildRunRow(state, { now });
   const role = String(state.role ?? "run").replace(/^specialist:/, "");
   const spender = ledger.get(state.runId);
-  const base = {
+  // The project only for a listed run: resolving it can cost a git call, and most runs wait on nobody.
+  const item = (fields) => ({
     id: `run:${state.runId}`, runId: state.runId, project: projectOf(state), worker: row.worker, role,
-    status: state.status, parked: false, resumeWindow: null, source: null,
-  };
+    status: state.status, parked: false, resumeWindow: null, source: null, retryable: false, ...fields,
+  });
   const since = (ms) => (Number.isFinite(ms) ? now - ms : row.ageMs);
 
   if (state.status === "waiting_human") {
@@ -111,32 +133,32 @@ export function inboxItem(state, ctx) {
     if (answeredAfterQuestion(questions, read(state.runId, "ANSWER.md"))) return null;
     const last = questionBlocks(questions?.text).at(-1);
     const source = last?.source === "observer" ? "observer" : "worker";
-    // A spender run's worker is stopped while it waits; the answer resumes it in the next window.
-    const parked = Boolean(spender)
-      && (Boolean(spender.parked) || (Array.isArray(liveSessions) && !liveSessions.includes(state.worker?.tmux)));
-    return {
-      ...base,
+    const denied = source === "observer" && Boolean(lastEscalation(read(state.runId, "OBSERVATION.log")?.text)?.finding);
+    // The spender stopped this run's worker; an answer resumes it in the next window.
+    const parked = Boolean(spender?.parked);
+    let subject;
+    if (denied) subject = "Needs you: a credential or billing prompt";
+    else if (source === "observer") subject = "Stuck on a technical prompt";
+    else if (last) subject = questionSubject(last.text, [state.title, spender?.title]);
+    else subject = clip(state.title || spender?.title || `${role} is waiting for your answer`, SUBJECT_MAX);
+    return item({
       kind: source === "observer" ? "problem" : "question",
-      subject: source === "observer"
-        ? "Stuck on a technical prompt"
-        : last ? questionSubject(last.text, [state.title, spender?.title]) : clip(state.title || spender?.title || `${role} is waiting for your answer`, SUBJECT_MAX),
+      subject,
       ageMs: since(questions?.mtimeMs ?? Date.parse(state.updatedAt ?? "")),
       parked,
       resumeWindow: parked ? resumeWindow : null,
       source,
-    };
+      retryable: source === "observer" && !denied && parked,
+    });
   }
   if (!row.uncollected) return null;
   const ageMs = since(Date.parse(state.finishedAt ?? ""));
   if (state.status === "failed") {
     const reason = reasonLine(state, read);
-    return { ...base, kind: "problem", subject: clip(reason ? `Failed: ${reason}` : "Failed", SUBJECT_MAX), ageMs };
+    return item({ kind: "problem", subject: clip(reason ? `Failed: ${reason}` : "Failed", SUBJECT_MAX), ageMs });
   }
   const title = state.title || spender?.title;
-  return {
-    ...base, kind: "result", ageMs,
-    subject: clip(title || reasonLine(state, read) || `${role} finished`, SUBJECT_MAX),
-  };
+  return item({ kind: "result", ageMs, subject: clip(title || reasonLine(state, read) || `${role} finished`, SUBJECT_MAX) });
 }
 
 /** Every inbox item, questions first, then problems, then results; newest first inside a kind. */

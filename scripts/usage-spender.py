@@ -307,9 +307,10 @@ def ghjson(*args):
 def tim_label(repo):
     """The repo's TIM project label from its .tim-project marker, or None."""
     try:
-        return json.loads((Path(repo) / ".tim-project").read_text()).get("project") or None
+        v = json.loads((Path(repo) / ".tim-project").read_text()).get("project")
     except (OSError, ValueError, AttributeError):
         return None
+    return v if isinstance(v, str) and v else None  # it goes into argv: a number or list would end the tick
 
 
 def local_repos():
@@ -534,10 +535,11 @@ def _spawn(a, day_dir, text=None):
     model = a["model"].split(":", 1)[1]
     verify = ["--verify-command", a["verify"], "--verify-runs", "1"] if a.get("verify") else []
     # The clone's path names no project: the dashboard groups the run by the repo it came from.
+    # The title (an issue or PR title) goes last: a title spelled like a flag then shadows none.
     r = teamup("runs", "create", "--cwd", cwd, "--role", a["role"], "--worker-cli", a["cli"],
                "--worker-model", model, "--prompt-file", str(prompt),
-               "--project", tim_label(a["repo"]) or Path(a["repo"]).name, "--title", task_title(a),
-               "--parent-cli", "claude", "--parent-attach", "manual", *verify)
+               "--parent-cli", "claude", "--parent-attach", "manual", *verify,
+               "--project", tim_label(a["repo"]) or Path(a["repo"]).name, "--title", task_title(a))
     run_id = next((ln.split()[1] for ln in r.stdout.splitlines() if ln.startswith("runId:")), None)
     if r.returncode or not run_id:
         a.update(spawned=False, rc=r.returncode, error=f"runs create rc={r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
@@ -988,6 +990,10 @@ def selftest():
         assert (flag(seen[0], "--project"), flag(seen[0], "--title")) == ("P0063", "Review: Fix it"), seen[0]
         assert (flag(seen[2], "--project"), flag(seen[2], "--title")) == ("x", "Code audit of x"), seen[2]
         assert pr["spawned"] and pr["run_id"] == "R1", pr
+        assert seen[0][-2:] == ("--title", "Review: Fix it"), "a title spelled like a flag shadows nothing last"
+        (d / "n").mkdir()
+        (d / "n" / ".tim-project").write_text('{"project": 7}')
+        assert tim_label(d / "n") is None and tim_label(d / "tim") == "P0063"
 
     # host CLI from cron-jobs.ini (main 16f0f68)
     built = ["claude", "--dangerously-skip-permissions", "--model", "opus", "Read x"]

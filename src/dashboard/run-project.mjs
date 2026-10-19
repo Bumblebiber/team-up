@@ -98,7 +98,9 @@ export function createProjectResolver({ exec = execFileSync, env = process.env, 
           if (!name.startsWith(".") && !repos.has(full) && fs.existsSync(path.join(full, ".git"))) repos.set(full, null);
         }
       } catch { /* unreadable folder: no repos */ }
-      f = { at: now(), repos, byOrigin: null, originsAt: 0 };
+      // The same repos keep their origins and the origins' own 10-minute clock.
+      const same = f && f.repos.size === repos.size && [...repos].every(([d, label]) => f.repos.get(d) === label);
+      f = { at: now(), repos, byOrigin: same ? f.byOrigin : null, originsAt: same ? f.originsAt : 0 };
       folders.set(dir, f);
     }
     return f;
@@ -134,7 +136,9 @@ export function createProjectResolver({ exec = execFileSync, env = process.env, 
         ?? (cwd ? repoByOrigin(f, originOf(cwd)) : null);
       if (dir) return { label: f.repos.get(dir) ?? null, name: path.basename(dir) };
       if (project && !path.isAbsolute(project)) return { label: /^P\d+$/.test(project) ? project : null, name: project };
-      const base = path.basename(cwd || project);
+      // A task clone's checkout is …/tasks/<task>/repo (or wt, clone): the task names it.
+      const p = cwd || project;
+      const base = path.basename(/^(?:repo|wt|clone)$/.test(path.basename(p)) ? path.dirname(p) : p);
       return base ? { label: null, name: base } : null;
     };
   };

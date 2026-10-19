@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildActionCenter, buildActionItem, questionBlocks, questionSubject, reasonLine, spenderWindow,
+  answeredAfterQuestion, buildActionCenter, buildActionItem, questionBlocks, questionSubject, reasonLine, spenderWindow,
 } from "../../src/dashboard/action-center.mjs";
 
 const now = Date.parse("2026-10-13T12:00:00Z");
@@ -52,7 +52,7 @@ test("questions, then problems, then results, newest first; cron jobs and capaci
   const byId = Object.fromEntries(ac.items.map((i) => [i.runId, i]));
   assert.deepEqual(byId["q-old"], {
     id: "run:q-old", runId: "q-old", project: null, worker: "claude:opus", role: "reviewer", status: "waiting_human",
-    parked: false, resumeWindow: null, source: "worker", kind: "question", subject: "A or B?",
+    parked: false, resumeWindow: null, source: "worker", retryable: false, kind: "question", subject: "A or B?",
     ageMs: now - at("2026-10-11T00:00:00Z"),
   });
   assert.equal(byId.stuck.source, "observer");
@@ -78,23 +78,67 @@ test("question blocks: escalateRun's separator only, the last marker names the s
   ]);
 });
 
-test("parked: a spender run whose worker the spender stopped or that is gone; the window comes from the roster", () => {
+test("parked: only a run the spender parked, since only those does it resume; the window comes from the roster", () => {
   const window = spenderWindow({ usage_spender: { spawn_from: 22, spawn_until: 24 } }, { spawn_from: 23, spawn_until: 3 });
   assert.deepEqual(window, { start: 22, end: 3 }, "an invalid hour keeps the default");
-  const states = ["marked", "gone", "live", "own"].map((runId) =>
+  const states = ["marked", "gone", "own"].map((runId) =>
     ({ runId, role: "implementer", status: "waiting_human", worker: { tmux: `t-${runId}` } }));
   const ledger = new Map([
     ["marked", { run_id: "marked", parked: "2026-10-13T00:00:00Z", title: "Ledger title" }],
+    // Its worker may be gone, but until the spender's next tick parks it, nothing would resume it.
     ["gone", { run_id: "gone" }],
-    ["live", { run_id: "live" }],
   ]);
   const read = () => null;
-  const items = buildActionCenter({ states, read, ledger, liveSessions: ["t-marked", "t-live"], resumeWindow: window, now }).items;
+  const items = buildActionCenter({ states, read, ledger, resumeWindow: window, now }).items;
   const parked = Object.fromEntries(items.map((i) => [i.runId, [i.parked, i.resumeWindow]]));
   assert.deepEqual(parked, {
-    marked: [true, window], gone: [true, window], live: [false, null], own: [false, null],
+    marked: [true, window], gone: [false, null], own: [false, null],
   }, "a run outside the ledger has nobody to resume it");
   assert.equal(items.find((i) => i.runId === "marked").subject, "Ledger title");
+});
+
+test("retryable: only a parked run's technical stop; a credential or billing prompt and a live run get Cancel only", () => {
+  const ids = ["parked", "live", "denied", "asks"];
+  const states = ids.map((runId) => ({ runId, role: "reviewer", status: "waiting_human" }));
+  const ledger = new Map(["parked", "denied", "asks"].map((id) => [id, { run_id: id, parked: "2026-10-13T00:00:00Z" }]));
+  const log = (finding) => [
+    JSON.stringify({ kind: "decision", action: "escalate", reason: "deny pattern matched in pane", finding: "API key:" }),
+    JSON.stringify({ kind: "decision", action: "escalate", reason: "judge error", finding }),
+    JSON.stringify({ kind: "decision", proposed_action: "escalate", action: "wait", finding: null }),
+  ].join("\n");
+  const stuck = ["<!-- source: observer -->\n\nTrust this folder?", "2026-10-13T09:00:00Z"];
+  const read = reader({
+    parked: { "QUESTIONS.md": stuck, "OBSERVATION.log": [log(null), "2026-10-13T09:00:00Z"] },
+    live: { "QUESTIONS.md": stuck },
+    denied: { "QUESTIONS.md": stuck, "OBSERVATION.log": [log("Billing: add credits"), "2026-10-13T09:00:00Z"] },
+    asks: { "QUESTIONS.md": ["# A or B?", "2026-10-13T09:00:00Z"] },
+  });
+  const byId = Object.fromEntries(buildActionCenter({ states, read, ledger, now }).items.map((i) => [i.runId, i]));
+  assert.deepEqual(ids.map((id) => [byId[id].kind, byId[id].retryable]), [
+    ["problem", true], ["problem", false], ["problem", false], ["question", false],
+  ]);
+  assert.equal(byId.parked.subject, "Stuck on a technical prompt", "an earlier finding the human answered does not count");
+  assert.equal(byId.denied.subject, "Needs you: a credential or billing prompt");
+});
+
+test("the project is resolved only for a run that is listed", () => {
+  const states = [
+    { runId: "q", status: "waiting_human" },
+    { runId: "busy", status: "watching" },
+    { runId: "read", status: "done", finishedAt: "2026-10-13T00:00:00Z", collected: { at: "x" } },
+  ];
+  const asked = [];
+  const projectOf = (s) => (asked.push(s.runId), { label: null, name: "p" });
+  const ac = buildActionCenter({ states, read: () => null, projectOf, now });
+  assert.deepEqual(ac.items.map((i) => [i.runId, i.project?.name]), [["q", "p"]]);
+  assert.deepEqual(asked, ["q"]);
+});
+
+test("answered needs a question: an ANSWER.md from an earlier round answers no QUESTIONS.md that is gone", () => {
+  const f = (iso) => ({ text: "x", mtimeMs: at(iso) });
+  assert.equal(answeredAfterQuestion(null, f("2026-10-13T00:00:00Z")), false);
+  assert.equal(answeredAfterQuestion(f("2026-10-13T00:00:00Z"), f("2026-10-13T00:00:00Z")), true);
+  assert.equal(answeredAfterQuestion(f("2026-10-13T01:00:00Z"), f("2026-10-13T00:00:00Z")), false);
 });
 
 test("reason line: FAILURE.md, RESULT summary, RESULT.md, recorded reason; never the bare STATUS=failed", () => {

@@ -45,6 +45,7 @@ test("run actions: cancel and fail only open runs, fail needs a reason, collect 
 
 test("answer writes ANSWER.md and puts a waiting run back on watch; refused once it no longer waits", () => {
   plant("20261013T120000Z-ansr", "waiting_human");
+  fs.writeFileSync(path.join(home, "runs", "20261013T120000Z-ansr", "mailbox", "QUESTIONS.md"), "A or B?\n");
   assert.throws(() => runAction("20261013T120000Z-ansr", "answer", { reason: "  " }), /needs text/);
   assert.equal(runAction("20261013T120000Z-ansr", "answer", { reason: "Use option B." }).status, "watching");
   const answer = fs.readFileSync(path.join(home, "runs", "20261013T120000Z-ansr", "mailbox", "ANSWER.md"), "utf8");
@@ -55,13 +56,27 @@ test("answer writes ANSWER.md and puts a waiting run back on watch; refused once
   assert.throws(() => runAction("20261013T120000Z-cpty", "answer", { reason: "x" }), /no longer waiting \(waiting_decision\)/);
 });
 
-test("retry answers only an observer's problem, with a fixed text; a worker's question needs a real answer", () => {
+test("retry answers only a parked run's technical stop, with a fixed text; anything else is refused", () => {
   const mb = (id) => path.join(home, "runs", id, "mailbox");
-  plant("20261019T120000Z-stck", "waiting_human");
-  fs.writeFileSync(path.join(mb("20261019T120000Z-stck"), "QUESTIONS.md"), "<!-- source: observer -->\n\nTrust this folder?\n");
+  const stuck = (id, log = "") => {
+    plant(id, "waiting_human");
+    fs.writeFileSync(path.join(mb(id), "QUESTIONS.md"), "<!-- source: observer -->\n\nTrust this folder?\n");
+    fs.writeFileSync(path.join(mb(id), "OBSERVATION.log"), log);
+  };
+  stuck("20261019T120000Z-stck");
+  stuck("20261019T120000Z-live");
+  stuck("20261019T120000Z-deny", `${JSON.stringify({ kind: "decision", action: "escalate", finding: "Billing: add credits" })}\n`);
   plant("20261019T120000Z-askd", "waiting_human");
   fs.writeFileSync(path.join(mb("20261019T120000Z-askd"), "QUESTIONS.md"), "# A or B?\n");
+  const ledger = path.join(home, "reports", "usage-spender", "ledger.json");
+  fs.mkdirSync(path.dirname(ledger), { recursive: true });
+  fs.writeFileSync(ledger, JSON.stringify(["stck", "deny", "askd"].map((s) =>
+    ({ run_id: `20261019T120000Z-${s}`, parked: "2026-10-19T12:10:00Z" }))));
+
   assert.throws(() => runAction("20261019T120000Z-askd", "retry"), /a question needs an answer/);
+  assert.throws(() => runAction("20261019T120000Z-live", "retry"), /only a run the usage-spender parked/);
+  assert.throws(() => runAction("20261019T120000Z-deny", "retry"), /credential or billing prompt: cancel it instead/);
+  assert.ok(!fs.existsSync(path.join(mb("20261019T120000Z-live"), "ANSWER.md")), "a refused retry writes nothing");
   assert.equal(runAction("20261019T120000Z-stck", "retry").status, "watching");
   const answer = fs.readFileSync(path.join(mb("20261019T120000Z-stck"), "ANSWER.md"), "utf8");
   assert.match(answer, /^<!-- source: human \(dashboard retry\) -->\nRetry: the stop was a technical problem/);
@@ -77,4 +92,11 @@ test("merged and discarded also mark the result read; never on a run still going
   assert.ok(state.collected);
   assert.throws(() => runAction("20261019T130000Z-busy", "discarded"), /still watching/);
   assert.equal(loadState("20261019T130000Z-busy").outcome, undefined);
+  // Intake collected it with the TIM entry it wrote: that link stays.
+  plant("20261019T130000Z-took", "done");
+  runAction("20261019T130000Z-took", "collect");
+  const collected = loadState("20261019T130000Z-took").collected;
+  runAction("20261019T130000Z-took", "discarded");
+  assert.equal(loadState("20261019T130000Z-took").outcome.value, "discarded");
+  assert.deepEqual(loadState("20261019T130000Z-took").collected, collected);
 });

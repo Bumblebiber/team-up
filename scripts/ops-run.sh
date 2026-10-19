@@ -7,7 +7,7 @@
 #
 # Usage: ops-run.sh --job NAME [--model CLI:MODEL] [--ceiling-sec N] <cwd> <prompt-file>
 # --model skips the ini. OPS_RUN_ID_FILE=<path>: the run id is written there.
-# Exit: 0 done, 1 failed/cancelled/question/dispatch failed, 2 still running at the ceiling,
+# Exit: 0 done, 1 failed/cancelled/question (cancelled)/dispatch failed, 2 still running at the ceiling,
 #       3 admission refused, 64 usage.
 set -euo pipefail
 
@@ -78,9 +78,10 @@ echo "ops-run: run $RUN [$JOB] on $MODEL ended $STATUS"
 cat "$MB/RESULT.md" 2>/dev/null || cat "$MB/RESULT.json" 2>/dev/null || true
 cat "$MB/FAILURE.md" 2>/dev/null || true
 cat "$MB/QUESTIONS.md" 2>/dev/null || true
-# Reported on stdout, so it is read: no intake ever comes for a scheduled job. A question is no
-# end state and stays open.
-if [[ "$STATUS" == failed || "$STATUS" == cancelled ]]; then
-  "${TEAMUP[@]}" runs collect "$RUN" --note "ops-run: $STATUS, reported on stdout" >/dev/null 2>&1 || true
+# Reported on stdout, so it is read: no intake ever comes for a scheduled job. The Inbox leaves
+# cron runs out, so nobody would answer a question either: it ends here, worker and slot freed.
+if [[ "$STATUS" == waiting_human || "$STATUS" == waiting_decision ]]; then
+  "${TEAMUP[@]}" runs cancel "$RUN" >/dev/null 2>&1 || true
 fi
+"${TEAMUP[@]}" runs collect "$RUN" --note "ops-run: $STATUS, reported on stdout" >/dev/null 2>&1 || true
 exit 1
