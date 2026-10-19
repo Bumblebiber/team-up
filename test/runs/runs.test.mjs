@@ -283,6 +283,36 @@ test("classifyMailbox skips question when ANSWER is newer", withTempRuns(async (
   assert.equal(classifyMailbox(s.runId).status, "watching");
 }));
 
+test("a run without a project takes the nearest .tim-project above its cwd, below $HOME, not past a .tim-ignore",
+  withTempRuns(async (dir) => {
+    const repo = path.join(process.env.HOME, "projects", "tim");
+    fs.mkdirSync(path.join(repo, "src", "deep"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".tim-project"), JSON.stringify({ project: "P0063" }));
+    const ignored = path.join(repo, "bench");
+    fs.mkdirSync(ignored);
+    fs.writeFileSync(path.join(ignored, ".tim-ignore"), "not a project\n");
+    // A marker in $HOME itself names no repo: every unmarked run would carry it.
+    fs.writeFileSync(path.join(process.env.HOME, ".tim-project"), JSON.stringify({ project: "P0000" }));
+    const run = (cwd, extra = {}) => createRun({
+      cwd, role: "implementer", parent: { cli: "claude", attach: "manual" }, worker: { cli: "codex" }, prompt: "x", ...extra,
+    });
+    try {
+      assert.equal(run(path.join(repo, "src", "deep")).project, "P0063");
+      assert.equal(run(repo, { project: "P0001" }).project, "P0001", "a named project wins");
+      assert.equal(run(ignored).project, null);
+      assert.equal(run(path.join(process.env.HOME, "elsewhere")).project, null);
+      const pf = path.join(dir, "prompt.md");
+      fs.writeFileSync(pf, "Hi\n");
+      const out = execFileSync("node", [
+        RUNS_BIN, "create", "--cwd", repo, "--role", "implementer", "--worker-cli", "codex", "--prompt-file", pf,
+        "--parent-cli", "claude", "--parent-attach", "manual", "--title", "  Fix   the sync ",
+      ], { env: { ...process.env, O9K_RUNS: dir }, encoding: "utf8" });
+      assert.equal(loadState(out.match(/runId:\s+(\S+)/)[1]).title, "Fix the sync");
+    } finally {
+      fs.rmSync(path.join(process.env.HOME, ".tim-project"));
+    }
+  }));
+
 test("CLI create prints runId", withTempRuns(async (dir) => {
   const pf = path.join(dir, "prompt.md");
   fs.writeFileSync(pf, "## Task\nHi\n");
