@@ -1,6 +1,7 @@
 import { pick, parseChainEntry } from "../roster/chain.mjs";
 import { cliModelFor, fastSupported, fastNote, FAST_CLIS, codexFastSlugs } from "../roster/config.mjs";
 import { cellStatus, addOfferedVersions } from "../roster/latest.mjs";
+import { t } from "./i18n.mjs";
 
 /**
  * Roles, their chains, and the roster settings around them — the one place
@@ -56,15 +57,18 @@ function chainView(roster, store, chain, now) {
 const roleUsers = (roster, role) =>
   Object.entries(roster?.specialists || {}).filter(([, s]) => s?.role === role).map(([id]) => id);
 
-/** `usedBy` is `[{id, name}]`: `nameOf` turns a specialist id into the name the panel shows. */
-export function buildRolesView(roster, usage, store, now = Date.now(), { nameOf = (id) => id } = {}) {
+/**
+ * `usedBy` is `[{id, name}]`: `nameOf` turns a specialist id into the name the panel shows.
+ * `protected` says who needs the role, in `lang`.
+ */
+export function buildRolesView(roster, usage, store, now = Date.now(), { nameOf = (id) => id, lang = "en" } = {}) {
   const roles = Object.entries(roster?.roles || {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([role, spec]) => {
       const result = pick({ roster, usage, role, now });
       return {
         role,
-        protected: own(PROTECTED_ROLES, role) ? PROTECTED_ROLES[role] : null,
+        protected: own(PROTECTED_ROLES, role) ? t(lang, PROTECTED_ROLES[role]) : null,
         usedBy: roleUsers(roster, role).map((id) => ({ id, name: nameOf(id) })),
         effort: spec?.effort ?? null,
         chain: chainView(roster, store, spec?.chain || [], now),

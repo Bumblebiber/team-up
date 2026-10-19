@@ -296,13 +296,13 @@ async function refreshRuns() {
   const rows = visibleRuns.map((r) => `
     <tr class="clickable" data-run="${esc(r.runId)}"${providerAttr(r.worker)}>
       <td><code>${esc(r.runId.slice(-8))}</code></td>
-      <td>${esc(r.role)}</td>
-      <td>${esc(r.status)}</td>
-      <td>${esc(r.worker || "—")}</td>
-      <td>${esc(r.project || "—")}</td>
-      <td class="path">${esc(r.cwd || "—")}</td>
-      <td>${esc(r.age || "—")}</td>
-      <td>${esc(r.heartbeatAge || "—")}</td>
+      <td translate="no">${esc(r.role)}</td>
+      <td translate="no">${esc(r.status)}</td>
+      <td translate="no">${esc(r.worker || "—")}</td>
+      <td translate="no">${esc(r.project || "—")}</td>
+      <td class="path" translate="no">${esc(r.cwd || "—")}</td>
+      <td translate="no">${esc(r.age || "—")}</td>
+      <td translate="no">${esc(r.heartbeatAge || "—")}</td>
     </tr>`).join("");
   $("#runs-table").innerHTML = `<table>
     <thead><tr>${th("Run", t("Run"))}${th("Role", t("Role"))}${th("Status", t("Status"))}${th("Worker", t("Worker"))}${
@@ -545,7 +545,7 @@ async function refreshUsage() {
       <div class="key">${esc(key)}</div>
       <div class="bar"><span style="width:${w.usedPct != null ? Math.min(100, w.usedPct) : 0}%"></span></div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
-      <div>${levelBadge(w.level)}${collectorBadge(key, data.collectors?.[key.split(":")[0]], w.stale)}</div>
+      <div class="badges">${levelBadge(w.level)}${collectorBadge(key, data.collectors?.[key.split(":")[0]], w.stale)}</div>
       <div class="marked-item">${w.resets_at ? esc(t("Resets {when}", { when: fmtDateTime(w.resets_at) })) : "—"}</div>
     </div>`).join("");
   $("#usage-grid").innerHTML = rows || `<p>${esc(t("No usage readings yet"))}</p>`;
@@ -1281,6 +1281,20 @@ async function refreshProviders() {
 let selectedCli = null;
 let cliLogTimer = null;
 
+// clis.mjs harnessLabel's words; a status it passes through stays as it is.
+const HARNESS_LABEL = {
+  unknown: t("unknown"), "installed, capabilities denied": t("installed, capabilities denied"), "not installed": t("not installed"),
+};
+
+function harnessCell(c) {
+  if (c.verification_verdict?.verdict === "harness_verification_unsupported") {
+    return `${esc(t("not checkable"))} · <span translate="no">${esc(c.verification_verdict.reason || "")}</span>`;
+  }
+  const label = c.harness_label || c.harness?.status;
+  if (!label) return "—";
+  return Object.hasOwn(HARNESS_LABEL, label) ? esc(HARNESS_LABEL[label]) : `<span translate="no">${esc(label)}</span>`;
+}
+
 function verdictBadge(v) {
   if (!v) return "—";
   if (v.verdict === "verified") return `<span class="badge ok">${esc(t("verified"))}</span>`;
@@ -1342,7 +1356,7 @@ async function refreshClis() {
       <td title="${esc(c.path || t("not on PATH"))}">${esc(c.cli)}</td>
       <td>${c.present ? `<span class="badge ok">${esc(t("installed"))}</span>` : `<span class="badge stale">${esc(t("missing"))}</span>`}</td>
       <td class="mono">${esc(c.version || "—")}</td>
-      <td>${esc(c.harness_label || c.harness?.status || "—")}</td>
+      <td>${harnessCell(c)}</td>
       <td>${verdictBadge(c.post_update_verdict)}</td>
       <td>${esc(state)}</td>
       <td>${actions.join(" ")}</td>
@@ -2723,7 +2737,7 @@ function builtinJobCard(j) {
   const outcomeOld = j.lastOutcome && Date.parse(j.lastRun) - Date.parse(j.lastOutcome.at) > 864e5;
   return `<article class="job${j.installed && j.enabled ? "" : " is-off"}" data-builtin="${esc(j.id)}">
     <div class="job-head">
-      <h3>${esc(j.title)}</h3>${state}<span class="tag">${esc(j.llm ? t("uses an LLM") : t("no LLM"))}</span>
+      <h3>${esc(j.title)}</h3>${state}<span class="tag">${esc(j.llm ? t("uses AI") : t("no AI"))}</span>
       <span class="spacer"></span>${toggle}
     </div>
     <div class="job-when">

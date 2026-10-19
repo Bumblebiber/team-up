@@ -73,11 +73,11 @@ export const DE = {
   // settings.mjs — when a change takes effect
   "Dashboard: now (the page reloads). Agents: runs started from now on.":
     "Dashboard: sofort (die Seite lädt neu). Agenten: für Aufträge, die ab jetzt starten.",
-  "Next pick or dispatch.": "Bei der nächsten Modellwahl oder dem nächsten Auftragsstart.",
+  "When the next task starts.": "Wenn der nächste Auftrag startet.",
   "Within a minute (the usage watcher re-reads the roster every tick).":
     "Innerhalb einer Minute (der Usage-Watcher liest das Roster bei jedem Durchlauf neu).",
   "Next usage-spender tick (every 10 minutes).": "Beim nächsten Durchlauf des Usage-Spenders (alle 10 Minuten).",
-  "Next cleanup sweep (`runs gc`, every 5 minutes).": "Beim nächsten Aufräumen (`runs gc`, alle 5 Minuten).",
+  "At the next cleanup (every 5 minutes).": "Beim nächsten Aufräumen (alle 5 Minuten).",
   "Next telemetry sample.": "Bei der nächsten Telemetrie-Messung.",
   "Information for the usage-spender only.": "Nur eine Information für den Usage-Spender.",
 
@@ -195,54 +195,55 @@ export const DE = {
     "…und hielt team-up dabei mindestens diesen Anteil des belegten Speichers, gilt team-up als Ursache.",
 
   // automation.mjs — built-in jobs
-  "Spends subscription quota that would otherwise expire unused. Every 10 minutes it holds each weekly window against a pacing curve; between its start and end time it starts one task after another — a PR review, a code audit, or a fix for a TIM task or GitHub issue in one of your repos. A task that needs a decision waits in the Inbox; once answered, it resumes the next night. A host session collects the results and reports via Telegram.":
-    "Verbraucht Abo-Kontingent, das sonst ungenutzt verfallen würde. Alle 10 Minuten hält er jedes Wochenfenster gegen eine Verbrauchskurve; zwischen Start- und Endzeit startet er eine Aufgabe nach der anderen — ein PR-Review, ein Code-Audit oder einen Fix für eine TIM-Aufgabe oder ein GitHub-Issue in einem deiner Repos. Eine Aufgabe, die eine Entscheidung braucht, wartet im Posteingang; sobald du antwortest, geht sie in der nächsten Nacht weiter. Eine Host-Session sammelt die Ergebnisse ein und berichtet per Telegram.",
-  "Each morning after a spend night: what the night's workers did and what is left for you.":
-    "Jeden Morgen nach einer Spender-Nacht: was die Agenten in der Nacht erledigt haben und was für dich übrig bleibt.",
+  "Spends subscription quota that would otherwise expire unused. Every 10 minutes it compares how much of each weekly limit is left with how much of the week is left; between its start and end time it starts one task after another — a PR review, a code audit, or a fix for a TIM task or GitHub issue in one of your repos. A task that needs a decision waits in the Inbox; once answered, it goes on the next night. In the morning the results are collected and reported via Telegram.":
+    "Verbraucht Abo-Kontingent, das sonst ungenutzt verfallen würde. Alle 10 Minuten vergleicht er, wie viel von jedem Wochenlimit noch übrig ist, mit der verbleibenden Zeit der Woche; zwischen Start- und Endzeit startet er eine Aufgabe nach der anderen — ein PR-Review, ein Code-Audit oder einen Fix für eine TIM-Aufgabe oder ein GitHub-Issue in einem deiner Repos. Eine Aufgabe, die eine Entscheidung braucht, wartet im Posteingang; sobald du antwortest, geht sie in der nächsten Nacht weiter. Morgens werden die Ergebnisse eingesammelt und per Telegram gemeldet.",
+  "Each morning after a night of spending: what the helpers did overnight and what is left for you.":
+    "Jeden Morgen nach einer Spender-Nacht: was die Helfer in der Nacht erledigt haben und was für dich übrig bleibt.",
   "Uses subscription quota — on purpose, only what would reset unused anyway.":
     "Verbraucht Abo-Kontingent — absichtlich, und nur, was sonst ungenutzt zurückgesetzt würde.",
   "Model of the morning host that collects the results": "Modell des Morgen-Hosts, der die Ergebnisse einsammelt",
   "Untick every subscription under Settings → Usage spender, or switch the job off here.":
     "Nimm unter Einstellungen → Usage-Spender bei jedem Abo das Häkchen raus oder schalte die Aufgabe hier ab.",
   "Run insights": "Auswertung der Aufträge",
-  "Reads the logs of all team-up runs every 48 hours and turns them into findings: failure reasons, stuck workers, slow paths. Only when the findings changed does an LLM judge them, write TIM entries, and prepare at most one fix — merged into main only if the tests pass in its clone.":
-    "Liest alle 48 Stunden die Logs aller team-up-Aufträge und macht daraus Befunde: Fehlerursachen, hängende Agenten, langsame Wege. Nur wenn sich die Befunde geändert haben, beurteilt ein LLM sie, schreibt TIM-Einträge und bereitet höchstens einen Fix vor — der nur dann in main gemergt wird, wenn die Tests in seinem Klon durchlaufen.",
-  "Every 48 h, only when the run logs show something new: findings and the one fix, if any.":
+  "Reads the logs of all team-up tasks every 48 hours and turns them into findings: why tasks failed, helpers that got stuck, slow steps. Only when the findings changed does an AI model judge them, note them in TIM and prepare at most one fix — merged into main only if the tests pass in its own copy of the repo.":
+    "Liest alle 48 Stunden die Logs aller team-up-Aufträge und macht daraus Befunde: warum Aufträge fehlschlugen, welche Helfer hängen blieben, welche Schritte langsam sind. Nur wenn sich die Befunde geändert haben, beurteilt ein KI-Modell sie, hält sie in TIM fest und bereitet höchstens einen Fix vor — der nur dann in main gemergt wird, wenn die Tests in seiner eigenen Kopie des Repos durchlaufen.",
+  "Every 48 h, only when the logs show something new: findings and the one fix, if any.":
     "Alle 48 h, nur wenn die Logs etwas Neues zeigen: die Befunde und der eine Fix, falls es einen gibt.",
-  "LLM only when the findings changed — at most one evaluation every 2 days.":
-    "LLM nur, wenn sich die Befunde geändert haben — höchstens eine Auswertung alle 2 Tage.",
+  "An AI model only when the findings changed — at most once every 2 days.":
+    "Ein KI-Modell nur, wenn sich die Befunde geändert haben — höchstens einmal alle 2 Tage.",
   "Model of the evaluator": "Modell der Auswertung",
   "Stop at the pull request (no auto-merge)": "Beim Pull Request anhalten (kein Auto-Merge)",
   "Usage watchdog": "Verbrauchswächter",
-  "Checks every minute that usage readings keep coming in. A stalled collector, a limit that should have reset, an unexplained jump or repeated failed reads send a Telegram message; otherwise it stays silent.":
-    "Prüft jede Minute, ob weiter Verbrauchswerte hereinkommen. Ein hängender Sammler, ein Limit, das sich hätte zurücksetzen sollen, ein unerklärter Sprung oder wiederholt fehlgeschlagenes Auslesen schicken eine Telegram-Nachricht; sonst bleibt er still.",
+  "Checks every minute that usage readings keep coming in. Readings that stop, a limit that should have reset, an unexplained jump or reads that keep failing send a Telegram message; otherwise it stays silent.":
+    "Prüft jede Minute, ob weiter Nutzungswerte hereinkommen. Werte, die ausbleiben, ein Limit, das sich hätte zurücksetzen sollen, ein unerklärter Sprung oder Abfragen, die immer wieder fehlschlagen, schicken eine Telegram-Nachricht; sonst bleibt er still.",
   "Only when usage readings stall or look wrong.": "Nur wenn Verbrauchswerte ausbleiben oder falsch aussehen.",
-  "No LLM.": "Kein LLM.",
-  "Stuck-run report": "Bericht über hängende Aufträge",
-  "Lists team-up runs that are stuck — waiting on a human, a worker that died, a run that never started — and worker terminals that outlived their run, and sends them to Telegram. It never kills or cancels anything: whether someone is coming back is your call.":
-    "Listet team-up-Aufträge, die hängen — sie warten auf einen Menschen, ihr Agent ist abgestürzt oder sie sind nie gestartet — und Agenten-Terminals, die ihren Auftrag überlebt haben, und schickt sie an Telegram. Er beendet und bricht nie etwas ab: Ob jemand zurückkommt, entscheidest du.",
-  "Every 2 h, only while runs are stuck: which ones and why.": "Alle 2 h, nur solange Aufträge hängen: welche und warum.",
+  "No AI model.": "Kein KI-Modell.",
+  "Stuck tasks report": "Bericht über hängende Aufträge",
+  "Lists team-up tasks that are stuck — waiting for you, a helper that died, a task that never started — and helper terminals that outlived their task, and sends them to Telegram. It never stops or cancels anything: whether someone is coming back is your call.":
+    "Listet team-up-Aufträge, die hängen — sie warten auf dich, ihr Helfer ist abgestürzt oder sie sind nie gestartet — und Helfer-Terminals, die ihren Auftrag überlebt haben, und schickt sie an Telegram. Er beendet und bricht nie etwas ab: Ob jemand zurückkommt, entscheidest du.",
+  "Every 2 h, only while tasks are stuck: which ones and why.": "Alle 2 h, nur solange Aufträge hängen: welche und warum.",
   "Report runs quiet for longer than": "Aufträge melden, die still sind seit mehr als",
-  "Harness health": "Zustand des Harness",
-  "Runs `team-up doctor` every 2 hours — CLI versions, capability grants, harness verification — and reports high findings. It exists because a silent claude self-update once revoked every specialist launch and nothing noticed.":
-    "Führt alle 2 Stunden `team-up doctor` aus — CLI-Versionen, Capability-Freigaben, Harness-Prüfung — und meldet schwere Befunde. Es gibt ihn, weil ein stilles Selbst-Update von claude einmal jeden Spezialisten-Start verhindert hat und es niemand merkte.",
-  "Every 2 h, only on high findings: a CLI update that broke launches or grants.":
-    "Alle 2 h, nur bei schweren Befunden: ein CLI-Update, das Starts oder Freigaben kaputt gemacht hat.",
-  "Model drift": "Modell-Drift",
-  "Daily: scans which models each CLI offers, moves role chains onto the newest version of a model family the roster already runs (pinned entries stay), and reports roster models a CLI no longer offers.":
-    "Täglich: prüft, welche Modelle jede CLI anbietet, stellt Rollenketten auf die neueste Version einer Modellfamilie um, die das Roster schon nutzt (festgepinnte Einträge bleiben), und meldet Roster-Modelle, die eine CLI nicht mehr anbietet.",
-  "Daily, only when a model changed: chains moved to a newer version, or a model vanished.":
-    "Täglich, nur wenn sich ein Modell geändert hat: Ketten auf eine neuere Version umgestellt oder ein Modell verschwunden.",
-  "No LLM. Edits roster.json when a newer version ships.": "Kein LLM. Ändert roster.json, wenn eine neuere Version erscheint.",
-  "Golden-task regression": "Golden-Task-Regressionstest",
-  "Once a month a worker solves a fixed reference task in ~/projects/golden-task, so a CLI or model update that breaks real work shows up before it bites.":
-    "Einmal im Monat löst ein Agent eine feste Referenzaufgabe in ~/projects/golden-task, damit ein CLI- oder Modell-Update, das echte Arbeit kaputt macht, auffällt, bevor es Schaden anrichtet.",
-  "LLM: one run per month.": "LLM: ein Auftrag pro Monat.",
+  "Health check": "Gesundheitscheck",
+  "Every 2 hours it runs `team-up doctor`, a self-check of the AI tools: their versions, their permissions, and whether a specialist can still start. It reports serious findings. It exists because a silent update of claude once stopped every specialist from starting and nobody noticed.":
+    "Führt alle 2 Stunden `team-up doctor` aus, einen Selbsttest der KI-Werkzeuge: ihre Versionen, ihre Rechte und ob ein Spezialist noch starten kann. Er meldet schwere Befunde. Es gibt ihn, weil ein stilles Update von claude einmal jeden Spezialisten am Starten gehindert hat und es niemand merkte.",
+  "Every 2 h, only on serious findings: an update of an AI tool that stops specialists from starting.":
+    "Alle 2 h, nur bei schweren Befunden: ein Update eines KI-Werkzeugs, das Spezialisten am Starten hindert.",
+  "Model updates": "Modell-Updates",
+  "Daily: checks which models each AI tool offers, moves roles onto the newest version of a model they already use (pinned entries stay), and reports models a tool no longer offers.":
+    "Täglich: prüft, welche Modelle jedes KI-Werkzeug anbietet, stellt Rollen auf die neueste Version eines Modells um, das sie schon nutzen (festgepinnte Einträge bleiben), und meldet Modelle, die ein Werkzeug nicht mehr anbietet.",
+  "Daily, only when a model changed: roles moved to a newer version, or a model disappeared.":
+    "Täglich, nur wenn sich ein Modell geändert hat: Rollen auf eine neuere Version umgestellt oder ein Modell verschwunden.",
+  "No AI model. Changes the model list when a newer version comes out.":
+    "Kein KI-Modell. Ändert die Modellliste, wenn eine neuere Version erscheint.",
+  "Monthly test task": "Monatliche Testaufgabe",
+  "Once a month a helper solves the same reference task in ~/projects/golden-task, so an update of an AI tool or model that breaks real work shows up before it does harm.":
+    "Einmal im Monat löst ein Helfer dieselbe Referenzaufgabe in ~/projects/golden-task, damit ein Update eines KI-Werkzeugs oder Modells, das echte Arbeit kaputt macht, auffällt, bevor es Schaden anrichtet.",
+  "AI model: one task per month.": "KI-Modell: ein Auftrag pro Monat.",
   "Model that solves the task": "Modell, das die Aufgabe löst",
   "The verdict of the monthly reference task: PASS, DRIFT or FAIL.": "Das Urteil der monatlichen Referenzaufgabe: PASS, DRIFT oder FAIL.",
   "Usage collector safety net": "Sicherheitsnetz für den Verbrauchssammler",
-  "Daily at 04:00: collects usage itself if the watcher service has not managed to for more than 25 hours.":
-    "Täglich um 04:00: sammelt den Verbrauch selbst, wenn der Watcher-Dienst es seit mehr als 25 Stunden nicht geschafft hat.",
+  "Daily at 04:00: reads the usage itself if the usage watcher has not managed to for more than 25 hours.":
+    "Täglich um 04:00: liest den Verbrauch selbst, wenn der Usage-Watcher es seit mehr als 25 Stunden nicht geschafft hat.",
 
   // automation.mjs — services and where a job is scheduled
   "Usage watcher": "Usage-Watcher",
@@ -269,11 +270,11 @@ export const DE = {
   "Not in your crontab": "Nicht in deiner Crontab",
 
   // communication.mjs
-  "TIM database header": "TIM-Datenbank-Header",
-  "Every 15 min, only when the database header looks corrupt.": "Alle 15 min, nur wenn der Datenbank-Header beschädigt aussieht.",
-  "TIM write-ahead log": "TIM-Write-Ahead-Log",
-  "Hourly, only when the WAL file grew past 50 MB and was truncated.":
-    "Stündlich, nur wenn die WAL-Datei über 50 MB gewachsen ist und gekürzt wurde.",
+  "TIM database check": "TIM-Datenbankprüfung",
+  "Every 15 min, only when the database looks damaged.": "Alle 15 min, nur wenn die Datenbank beschädigt aussieht.",
+  "TIM database size": "TIM-Datenbankgröße",
+  "Hourly, only when TIM's working file grew past 50 MB and was trimmed.":
+    "Stündlich, nur wenn die Arbeitsdatei von TIM über 50 MB gewachsen ist und gekürzt wurde.",
   "TIM backups": "TIM-Backups",
   "Hourly, only when the newest snapshot is older than 2 hours.": "Stündlich, nur wenn der neueste Snapshot älter als 2 Stunden ist.",
   "Its result after every run.": "Sein Ergebnis nach jedem Lauf.",
@@ -289,6 +290,14 @@ export const DE = {
   "every {days} at {time}": "jeden {days} um {time}",
   "weekdays at {time}": "montags bis freitags um {time}",
   "monthly on the {day}{suffix} at {time}": "am {day}. jedes Monats um {time}",
+
+  // roles.mjs — who needs a role team-up's own code asks for
+  "the insights job's fix runs and the usage-spender's implement runs":
+    "die Fix-Aufträge der Auswertung und die Umsetzungs-Aufträge des Usage-Spenders",
+  "the usage-spender's reviews and audits": "die Reviews und Audits des Usage-Spenders",
+  "the usage-spender's research tasks": "die Recherche-Aufgaben des Usage-Spenders",
+  "the usage-spender's triage runs": "die Triage-Aufträge des Usage-Spenders",
+  "the run observer that watches every worker": "der Aufpasser, der jeden Agenten beobachtet",
 
   // action-center.mjs — the subject of an inbox item the server words itself
   "Needs you: a credential or billing prompt": "Braucht dich: eine Abfrage zu Zugangsdaten oder Bezahlung",

@@ -243,6 +243,7 @@ tr.orphan td:first-child { color: var(--orphan); }
   border-radius: 3px;
   font-size: 0.75rem;
   font-weight: 600;
+  white-space: nowrap;
 }
 .badge.red { background: #dc2626; color: #fff; } /* not var(--red): white on the dark-mode red is 2.8:1 */
 .badge.amber { background: var(--amber); color: #000; }
@@ -269,7 +270,7 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
   /* Everything but the bar is a fixed column, so the bars start and end on the
      same two lines — a STALE badge or a missing reset date must not shorten
      the one thing the eye compares. */
-  grid-template-columns: 9rem minmax(4rem, 1fr) 3rem 7rem 11rem;
+  grid-template-columns: 9rem minmax(4rem, 1fr) 3rem 10.5rem 13rem;
   align-items: center;
   gap: 0.5rem;
   padding: 0.35rem 0.5rem;
@@ -280,6 +281,8 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
 .usage-row .key { font-weight: 600; font-size: 0.8rem; overflow-wrap: anywhere; }
 .usage-row .pct { text-align: right; font-variant-numeric: tabular-nums; }
 .usage-row .marked-item { margin: 0; white-space: nowrap; text-align: right; }
+/* The level and an "out of date" button stack rather than squeeze into one line. */
+.usage-row .badges { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .bar {
   height: 0.6rem;
   border-radius: 3px;
@@ -294,8 +297,9 @@ button.badge.stale:disabled { cursor: progress; opacity: 0.7; }
 
 /* 900px, not 600: the 15rem sidebar eats the room the row needs. */
 @media (max-width: 900px) {
-  .usage-row { grid-template-columns: 3rem 7rem 1fr; }
+  .usage-row { grid-template-columns: 3rem 10.5rem 1fr; }
   .usage-row .key, .usage-row .bar { grid-column: 1 / -1; }
+  .usage-row .marked-item { white-space: normal; }
 }
 
 .detail, .pane {
@@ -737,6 +741,16 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .comm-bot-row:last-child { border-bottom: 0; }
 .comm-bot-row .name { min-width: 12rem; font-weight: 600; }
 .comm-new { margin-top: 1rem; }
+@media (max-width: 700px) {
+  /* A phone: the job, then where it goes below it. */
+  .comm-table thead { display: none; }
+  .comm-table, .comm-table tbody, .comm-table tr, .comm-table td { display: block; width: auto; }
+  .comm-table th:last-child, .comm-table td:last-child { width: auto; }
+  .comm-table tr { padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+  .comm-table td { padding: 0.15rem 0; border: 0; }
+  .comm-dest { width: 100%; }
+  .comm-bot-row .name { min-width: 0; }
+}
 .comm-new textarea { width: 100%; max-width: 40rem; }
 
 /* Inbox: short rows and the open item beside them; below 1000px one or the other

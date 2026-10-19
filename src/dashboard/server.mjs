@@ -1728,7 +1728,7 @@ export function createDashboardServer({
         const roster = loadRoster(env);
         const usage = loadJson(usagePath(env)) || {};
         return sanitizeForDashboard(buildRolesView(roster, usage, loadModelsStore(env), ts,
-          { nameOf: (id) => specialistName(id, { env }) }), { stripAccounts: true });
+          { nameOf: (id) => specialistName(id, { env }), lang: langOf(roster) }), { stripAccounts: true });
       });
       jsonResponse(res, 200, data);
       return;

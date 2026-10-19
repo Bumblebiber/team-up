@@ -9,6 +9,7 @@ import { EXCLUDED, GROUPS, applySettingsEdit, buildSettingsView } from "../../sr
 import { BUILTIN_JOBS, SERVICES, buildAutomationView } from "../../src/dashboard/automation.mjs";
 import { TIM_SENDERS, listSenders } from "../../src/dashboard/communication.mjs";
 import { describeSchedule } from "../../src/dashboard/cron-schedule.mjs";
+import { PROTECTED_ROLES } from "../../src/dashboard/roles.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
@@ -152,7 +153,7 @@ test("the key extraction sees every call shape the sources use", () => {
 });
 
 test("every text of the settings, jobs and senders tables has a German entry", () => {
-  const texts = tableTexts([GROUPS, EXCLUDED, BUILTIN_JOBS, SERVICES, TIM_SENDERS]);
+  const texts = [...tableTexts([GROUPS, EXCLUDED, BUILTIN_JOBS, SERVICES, TIM_SENDERS]), ...Object.values(PROTECTED_ROLES)];
   assert.ok(texts.length > 50);
   assert.deepEqual(untranslated(texts, DE), []);
 });

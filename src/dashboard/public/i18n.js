@@ -331,8 +331,6 @@ const I18N_DE = {
   "Built-in jobs": "Eingebaute Aufgaben",
   "Background services": "Hintergrunddienste",
   "not installed": "nicht installiert",
-  "uses an LLM": "nutzt ein LLM",
-  "no LLM": "kein LLM",
   "When": "Wann",
   "Next|run": "Nächster Lauf",
   "Last activity": "Zuletzt aktiv",
@@ -836,6 +834,12 @@ const I18N_DE = {
   "Visible columns": "Sichtbare Spalten",
   "Visible rows": "Sichtbare Zeilen",
   "Nothing new.": "Nichts Neues.",
+  // CLIs: harness check
+  "unknown": "unbekannt",
+  "installed, capabilities denied": "installiert, Rechte verweigert",
+  // Scheduled jobs: AI tag
+  "uses AI": "nutzt KI",
+  "no AI": "ohne KI",
 };
 
 function t(en, vars) {

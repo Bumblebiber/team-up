@@ -43,8 +43,8 @@ const KNOWN = [
 
 /** TIM's watchdogs, scheduled in the crontab next to team-up's jobs. */
 export const TIM_SENDERS = [
-  { key: "tim-db-header-watchdog", title: "TIM database header", match: "tim-db-header-watchdog.sh", notifies: "Every 15 min, only when the database header looks corrupt." },
-  { key: "tim-wal-watchdog", title: "TIM write-ahead log", match: "tim-wal-watchdog.sh", notifies: "Hourly, only when the WAL file grew past 50 MB and was truncated." },
+  { key: "tim-db-header-watchdog", title: "TIM database check", match: "tim-db-header-watchdog.sh", notifies: "Every 15 min, only when the database looks damaged." },
+  { key: "tim-wal-watchdog", title: "TIM database size", match: "tim-wal-watchdog.sh", notifies: "Hourly, only when TIM's working file grew past 50 MB and was trimmed." },
   { key: "tim-snapshot-watchdog", title: "TIM backups", match: "tim-snapshot-watchdog.sh", notifies: "Hourly, only when the newest snapshot is older than 2 hours." },
 ];
 

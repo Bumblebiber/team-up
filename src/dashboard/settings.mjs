@@ -28,10 +28,10 @@ export const SPENDER_DEFAULTS = Object.freeze({
 
 const effects = (lang) => ({
   language: t(lang, "Dashboard: now (the page reloads). Agents: runs started from now on."),
-  pick: t(lang, "Next pick or dispatch."),
+  pick: t(lang, "When the next task starts."),
   watcher: t(lang, "Within a minute (the usage watcher re-reads the roster every tick)."),
   spender: t(lang, "Next usage-spender tick (every 10 minutes)."),
-  gc: t(lang, "Next cleanup sweep (`runs gc`, every 5 minutes)."),
+  gc: t(lang, "At the next cleanup (every 5 minutes)."),
   telemetry: t(lang, "Next telemetry sample."),
   info: t(lang, "Information for the usage-spender only."),
 });
