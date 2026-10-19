@@ -7,7 +7,6 @@ import { execFileSync } from "node:child_process";
 import { teamUpHome, usageWatcherStatePath } from "../paths.mjs";
 import { readRepairState, readRepairReport, spawnUsageRepair } from "./repair.mjs";
 import { loadJson, configPath, usagePath, saveRoster } from "../roster/config.mjs";
-import { specialistAssignment } from "../roster/profile.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
 import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
 import {
@@ -21,6 +20,7 @@ import {
   buildSpecialistsView,
   buildCapabilityPoolView,
   installSpecialistFromGithub,
+  specialistName,
 } from "./specialists.mjs";
 import {
   listProjects,
@@ -1032,6 +1032,7 @@ export function createDashboardServer({
         );
         clisMemo.invalidate("specialists");
         clisMemo.invalidate("capability-pool");
+        memo.invalidate("roles"); // a reinstall can rename who "Used by" shows
         // The client reads `error`; without it a refused install reaches the
         // panel as a bare "Bad Request" and the reason is lost.
         jsonResponse(res, result.ok ? 200 : 400, {
@@ -1057,6 +1058,7 @@ export function createDashboardServer({
         appendAudit({ actor: "127.0.0.1", action: "specialist.assign",
           target: `${specialistId}:${body.role ?? (body.chain ? "chain" : "none")}`, result: "ok" }, { env });
         clisMemo.invalidate("specialists");
+        memo.invalidate("roles"); // its "Used by"
         jsonResponse(res, 200, { ok: true, backup: path.basename(written.backup) });
       } catch (e) {
         appendAudit({ actor: "127.0.0.1", action: "specialist.assign", target: specialistId, result: "fail" }, { env });
@@ -1079,6 +1081,7 @@ export function createDashboardServer({
           target: `${body.cli}:${body.cli_id}:${body.on ? "on" : "off"}`, result: "ok" }, { env });
         memo.invalidate("pick");
         memo.invalidate("roles");
+        clisMemo.invalidate("specialists");
         jsonResponse(res, 200, { ok: true, backup: path.basename(written.backup) });
       } catch (e) {
         if (e.roles) {
@@ -1198,6 +1201,7 @@ export function createDashboardServer({
         memo.invalidate("usage");
         memo.invalidate("pick");
         memo.invalidate("roles");
+        clisMemo.invalidate("specialists");
         jsonResponse(res, 200, { ok: true, ...result });
       } catch (e) {
         appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
@@ -1297,13 +1301,14 @@ export function createDashboardServer({
         let changes;
         let added;
         let removed;
-        if (roleMatch) next = applyRoleEdit(roster, { ...body, role: target });
+        if (roleMatch) next = applyRoleEdit(roster, { ...body, role: target }, { nameOf: (id) => specialistName(id, { env }) });
         else if (isSettings) next = applySettingsEdit(roster, body);
         else ({ next, changes, added, removed } = bringToLatest(roster, loadModelsStore(env)));
         const written = changes?.length === 0 && added?.length === 0 && removed?.length === 0 ? null : saveRoster(next, { env });
         appendAudit({ actor: "127.0.0.1", action, target: isSettings ? body.path : target, result: "ok" }, { env });
         memo.invalidate("pick");
         memo.invalidate("roles");
+        clisMemo.invalidate("specialists");
         jsonResponse(res, 200, {
           ok: true,
           backup: written ? path.basename(written.backup) : null,
@@ -1374,8 +1379,9 @@ export function createDashboardServer({
     if (pathname === "/api/projects") {
       const dir = url.searchParams.get("dir") || "";
       try {
-        const data = memo.get(`projects:${dir}`, () => listProjects(dir, { exec, env }));
-        jsonResponse(res, 200, { ...data, clis: Object.keys(loadRoster(env).clis || {}).sort() });
+        const clis = Object.keys(loadRoster(env).clis || {}).sort();
+        const data = memo.get(`projects:${dir}`, () => listProjects(dir, { exec, env, clis }));
+        jsonResponse(res, 200, { ...data, clis });
       } catch (e) {
         jsonResponse(res, 400, { error: String(e.message || e) });
       }
@@ -1673,14 +1679,17 @@ export function createDashboardServer({
     }
 
     if (pathname === "/api/specialists") {
-      // Reads a handful of JSON indexes and no subprocess, but nothing here
-      // changes between polls — the 30s memo keeps it off the 5s cycle.
-      const data = clisMemo.get("specialists", () => {
-        const roster = loadRoster(env);
-        const view = buildSpecialistsView({ env });
-        for (const s of view.specialists) s.assignment = specialistAssignment(roster, s.id);
-        return sanitizeForDashboard(view);
-      });
+      // Reads a handful of JSON indexes, the run states once and no subprocess,
+      // but nothing here changes between polls — the 30s memo keeps it off the
+      // 5s cycle. Edits that move a specialist's model invalidate it.
+      const data = clisMemo.get("specialists", () => sanitizeForDashboard(buildSpecialistsView({
+        env,
+        roster: loadRoster(env),
+        usage: loadJson(usagePath(env)) || {},
+        store: loadModelsStore(env),
+        states: listAllStates(),
+        now: ts,
+      })));
       jsonResponse(res, 200, data);
       return;
     }
@@ -1701,7 +1710,8 @@ export function createDashboardServer({
       const data = memo.get("roles", () => {
         const roster = loadRoster(env);
         const usage = loadJson(usagePath(env)) || {};
-        return sanitizeForDashboard(buildRolesView(roster, usage, loadModelsStore(env), ts), { stripAccounts: true });
+        return sanitizeForDashboard(buildRolesView(roster, usage, loadModelsStore(env), ts,
+          { nameOf: (id) => specialistName(id, { env }) }), { stripAccounts: true });
       });
       jsonResponse(res, 200, data);
       return;

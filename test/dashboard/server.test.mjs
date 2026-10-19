@@ -906,3 +906,78 @@ test("a bad collecting folder still lists waiting runs; runs carry a project nam
       server.close();
     }
   }));
+
+// ── Projects and Team routes: the wiring the unit tests cannot see ──
+
+function plantSpecialist(home, id, displayName) {
+  const dir = path.join(home, "specialists", id, "0.1.0", "aaa");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "specialist.json"), JSON.stringify({
+    schema_version: 2, id, display_name: displayName, version: "0.1.0",
+    remit: ["x"], anti_remit: [], call_types: ["delegate"],
+    capabilities: { skills: [], tools: [], mcps: [], frameworks: [] },
+    permissions: { filesystem: "project", writes: false, network: false, commands: [] },
+    budget: { timeout_seconds: 600 },
+  }));
+  const entry = { id, version: "0.1.0", checksum: "sha256:" + "a".repeat(64), path: dir, installed_at: "2026-10-01T00:00:00.000Z" };
+  fs.writeFileSync(path.join(home, "specialists-index.json"),
+    JSON.stringify({ specialists: { [id]: entry }, versions: { [id]: [entry] } }));
+}
+
+test("a project row lists its sessions under the roster's CLIs, task sessions included", () =>
+  withHome(async ({ token }) => {
+    const root = fs.mkdtempSync(path.join(os.homedir(), ".teamup-test-projects-"));
+    fs.mkdirSync(path.join(root, "alpha"));
+    fs.mkdirSync(path.join(root, "alpha-x"));
+    const tmux = ["team-up-proj-alpha-claude", "team-up-proj-alpha-claude-01jtask", "team-up-proj-alpha-x-claude"];
+    const exec = (cmd) => (cmd === "tmux" ? tmux.join("\n") : "");
+    const { server } = createDashboardServer({ token, exec });
+    try {
+      const port = await listen(server);
+      const r = await req(port, `/api/projects?dir=${encodeURIComponent(root)}`, { token });
+      assert.equal(r.status, 200, r.text);
+      assert.deepEqual(r.json.clis, ["claude"]);
+      const row = (name) => r.json.projects.find((p) => p.name === name);
+      assert.deepEqual(row("alpha").sessions, ["team-up-proj-alpha-claude", "team-up-proj-alpha-claude-01jtask"]);
+      assert.deepEqual(row("alpha-x").sessions, ["team-up-proj-alpha-x-claude"]);
+    } finally {
+      server.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }));
+
+test("the Team and Roles routes carry model, last run and who uses a role", () =>
+  withHome(async ({ home, token }) => {
+    plantSpecialist(home, "research.reanna", "Reanna");
+    const { runId } = createRun({
+      cwd: "/tmp",
+      role: "specialist:research.reanna",
+      parent: { cli: "claude", attach: "manual" },
+      worker: { cli: "claude", tmux: "team-up-test" },
+      prompt: "look it up",
+    });
+    const { server } = createDashboardServer({ token, exec: () => "" });
+    try {
+      const port = await listen(server);
+      const usedBy = async () => (await req(port, "/api/roles", { token })).json.roles.find((r) => r.role === "planner").usedBy;
+      assert.deepEqual(await usedBy(), []);
+
+      const assigned = await req(port, "/api/specialists/research.reanna/assign", {
+        method: "POST", token, csrf: true, body: { role: "planner" },
+      });
+      assert.equal(assigned.status, 200, assigned.text);
+      // The assignment shows at once, not after the roles memo runs out.
+      assert.deepEqual(await usedBy(), [{ id: "research.reanna", name: "Reanna" }]);
+
+      const r = await req(port, "/api/specialists", { token });
+      assert.equal(r.status, 200, r.text);
+      const [reanna] = r.json.specialists;
+      assert.deepEqual(reanna.assignment, { role: "planner" });
+      assert.equal(reanna.category, "research");
+      assert.deepEqual([reanna.model, reanna.modelReason], ["m", null]);
+      assert.equal(reanna.lastRun.runId, runId);
+      assert.deepEqual(reanna.lastRun.project, { label: null, name: "tmp" });
+    } finally {
+      server.close();
+    }
+  }));

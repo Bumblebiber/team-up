@@ -8,6 +8,7 @@ import {
   buildCapabilityPoolView,
   parseGithubSource,
   installSpecialistFromGithub,
+  specialistName,
 } from "../../src/dashboard/specialists.mjs";
 
 const CHECKSUM = "sha256:" + "a".repeat(64);
@@ -144,6 +145,80 @@ test("legacy specialist rows do not appear in the Specialists panel", () =>
     const [codey] = buildSpecialistsView().specialists;
     assert.equal(Object.hasOwn(codey, "approved_for"), false);
     assert.equal(Object.hasOwn(codey, "approved_everywhere"), false);
+  }));
+
+test("a specialist is named by its display name, an unknown one by its id", () =>
+  withHome(() => {
+    assert.equal(specialistName("coding.codey"), "Codey");
+    assert.equal(specialistName("testing.ghost"), "testing.ghost");
+    assert.equal(specialistName("../escape"), "../escape");
+  }));
+
+// ── Team page: model now, category, last run ──
+
+const ROSTER = {
+  clis: { claude: { cmd: ["claude", "{prompt}"] }, codex: { cmd: ["codex", "{prompt}"] } },
+  models: {
+    "claude-opus": { cli: ["claude"], cli_model: "opus" },
+    luna: { cli: ["codex"] },
+  },
+  roles: { implementer: { chain: ["claude:claude-opus"] } },
+};
+const STORE = { clis: { claude: { models: [{ cli_id: "opus", version: "Opus 5.5" }] } } };
+
+test("a specialist shows the model a launch would get now, labelled like a role pick", () =>
+  withHome(() => {
+    const view = (specialists) =>
+      buildSpecialistsView({ roster: { ...ROSTER, specialists }, store: STORE }).specialists[0];
+    const onRole = view({ "coding.codey": { role: "implementer" } });
+    assert.deepEqual([onRole.model, onRole.modelReason], ["claude-opus-5.5", null]);
+    assert.deepEqual(onRole.assignment, { role: "implementer" });
+    assert.equal(onRole.category, "coding");
+    // The launcher's requirements apply: codex has no context isolation, so
+    // the own chain's first cell is skipped as it would be at launch.
+    assert.equal(view({ "coding.codey": { chain: ["codex:luna", "claude:claude-opus"] } }).model, "claude-opus-5.5");
+
+    const off = view(undefined);
+    assert.equal(off.model, null);
+    assert.match(off.modelReason, /no role or chain assigned/);
+    const blocked = view({ "coding.codey": { chain: ["codex:luna"] } });
+    assert.equal(blocked.model, null);
+    assert.match(blocked.modelReason, /^codex:luna: context isolation unavailable/);
+  }));
+
+test("a specialist's last run is its newest, under its old id too", () =>
+  withHome((home) => {
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    const run = (runId, role, createdAt, cwd = "/home/x/projects/tim") =>
+      ({ runId, role, status: "done", cwd, createdAt });
+    const states = [
+      run("r1", "specialist:coding.codey", "2026-10-18T12:00:00Z"),
+      run("r2", "specialist:coding.codey", "2026-10-19T11:00:00Z", "/home/x/projects/tasks/task-ultratodo"),
+      run("r3", "implementer", "2026-10-19T11:30:00Z"),
+      run("r4", "specialist:testing.hannes", "2026-10-17T12:00:00Z"),
+    ];
+    const env = { ...process.env, TEAM_UP_TASKS_ROOT: "/home/x/projects/tasks" };
+    const [codey] = buildSpecialistsView({ states, now, env }).specialists;
+    // A clone's folder name is no project: the run shows none until §1 resolves it.
+    assert.deepEqual(codey.lastRun,
+      { runId: "r2", status: "done", project: null, createdAt: "2026-10-19T11:00:00Z", ageMs: 3_600_000 });
+    const [inRepo] = buildSpecialistsView({ states: [states[0]], now, env }).specialists;
+    assert.deepEqual(inRepo.lastRun.project, { label: null, name: "tim" });
+    // team-up's own home holds the spender's clones.
+    const smoke = run("r5", "specialist:coding.codey", "2026-10-19T11:59:00Z", path.join(home, "clones", "smoke"));
+    assert.equal(buildSpecialistsView({ states: [smoke], now, env }).specialists[0].lastRun.project, null);
+
+    // Re-plant codey as tessa: runs of the pre-rename id are hers.
+    const index = JSON.parse(fs.readFileSync(path.join(home, "specialists-index.json"), "utf8"));
+    const manifestFile = path.join(index.specialists["coding.codey"].path, "specialist.json");
+    fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, "utf8")), id: "testing.tessa" }));
+    const entry = { ...index.specialists["coding.codey"], id: "testing.tessa" };
+    fs.writeFileSync(path.join(home, "specialists-index.json"),
+      JSON.stringify({ specialists: { "testing.tessa": entry }, versions: { "testing.tessa": [entry] } }));
+    const [tessa] = buildSpecialistsView({ states, now }).specialists;
+    assert.equal(tessa.id, "testing.tessa");
+    assert.equal(tessa.category, "testing");
+    assert.equal(tessa.lastRun.runId, "r4");
   }));
 
 test("only https github URLs are accepted as an install source", () => {

@@ -25,7 +25,7 @@ export function sanitizeForDashboard(value, { stripAccounts = false } = {}) {
   return out;
 }
 
-function ageMs(iso, now) {
+export function ageMs(iso, now) {
   if (!iso) return null;
   const ms = now - Date.parse(iso);
   return Number.isFinite(ms) ? ms : null;
