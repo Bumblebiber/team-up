@@ -63,9 +63,12 @@ STAMP_ID=$(date +%Y%m%d-%H%M)
 BRANCH="insights/$STAMP_ID"
 PROMPT="${JSON%.json}.prompt.md"
 TICKET="${JSON%.json}.ticket.md"
-# The report is written in roster.json "language" (missing = en).
+# The report and every line this script adds to it follow roster.json
+# "language" (missing = en). Roster path precedence as in src/paths.mjs.
 REPORT_LANGUAGE=$(python3 -c 'import json, sys; print("German" if json.load(open(sys.argv[1])).get("language") == "de" else "English")' \
-  "${TEAM_UP_HOME:-$HOME/.team-up}/roster.json" 2>/dev/null || echo English)
+  "${TEAM_UP_ROSTER:-${O9K_ROSTER:-${TEAM_UP_HOME:-$HOME/.team-up}/roster.json}}" 2>/dev/null || echo English)
+# L "English" "Deutsch": the line in the report's language.
+L() { if [ "$REPORT_LANGUAGE" = German ]; then printf '%s\n' "$2"; else printf '%s\n' "$1"; fi; }
 sed -e "s|{{REPORT_MD}}|$MD|g" -e "s|{{REPORT_JSON}}|$JSON|g" \
     -e "s|{{REPORT_DIR}}|$OUT_DIR|g" -e "s|{{TICKET}}|$TICKET|g" \
     -e "s|{{BRANCH}}|$BRANCH|g" -e "s|{{TIM_PROJECT}}|${INSIGHTS_TIM_PROJECT:-P0073}|g" \
@@ -114,10 +117,10 @@ fix_ticket() {
   status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' \
            "$HOME/.team-up/runs/$run/STATE.json" 2>/dev/null)
   if [ "$status" != "done" ] || [ -z "$(git -C "$clone" log --oneline main..HEAD)" ]; then
-    echo "Fix-Run $run: ${status:-unbekannt}, kein PR ($clone)"
+    L "Fix run $run: ${status:-unknown}, no PR ($clone)" "Fix-Run $run: ${status:-unbekannt}, kein PR ($clone)"
     return 0
   fi
-  git -C "$clone" push -q -u origin "$BRANCH" >> "$LOG_DIR/stderr.log" 2>&1 || { echo "Fix-Run $run: push fehlgeschlagen"; return 0; }
+  git -C "$clone" push -q -u origin "$BRANCH" >> "$LOG_DIR/stderr.log" 2>&1 || { L "Fix run $run: push failed" "Fix-Run $run: push fehlgeschlagen"; return 0; }
   local pr
   pr=$(cd "$clone" && gh pr create --base main --head "$BRANCH" \
      --title "insights: $(head -1 "$TICKET" | sed 's/^#* *//')" \
@@ -128,33 +131,33 @@ Bericht: \`$MD\` · Run: \`$run\` · parent verification: \`npm test\` grün.
 $(cat "$TICKET")
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)" 2>> "$LOG_DIR/stderr.log") \
-    || { echo "Fix-Run $run: PR-Erstellung fehlgeschlagen ($BRANCH gepusht)"; return 0; }
+    || { L "Fix run $run: creating the PR failed ($BRANCH pushed)" "Fix-Run $run: PR-Erstellung fehlgeschlagen ($BRANCH gepusht)"; return 0; }
   if [ "${INSIGHTS_NO_MERGE:-0}" = "1" ]; then
-    echo "Fix-PR (nicht gemerged): $pr"
+    L "Fix PR (not merged): $pr" "Fix-PR (nicht gemerged): $pr"
     return 0
   fi
   (cd "$clone" && gh pr merge "$pr" --squash --delete-branch) >> "$LOG_DIR/stderr.log" 2>&1 \
-    || { echo "Fix-PR offen, Merge fehlgeschlagen (Konflikt?): $pr"; return 0; }
+    || { L "Fix PR open, merge failed (conflict?): $pr" "Fix-PR offen, Merge fehlgeschlagen (Konflikt?): $pr"; return 0; }
   # Crons run from the main checkout, so the fix is only live once it is there.
   # A checkout on another branch or with conflicting edits is left alone.
   if [ "$(git -C "$REPO" branch --show-current)" = "main" ] \
      && git -C "$REPO" pull -q --ff-only >> "$LOG_DIR/stderr.log" 2>&1; then
-    echo "Fix gemerged und live: $pr"
+    L "Fix merged and live: $pr" "Fix gemerged und live: $pr"
   else
-    echo "Fix gemerged: $pr — Main-Checkout nicht aktualisiert, bitte pullen"
+    L "Fix merged: $pr — main checkout not updated, please pull" "Fix gemerged: $pr — Main-Checkout nicht aktualisiert, bitte pullen"
   fi
 }
 FIX=""
 # A tampered main checkout means the evaluator broke its rules: no fix on top.
-[ "$RC" -eq 0 ] && [ "$TAMPERED" = "0" ] && [ -s "$TICKET" ] && FIX=$(fix_ticket || echo "Fix-Vorbereitung fehlgeschlagen, siehe $LOG_DIR/stderr.log")
+[ "$RC" -eq 0 ] && [ "$TAMPERED" = "0" ] && [ -s "$TICKET" ] && FIX=$(fix_ticket || L "Preparing the fix failed, see $LOG_DIR/stderr.log" "Fix-Vorbereitung fehlgeschlagen, siehe $LOG_DIR/stderr.log")
 
-MSG="🔎 team-up Insights ($ACTIONABLE auffällig)
+MSG="$(L "🔎 team-up insights ($ACTIONABLE notable)" "🔎 team-up Insights ($ACTIONABLE auffällig)")
 $(head -c 3000 "$DECISION")
 ${FIX:+$FIX
-}Bericht: $MD"
-[ "$RC" -ne 0 ] && MSG="⚠️ Insights-Evaluator exit $RC — Bericht liegt trotzdem vor.
+}$(L "Report: $MD" "Bericht: $MD")"
+[ "$RC" -ne 0 ] && MSG="$(L "⚠️ Insights evaluator exit $RC — the report is there anyway." "⚠️ Insights-Evaluator exit $RC — Bericht liegt trotzdem vor.")
 $MSG"
-[ "$TAMPERED" = "1" ] && MSG="🛑 Evaluator hat den Main-Checkout verändert — bitte prüfen.
+[ "$TAMPERED" = "1" ] && MSG="$(L "🛑 The evaluator changed the main checkout — please check." "🛑 Evaluator hat den Main-Checkout verändert — bitte prüfen.")
 $MSG"
 
 echo "$MSG"

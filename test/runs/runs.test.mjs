@@ -656,6 +656,8 @@ test("worker prompts ask for a Subject line, in German when the roster says so â
     assert.ok(wrapped.startsWith(host), "a host's own protocol stays as written");
     assert.ok(wrapped.endsWith(`\n\n${humanLanguageLine()}\n`) && wrapped.includes("in German"), "and gets the line appended");
     assert.equal(wrapPromptWithMailboxProtocol(wrapped, {}), wrapped, "only once");
+    fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify({ language: "en" }));
+    assert.equal(wrapPromptWithMailboxProtocol(wrapped, {}), wrapped, "once, even after a language switch");
   } finally {
     if (prev === undefined) delete process.env.TEAM_UP_HOME;
     else process.env.TEAM_UP_HOME = prev;

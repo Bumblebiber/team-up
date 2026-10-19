@@ -114,6 +114,9 @@ export function promptHasMailboxProtocol(text) {
   return /mailbox\/STATUS|STATUS\s*=\s*`?done`?/i.test(t) && /HEARTBEAT/i.test(t);
 }
 
+/** In the language line of every language: a prompt that has it was wrapped already. */
+const SUBJECT_MARKER = "one line `Subject: …`";
+
 /**
  * What a worker is told about the human who answers QUESTIONS.md: a plain
  * `Subject:` line first (the dashboard inbox shows it), and with roster
@@ -144,8 +147,9 @@ export function humanLanguageLine() {
 export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory, resultProtocol } = {}) {
   const body = (taskBody || "").trim();
   const language = humanLanguageLine();
-  // A host wrote its own protocol: it still gets the language line, once.
-  if (promptHasMailboxProtocol(body)) return body.includes(language) ? `${body}\n` : `${body}\n\n${language}\n`;
+  // A host wrote its own protocol: it still gets the language line, once
+  // (in whichever language it was first wrapped).
+  if (promptHasMailboxProtocol(body)) return body.includes(SUBJECT_MARKER) ? `${body}\n` : `${body}\n\n${language}\n`;
   const typed = resultProtocol === "RESULT.json";
   const tplName = typed ? "worker-prompt.md" : "worker-prompt-legacy.md";
   const tplPath = path.join(rosterPluginRoot(), "templates", tplName);

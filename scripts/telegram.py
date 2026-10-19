@@ -37,6 +37,8 @@ from pathlib import Path
 HOME = Path.home()
 TU = Path(os.environ.get("TEAM_UP_HOME") or HOME / ".team-up")
 RUNS = Path(os.environ.get("TEAM_UP_RUNS") or TU / "runs")
+# Same precedence as src/paths.mjs and usage-spender.py.
+ROSTER = Path(os.environ.get("TEAM_UP_ROSTER") or os.environ.get("O9K_ROSTER") or TU / "roster.json")
 DIR = TU / "telegram"
 CLAUDE = os.environ.get("TEAMUP_CLAUDE_BIN") or str(HOME / ".local/bin/claude")
 TICK = 3
@@ -88,7 +90,7 @@ def load_cfg():
 
 def roster_cli_model(model_id):
     """claude-opus -> opus (roster models.<id>.cli_model); unknown ids pass through."""
-    spec = (read_json(TU / "roster.json", {}) or {}).get("models", {}).get(model_id) or {}
+    spec = (read_json(ROSTER, {}) or {}).get("models", {}).get(model_id) or {}
     return spec.get("cli_model") or model_id
 
 
@@ -132,12 +134,13 @@ TEXT = {
 
 
 def language():
-    lang = (read_json(TU / "roster.json", {}) or {}).get("language")
+    """Read once per message, so one message never mixes two languages."""
+    lang = (read_json(ROSTER, {}) or {}).get("language")
     return lang if lang in TEXT else "en"
 
 
-def say(key, lang=None, **values):
-    return TEXT[lang or language()][key].format(**values)
+def say(key, lang, **values):
+    return TEXT[lang][key].format(**values)
 
 
 # ── Telegram API ──────────────────────────────────────────────────────────
@@ -287,13 +290,14 @@ def cmd_send(argv):
     script_key, script_name = sender_of(pid) if pid else (None, None)
     sender = job or script_key
     info = footer_info({**os.environ, "TEAMUP_NOTIFY_SCRIPT": script_name or job or ""})
+    lang = language()
     for dest in destination(cfg, sender):
         if dest == "bell":
-            ring_bell(f"team-up: {sender or say('message')}", text)
+            ring_bell(f"team-up: {sender or say('message', lang)}", text)
             return 0
         env = read_env(dest["env"])
         chat = env.get("TELEGRAM_CHAT_ID") or any_chat(cfg)
-        res = send_html(env.get("TELEGRAM_BOT_TOKEN", ""), chat, with_footer(text, render_footer(info, bool(dest.get("listen")))))
+        res = send_html(env.get("TELEGRAM_BOT_TOKEN", ""), chat, with_footer(text, render_footer(info, bool(dest.get("listen")), lang)))
         if res.get("ok"):
             return 0
         print(f"telegram.py: @{dest.get('username')} failed: {res.get('description')}", file=sys.stderr)
@@ -402,7 +406,7 @@ def finished_worker_tmux(tmux):
     return False
 
 
-def free_session(session):
+def free_session(session, lang):
     """None when the session can be resumed now, else why not (for Benni, in his language)."""
     rec = live_session(session)
     if not rec:
@@ -416,7 +420,7 @@ def free_session(session):
                 return None
             time.sleep(0.5)
     where = f" (tmux {rec['tmux']})" if rec.get("tmux") else ""
-    return say("busy", where=where)
+    return say("busy", lang, where=where)
 
 
 RESUME_FRAME = """[Telegram] Benni replied on Telegram to your last message. If you were a team-up
@@ -460,18 +464,19 @@ def cmd_handle(job_file):
     env = read_env(bot["env"])
     token, chat, reply_to = env["TELEGRAM_BOT_TOKEN"], job["chat_id"], job["message_id"]
     resume = bool(target and target.get("cli") == "claude" and target.get("session"))
+    lang = language()
     if resume:
         cwd, model = target.get("cwd") or str(HOME), target.get("model")
-        why = free_session(target["session"])
+        why = free_session(target["session"], lang)
         if why:
             send_html(token, chat, html.escape(why), reply_to)
             return 0
-        send_html(token, chat, say("resuming", session=html.escape(target["session"][:8])), reply_to)
+        send_html(token, chat, say("resuming", lang, session=html.escape(target["session"][:8])), reply_to)
     else:
         cwd = untilde(cfg_r.get("cwd") or str(HOME / "projects/team-up"))
         model = (cfg_r.get("model") or "claude:claude-sonnet").split(":", 1)[-1]
-        note = say("cannot_resume", cli=html.escape(target["cli"])) if target else ""
-        send_html(token, chat, say("new_session", model=html.escape(model), cwd=html.escape(tilde(cwd)), note=note), reply_to)
+        note = say("cannot_resume", lang, cli=html.escape(target["cli"])) if target else ""
+        send_html(token, chat, say("new_session", lang, model=html.escape(model), cwd=html.escape(tilde(cwd)), note=note), reply_to)
     lock = DIR / "locks" / f"{(target or {}).get('session') or 'new'}.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     with open(lock, "w") as fh:
@@ -481,19 +486,19 @@ def cmd_handle(job_file):
         try:
             if resume:
                 out = claude([*args, "--resume", target["session"],
-                              RESUME_FRAME.format(text=job["text"], language=say("language"))], cwd)
+                              RESUME_FRAME.format(text=job["text"], language=say("language", lang))], cwd)
             else:
                 quoted = f"The message he replied to:\n\n<quoted>\n{job['quoted']}\n</quoted>\n\n" if job.get("quoted") else ""
                 prompt = NEW_PROMPT.format(bot=bot.get("username", bot["id"]), quoted=quoted, text=job["text"],
-                                           extra=cfg_r.get("instructions") or "", language=say("language"))
+                                           extra=cfg_r.get("instructions") or "", language=say("language", lang))
                 out = claude([*args, prompt], cwd)
         except subprocess.TimeoutExpired:
-            out = {"is_error": True, "result": say("timed_out", minutes=REPLY_CEILING // 60)}
-    body = html.escape(str(out.get("result") or say("no_answer")))
+            out = {"is_error": True, "result": say("timed_out", lang, minutes=REPLY_CEILING // 60)}
+    body = html.escape(str(out.get("result") or say("no_answer", lang)))
     if out.get("is_error"):
-        body = f"{say('failed')}\n\n{body}"
+        body = f"{say('failed', lang)}\n\n{body}"
     info = {"cwd": cwd, "cli": "claude", "model": model, "session": out.get("session_id") or (target or {}).get("session")}
-    res = send_html(token, chat, with_footer(body, render_footer(info, True)), reply_to)
+    res = send_html(token, chat, with_footer(body, render_footer(info, True, lang)), reply_to)
     if not res.get("ok"):
         print(f"send back failed: {res.get('description')}", file=sys.stderr)
     return 0 if not out.get("is_error") else 1
