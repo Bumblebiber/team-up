@@ -14,6 +14,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { teamUpHome } from "../paths.mjs";
 import { describeSchedule, nextRun, parseSchedule } from "./cron-schedule.mjs";
+import { t } from "./i18n.mjs";
 import {
   cronEntries, editCrontab, findEntry, managedLines, readCrontab,
   setEntryEnabled, setEntryEnv, setEntrySchedule, withManagedBlock,
@@ -32,7 +33,8 @@ const hermesOut = (name) => path.join(HOME, ".hermes", "cron-outputs", name);
  * (or Hermes job) by the script it runs. `knobs` are env settings in front of
  * the command that the dashboard may set. `model` names its cron-jobs.ini
  * section when an LLM does the work. `notifies` says what message it sends
- * (dashboard → Communication); jobs without it send none.
+ * (dashboard → Communication); jobs without it send none. The prose is the
+ * English key; views translate it (i18n.mjs).
  */
 export const BUILTIN_JOBS = [
   {
@@ -176,9 +178,9 @@ function hermesJobs(env) {
   }
 }
 
-const when = (expr, now) => {
+const when = (expr, now, lang) => {
   try {
-    return { text: describeSchedule(expr), next: nextRun(expr, now)?.toISOString() ?? null };
+    return { text: describeSchedule(expr, lang), next: nextRun(expr, now)?.toISOString() ?? null };
   } catch {
     return { text: `cron "${expr}"`, next: null };
   }
@@ -232,7 +234,7 @@ export function customCronLines(sections) {
 
 /** @param states, read  the run states and a mailbox reader, for each ops-run job's last outcome */
 export function buildAutomationView({
-  env = process.env, exec = execFileSync, now = new Date(), modelOptions = [], states = [], read = () => null,
+  env = process.env, exec = execFileSync, now = new Date(), modelOptions = [], states = [], read = () => null, lang = "en",
 } = {}) {
   let crontab = "";
   let crontabError = null;
@@ -248,10 +250,10 @@ export function buildAutomationView({
 
   const builtin = BUILTIN_JOBS.map((job) => {
     const base = {
-      id: job.id, title: job.title, what: job.what, cost: job.cost, llm: job.llm, source: job.source,
-      output: job.output ? tilde(job.output) : null, settings: job.settings ?? null, off: job.off ?? null,
+      id: job.id, title: t(lang, job.title), what: t(lang, job.what), cost: t(lang, job.cost), llm: job.llm, source: job.source,
+      output: job.output ? tilde(job.output) : null, settings: job.settings ?? null, off: job.off ? t(lang, job.off) : null,
       lastRun: newestMtime(job.output),
-      model: job.model ? { ...job.model, value: section(job.model.job)?.model ?? null } : null,
+      model: job.model ? { ...job.model, label: t(lang, job.model.label), value: section(job.model.job)?.model ?? null } : null,
       // golden-task and insights run through ops-run as role cron-<ini section>; the spender's
       // host is a plain tmux session, so it has no such run and stays null.
       lastOutcome: job.model ? lastJobOutcome(job.model.job, states, read) : null,
@@ -264,9 +266,9 @@ export function buildAutomationView({
         installed: !!h,
         enabled: h ? h.enabled !== false && h.paused !== true : false,
         editable: false,
-        where: "Scheduled by the Hermes cron daemon (~/.hermes/cron/jobs.json) — change it there.",
+        where: t(lang, "Scheduled by the Hermes cron daemon (~/.hermes/cron/jobs.json) — change it there."),
         schedule: typeof expr === "string" ? expr : null,
-        ...(typeof expr === "string" ? { when: when(expr, now) } : {}),
+        ...(typeof expr === "string" ? { when: when(expr, now, lang) } : {}),
       };
     }
     let entry = null;
@@ -281,10 +283,10 @@ export function buildAutomationView({
       installed: !!entry,
       enabled: entry?.enabled ?? false,
       editable: !!entry && !crontabError,
-      where: entry ? "Your crontab" : problem || "Not in your crontab",
+      where: entry ? t(lang, "Your crontab") : problem || t(lang, "Not in your crontab"),
       schedule: entry?.schedule ?? null,
-      ...(entry ? { when: when(entry.schedule, now) } : {}),
-      knobs: (job.knobs || []).map((k) => ({ ...k, value: entry?.env?.[k.key] ?? null })),
+      ...(entry ? { when: when(entry.schedule, now, lang) } : {}),
+      knobs: (job.knobs || []).map((k) => ({ ...k, label: t(lang, k.label), value: entry?.env?.[k.key] ?? null })),
     };
   });
 
@@ -312,7 +314,7 @@ export function buildAutomationView({
         name,
         description: values.description ?? "",
         schedule: values.schedule ?? "",
-        when: values.schedule ? when(values.schedule, now) : null,
+        when: values.schedule ? when(values.schedule, now, lang) : null,
         model: values.model ?? null,
         cwd: values.cwd ?? null,
         notify: values.notify === "true",
@@ -324,17 +326,17 @@ export function buildAutomationView({
       };
     });
 
-  let services = [];
+  let services = SERVICES.map((s) => ({ ...s, title: t(lang, s.title), what: t(lang, s.what) }));
   try {
     const out = exec("systemctl", ["--user", "show", "-p", "Id,ActiveState,SubState,UnitFileState", ...SERVICES.map((s) => s.unit)],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     const blocks = out.split(/\n\n+/).map((b) => Object.fromEntries(b.split("\n").filter(Boolean).map((l) => l.split(/=(.*)/s).slice(0, 2))));
-    services = SERVICES.map((s) => {
+    services = services.map((s) => {
       const b = blocks.find((x) => x.Id === s.unit) || {};
       return { ...s, active: b.ActiveState ?? "unknown", sub: b.SubState ?? null, enabled: b.UnitFileState ?? "unknown" };
     });
   } catch {
-    services = SERVICES.map((s) => ({ ...s, active: "unknown", sub: null, enabled: "unknown" }));
+    services = services.map((s) => ({ ...s, active: "unknown", sub: null, enabled: "unknown" }));
   }
 
   const otherLines = cronEntries(crontab).filter((e) =>

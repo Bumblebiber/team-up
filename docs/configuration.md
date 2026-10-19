@@ -99,6 +99,21 @@ so the default applies again. Deliberately not editable from a browser:
 The usage watcher re-reads `roster.json` every tick, so `subscriptions` and
 `usage_watcher.*` changes apply within a minute, without a restart.
 
+## Language
+
+Top-level `"language": "en" | "de"` (Settings → General). Missing or any other
+value means `en`. It sets the language of what the human reads:
+
+- the dashboard's text (the page reloads after the save);
+- the question a worker writes to `QUESTIONS.md` and its first line
+  `Subject: …`, for runs started after the change;
+- Telegram replies and their status lines (`scripts/telegram.py`);
+- the 48h insights report (`scripts/insights-cron.sh`).
+
+Everything agents write for each other stays English: `RESULT.json` /
+`RESULT.md`, code, commits, notes for the parent, and the Telegram footer's
+📂 🤖 🧵 lines. Questions asked before a switch keep their language.
+
 ## Limits
 
 | Field | Default | Meaning |

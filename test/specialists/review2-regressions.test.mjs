@@ -9,7 +9,9 @@ import { installPackage } from "../../src/specialists/store.mjs";
 import { trustProjectPolicy } from "../../src/specialists/approvals.mjs";
 import { launch } from "../../src/specialists/launcher.mjs";
 import { materialize } from "../../src/sandbox/materialize.mjs";
-import { createRun, classifyMailbox, setStatus, runDir, wrapPromptWithMailboxProtocol, loadState } from "../../src/runs/runs.mjs";
+import {
+  createRun, classifyMailbox, setStatus, runDir, wrapPromptWithMailboxProtocol, loadState, humanLanguageLine,
+} from "../../src/runs/runs.mjs";
 import { atomicWriteText } from "../../src/json-store.mjs";
 import { resolveProfile } from "../../src/roster/profile.mjs";
 import { buildCommand } from "../../src/roster/command.mjs";
@@ -299,7 +301,8 @@ test("already-wrapped legacy prompt stays compatible", () => {
     runId: "r1",
     runDirectory: "/tmp/run",
   });
-  assert.equal(out, legacy.endsWith("\n") ? legacy : `${legacy}\n`);
+  // Kept as written; only the line about the human's language is appended.
+  assert.equal(out, `${legacy.trim()}\n\n${humanLanguageLine()}\n`);
   assert.ok(!out.includes("team-up.result/v1") || legacy.includes("RESULT.md"));
 });
 

@@ -2,7 +2,8 @@
 // contract for one knob: where it lives in roster.json, what it means in plain
 // words, its unit and default, how a value is checked, and when a change takes
 // effect. The browser renders the list as it comes, so adding a knob here is
-// all it takes to make it editable.
+// all it takes to make it editable. Text is in the roster's language
+// (i18n.mjs); the tables below hold the English keys.
 //
 // `clis.*.cmd` and friends are deliberately absent — see EXCLUDED.
 
@@ -12,6 +13,7 @@ import { DEFAULT_ADMISSION } from "../admission/admission.mjs";
 import { DEFAULT_CONFIG as WATCHER } from "../usage/usage-watcher.mjs";
 import { DEFAULT_RETENTION_DAYS } from "../telemetry/store.mjs";
 import { DEFAULT_THRESHOLDS } from "../telemetry/restart.mjs";
+import { langOf, t } from "./i18n.mjs";
 
 // Defaults of scripts/usage-spender.py; keep in sync with the constants there.
 export const SPENDER_DEFAULTS = Object.freeze({
@@ -24,16 +26,22 @@ export const SPENDER_DEFAULTS = Object.freeze({
   task_cost: 0.3,
 });
 
-const EFFECT = {
-  pick: "Next pick or dispatch.",
-  watcher: "Within a minute (the usage watcher re-reads the roster every tick).",
-  spender: "Next usage-spender tick (every 10 minutes).",
-  gc: "Next cleanup sweep (`runs gc`, every 5 minutes).",
-  telemetry: "Next telemetry sample.",
-  info: "Information for the usage-spender only.",
-};
+const effects = (lang) => ({
+  language: t(lang, "Dashboard: now (the page reloads). Agents: runs started from now on."),
+  pick: t(lang, "Next pick or dispatch."),
+  watcher: t(lang, "Within a minute (the usage watcher re-reads the roster every tick)."),
+  spender: t(lang, "Next usage-spender tick (every 10 minutes)."),
+  gc: t(lang, "Next cleanup sweep (`runs gc`, every 5 minutes)."),
+  telemetry: t(lang, "Next telemetry sample."),
+  info: t(lang, "Information for the usage-spender only."),
+});
 
 export const GROUPS = [
+  {
+    id: "general",
+    title: "General",
+    intro: "The language of this dashboard and of the questions agents ask you. Work between agents stays in English.",
+  },
   {
     id: "accounts",
     title: "Accounts",
@@ -112,35 +120,36 @@ export function getPath(obj, dotted) {
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
-/** Why `value` does not fit `field`, or null. */
-export function checkValue(field, value) {
-  if (value === null) return field.nullable ? null : "a value is required";
+/** Why `value` does not fit `field`, as a sentence in `lang`, or null. */
+export function checkValue(field, value, lang = "en") {
+  const label = field.label;
+  if (value === null) return field.nullable ? null : t(lang, "{label}: a value is required", { label });
   switch (field.type) {
     case "bool":
-      return typeof value === "boolean" ? null : "must be on or off";
+      return typeof value === "boolean" ? null : t(lang, "{label} must be on or off", { label });
     case "int":
     case "number":
     case "ratio": {
-      if (!isNum(value)) return "must be a number";
-      if (field.type === "int" && !Number.isInteger(value)) return "must be a whole number";
+      if (!isNum(value)) return t(lang, "{label} must be a number", { label });
+      if (field.type === "int" && !Number.isInteger(value)) return t(lang, "{label} must be a whole number", { label });
       const min = field.type === "ratio" ? 0 : field.min;
       const max = field.type === "ratio" ? 1 : field.max;
-      if (field.type === "ratio" && value <= 0) return "must be above 0 %";
-      if (min != null && value < min) return `must be at least ${min}`;
-      if (max != null && value > max) return `must be at most ${max}`;
+      if (field.type === "ratio" && value <= 0) return t(lang, "{label} must be above 0 %", { label });
+      if (min != null && value < min) return t(lang, "{label} must be at least {min}", { label, min });
+      if (max != null && value > max) return t(lang, "{label} must be at most {max}", { label, max });
       return null;
     }
     case "enum":
-      return field.options.some((o) => o.value === value) ? null : "is not one of the choices";
+      return field.options.some((o) => o.value === value) ? null : t(lang, "{label} is not one of the choices", { label });
     case "set": {
-      if (!Array.isArray(value)) return "must be a list";
-      if (new Set(value).size !== value.length) return "lists a choice twice";
-      if (!value.every((v) => field.options.some((o) => o.value === v))) return "lists an unknown choice";
-      if (field.minItems && value.length < field.minItems) return `needs at least ${field.minItems}`;
+      if (!Array.isArray(value)) return t(lang, "{label} must be a list", { label });
+      if (new Set(value).size !== value.length) return t(lang, "{label} lists a choice twice", { label });
+      if (!value.every((v) => field.options.some((o) => o.value === v))) return t(lang, "{label} lists an unknown choice", { label });
+      if (field.minItems && value.length < field.minItems) return t(lang, "{label} needs at least {min}", { label, min: field.minItems });
       return null;
     }
     default:
-      return "has an unknown type";
+      return t(lang, "{label} has an unknown type", { label });
   }
 }
 
@@ -152,6 +161,8 @@ const opts = (values, label = String) => values.map((v) => ({ value: v, label: l
  * models — are built from it.
  */
 export function settingsFields(roster = {}) {
+  const lang = langOf(roster);
+  const EFFECT = effects(lang);
   const fields = [];
   const add = (field) => fields.push({ ...field, value: getPath(roster, field.path) });
   const clis = Object.keys(roster.clis || {}).sort();
@@ -159,142 +170,154 @@ export function settingsFields(roster = {}) {
     ? roster.subscriptions
     : ["claude", "codex", "cursor"];
 
+  add({
+    group: "general", path: "language", type: "enum", label: t(lang, "Language"),
+    help: t(lang, "For the dashboard and for the questions agents ask you. Results, code and messages between agents stay in English."),
+    // Endonyms: each language is named in itself, never translated.
+    options: [{ value: "en", label: "English" }, { value: "de", label: "Deutsch" }],
+    default: "en", effect: EFFECT.language,
+  });
+
   for (const [id, account] of Object.entries(roster.accounts || {})) {
-    const row = `${id} (${account?.kind === "credit" ? "credit" : "subscription"})`;
+    const row = account?.kind === "credit" ? t(lang, "{id} (credit)", { id }) : t(lang, "{id} (subscription)", { id });
     add({
-      group: "accounts", row, path: `accounts.${id}.enabled`, type: "bool", label: "Enabled",
+      group: "accounts", row, path: `accounts.${id}.enabled`, type: "bool", label: t(lang, "Enabled"),
       help: account?.$comment || "",
       default: true, effect: EFFECT.pick, required: true,
     });
     if (account?.kind === "credit") {
       add({
-        group: "accounts", row, path: `accounts.${id}.remaining`, type: "number", label: "Credit left",
+        group: "accounts", row, path: `accounts.${id}.remaining`, type: "number", label: t(lang, "Credit left"),
         help: "", min: -1e9, effect: EFFECT.pick,
       });
     } else if (PLAN_TIERS[id]) {
       add({
-        group: "accounts", row, path: `accounts.${id}.plan`, type: "enum", label: "Plan",
+        group: "accounts", row, path: `accounts.${id}.plan`, type: "enum", label: t(lang, "Plan"),
         help: "",
-        options: opts(PLAN_TIERS[id]), nullable: true, nullLabel: "not set", effect: EFFECT.info,
+        options: opts(PLAN_TIERS[id]), nullable: true, nullLabel: t(lang, "not set"), effect: EFFECT.info,
       });
     }
   }
 
   const lim = limitDefaults({});
   add({
-    group: "limits", path: "limits.warn_at", type: "ratio", label: "Wrap-up warning at",
-    help: "At this share of a usage window a running agent is told to finish what it is doing.",
+    group: "limits", path: "limits.warn_at", type: "ratio", label: t(lang, "Wrap-up warning at"),
+    help: t(lang, "At this share of a usage window a running agent is told to finish what it is doing."),
     default: lim.warn_at, effect: EFFECT.pick,
   });
   add({
-    group: "limits", path: "limits.handoff_at", type: "ratio", label: "Hand off at",
-    help: "At this share the agent hands off and stops; the next model in its role chain takes over.",
+    group: "limits", path: "limits.handoff_at", type: "ratio", label: t(lang, "Hand off at"),
+    help: t(lang, "At this share the agent hands off and stops; the next model in its role chain takes over."),
     default: lim.handoff_at, effect: EFFECT.pick,
   });
   add({
-    group: "limits", path: "limits.handoff_at_burst", type: "ratio", label: "Hand off at (5-hour windows)",
-    help: "The same for short windows (5 hours, sessions). They refill fast, so stopping earlier costs little.",
+    group: "limits", path: "limits.handoff_at_burst", type: "ratio", label: t(lang, "Hand off at (5-hour windows)"),
+    help: t(lang, "The same for short windows (5 hours, sessions). They refill fast, so stopping earlier costs little."),
     default: lim.handoff_at_burst, effect: EFFECT.pick,
   });
   add({
-    group: "limits", path: "limits.project_min", type: "int", label: "Look-ahead", unit: "min",
-    help: "Routing projects a short window's burn rate this far ahead and skips a model that would run out. 0 turns the projection off.",
+    group: "limits", path: "limits.project_min", type: "int", label: t(lang, "Look-ahead"), unit: "min",
+    help: t(lang, "Routing projects a short window's burn rate this far ahead and skips a model that would run out. 0 turns the projection off."),
     min: 0, max: 1440, default: lim.project_min, effect: EFFECT.pick, advanced: true,
   });
   add({
-    group: "limits", path: "limits.usage_max_age_min", type: "int", label: "Hand-off needs a reading younger than", unit: "min",
-    help: "A hand-off that blocks a model only trusts a usage reading this fresh.",
+    group: "limits", path: "limits.usage_max_age_min", type: "int", label: t(lang, "Hand-off needs a reading younger than"), unit: "min",
+    help: t(lang, "A hand-off that blocks a model only trusts a usage reading this fresh."),
     min: 1, max: 1440, default: lim.usage_max_age_min, effect: EFFECT.pick, advanced: true,
   });
 
   add({
-    group: "workers", path: "admission.max_workers", type: "int", label: "Max. parallel workers",
-    help: "Hard cap on workers running at once. On auto, it is derived from memory telemetry.",
-    min: 1, max: 64, nullable: true, nullLabel: "auto", default: DEFAULT_ADMISSION.max_workers, effect: EFFECT.pick,
+    group: "workers", path: "admission.max_workers", type: "int", label: t(lang, "Max. parallel workers"),
+    help: t(lang, "Hard cap on workers running at once. On auto, it is derived from memory telemetry."),
+    min: 1, max: 64, nullable: true, nullLabel: t(lang, "auto"), default: DEFAULT_ADMISSION.max_workers, effect: EFFECT.pick,
   });
   add({
-    group: "workers", path: "admission.fallback_max_workers", type: "int", label: "Cap while telemetry is thin",
-    help: "Used on auto until enough worker samples exist to trust the derived cap.",
+    group: "workers", path: "admission.fallback_max_workers", type: "int", label: t(lang, "Cap while telemetry is thin"),
+    help: t(lang, "Used on auto until enough worker samples exist to trust the derived cap."),
     min: 1, max: 64, default: DEFAULT_ADMISSION.fallback_max_workers, effect: EFFECT.pick,
   });
   add({
-    group: "workers", path: "limits.idle_session_hours", type: "number", label: "Stop idle worker sessions after", unit: "h",
-    help: "A worker's terminal session that has been idle this long is closed.",
+    group: "workers", path: "limits.idle_session_hours", type: "number", label: t(lang, "Stop idle worker sessions after"), unit: "h",
+    help: t(lang, "A worker's terminal session that has been idle this long is closed."),
     min: 0.25, max: 168, default: 2, effect: EFFECT.gc,
   });
   add({
-    group: "workers", path: "admission.reserve_mb", type: "int", label: "Memory to keep free", unit: "MB",
-    help: "A new worker only starts if at least this much memory stays available after it.",
+    group: "workers", path: "admission.reserve_mb", type: "int", label: t(lang, "Memory to keep free"), unit: "MB",
+    help: t(lang, "A new worker only starts if at least this much memory stays available after it."),
     min: 1, max: 1e6, default: DEFAULT_ADMISSION.reserve_mb, effect: EFFECT.pick, advanced: true,
   });
   add({
-    group: "workers", path: "admission.psi_some_max", type: "number", label: "Refuse above memory pressure (some)", unit: "%",
-    help: "No new worker while PSI memory 'some' (10 s average) is above this.",
+    group: "workers", path: "admission.psi_some_max", type: "number", label: t(lang, "Refuse above memory pressure (some)"), unit: "%",
+    help: t(lang, "No new worker while PSI memory 'some' (10 s average) is above this."),
     min: 0.1, max: 100, default: DEFAULT_ADMISSION.psi_some_max, effect: EFFECT.pick, advanced: true,
   });
   add({
-    group: "workers", path: "admission.psi_full_max", type: "number", label: "Refuse above memory pressure (full)", unit: "%",
-    help: "No new worker while PSI memory 'full' (10 s average) is above this.",
+    group: "workers", path: "admission.psi_full_max", type: "number", label: t(lang, "Refuse above memory pressure (full)"), unit: "%",
+    help: t(lang, "No new worker while PSI memory 'full' (10 s average) is above this."),
     min: 0.1, max: 100, default: DEFAULT_ADMISSION.psi_full_max, effect: EFFECT.pick, advanced: true,
   });
   add({
-    group: "workers", path: "admission.min_samples", type: "int", label: "Samples before telemetry is trusted",
-    help: "Worker memory samples needed before auto derives the cap from them.",
+    group: "workers", path: "admission.min_samples", type: "int", label: t(lang, "Samples before telemetry is trusted"),
+    help: t(lang, "Worker memory samples needed before auto derives the cap from them."),
     min: 1, max: 100000, default: DEFAULT_ADMISSION.min_samples, effect: EFFECT.pick, advanced: true,
   });
 
   add({
-    group: "usage", path: "subscriptions", type: "set", label: "Watched subscriptions",
-    help: "CLIs whose usage windows are read and shown. An unwatched CLI still runs; its limits just go unchecked.",
+    group: "usage", path: "subscriptions", type: "set", label: t(lang, "Watched subscriptions"),
+    help: t(lang, "CLIs whose usage windows are read and shown. An unwatched CLI still runs; its limits just go unchecked."),
     options: opts(clis), minItems: 1, default: ["claude", "codex", "cursor"], effect: EFFECT.watcher,
   });
-  for (const [key, label] of [["idle_min", "when nothing runs"], ["active_min", "while one agent runs"], ["busy_min", "while several run"]]) {
+  for (const [key, label] of [
+    ["idle_min", t(lang, "Read limits every … when nothing runs")],
+    ["active_min", t(lang, "Read limits every … while one agent runs")],
+    ["busy_min", t(lang, "Read limits every … while several run")],
+  ]) {
     add({
-      group: "usage", path: `usage_watcher.intervals.${key}`, type: "int", label: `Read limits every … ${label}`, unit: "min",
-      help: "How often each watched subscription's limits are read. Per-CLI overrides below win.",
+      group: "usage", path: `usage_watcher.intervals.${key}`, type: "int", label, unit: "min",
+      help: t(lang, "How often each watched subscription's limits are read. Per-CLI overrides below win."),
       min: 1, max: 1440, default: WATCHER.intervals[key], effect: EFFECT.watcher,
     });
   }
   for (const cli of watched) {
-    for (const [key, label] of [["idle_min", "idle"], ["active_min", "active"], ["busy_min", "busy"]]) {
+    for (const [key, label] of [["idle_min", t(lang, "idle")], ["active_min", t(lang, "active")], ["busy_min", t(lang, "busy")]]) {
       add({
-        group: "usage", row: `${cli} override`, path: `usage_watcher.cli_intervals.${cli}.${key}`, type: "int",
-        label, unit: "min", help: `Overrides the general pace for ${cli} (reading codex and cursor is slow).`,
+        group: "usage", row: t(lang, "{cli} override", { cli }), path: `usage_watcher.cli_intervals.${cli}.${key}`, type: "int",
+        label, unit: "min", help: t(lang, "Overrides the general pace for {cli} (reading codex and cursor is slow).", { cli }),
         min: 1, max: 1440, default: WATCHER.cli_intervals[cli]?.[key] ?? WATCHER.intervals[key],
         effect: EFFECT.watcher, advanced: true,
       });
     }
   }
   add({
-    group: "usage", path: "usage_watcher.tick_sec", type: "int", label: "Watcher wakes every", unit: "s",
-    help: "How often the watcher checks which CLIs are running and which reading is due.",
+    group: "usage", path: "usage_watcher.tick_sec", type: "int", label: t(lang, "Watcher wakes every"), unit: "s",
+    help: t(lang, "How often the watcher checks which CLIs are running and which reading is due."),
     min: 10, max: 3600, default: WATCHER.tick_sec, effect: EFFECT.watcher, advanced: true,
   });
   add({
-    group: "usage", path: "usage_watcher.dispatch_freshness_sec", type: "int", label: "Dispatch wants a reading younger than", unit: "s",
-    help: "An older reading is refreshed before a worker starts.",
+    group: "usage", path: "usage_watcher.dispatch_freshness_sec", type: "int", label: t(lang, "Dispatch wants a reading younger than"), unit: "s",
+    help: t(lang, "An older reading is refreshed before a worker starts."),
     min: 30, max: 86400, default: 300, effect: EFFECT.pick, advanced: true,
   });
 
   add({
-    group: "spender", path: "usage_spender.subscriptions", type: "set", label: "Spend the quota of",
-    help: "Subscriptions whose spare quota may be spent. Untick all to switch the spender off.",
+    group: "spender", path: "usage_spender.subscriptions", type: "set", label: t(lang, "Spend the quota of"),
+    help: t(lang, "Subscriptions whose spare quota may be spent. Untick all to switch the spender off."),
     options: opts(watched), default: SPENDER_DEFAULTS.subscriptions, effect: EFFECT.spender,
   });
   const hours = opts([...Array(24).keys()], (h) => `${String(h).padStart(2, "0")}:00`);
   add({
-    group: "spender", path: "usage_spender.spawn_from", type: "enum", label: "Start new tasks from",
-    help: "Local time the night starts. From here, one task after another until the quota target or the end time is reached.",
+    group: "spender", path: "usage_spender.spawn_from", type: "enum", label: t(lang, "Start new tasks from"),
+    help: t(lang, "Local time the night starts. From here, one task after another until the quota target or the end time is reached."),
     options: hours, default: SPENDER_DEFAULTS.spawn_from, effect: EFFECT.spender,
   });
   add({
-    group: "spender", path: "usage_spender.spawn_until", type: "enum", label: "Start new tasks until",
-    help: "No new task starts from this time on; one already running finishes. Same as the start time = all day.",
+    group: "spender", path: "usage_spender.spawn_until", type: "enum", label: t(lang, "Start new tasks until"),
+    help: t(lang, "No new task starts from this time on; one already running finishes. Same as the start time = all day."),
     options: hours, default: SPENDER_DEFAULTS.spawn_until, effect: EFFECT.spender,
   });
   add({
-    group: "spender", path: "usage_spender.implement", type: "bool", label: "Implement fixes",
-    help: "On: TIM tasks and GitHub issues are implemented in a throwaway clone and opened as pull requests. Off: reviews and triage only.",
+    group: "spender", path: "usage_spender.implement", type: "bool", label: t(lang, "Implement fixes"),
+    help: t(lang, "On: TIM tasks and GitHub issues are implemented in a throwaway clone and opened as pull requests. Off: reviews and triage only."),
     default: SPENDER_DEFAULTS.implement, effect: EFFECT.spender,
   });
   for (const cli of watched) {
@@ -304,40 +327,40 @@ export function settingsFields(roster = {}) {
       .sort();
     if (!models.length) continue;
     add({
-      group: "spender", path: `usage_spender.implement_model.${cli}`, type: "enum", label: `Implementing model on ${cli}`,
-      help: "Overrides the implementer role chain for spender runs only — spare quota can afford a stronger model.",
+      group: "spender", path: `usage_spender.implement_model.${cli}`, type: "enum", label: t(lang, "Implementing model on {cli}", { cli }),
+      help: t(lang, "Overrides the implementer role chain for spender runs only — spare quota can afford a stronger model."),
       // "" = no override: the spender asks the implementer role chain.
-      options: [{ value: "", label: "implementer role chain" }, ...opts(models)],
+      options: [{ value: "", label: t(lang, "implementer role chain") }, ...opts(models)],
       default: SPENDER_DEFAULTS.implement_model[cli] ?? "", effect: EFFECT.spender, advanced: true,
     });
   }
   add({
-    group: "spender", path: "usage_spender.max_run_h", type: "number", label: "Cancel a task after", unit: "h",
-    help: "A spender task still running after this long is cancelled so it cannot block the queue.",
+    group: "spender", path: "usage_spender.max_run_h", type: "number", label: t(lang, "Cancel a task after"), unit: "h",
+    help: t(lang, "A spender task still running after this long is cancelled so it cannot block the queue."),
     min: 0.5, max: 48, default: SPENDER_DEFAULTS.max_run_h, effect: EFFECT.spender, advanced: true,
   });
   add({
-    group: "spender", path: "usage_spender.task_cost", type: "ratio", label: "One task burns about",
-    help: "Share of a weekly window one task uses on the smallest paid plan. Raise it if the spender overshoots, lower it if quota is left over.",
+    group: "spender", path: "usage_spender.task_cost", type: "ratio", label: t(lang, "One task burns about"),
+    help: t(lang, "Share of a weekly window one task uses on the smallest paid plan. Raise it if the spender overshoots, lower it if quota is left over."),
     default: SPENDER_DEFAULTS.task_cost, effect: EFFECT.spender, advanced: true,
   });
 
   add({
-    group: "telemetry", path: "telemetry.retention_days", type: "int", label: "Keep samples for", unit: "days",
+    group: "telemetry", path: "telemetry.retention_days", type: "int", label: t(lang, "Keep samples for"), unit: t(lang, "days"),
     min: 1, max: 365, default: DEFAULT_RETENTION_DAYS, effect: EFFECT.telemetry,
   });
   add({
-    group: "telemetry", path: "telemetry.verdict.mem_available_ratio", type: "ratio", label: "Restart verdict: free memory below",
-    help: "A restart counts as memory-caused when free memory fell below this share.",
+    group: "telemetry", path: "telemetry.verdict.mem_available_ratio", type: "ratio", label: t(lang, "Restart verdict: free memory below"),
+    help: t(lang, "A restart counts as memory-caused when free memory fell below this share."),
     default: DEFAULT_THRESHOLDS.mem_available_ratio, effect: EFFECT.telemetry,
   });
   add({
-    group: "telemetry", path: "telemetry.verdict.psi_full_avg10", type: "number", label: "Restart verdict: pressure (full) above", unit: "%",
+    group: "telemetry", path: "telemetry.verdict.psi_full_avg10", type: "number", label: t(lang, "Restart verdict: pressure (full) above"), unit: "%",
     min: 0, max: 100, default: DEFAULT_THRESHOLDS.psi_full_avg10, effect: EFFECT.telemetry,
   });
   add({
-    group: "telemetry", path: "telemetry.verdict.team_up_share", type: "ratio", label: "Restart verdict: team-up's share at least",
-    help: "…and team-up held at least this share of used memory, it is blamed.",
+    group: "telemetry", path: "telemetry.verdict.team_up_share", type: "ratio", label: t(lang, "Restart verdict: team-up's share at least"),
+    help: t(lang, "…and team-up held at least this share of used memory, it is blamed."),
     default: DEFAULT_THRESHOLDS.team_up_share, effect: EFFECT.telemetry,
   });
 
@@ -345,7 +368,12 @@ export function settingsFields(roster = {}) {
 }
 
 export function buildSettingsView(roster) {
-  return { groups: GROUPS, fields: settingsFields(roster), excluded: EXCLUDED };
+  const lang = langOf(roster);
+  return {
+    groups: GROUPS.map((g) => ({ ...g, title: t(lang, g.title), intro: t(lang, g.intro) })),
+    fields: settingsFields(roster),
+    excluded: EXCLUDED.map((x) => ({ what: t(lang, x.what), why: t(lang, x.why) })),
+  };
 }
 
 /**
@@ -380,8 +408,8 @@ export function applySettingsEdit(roster, { path: dotted, value, reset } = {}) {
   if (field.type === "enum" && typeof value === "string") {
     value = field.options.find((o) => String(o.value) === value)?.value ?? value;
   }
-  const problem = checkValue(field, value);
-  if (problem) throw new Error(`invalid value for ${dotted}: ${field.label} ${problem}`);
+  const problem = checkValue(field, value, langOf(roster));
+  if (problem) throw new Error(`invalid value for ${dotted}: ${problem}`);
   let node = next;
   for (const key of keys.slice(0, -1)) {
     if (!own(node, key) || typeof node[key] !== "object" || node[key] === null) node[key] = {};

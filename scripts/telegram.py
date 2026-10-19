@@ -37,6 +37,8 @@ from pathlib import Path
 HOME = Path.home()
 TU = Path(os.environ.get("TEAM_UP_HOME") or HOME / ".team-up")
 RUNS = Path(os.environ.get("TEAM_UP_RUNS") or TU / "runs")
+# Same precedence as src/paths.mjs and usage-spender.py.
+ROSTER = Path(os.environ.get("TEAM_UP_ROSTER") or os.environ.get("O9K_ROSTER") or TU / "roster.json")
 DIR = TU / "telegram"
 CLAUDE = os.environ.get("TEAMUP_CLAUDE_BIN") or str(HOME / ".local/bin/claude")
 TICK = 3
@@ -88,8 +90,57 @@ def load_cfg():
 
 def roster_cli_model(model_id):
     """claude-opus -> opus (roster models.<id>.cli_model); unknown ids pass through."""
-    spec = (read_json(TU / "roster.json", {}) or {}).get("models", {}).get(model_id) or {}
+    spec = (read_json(ROSTER, {}) or {}).get("models", {}).get(model_id) or {}
     return spec.get("cli_model") or model_id
+
+
+# What Benni reads, in roster.json "language" (missing = en). The footer's
+# 📂 🤖 🧵 lines are the reply contract (FOOT_RE) and stay as they are; an
+# unknown session must never look like an id there (8+ id characters).
+TEXT = {
+    "en": {
+        "language": "English",
+        "script": "script",
+        "no_session": "no session",
+        "session_unknown": "session unknown",
+        "reply_new": "↩️ A reply starts a new session",
+        "reply_resumes": "↩️ A reply continues this session",
+        "busy": "This session is still running{where} — I won't write into it. Reply again once it has finished.",
+        "resuming": "⏳ continuing session <code>{session}…</code>",
+        "cannot_resume": " (I can't continue the {cli} session)",
+        "new_session": "⏳ new session: {model} in <code>{cwd}</code>{note}",
+        "timed_out": "cancelled after {minutes} min",
+        "no_answer": "(no answer)",
+        "failed": "❌ failed",
+        "message": "message",
+    },
+    "de": {
+        "language": "German",
+        "script": "Skript",
+        "no_session": "keine Session",
+        "session_unknown": "Session unbekannt",
+        "reply_new": "↩️ Antwort startet eine neue Session",
+        "reply_resumes": "↩️ Antwort setzt diese Session fort",
+        "busy": "Diese Session läuft gerade noch{where} — ich schreibe nicht hinein. Antworte noch einmal, wenn sie fertig ist.",
+        "resuming": "⏳ weiter in Session <code>{session}…</code>",
+        "cannot_resume": " (die {cli}-Session kann ich nicht fortsetzen)",
+        "new_session": "⏳ neue Session: {model} in <code>{cwd}</code>{note}",
+        "timed_out": "nach {minutes} min abgebrochen",
+        "no_answer": "(keine Antwort)",
+        "failed": "❌ fehlgeschlagen",
+        "message": "Nachricht",
+    },
+}
+
+
+def language():
+    """Read once per message, so one message never mixes two languages."""
+    lang = (read_json(ROSTER, {}) or {}).get("language")
+    return lang if lang in TEXT else "en"
+
+
+def say(key, lang, **values):
+    return TEXT[lang][key].format(**values)
 
 
 # ── Telegram API ──────────────────────────────────────────────────────────
@@ -143,19 +194,19 @@ def footer_info(env=os.environ, cwd=None):
     return {"script": env.get("TEAMUP_NOTIFY_SCRIPT") or None}
 
 
-def render_footer(info, listening):
+def render_footer(info, listening, lang=None):
     e = html.escape
+    lang = lang or language()
     if "script" in info:
-        lines = [f"⚙️ {e(info['script'] or 'Skript')} · keine Session"]
-        hint = "↩️ Antwort startet eine neue Session"
+        lines = [f"⚙️ {e(info['script'] or say('script', lang))} · {say('no_session', lang)}"]
+        hint = say("reply_new", lang)
     else:
         lines = []
         if info.get("cwd"):
             lines.append(f"📂 <code>{e(tilde(info['cwd']))}</code>")
         lines.append(f"🤖 {e(info.get('cli') or '?')}" + (f" · {e(info['model'])}" if info.get("model") else ""))
-        lines.append(f"🧵 <code>{e(info['session'])}</code>" if info.get("session") else "🧵 Session unbekannt")
-        hint = "↩️ Antwort setzt diese Session fort" if info.get("session") and info.get("cli") == "claude" \
-            else "↩️ Antwort startet eine neue Session"
+        lines.append(f"🧵 <code>{e(info['session'])}</code>" if info.get("session") else f"🧵 {say('session_unknown', lang)}")
+        hint = say("reply_resumes", lang) if info.get("session") and info.get("cli") == "claude" else say("reply_new", lang)
     return "\n".join([RULE, *lines, *([hint] if listening else [])])
 
 
@@ -239,13 +290,14 @@ def cmd_send(argv):
     script_key, script_name = sender_of(pid) if pid else (None, None)
     sender = job or script_key
     info = footer_info({**os.environ, "TEAMUP_NOTIFY_SCRIPT": script_name or job or ""})
+    lang = language()
     for dest in destination(cfg, sender):
         if dest == "bell":
-            ring_bell(f"team-up: {sender or 'message'}", text)
+            ring_bell(f"team-up: {sender or say('message', lang)}", text)
             return 0
         env = read_env(dest["env"])
         chat = env.get("TELEGRAM_CHAT_ID") or any_chat(cfg)
-        res = send_html(env.get("TELEGRAM_BOT_TOKEN", ""), chat, with_footer(text, render_footer(info, bool(dest.get("listen")))))
+        res = send_html(env.get("TELEGRAM_BOT_TOKEN", ""), chat, with_footer(text, render_footer(info, bool(dest.get("listen")), lang)))
         if res.get("ok"):
             return 0
         print(f"telegram.py: @{dest.get('username')} failed: {res.get('description')}", file=sys.stderr)
@@ -354,8 +406,8 @@ def finished_worker_tmux(tmux):
     return False
 
 
-def free_session(session):
-    """None when the session can be resumed now, else why not (German, for Benni)."""
+def free_session(session, lang):
+    """None when the session can be resumed now, else why not (for Benni, in his language)."""
     rec = live_session(session)
     if not rec:
         return None
@@ -368,13 +420,13 @@ def free_session(session):
                 return None
             time.sleep(0.5)
     where = f" (tmux {rec['tmux']})" if rec.get("tmux") else ""
-    return f"Diese Session läuft gerade noch{where} — ich schreibe nicht hinein. Antworte noch einmal, wenn sie fertig ist."
+    return say("busy", lang, where=where)
 
 
 RESUME_FRAME = """[Telegram] Benni replied on Telegram to your last message. If you were a team-up
 worker: that job is over — do not touch its mailbox (no RESULT.md, STATUS, runs collect).
 Ask before anything destructive or irreversible. Your final message is sent back to him:
-German, plain text, at most 15 lines.
+{language}, plain text, at most 15 lines.
 
 His reply:
 {text}"""
@@ -389,7 +441,7 @@ NEW_PROMPT = """Benni wrote on Telegram to the bot @{bot}, which delivers team-u
 {extra}
 Do what he asks if it is clear and safe from this working directory. Ask before anything
 destructive or irreversible — say what you would do instead of doing it. Your final message
-is sent back to him on Telegram: German, plain text, at most 15 lines."""
+is sent back to him on Telegram: {language}, plain text, at most 15 lines."""
 
 
 def claude(args, cwd):
@@ -412,18 +464,19 @@ def cmd_handle(job_file):
     env = read_env(bot["env"])
     token, chat, reply_to = env["TELEGRAM_BOT_TOKEN"], job["chat_id"], job["message_id"]
     resume = bool(target and target.get("cli") == "claude" and target.get("session"))
+    lang = language()
     if resume:
         cwd, model = target.get("cwd") or str(HOME), target.get("model")
-        why = free_session(target["session"])
+        why = free_session(target["session"], lang)
         if why:
             send_html(token, chat, html.escape(why), reply_to)
             return 0
-        send_html(token, chat, f"⏳ weiter in Session <code>{html.escape(target['session'][:8])}…</code>", reply_to)
+        send_html(token, chat, say("resuming", lang, session=html.escape(target["session"][:8])), reply_to)
     else:
         cwd = untilde(cfg_r.get("cwd") or str(HOME / "projects/team-up"))
         model = (cfg_r.get("model") or "claude:claude-sonnet").split(":", 1)[-1]
-        note = f" (die {target['cli']}-Session kann ich nicht fortsetzen)" if target else ""
-        send_html(token, chat, f"⏳ neue Session: {html.escape(model)} in <code>{html.escape(tilde(cwd))}</code>{note}", reply_to)
+        note = say("cannot_resume", lang, cli=html.escape(target["cli"])) if target else ""
+        send_html(token, chat, say("new_session", lang, model=html.escape(model), cwd=html.escape(tilde(cwd)), note=note), reply_to)
     lock = DIR / "locks" / f"{(target or {}).get('session') or 'new'}.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     with open(lock, "w") as fh:
@@ -432,19 +485,20 @@ def cmd_handle(job_file):
         args = ["--model", roster_cli_model(model)] if model else []
         try:
             if resume:
-                out = claude([*args, "--resume", target["session"], RESUME_FRAME.format(text=job["text"])], cwd)
+                out = claude([*args, "--resume", target["session"],
+                              RESUME_FRAME.format(text=job["text"], language=say("language", lang))], cwd)
             else:
                 quoted = f"The message he replied to:\n\n<quoted>\n{job['quoted']}\n</quoted>\n\n" if job.get("quoted") else ""
                 prompt = NEW_PROMPT.format(bot=bot.get("username", bot["id"]), quoted=quoted, text=job["text"],
-                                           extra=cfg_r.get("instructions") or "")
+                                           extra=cfg_r.get("instructions") or "", language=say("language", lang))
                 out = claude([*args, prompt], cwd)
         except subprocess.TimeoutExpired:
-            out = {"is_error": True, "result": f"nach {REPLY_CEILING // 60} min abgebrochen"}
-    body = html.escape(str(out.get("result") or "(keine Antwort)"))
+            out = {"is_error": True, "result": say("timed_out", lang, minutes=REPLY_CEILING // 60)}
+    body = html.escape(str(out.get("result") or say("no_answer", lang)))
     if out.get("is_error"):
-        body = f"❌ fehlgeschlagen\n\n{body}"
+        body = f"{say('failed', lang)}\n\n{body}"
     info = {"cwd": cwd, "cli": "claude", "model": model, "session": out.get("session_id") or (target or {}).get("session")}
-    res = send_html(token, chat, with_footer(body, render_footer(info, True)), reply_to)
+    res = send_html(token, chat, with_footer(body, render_footer(info, True, lang)), reply_to)
     if not res.get("ok"):
         print(f"send back failed: {res.get('description')}", file=sys.stderr)
     return 0 if not out.get("is_error") else 1
@@ -479,6 +533,17 @@ def selftest():
         == {"cwd": "/w", "cli": "codex", "model": None, "session": "abc12345"}
     assert parse_footer(strip_html(with_footer("x", render_footer({"script": "stale-runs.sh"}, True)))) is None
     assert parse_footer("no footer here") is None
+    # Every language: the same keys, the same round trip, and no footer
+    # without a session parses as one (a reply would resume a made-up id).
+    assert all(TEXT[lang].keys() == TEXT["en"].keys() for lang in TEXT)
+    unknown = {"cwd": "/w", "cli": "claude", "model": None, "session": None}
+    for lang in TEXT:
+        assert parse_footer(strip_html(with_footer("x", render_footer(info, True, lang)))) == info, lang
+        assert parse_footer(strip_html(with_footer("x", render_footer(unknown, True, lang)))) is None, lang
+    # Footers sent before the language setting still parse.
+    old = f"Bericht\n\n{RULE}\n📂 ~/projects/team-up\n🤖 claude · claude-opus\n🧵 8b29ac88-269e-4593-af6e-1606997c5448\n" \
+          "↩️ Antwort setzt diese Session fort"
+    assert parse_footer(old) == info, parse_footer(old)
     long = with_footer("y" * 9000, render_footer(info, True))
     assert len(long) <= MAX_TEXT and long.endswith(render_footer(info, True))
     print("ok")

@@ -55,6 +55,6 @@ run's status or kill a tmux session.
 
 ## Output
 
-Your result (RESULT.md) is the Telegram report, in German, at most 12 lines: one
-line per medium/high finding with its verdict, then either "Fix-Ticket: <one
-line>" or "kein Fix". The wrapper appends the PR link.
+Your result (RESULT.md) is the Telegram report, in {{LANGUAGE}}, at most 12 lines:
+one line per medium/high finding with its verdict, then either "Fix ticket: <one
+line>" or "No fix", both in {{LANGUAGE}}. The wrapper appends the PR link.

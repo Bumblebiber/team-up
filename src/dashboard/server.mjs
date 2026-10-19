@@ -55,6 +55,7 @@ import {
 import { createAdminGate } from "./admin.mjs";
 import { createTimViewerProxy, PREFIX as TIM_VIEWER_PREFIX } from "./tim-viewer.mjs";
 import { describeSchedule, nextRun, parseSchedule } from "./cron-schedule.mjs";
+import { langOf } from "./i18n.mjs";
 import {
   admissionResetAction,
   clearMarkAction,
@@ -336,6 +337,15 @@ function loadRoster(env) {
   const roster = loadJson(configPath(env));
   if (!roster) throw new Error("no roster");
   return roster;
+}
+
+/** The roster's UI language; "en" without a readable roster (the login page still loads). */
+function rosterLang(env) {
+  try {
+    return langOf(loadJson(configPath(env)));
+  } catch {
+    return "en";
+  }
 }
 
 export function createDashboardServer({
@@ -1240,7 +1250,7 @@ export function createDashboardServer({
           target = `${target} ${body.listen === true ? "on" : "off"}`;
           result = await setListen(commBotMatch[1], body.listen === true, opts);
         } else {
-          result = await sendTest(target, opts);
+          result = await sendTest(target, { ...opts, lang: rosterLang(env) });
         }
         appendAudit({ actor: "127.0.0.1", action, target, result: "ok" }, { env });
         jsonResponse(res, 200, { ok: true, ...result });
@@ -1309,6 +1319,9 @@ export function createDashboardServer({
         memo.invalidate("pick");
         memo.invalidate("roles");
         clisMemo.invalidate("specialists");
+        // Cached views carry text in the old language. ponytail: only `memo`
+        // so far; widen when a clisMemo/timMemo view holds translated text.
+        if (isSettings && body.path === "language") memo.invalidatePrefix("");
         jsonResponse(res, 200, {
           ok: true,
           backup: written ? path.basename(written.backup) : null,
@@ -1547,13 +1560,15 @@ export function createDashboardServer({
     }
 
     if (pathname === "/" || pathname === "/index.html") {
-      const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+      // The page reads its language from <html lang>, before login too.
+      const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8")
+        .replace('<html lang="en">', `<html lang="${rosterLang(env)}">`);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
       return;
     }
 
-    if (pathname === "/app.js" || pathname === "/app.css") {
+    if (pathname === "/app.js" || pathname === "/app.css" || pathname === "/i18n.js") {
       const file = path.join(PUBLIC_DIR, path.basename(pathname));
       const ext = pathname.endsWith(".css") ? "text/css" : "application/javascript";
       res.writeHead(200, { "Content-Type": `${ext}; charset=utf-8` });
@@ -1728,7 +1743,7 @@ export function createDashboardServer({
       const schedule = url.searchParams.get("schedule") || "";
       try {
         parseSchedule(schedule);
-        jsonResponse(res, 200, { text: describeSchedule(schedule), next: nextRun(schedule)?.toISOString() ?? null });
+        jsonResponse(res, 200, { text: describeSchedule(schedule, rosterLang(env)), next: nextRun(schedule)?.toISOString() ?? null });
       } catch (e) {
         jsonResponse(res, 200, { error: String(e.message || e) });
       }
@@ -1737,7 +1752,10 @@ export function createDashboardServer({
 
     if (pathname === "/api/communication") {
       try {
-        jsonResponse(res, 200, await buildCommunicationView({ env, exec, fetchFn, modelOptions: cronModelOptions(loadRoster(env)) }));
+        const roster = loadRoster(env);
+        jsonResponse(res, 200, await buildCommunicationView({
+          env, exec, fetchFn, modelOptions: cronModelOptions(roster), lang: langOf(roster),
+        }));
       } catch (e) {
         jsonResponse(res, 500, { error: String(e.message || e) });
       }
@@ -1745,8 +1763,9 @@ export function createDashboardServer({
     }
 
     if (pathname === "/api/automation") {
+      const roster = loadRoster(env);
       jsonResponse(res, 200, buildAutomationView({
-        env, exec, modelOptions: cronModelOptions(loadRoster(env)), states: listAllStates(), read: readMailbox,
+        env, exec, modelOptions: cronModelOptions(roster), states: listAllStates(), read: readMailbox, lang: langOf(roster),
       }));
       return;
     }

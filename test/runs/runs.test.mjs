@@ -11,7 +11,7 @@ import {
   classifyMailbox, writeAnswer, buildResumePlan, coldStartArgv, buildCliArgv,
   setStatus, resumeAll, linkDispatchToRun, listActiveStates,
   acquireResumeLock, resumeLockPath, waitTmuxReady,
-  wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, waitMailbox, resumeTmuxArgs,
+  wrapPromptWithMailboxProtocol, promptHasMailboxProtocol, humanLanguageLine, waitMailbox, resumeTmuxArgs,
   resolveGitBase, isValidRunId, listAllStates, executeResumeAction,
 } from "../../src/runs/runs.mjs";
 import { gcRuns } from "../../src/runs/gc.mjs";
@@ -663,6 +663,36 @@ test("wrapPromptWithMailboxProtocol is idempotent on already-wrapped prompts", (
   const once = wrapPromptWithMailboxProtocol("Task A", { runId: "r2", runDirectory: "/tmp/r2" });
   const twice = wrapPromptWithMailboxProtocol(once, { runId: "r2", runDirectory: "/tmp/r2" });
   assert.equal(twice, once.endsWith("\n") ? once : `${once}\n`);
+});
+
+test("worker prompts ask for a Subject line, in German when the roster says so — host-written protocols too", () => {
+  const prev = process.env.TEAM_UP_HOME;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "tu-lang-"));
+  process.env.TEAM_UP_HOME = home;
+  try {
+    for (const resultProtocol of ["RESULT.json", "RESULT.md"]) {
+      const en = wrapPromptWithMailboxProtocol("Do it", { runId: "r1", runDirectory: "/tmp/r1", resultProtocol });
+      assert.match(en, /answered cold.*\n {3}Start QUESTIONS\.md with one line `Subject: …`/);
+      assert.doesNotMatch(en, /German|HUMAN_LANGUAGE/);
+    }
+    fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify({ language: "de" }));
+    for (const resultProtocol of ["RESULT.json", "RESULT.md"]) {
+      const de = wrapPromptWithMailboxProtocol("Do it", { runId: "r1", runDirectory: "/tmp/r1", resultProtocol });
+      assert.match(de, /answered cold.*\n {3}Write QUESTIONS\.md for the human in German \(Deutsch, informal "du"\), starting with one line `Subject: …`/);
+      assert.match(de, /stays in English/);
+    }
+    const host = "Write mailbox/STATUS = done. Update HEARTBEAT.\n\n## Task\nx";
+    const wrapped = wrapPromptWithMailboxProtocol(host, {});
+    assert.ok(wrapped.startsWith(host), "a host's own protocol stays as written");
+    assert.ok(wrapped.endsWith(`\n\n${humanLanguageLine()}\n`) && wrapped.includes("in German"), "and gets the line appended");
+    assert.equal(wrapPromptWithMailboxProtocol(wrapped, {}), wrapped, "only once");
+    fs.writeFileSync(path.join(home, "roster.json"), JSON.stringify({ language: "en" }));
+    assert.equal(wrapPromptWithMailboxProtocol(wrapped, {}), wrapped, "once, even after a language switch");
+  } finally {
+    if (prev === undefined) delete process.env.TEAM_UP_HOME;
+    else process.env.TEAM_UP_HOME = prev;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("waitMailbox stops worker tmux for every terminal outcome", withTempRuns(async () => {

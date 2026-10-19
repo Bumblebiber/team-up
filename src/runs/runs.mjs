@@ -114,6 +114,26 @@ export function promptHasMailboxProtocol(text) {
   return /mailbox\/STATUS|STATUS\s*=\s*`?done`?/i.test(t) && /HEARTBEAT/i.test(t);
 }
 
+/** In the language line of every language: a prompt that has it was wrapped already. */
+const SUBJECT_MARKER = "one line `Subject: …`";
+
+/**
+ * What a worker is told about the human who answers QUESTIONS.md: a plain
+ * `Subject:` line first (the dashboard inbox shows it), and with roster
+ * "language": "de" the question in German. Everything else stays English.
+ */
+export function humanLanguageLine() {
+  let language;
+  try {
+    language = loadJson(configPath())?.language;
+  } catch {
+    /* an unreadable roster: English */
+  }
+  return language === "de"
+    ? 'Write QUESTIONS.md for the human in German (Deutsch, informal "du"), starting with one line `Subject: …` (≤ 70 characters, plain language, no file names or ids). Everything else you write — RESULT.json, RESULT.md, code, commits, notes for the parent — stays in English. Keep commands, paths, identifiers and quoted output verbatim.'
+    : "Start QUESTIONS.md with one line `Subject: …` (≤ 70 characters, plain language, no file names or ids).";
+}
+
 /**
  * Wrap a bare task prompt with templates/worker-prompt.md so the worker
  * knows to set mailbox STATUS=done. Without this, parents hang on `runs wait`
@@ -126,7 +146,10 @@ export function promptHasMailboxProtocol(text) {
  */
 export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory, resultProtocol } = {}) {
   const body = (taskBody || "").trim();
-  if (promptHasMailboxProtocol(body)) return body.endsWith("\n") ? body : `${body}\n`;
+  const language = humanLanguageLine();
+  // A host wrote its own protocol: it still gets the language line, once
+  // (in whichever language it was first wrapped).
+  if (promptHasMailboxProtocol(body)) return body.includes(SUBJECT_MARKER) ? `${body}\n` : `${body}\n\n${language}\n`;
   const typed = resultProtocol === "RESULT.json";
   const tplName = typed ? "worker-prompt.md" : "worker-prompt-legacy.md";
   const tplPath = path.join(rosterPluginRoot(), "templates", tplName);
@@ -135,6 +158,7 @@ export function wrapPromptWithMailboxProtocol(taskBody, { runId, runDirectory, r
   tpl = tpl
     .replaceAll("{{RUN_DIR}}", rd)
     .replaceAll("{{RUN_ID}}", runId || "{{RUN_ID}}")
+    .replace("{{HUMAN_LANGUAGE}}", language)
     .replace("{{TASK_BODY}}", body);
   return tpl.endsWith("\n") ? tpl : `${tpl}\n`;
 }
