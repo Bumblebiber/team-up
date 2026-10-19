@@ -7,7 +7,6 @@ import { execFileSync } from "node:child_process";
 import { teamUpHome, usageWatcherStatePath } from "../paths.mjs";
 import { readRepairState, readRepairReport, spawnUsageRepair } from "./repair.mjs";
 import { loadJson, configPath, usagePath, saveRoster } from "../roster/config.mjs";
-import { specialistAssignment } from "../roster/profile.mjs";
 import { listAllStates, loadState, runDir } from "../runs/runs.mjs";
 import { listTmuxSessions, tmuxSessionExists } from "../runs/tmux.mjs";
 import {
@@ -1062,6 +1061,7 @@ export function createDashboardServer({
           target: `${body.cli}:${body.cli_id}:${body.on ? "on" : "off"}`, result: "ok" }, { env });
         memo.invalidate("pick");
         memo.invalidate("roles");
+        clisMemo.invalidate("specialists");
         jsonResponse(res, 200, { ok: true, backup: path.basename(written.backup) });
       } catch (e) {
         if (e.roles) {
@@ -1181,6 +1181,7 @@ export function createDashboardServer({
         memo.invalidate("usage");
         memo.invalidate("pick");
         memo.invalidate("roles");
+        clisMemo.invalidate("specialists");
         jsonResponse(res, 200, { ok: true, ...result });
       } catch (e) {
         appendAudit({ actor: "127.0.0.1", action, target, result: "fail" }, { env });
@@ -1287,6 +1288,7 @@ export function createDashboardServer({
         appendAudit({ actor: "127.0.0.1", action, target: isSettings ? body.path : target, result: "ok" }, { env });
         memo.invalidate("pick");
         memo.invalidate("roles");
+        clisMemo.invalidate("specialists");
         jsonResponse(res, 200, {
           ok: true,
           backup: written ? path.basename(written.backup) : null,
@@ -1650,14 +1652,17 @@ export function createDashboardServer({
     }
 
     if (pathname === "/api/specialists") {
-      // Reads a handful of JSON indexes and no subprocess, but nothing here
-      // changes between polls — the 30s memo keeps it off the 5s cycle.
-      const data = clisMemo.get("specialists", () => {
-        const roster = loadRoster(env);
-        const view = buildSpecialistsView({ env });
-        for (const s of view.specialists) s.assignment = specialistAssignment(roster, s.id);
-        return sanitizeForDashboard(view);
-      });
+      // Reads a handful of JSON indexes, the run states once and no subprocess,
+      // but nothing here changes between polls — the 30s memo keeps it off the
+      // 5s cycle. Edits that move a specialist's model invalidate it.
+      const data = clisMemo.get("specialists", () => sanitizeForDashboard(buildSpecialistsView({
+        env,
+        roster: loadRoster(env),
+        usage: loadJson(usagePath(env)) || {},
+        store: loadModelsStore(env),
+        states: listAllStates(),
+        now: ts,
+      })));
       jsonResponse(res, 200, data);
       return;
     }

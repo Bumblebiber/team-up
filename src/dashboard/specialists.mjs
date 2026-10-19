@@ -8,10 +8,75 @@ import { assertSafeRelPath, assertPathInsideRoot } from "../specialists/safe-id.
 import { loadAssignments } from "../capabilities/assignments.mjs";
 import { listInstalledCapabilities } from "../capabilities/store.mjs";
 import { resolveCapabilities } from "../capabilities/resolve.mjs";
+import { resolveProfile, specialistAssignment } from "../roster/profile.mjs";
+import { COMMAND_BROKER_CAPABILITY, CONTEXT_ISOLATION_CAPABILITY } from "../harness/capabilities.mjs";
+import { modelLabel } from "./roles.mjs";
 
 const execFileAsync = promisify(execFile);
 
 const short = (checksum) => String(checksum || "").replace(/^sha256:/, "").slice(0, 12);
+
+const CATEGORIES = new Set(["coding", "testing", "review", "research", "marketing"]);
+const category = (id) => {
+  const prefix = id.split(".")[0];
+  return CATEGORIES.has(prefix) ? prefix : "other";
+};
+
+// Specialists renamed after they had runs: those runs stay their history.
+const RENAMED = new Map([
+  ["testing.hannes", "testing.tessa"],
+  ["research.hugo", "research.reanna"],
+]);
+
+/** The newest run per specialist id, in one pass over every run. */
+function latestRuns(states) {
+  const latest = new Map();
+  for (const state of states) {
+    const raw = String(state.role ?? "").match(/^specialist:(.+)$/)?.[1];
+    if (!raw) continue;
+    const id = RENAMED.get(raw) ?? raw;
+    // ISO timestamps from toISOString compare as strings.
+    if (String(state.createdAt ?? "") > String(latest.get(id)?.createdAt ?? "")) latest.set(id, state);
+  }
+  return latest;
+}
+
+function lastRunView(state, now) {
+  if (!state) return null;
+  const ageMs = now - Date.parse(state.createdAt);
+  return {
+    runId: state.runId,
+    status: state.status,
+    // ponytail: cwd basename; a clone's folder name, until runs resolve to their project.
+    project: state.cwd ? path.basename(state.cwd) : null,
+    ageMs: Number.isFinite(ageMs) ? ageMs : null,
+  };
+}
+
+/**
+ * The model a launch would get now: the first cell of the resolution the
+ * launcher runs, with the requirements it derives from the manifest (doctor.mjs
+ * asks the same), labelled like a /api/roles pick. Null with the reason when
+ * no cell is reachable.
+ */
+function currentModel(id, manifest, { roster, usage, store, now }) {
+  const resolved = resolveProfile({
+    roster,
+    usage,
+    specialistId: id,
+    now,
+    requirements: {
+      context_isolation: CONTEXT_ISOLATION_CAPABILITY,
+      ...((manifest.permissions?.commands ?? []).length ? { command_broker: COMMAND_BROKER_CAPABILITY } : {}),
+    },
+  });
+  const cell = resolved.chain[0];
+  if (cell) return { model: modelLabel(roster, store, cell.model, cell.cli), modelReason: null };
+  return {
+    model: null,
+    modelReason: resolved.skipped.map((s) => (s.model === "*" ? s.reason : `${s.model}: ${s.reason}`)).join("; "),
+  };
+}
 
 function bundled(manifest) {
   const caps = manifest?.capabilities || {};
@@ -29,7 +94,7 @@ function bundled(manifest) {
  * resolveCapabilities() the launcher uses — reimplementing "all minus exclude"
  * here would let the dashboard drift from what a run really materialises.
  */
-function describe(id, { env, assignments, installedCaps, versions }) {
+function describe(id, { env, assignments, installedCaps, versions, roster, usage, store, now, lastRun }) {
   const loaded = loadInstalledManifest(id, { env });
   if (!loaded) return { id, error: "not installed" };
   const manifest = loaded.manifest || {};
@@ -82,13 +147,29 @@ function describe(id, { env, assignments, installedCaps, versions }) {
     assigned,
     exclusions,
     error,
+    category: category(id),
+    assignment: specialistAssignment(roster, id),
+    ...currentModel(id, manifest, { roster, usage, store, now }),
+    lastRun: lastRunView(lastRun, now),
   };
 }
 
-export function buildSpecialistsView({ env = process.env } = {}) {
+/**
+ * `states` is the run list the caller already holds (runs are read once, not
+ * per specialist); `roster`, `usage` and `store` feed the model label.
+ */
+export function buildSpecialistsView({
+  env = process.env,
+  roster = null,
+  usage = {},
+  store = null,
+  states = [],
+  now = Date.now(),
+} = {}) {
   const index = listInstalled(env) || {};
   const assignments = loadAssignments({ env }).assignments ?? [];
   const installedCaps = listInstalledCapabilities({ env });
+  const lastRuns = latestRuns(states);
   const specialists = Object.keys(index.specialists ?? {})
     .sort()
     .map((id) =>
@@ -97,6 +178,11 @@ export function buildSpecialistsView({ env = process.env } = {}) {
         assignments,
         installedCaps,
         versions: index.versions?.[id] || [],
+        roster,
+        usage,
+        store,
+        now,
+        lastRun: lastRuns.get(id),
       }),
     );
   return { specialists };
