@@ -222,15 +222,22 @@ make it correct), mark as read (result, problem). **Merged / Discarded also set
 - The collecting folder input moves to Settings → General.
 - "+ New project" opens a small dialog.
 - Fix: the Sessions prefix match (`projects.mjs` `startsWith`) must compare the
-  exact `projectSessionName(name, cli)`.
+  exact `projectSessionName(name, cli)`, or that name plus `-<entry id>` (a TIM
+  task session started from the TIM panel).
+- Counts owner: the §7 front end derives "Waiting for you" and "Working now" by
+  joining `/api/action-center` `items[].project.name` and the runs list's
+  resolved project to the row's `name`, once §1 lands. `/api/projects` gets no
+  count fields.
 
 ## 8. Team (`#/specialists`)
 
 - Card grid of all specialists: initial avatar coloured by category (id prefix
   coding/testing/review/research/marketing → Developer/Tester/Reviewer/
   Researcher/Marketing), name, one-line purpose (`remit[0]`, capitalised),
-  "Works with: <model label>" (the model the roster would pick now: role pick
-  label, or first entry of the own chain), plain permission badges ("Edits
+  "Works with: <model label>" (`specialist.model` from `/api/specialists`: the
+  model a launch would get now, with the launcher's requirements such as
+  context isolation; not the Roles row's `pick.label`, which can differ),
+  plain permission badges ("Edits
   code", "Read-only", "Uses the internet", "Runs tests", "Up to N min"), status
   (Active / Off when unassigned or error).
 - Card click → detail: "Good at" (remit), "Won't do" (anti_remit), built-in
@@ -244,7 +251,8 @@ make it correct), mark as read (result, problem). **Merged / Discarded also set
   `specialist:<id>` incl. old ids (`testing.hannes` → tessa, `research.hugo` → reanna).
 - "Add a specialist" (install from GitHub) in a dialog with a plain
   explanation that installing grants the listed permissions.
-- Roles & Models shows "Used by: <name>" per role.
+- Roles & Models shows "Used by: <name>" per role (`usedBy: [{id, name}]`;
+  `name` comes from an installed manifest, so render it escaped).
 
 ## 9. Navigation, overview, hygiene
 
