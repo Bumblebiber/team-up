@@ -127,7 +127,8 @@ export function spenderWindow(roster, defaults) {
  * The inbox item of one run, or null when it waits on nobody.
  *
  * Retry is offered only on a technical stop of a run the usage-spender parked:
- * the spender resumes it as a fresh run with the stop explained. A live worker
+ * the spender resumes it as a fresh run with the stop explained; and on a
+ * spender run the watcher failed, which the spender starts again. A live worker
  * stuck in a prompt never reads ANSWER.md and nothing would watch it again, and
  * the observer reads any answer to a credential or billing prompt as the
  * human's approval of it: those get Cancel only.
@@ -187,7 +188,12 @@ export function inboxItem(state, ctx) {
     let subject = t(lang, "Failed|subject");
     if (reason?.startsWith("observer:")) subject = t(lang, "Stopped by the watcher");
     else if (reason) subject = t(lang, "Failed: {reason}", { reason });
-    return item({ kind: "problem", subject: clip(subject, SUBJECT_MAX), ageMs, reason });
+    // The watcher failed a spender run before it did any work (a trust dialog): the spender
+    // starts its task again in the next window once Retry marks it read (actions.mjs).
+    const retryable = Boolean(spender) && String(state.failure?.error ?? "").startsWith("observer:");
+    return item({
+      kind: "problem", subject: clip(subject, SUBJECT_MAX), ageMs, reason, retryable, resumeWindow: retryable ? resumeWindow : null,
+    });
   }
   const title = state.title || spender?.title;
   return item({ kind: "result", ageMs, subject: clip(title || reasonLine(state, read) || t(lang, "{role} finished", { role }), SUBJECT_MAX) });

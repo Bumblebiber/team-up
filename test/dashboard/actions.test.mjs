@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { clearMarkAction, markLimitedAction, markTargets, runAction } from "../../src/dashboard/actions.mjs";
+import { SPENDER_RETRY_NOTE, clearMarkAction, markLimitedAction, markTargets, runAction } from "../../src/dashboard/actions.mjs";
 import { loadState } from "../../src/runs/runs.mjs";
 
 const roster = {
@@ -84,6 +84,30 @@ test("retry answers only a parked run's technical stop, with a fixed text; anyth
   const answer = fs.readFileSync(path.join(mb("20261019T120000Z-stck"), "ANSWER.md"), "utf8");
   assert.match(answer, /^<!-- source: human \(dashboard retry\) -->\nRetry: the stop was a technical problem/);
   assert.throws(() => runAction("20261019T120000Z-stck", "retry"), /already answered/);
+});
+
+test("retry of a spender run the watcher failed marks it read with the note the spender reads, once", () => {
+  const failed = (id, error) => {
+    plant(id, "failed");
+    const file = path.join(home, "runs", id, "STATE.json");
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), finishedAt: new Date().toISOString(), failure: { error } }));
+  };
+  const watcher = "observer: Claude Code is stuck on its workspace-trust dialog for /x";
+  failed("20261019T140000Z-trst", watcher);
+  failed("20261019T140000Z-mine", watcher);
+  failed("20261019T140000Z-crsh", "tree not clean");
+  const ledger = path.join(home, "reports", "usage-spender", "ledger.json");
+  fs.mkdirSync(path.dirname(ledger), { recursive: true });
+  fs.writeFileSync(ledger, JSON.stringify(["trst", "crsh"].map((s) => ({ run_id: `20261019T140000Z-${s}`, key: s }))));
+
+  assert.throws(() => runAction("20261019T140000Z-mine", "retry"), /only a usage-spender run the watcher stopped/);
+  assert.throws(() => runAction("20261019T140000Z-crsh", "retry"), /only a usage-spender run the watcher stopped/);
+  assert.equal(loadState("20261019T140000Z-crsh").collected, undefined, "a refused retry writes nothing");
+  assert.equal(runAction("20261019T140000Z-trst", "retry").status, "failed");
+  assert.equal(loadState("20261019T140000Z-trst").collected.note, SPENDER_RETRY_NOTE);
+  assert.match(fs.readFileSync(new URL("../../scripts/usage-spender.py", import.meta.url), "utf8"),
+    new RegExp(`^RETRY_NOTE = "${SPENDER_RETRY_NOTE}"$`, "m"), "the spender reads the same note");
+  assert.throws(() => runAction("20261019T140000Z-trst", "retry"), /only until it is read/);
 });
 
 test("merged and discarded also mark the result read; never on a run still going", () => {

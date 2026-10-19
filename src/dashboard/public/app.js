@@ -3342,7 +3342,8 @@ function acProblemHtml(item) {
     explain = t("The helper got stuck on a technical prompt and could not continue.");
   }
   let next;
-  if (failed) next = t("Nothing to answer here. Mark it as read once you have seen it.");
+  if (failed && item.retryable) next = t("Retry starts it again tonight from {start}:00. Or mark it as read to drop it.", { start: hour(item.resumeWindow?.start ?? 23) });
+  else if (failed) next = t("Nothing to answer here. Mark it as read once you have seen it.");
   else if (item.retryable) next = t("Retry lets it continue tonight from {start}:00. Or cancel the task.", { start: hour(item.resumeWindow?.start ?? 23) });
   else next = t("This one cannot be retried from here: someone has to answer the prompt in the helper's terminal. Or cancel the task.");
   const raw = failed ? [reason, item.result?.markdown].filter(Boolean).join("\n\n") : item.body;
@@ -3376,7 +3377,9 @@ function acActionsHtml(item) {
     if (item.retryable) buttons += button("retry", t("Retry"), "primary");
     buttons += button("cancel", t("Cancel task"), "danger");
   } else if (item.kind === "problem" || item.kind === "result") {
-    buttons += button("collect", t("Mark as read"), "primary");
+    // A spender run the watcher failed: the spender starts it again tonight (actions.mjs).
+    if (item.retryable) buttons += button("retry", t("Retry tonight"), "primary");
+    buttons += button("collect", t("Mark as read"), item.retryable ? "" : "primary");
   }
   if (item.kind === "result" && isExpert()) {
     buttons += `<details class="ac-menu"><summary>${esc(t("More"))}</summary><div>${button("merged", t("Kept"))}${button("discarded", t("Discarded"))}</div></details>`;
@@ -3436,7 +3439,7 @@ function acDraft(runId, text) {
 }
 
 function acDoneText(action, item) {
-  const start = item?.parked && item.resumeWindow ? hour(item.resumeWindow.start) : null;
+  const start = item?.resumeWindow ? hour(item.resumeWindow.start) : null;
   if (action === "answer") return start ? t("Answer sent — continues tonight from {start}:00.", { start }) : t("Answer sent — the helper continues now.");
   if (action === "retry") return start ? t("Retry sent — continues tonight from {start}:00.", { start }) : t("Retry sent.");
   if (action === "cancel") return t("Task cancelled.");
