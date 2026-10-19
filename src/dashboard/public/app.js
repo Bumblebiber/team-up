@@ -2673,7 +2673,7 @@ function updateAttention() {
 // ── Inbox ─────────────────────────────────────────────────────────────────
 // Everything that waits on the human, like an e-mail inbox: short rows (kind,
 // project, age, subject) and the open item beside them, or instead of them
-// below 760px. The open item lives in the hash (#/actions/<runId>), so back
+// below 1000px. The open item lives in the hash (#/actions/<runId>), so back
 // and reload keep the place. The five-second poll redraws the list; the item
 // redraws only when its content changed, and never takes away an answer that
 // is being typed.
@@ -2690,7 +2690,8 @@ const AC_SERVER_SUBJECTS = {
   Failed: t("Failed|subject"),
 };
 // A recommendation the agent made; "I do not recommend" or "nicht empfehlenswert" is none.
-const AC_RECOMMENDS = /\*\*(?:my |meine )?(?:recommendation|recommended|empfehlung|empfohlen)\b|^\s*(?:my |meine )?(?:recommendation|empfehlung)\s*:|\b(?:I|I'd|I would) recommend\b|\bich empfehle\b|\bmeine empfehlung\b/im;
+// [ \t], not \s: with the m flag, \s* spans newlines and a run of blank lines turns quadratic.
+const AC_RECOMMENDS = /\*\*(?:my |meine )?(?:recommendation|recommended|empfehlung|empfohlen)\b|^[ \t]*(?:my |meine )?(?:recommendation|empfehlung)[ \t]*:|\b(?:I|I'd|I would) recommend\b|\bich empfehle\b|\bmeine empfehlung\b/im;
 // Server errors a person can hit from the inbox, in their words.
 const AC_ERRORS = [
   [/^already answered/, t("Already answered.")],
