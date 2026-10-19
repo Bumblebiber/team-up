@@ -79,7 +79,7 @@ function updateDashboardMetrics() {
   const worst = windows[0];
   $("#kpi-worst-usage").textContent = worst ? `${worst[1].usedPct}%` : "—";
   $("#kpi-worst-usage-detail").textContent = worst
-    ? `${worst[0]} · ${usageLevelName(worst[1].level)}`
+    ? `${worst[0]} · ${usageLevelName(worst[1].stale ? null : worst[1].level)}`
     : t("No usage readings yet");
   const usageLevel = Object.values(dashboardMetrics.usage?.windows || {}).some((window) => window.level === "red")
     ? "red"
@@ -2793,8 +2793,11 @@ function renderAutomation(force = false) {
   if (!unsaved && (force || (!field && custom + builtin !== automationKey))) {
     automationKey = custom + builtin;
     const open = [...$("#builtin-jobs").querySelectorAll("details[open]")].map((el) => el.closest("[data-builtin]").dataset.builtin);
+    // Where focus was, found again in the new cards: by id, the summary, or the control's data attribute.
     const card = a?.closest("[data-builtin], [data-job]");
-    const control = card && (a.id ? `#${CSS.escape(a.id)}` : [...a.attributes].map((x) => x.name).find((n) => n.startsWith("data-")));
+    const refocus = !card ? null : a.id ? `#${CSS.escape(a.id)}`
+      : `[${card.dataset.builtin ? "data-builtin" : "data-job"}="${CSS.escape(card.dataset.builtin || card.dataset.job)}"] ${
+        a.tagName === "SUMMARY" ? "summary" : `[${[...a.attributes].map((x) => x.name).find((n) => n.startsWith("data-"))}]`}`;
     automationDrawing = true;
     try {
       lists[0].innerHTML = custom;
@@ -2806,11 +2809,7 @@ function renderAutomation(force = false) {
       const el = $(`#builtin-jobs [data-builtin="${CSS.escape(id)}"] details`);
       if (el) el.open = true;
     }
-    if (control) {
-      const sel = control.startsWith("#") ? control
-        : `[${card.dataset.builtin ? "data-builtin" : "data-job"}="${CSS.escape(card.dataset.builtin || card.dataset.job)}"] [${control}]`;
-      document.querySelector(sel)?.focus({ preventScroll: true });
-    }
+    if (refocus) document.querySelector(refocus)?.focus({ preventScroll: true });
   }
   $("#services").innerHTML = `<table><thead><tr>${th("Service", t("Service"))}${th("What it does", t("What it does"))}${th("State", t("State"))}</tr></thead><tbody>${
     d.services.map((s) => `<tr><td>${esc(s.title)}<div class="muted mono">${esc(s.unit)}</div></td><td>${esc(s.what)}</td>
