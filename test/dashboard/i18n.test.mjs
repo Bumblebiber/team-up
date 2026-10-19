@@ -9,7 +9,7 @@ import { EXCLUDED, GROUPS, applySettingsEdit, buildSettingsView } from "../../sr
 import { BUILTIN_JOBS, SERVICES, buildAutomationView } from "../../src/dashboard/automation.mjs";
 import { TIM_SENDERS, listSenders } from "../../src/dashboard/communication.mjs";
 import { describeSchedule } from "../../src/dashboard/cron-schedule.mjs";
-import { PROTECTED_ROLES } from "../../src/dashboard/roles.mjs";
+import { PROTECTED_ROLES, buildRolesView } from "../../src/dashboard/roles.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
@@ -23,6 +23,7 @@ const SERVER_SOURCES = [
   "src/dashboard/communication.mjs",
   "src/dashboard/cron-schedule.mjs",
   "src/dashboard/action-center.mjs",
+  "src/dashboard/roles.mjs",
 ];
 
 /** Keys that are the same in every language (identifiers); none yet. */
@@ -153,9 +154,15 @@ test("the key extraction sees every call shape the sources use", () => {
 });
 
 test("every text of the settings, jobs and senders tables has a German entry", () => {
-  const texts = [...tableTexts([GROUPS, EXCLUDED, BUILTIN_JOBS, SERVICES, TIM_SENDERS]), ...Object.values(PROTECTED_ROLES)];
+  const texts = tableTexts([GROUPS, EXCLUDED, BUILTIN_JOBS, SERVICES, TIM_SENDERS]);
   assert.ok(texts.length > 50);
   assert.deepEqual(untranslated(texts, DE), []);
+});
+
+test("every protected role says in German why it cannot be deleted", () => {
+  const roles = Object.fromEntries(Object.keys(PROTECTED_ROLES).map((role) => [role, { chain: [] }]));
+  const view = buildRolesView({ roles }, {}, null, Date.now(), { lang: "de" });
+  for (const r of view.roles) assert.match(r.protected || "", /kann sie nicht gelöscht werden/, r.role);
 });
 
 test("a German entry uses only the placeholders its English key provides", () => {
@@ -254,7 +261,7 @@ test("scheduled jobs and message senders come in the roster language; ids stay",
   const exec = () => "";
   const view = buildAutomationView({ exec, lang: "de" });
   const spender = view.builtin.find((j) => j.id === "usage-spender");
-  assert.equal(spender.title, "Usage-Spender");
+  assert.equal(spender.title, "Kontingent-Nutzer");
   assert.equal(spender.where, "Nicht in deiner Crontab");
   assert.equal(view.services.find((s) => s.unit === "team-up-dashboard.service").what, "Diese Seite.");
   assert.equal(buildAutomationView({ exec }).builtin[0].title, "Usage spender");

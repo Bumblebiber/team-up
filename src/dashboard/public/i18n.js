@@ -151,7 +151,7 @@ const I18N_DE = {
   "Warning": "Warnung",
   "OK": "OK",
   "Unknown": "Unbekannt",
-  "Usage level: {level}": "Auslastung: {level}",
+  "Usage level: {level}": "Nutzung: {level}",
   "{window} is at {pct}%; it resets {when}.": "{window} ist zu {pct} % verbraucht; es wird {when} zurückgesetzt.",
   "{window} is at {pct}%.": "{window} ist zu {pct} % verbraucht.",
   "The usage readings for {cli} are out of date, so its limits are not checked.":
@@ -404,8 +404,8 @@ const I18N_DE = {
   "Back to the default: {label}.": "Zurück auf Standard: {label}.",
   "Backup: {file}": "Sicherung: {file}",
   "Lift the post-restart cap": "Begrenzung nach dem Neustart aufheben",
-  "After a memory-caused restart team-up caps workers for 24 h; this lifts it now":
-    "Nach einem Neustart wegen Speichermangels begrenzt team-up die Agenten 24 Stunden lang; das hebt die Begrenzung jetzt auf",
+  "After a memory-caused restart team-up limits the helpers for 24 h; this lifts the limit now":
+    "Nach einem Neustart wegen Speichermangels begrenzt team-up die Helfer 24 Stunden lang; das hebt die Begrenzung jetzt auf",
   "Cap lifted.": "Begrenzung aufgehoben.",
   "There was no cap to lift.": "Es gab keine Begrenzung aufzuheben.",
   // Static page text (index.html), translated once at boot by translateStatic()
@@ -413,11 +413,12 @@ const I18N_DE = {
   "Paste the access key from this file on the server:": "Füge den Zugangsschlüssel aus dieser Datei auf dem Server ein:",
   "Access key": "Zugangsschlüssel",
   "Sign in": "Anmelden",
-  "Changes need a confirmation code. The terminal that runs the dashboard prints it:":
-    "Änderungen brauchen einen Bestätigungscode. Das Terminal, in dem das Dashboard läuft, zeigt ihn an:",
+  "Changes need a confirmation code. You find it in the terminal where the dashboard runs.":
+    "Änderungen brauchen einen Bestätigungscode. Du findest ihn im Terminal, in dem das Dashboard läuft.",
+  "That terminal was started with:": "Dieses Terminal wurde gestartet mit:",
   "Request code": "Code anfordern",
   "Confirm": "Bestätigen",
-  "Highest usage": "Höchste Auslastung",
+  "Highest usage": "Höchste Nutzung",
   "No usage readings yet": "Noch keine Nutzungswerte",
   "Mark a model, provider or CLI as limited…": "Modell, Anbieter oder CLI als begrenzt markieren…",
   "Takes it out of every chain until the time runs out — for a limit team-up cannot see (an API error, a provider outage).":
@@ -632,7 +633,6 @@ const I18N_DE = {
   "Every model in the chain is skipped right now": "Gerade wird jedes Modell der Kette übersprungen",
   "exhausted": "erschöpft",
   "Effort, pinning, chain as a form": "Aufwand, Pinning, Kette als Formular",
-  "Used by {names}: it cannot be deleted": "Genutzt von {names}: kann nicht gelöscht werden",
   "in {roles}": "in {roles}",
   "in no chain yet": "noch in keiner Kette",
   "No models in the roster yet: add some below.": "Noch keine Modelle im Roster: Füg unten welche hinzu.",
@@ -753,7 +753,8 @@ const I18N_DE = {
     "Scan gestartet: Jede CLI wird nach ihren Modellen gefragt; die Liste aktualisiert sich in etwa zwei Minuten.",
   "Starting the TIM viewer…": "Der TIM-Viewer startet…",
   // Communication, AI trending, panel help, notifications
-  "Where {job} goes": "Wohin {job} geht",
+  "Where messages from {job} go": "Ziel der Nachrichten von {job}",
+  "Where all other messages go": "Ziel aller anderen Nachrichten",
   "Only the bell in this dashboard": "Nur die Glocke in diesem Dashboard",
   "Job: what it sends": "Aufgabe: was sie schickt",
   "Goes to": "Geht an",
@@ -870,11 +871,15 @@ function fmtAgo(ms) {
   return new Intl.RelativeTimeFormat(LANG, { numeric: "auto" }).format(-Math.trunc(ms / size) || 0, unit);
 }
 
-/** An ISO timestamp as a short local date and time ("19.10.26, 14:05"). */
+/**
+ * An ISO timestamp as a short local date and time: "19.10.26, 14:05", or
+ * "Oct 19, 2026, 14:05" in English (a month name, never the US 10/19/26).
+ * One 24-hour clock everywhere, as fmtWhen in app.js.
+ */
 function fmtDateTime(iso) {
   const d = new Date(iso);
   if (!iso || Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat(LANG, { dateStyle: "short", timeStyle: "short" }).format(d);
+  return new Intl.DateTimeFormat(LANG, { dateStyle: LANG === "de" ? "short" : "medium", timeStyle: "short", hourCycle: "h23" }).format(d);
 }
 
 // Skipped with everything inside, their own attributes too: agent content, names, ids.

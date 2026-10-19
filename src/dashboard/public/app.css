@@ -247,6 +247,8 @@ tr.orphan td:first-child { color: var(--orphan); }
 .badge.red { background: #dc2626; color: #fff; } /* not var(--red): white on the dark-mode red is 2.8:1 */
 .badge.amber { background: var(--amber); color: #000; }
 .badge.stale { background: var(--muted); color: var(--bg); }
+/* The level of an out-of-date reading: not known, so no colour. */
+.badge.unknown { border: 1px solid var(--border); color: var(--muted); }
 /* STALE is a <button> in the usage grid; keep it looking like the badge it replaced. */
 button.badge.stale {
   border: 0;
@@ -554,7 +556,7 @@ details > summary { cursor: pointer; color: var(--muted); margin: 0.4rem 0; }
 
 /* Settings */
 #settings-body table td { padding: 0.15rem 0.5rem; }
-#settings-body input[type="number"] { width: 6rem; }
+#settings-body input[type="number"] { width: 7.5rem; } /* fits the German placeholder "automatisch" */
 #settings-body label { margin-right: 0.6rem; white-space: nowrap; }
 #cron-jobs-body select { min-width: 14rem; max-width: 100%; }
 

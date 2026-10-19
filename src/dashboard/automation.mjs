@@ -96,7 +96,7 @@ export const BUILTIN_JOBS = [
     title: "Health check",
     source: "crontab",
     match: "harness-health.sh",
-    what: "Every 2 hours it runs `team-up doctor`, a self-check of the AI tools: their versions, their permissions, and whether a specialist can still start. It reports serious findings. It exists because a silent update of claude once stopped every specialist from starting and nobody noticed.",
+    what: "Every 2 hours it runs team-up doctor, a self-check of the AI tools: their versions, their permissions, and whether a specialist can still start. It reports serious findings. It exists because a silent update of claude once stopped every specialist from starting and nobody noticed.",
     notifies: "Every 2 h, only on serious findings: an update of an AI tool that stops specialists from starting.",
     cost: "No AI model.",
     llm: false,

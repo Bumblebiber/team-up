@@ -1000,20 +1000,24 @@ test("the page carries the roster language in <html lang>, and /i18n.js and /md.
       const cookie = await loginCookie(port, token);
       const saved = await req(port, "/api/settings", { method: "POST", cookie, csrf: true, body: { path: "language", value: "de" } });
       assert.equal(saved.status, 200, saved.text);
-      const page = (await req(port, "/")).text;
+      const pageRes = await req(port, "/");
+      const page = pageRes.text;
       assert.match(page, /<html lang="de">/);
+      // Revalidated every load: a cached old app.js would miss this build's i18n.js globals.
+      assert.equal(pageRes.headers.get("cache-control"), "no-cache");
       assert.ok(page.indexOf('src="/i18n.js"') < page.indexOf('src="/app.js"'));
       assert.ok(page.indexOf('src="/md.js"') < page.indexOf('src="/app.js"'));
       for (const file of ["/i18n.js", "/md.js"]) {
         const script = await req(port, file);
         assert.equal(script.status, 200, file);
         assert.match(script.headers.get("content-type"), /javascript/);
+        assert.equal(script.headers.get("cache-control"), "no-cache", file);
       }
       const preview = await req(port, "/api/automation/preview?schedule=0%206%20*%20*%20*", { cookie });
       assert.equal(preview.json.text, "täglich um 06:00");
       // Every route that builds text passes the roster language on.
       const spender = (await req(port, "/api/automation", { cookie })).json.builtin.find((j) => j.id === "usage-spender");
-      assert.equal(spender.title, "Usage-Spender");
+      assert.equal(spender.title, "Kontingent-Nutzer");
       assert.equal(spender.where, "Nicht in deiner Crontab");
       const comm = await req(port, "/api/communication", { cookie });
       assert.ok(comm.json.senders.some((s) => s.title === "TIM-Backups"), comm.text);

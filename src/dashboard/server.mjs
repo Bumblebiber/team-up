@@ -1564,7 +1564,8 @@ export function createDashboardServer({
       // The page reads its language from <html lang>, before login too.
       const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8")
         .replace('<html lang="en">', `<html lang="${rosterLang(env)}">`);
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      // no-cache: app.js needs the i18n.js of the same build, and the page the roster's language.
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
       res.end(html);
       return;
     }
@@ -1572,7 +1573,7 @@ export function createDashboardServer({
     if (["/app.js", "/app.css", "/i18n.js", "/md.js"].includes(pathname)) {
       const file = path.join(PUBLIC_DIR, path.basename(pathname));
       const ext = pathname.endsWith(".css") ? "text/css" : "application/javascript";
-      res.writeHead(200, { "Content-Type": `${ext}; charset=utf-8` });
+      res.writeHead(200, { "Content-Type": `${ext}; charset=utf-8`, "Cache-Control": "no-cache" });
       res.end(fs.readFileSync(file, "utf8"));
       return;
     }

@@ -545,8 +545,8 @@ async function refreshUsage() {
       <div class="key">${esc(key)}</div>
       <div class="bar"><span style="width:${w.usedPct != null ? Math.min(100, w.usedPct) : 0}%"></span></div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
-      <div class="badges">${levelBadge(w.level)}${collectorBadge(key, data.collectors?.[key.split(":")[0]], w.stale)}</div>
-      <div class="marked-item">${w.resets_at ? esc(t("Resets {when}", { when: fmtDateTime(w.resets_at) })) : "—"}</div>
+      <div class="badges">${w.stale ? `<span class="badge unknown">${esc(t("Unknown"))}</span>` : levelBadge(w.level)}${collectorBadge(key, data.collectors?.[key.split(":")[0]], w.stale)}</div>
+      <div class="marked-item">${w.resets_at ? esc(t("Resets {when}")).replace("{when}", () => `<span class="nowrap">${esc(fmtDateTime(w.resets_at))}</span>`) : "—"}</div>
     </div>`).join("");
   $("#usage-grid").innerHTML = rows || `<p>${esc(t("No usage readings yet"))}</p>`;
   const status = repairStatusLine(data.collectors);
@@ -675,7 +675,7 @@ function roleRow(r) {
     <div class="row-actions">
       <button type="button" class="role-edit" data-role="${esc(r.role)}" title="${esc(t("Effort, pinning, chain as a form"))}" aria-label="${esc(t("Edit {role}", { role: r.role }))}">✎</button>
       ${r.protected
-        ? `<span class="role-pin" title="${esc(t("Used by {names}: it cannot be deleted", { names: r.protected }))}" role="img" aria-label="${esc(t("Cannot be deleted"))}">🔒</span>`
+        ? `<span class="role-pin" title="${esc(r.protected)}" role="img" aria-label="${esc(t("Cannot be deleted"))}">🔒</span>`
         : `<button type="button" class="role-delete" data-role="${esc(r.role)}" title="${esc(t("Delete role"))}" aria-label="${esc(t("Delete {role}", { role: r.role }))}">🗑</button>`}
     </div>
   </div>`;
@@ -2428,7 +2428,7 @@ let settingsData = null;
 const GROUP_ACTIONS = {
   workers: [{
     label: t("Lift the post-restart cap"),
-    title: t("After a memory-caused restart team-up caps workers for 24 h; this lifts it now"),
+    title: t("After a memory-caused restart team-up limits the helpers for 24 h; this lifts the limit now"),
     endpoint: "/api/actions/admission-reset",
     done: (r) => (r.lifted ? t("Cap lifted.") : t("There was no cap to lift.")),
   }],
@@ -2493,12 +2493,14 @@ function settingRow(fields) {
     ? `${esc(first.row)}`
     : `${esc(first.label)}`;
   const help = [...new Set(fields.map((f) => f.help).filter(Boolean))].join(" ");
+  // Written by hand in roster.json, in whatever language: experts only, never translated.
+  const note = isExpert() ? fields.map((f) => f.note).filter(Boolean).join(" ") : "";
   const effect = first.effect ? `<span class="effect">${esc(t("Takes effect: {effect}", { effect: first.effect }))}</span>` : "";
   // The roster path of a setting is for experts.
   return `<div class="set-row" data-paths="${esc(fields.map((f) => f.path).join(" "))}">
     <div class="set-label">${title}${first.row || !isExpert() ? "" : `<span class="row-name mono">${esc(first.path)}</span>`}</div>
     <div class="set-control">${fields.map((f) => `<span class="set-field">${settingControl(f)}</span>${fields.length === 1 ? settingMeta(f) : ""}`).join("")}</div>
-    <p class="set-help">${esc(help)}${fields.length > 1 ? ` ${fields.map(settingMeta).filter((m) => m.includes("changed")).length ? "" : ""}` : ""}${effect}</p>
+    <p class="set-help">${esc(help)}${note ? `<span translate="no">${esc(note)}</span>` : ""}${fields.length > 1 ? ` ${fields.map(settingMeta).filter((m) => m.includes("changed")).length ? "" : ""}` : ""}${effect}</p>
   </div>`;
 }
 
@@ -2764,14 +2766,52 @@ function builtinJobCard(j) {
   </article>`;
 }
 
-function renderAutomation() {
+let automationKey = "";
+/** True while renderAutomation swaps the job cards: a change event then is not the user's. */
+let automationDrawing = false;
+
+/**
+ * The job cards are drawn again only when their content changed, and never
+ * over a field the user is typing in: removing a focused, edited knob fires
+ * its change, which would save "4" on the way to "48" into the crontab.
+ * force (after the user's own save) draws over a focused field that holds no
+ * unsaved text; the timer waits until focus leaves the fields.
+ */
+function renderAutomation(force = false) {
   const d = automationData;
   if (!d) return;
   if (!d.crontab.readable) automationNote(t("Cannot read your crontab: {error}", { error: d.crontab.error }), "err");
-  $("#custom-jobs").innerHTML = d.custom.length
+  const lists = [$("#custom-jobs"), $("#builtin-jobs")];
+  const a = lists.some((el) => el.contains(document.activeElement)) ? document.activeElement : null;
+  const field = a?.matches("input:not([type=checkbox]), select");
+  const unsaved = field && a.tagName === "INPUT" && a.value !== a.defaultValue;
+  const custom = d.custom.length
     ? `<div class="job-list">${d.custom.map(customJobCard).join("")}</div>`
     : `<div class="empty">${esc(t("No jobs of your own yet. A job is a prompt that a helper runs in one of your projects on a schedule — say a weekly dependency check, or a nightly “read the logs and file what looks wrong”."))}</div>`;
-  $("#builtin-jobs").innerHTML = d.builtin.map(builtinJobCard).join("");
+  const builtin = d.builtin.map(builtinJobCard).join("");
+  // Forced even when unchanged: a refused toggle must flip back.
+  if (!unsaved && (force || (!field && custom + builtin !== automationKey))) {
+    automationKey = custom + builtin;
+    const open = [...$("#builtin-jobs").querySelectorAll("details[open]")].map((el) => el.closest("[data-builtin]").dataset.builtin);
+    const card = a?.closest("[data-builtin], [data-job]");
+    const control = card && (a.id ? `#${CSS.escape(a.id)}` : [...a.attributes].map((x) => x.name).find((n) => n.startsWith("data-")));
+    automationDrawing = true;
+    try {
+      lists[0].innerHTML = custom;
+      lists[1].innerHTML = builtin;
+    } finally {
+      automationDrawing = false;
+    }
+    for (const id of open) {
+      const el = $(`#builtin-jobs [data-builtin="${CSS.escape(id)}"] details`);
+      if (el) el.open = true;
+    }
+    if (control) {
+      const sel = control.startsWith("#") ? control
+        : `[${card.dataset.builtin ? "data-builtin" : "data-job"}="${CSS.escape(card.dataset.builtin || card.dataset.job)}"] [${control}]`;
+      document.querySelector(sel)?.focus({ preventScroll: true });
+    }
+  }
   $("#services").innerHTML = `<table><thead><tr>${th("Service", t("Service"))}${th("What it does", t("What it does"))}${th("State", t("State"))}</tr></thead><tbody>${
     d.services.map((s) => `<tr><td>${esc(s.title)}<div class="muted mono">${esc(s.unit)}</div></td><td>${esc(s.what)}</td>
       <td><span class="tag ${s.active === "active" ? "ok" : s.active === "failed" ? "err" : "off"}" translate="no">${esc(s.active)}${s.sub ? ` · ${esc(s.sub)}` : ""}</span></td></tr>`).join("")
@@ -2783,10 +2823,10 @@ function renderAutomation() {
     failing ? tp(failing, { one: "{n} job failed on its last run", other: "{n} jobs failed on their last run" }) : "");
 }
 
-async function refreshAutomation() {
+async function refreshAutomation(force = false) {
   automationData = await api("/api/automation");
   dashboardMetrics.automation = automationData;
-  renderAutomation();
+  renderAutomation(force);
   updateAttention();
 }
 onEnter.automation = () => refreshAutomation().catch((err) => automationNote(t("That did not work: {error}", { error: err.message }), "err"));
@@ -2800,11 +2840,13 @@ async function automationWrite(url, body, done) {
     automationNote(t("Refused: {error}", { error: err.message }), "err");
     return false;
   } finally {
-    await refreshAutomation().catch(() => {});
+    await refreshAutomation(true).catch(() => {});
   }
 }
 
 $("#builtin-jobs").addEventListener("change", async (e) => {
+  // Fired by our own redraw removing an edited field, or after it: never a save.
+  if (automationDrawing || !e.target.isConnected) return;
   const card = e.target.closest("[data-builtin]");
   if (!card) return;
   const id = card.dataset.builtin;
@@ -2819,8 +2861,10 @@ $("#builtin-jobs").addEventListener("change", async (e) => {
     } catch (err) {
       automationNote(t("Refused: {error}", { error: err.message }), "err");
     }
-    await refreshAutomation().catch(() => {});
+    await refreshAutomation(true).catch(() => {});
   } else if (e.target.matches("[data-knob]")) {
+    // Committed (Enter or leaving the field): no longer unsaved text for renderAutomation.
+    e.target.defaultValue = e.target.value;
     const key = e.target.dataset.knob;
     const value = e.target.type === "checkbox" ? e.target.checked : e.target.value.trim() === "" ? null : Number(e.target.value);
     const knob = automationData.builtin.find((j) => j.id === id)?.knobs?.find((k) => k.key === key)?.label || key;
@@ -2841,7 +2885,7 @@ $("#builtin-jobs").addEventListener("click", async (e) => {
 });
 
 $("#custom-jobs").addEventListener("change", async (e) => {
-  if (!e.target.matches("[data-job-toggle]")) return;
+  if (automationDrawing || !e.target.isConnected || !e.target.matches("[data-job-toggle]")) return;
   const name = e.target.closest("[data-job]").dataset.job;
   await automationWrite(`/api/automation/jobs/${name}/enabled`, { enabled: e.target.checked },
     e.target.checked ? t("{job} switched on", { job: name }) : t("{job} switched off", { job: name }));
@@ -3654,9 +3698,10 @@ function commNote(text, tone = "") {
   el.className = `status-line ${tone}`;
 }
 
-function commDestSelect(value, label) {
+/** ariaLabel: a whole sentence naming what the select routes. */
+function commDestSelect(value, ariaLabel) {
   const d = commData;
-  return `<select class="comm-dest" data-comm-dest aria-label="${esc(t("Where {job} goes", { job: label }))}">${
+  return `<select class="comm-dest" data-comm-dest aria-label="${esc(ariaLabel)}">${
     d.bots.map((b) => `<option value="${esc(b.id)}"${value === b.id ? " selected" : ""} translate="no">📱 Telegram · @${esc(b.username)}</option>`).join("")
   }<option value="bell"${value === "bell" ? " selected" : ""}>🔔 ${esc(t("Only the bell in this dashboard"))}</option></select>`;
 }
@@ -3671,14 +3716,14 @@ function renderCommunication() {
     rows.map((s) => `<tr data-sender="${esc(s.key)}">
       <td>${esc(s.title)}${!s.scheduled ? ` <span class="tag off">${esc(t("not scheduled"))}</span>` : s.enabled ? "" : ` <span class="tag off">${esc(t("switched off"))}</span>`}
         <div class="muted">${esc(s.notifies)}</div></td>
-      <td>${commDestSelect(s.dest ?? d.default, s.title)}</td></tr>`).join("")}</tbody></table>`;
+      <td>${commDestSelect(s.dest ?? d.default, t("Where messages from {job} go", { job: s.title }))}</td></tr>`).join("")}</tbody></table>`;
   $("#comm-routes").innerHTML = groups.map(([g, title]) => {
     const rows = d.senders.filter((s) => s.group === g);
     return rows.length ? `<h3 class="comm-group">${esc(title)}</h3>${table(rows)}` : "";
   }).join("") + `<h3 class="comm-group">${esc(t("Everything else"))}</h3>
     <table class="comm-table"><tbody><tr data-sender="*">
       <td>${esc(t("Anything not listed above"))}<div class="muted">${esc(t("Any other script that sends to Telegram, and new jobs until you choose a place for them."))}</div></td>
-      <td>${commDestSelect(d.default, t("everything else"))}</td></tr></tbody></table>`;
+      <td>${commDestSelect(d.default, t("Where all other messages go"))}</td></tr></tbody></table>`;
 
   // Replies: which bots listen, and how a new session starts.
   const listening = d.bots.filter((b) => b.listen);

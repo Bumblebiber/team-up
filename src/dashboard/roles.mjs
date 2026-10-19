@@ -57,18 +57,28 @@ function chainView(roster, store, chain, now) {
 const roleUsers = (roster, role) =>
   Object.entries(roster?.specialists || {}).filter(([, s]) => s?.role === role).map(([id]) => id);
 
+/** Why a role team-up's own code asks for cannot be deleted: one whole sentence each, in `lang`. */
+const protectedHint = (lang) => ({
+  implementer: t(lang, "The insights job and the usage spender make their fixes with this role, so it cannot be deleted."),
+  reviewer: t(lang, "The usage spender's reviews and audits run on this role, so it cannot be deleted."),
+  researcher: t(lang, "The usage spender's research tasks run on this role, so it cannot be deleted."),
+  planner: t(lang, "The usage spender sorts new issues with this role, so it cannot be deleted."),
+  observer: t(lang, "The observer that watches every running agent uses this role, so it cannot be deleted."),
+});
+
 /**
  * `usedBy` is `[{id, name}]`: `nameOf` turns a specialist id into the name the panel shows.
- * `protected` says who needs the role, in `lang`.
+ * `protected` is the sentence why the role cannot be deleted, in `lang`.
  */
 export function buildRolesView(roster, usage, store, now = Date.now(), { nameOf = (id) => id, lang = "en" } = {}) {
+  const hints = protectedHint(lang);
   const roles = Object.entries(roster?.roles || {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([role, spec]) => {
       const result = pick({ roster, usage, role, now });
       return {
         role,
-        protected: own(PROTECTED_ROLES, role) ? t(lang, PROTECTED_ROLES[role]) : null,
+        protected: own(PROTECTED_ROLES, role) ? hints[role] : null,
         usedBy: roleUsers(roster, role).map((id) => ({ id, name: nameOf(id) })),
         effort: spec?.effort ?? null,
         chain: chainView(roster, store, spec?.chain || [], now),

@@ -27,35 +27,35 @@ export const SPENDER_DEFAULTS = Object.freeze({
 });
 
 const effects = (lang) => ({
-  language: t(lang, "Dashboard: now (the page reloads). Agents: runs started from now on."),
+  language: t(lang, "Dashboard: now (the page reloads). Helpers: tasks started from now on."),
   pick: t(lang, "When the next task starts."),
-  watcher: t(lang, "Within a minute (the usage watcher re-reads the roster every tick)."),
-  spender: t(lang, "Next usage-spender tick (every 10 minutes)."),
+  watcher: t(lang, "Within a minute."),
+  spender: t(lang, "Within 10 minutes."),
   gc: t(lang, "At the next cleanup (every 5 minutes)."),
   telemetry: t(lang, "Next telemetry sample."),
-  info: t(lang, "Information for the usage-spender only."),
+  info: t(lang, "Only the usage spender uses this."),
 });
 
 export const GROUPS = [
   {
     id: "general",
     title: "General",
-    intro: "The language of this dashboard and of the questions agents ask you. Work between agents stays in English.",
+    intro: "The language of this dashboard and of the questions helpers ask you. Work between helpers stays in English.",
   },
   {
     id: "accounts",
     title: "Accounts",
-    intro: "Every model belongs to an account. Switch one off and all its models drop out of every role chain until you switch it back on. The plan only tells the usage-spender how much spare work a night can buy; a credit account at 0 is blocked.",
+    intro: "Every AI model belongs to an account. Switch an account off and none of its models is used until you switch it back on. The plan only tells the usage spender how much spare work a night can buy; a credit account at 0 is blocked.",
   },
   {
     id: "limits",
     title: "Usage limits",
-    intro: "What a running agent does as a subscription window fills up. Shares are of the window, e.g. 90 % of the weekly limit.",
+    intro: "What a running helper does as a subscription window fills up. Shares are of the window, e.g. 90 % of the weekly limit.",
   },
   {
     id: "workers",
-    title: "Workers & machine",
-    intro: "How many agents may run at once on this server, and when idle ones are cleaned up.",
+    title: "Helpers & machine",
+    intro: "How many helpers may run at once on this server, and when idle ones are closed.",
   },
   {
     id: "usage",
@@ -172,7 +172,7 @@ export function settingsFields(roster = {}) {
 
   add({
     group: "general", path: "language", type: "enum", label: t(lang, "Language"),
-    help: t(lang, "For the dashboard and for the questions agents ask you. Results, code and messages between agents stay in English."),
+    help: t(lang, "For the dashboard and for the questions helpers ask you. Results, code and messages between helpers stay in English."),
     // Endonyms: each language is named in itself, never translated.
     options: [{ value: "en", label: "English" }, { value: "de", label: "Deutsch" }],
     default: "en", effect: EFFECT.language,
@@ -182,7 +182,8 @@ export function settingsFields(roster = {}) {
     const row = account?.kind === "credit" ? t(lang, "{id} (credit)", { id }) : t(lang, "{id} (subscription)", { id });
     add({
       group: "accounts", row, path: `accounts.${id}.enabled`, type: "bool", label: t(lang, "Enabled"),
-      help: account?.$comment || "",
+      // The owner's own note in roster.json: shown as written, in expert view only.
+      help: "", note: account?.$comment || "",
       default: true, effect: EFFECT.pick, required: true,
     });
     if (account?.kind === "credit") {
@@ -202,12 +203,12 @@ export function settingsFields(roster = {}) {
   const lim = limitDefaults({});
   add({
     group: "limits", path: "limits.warn_at", type: "ratio", label: t(lang, "Wrap-up warning at"),
-    help: t(lang, "At this share of a usage window a running agent is told to finish what it is doing."),
+    help: t(lang, "At this share of a usage window a running helper is told to finish what it is doing."),
     default: lim.warn_at, effect: EFFECT.pick,
   });
   add({
     group: "limits", path: "limits.handoff_at", type: "ratio", label: t(lang, "Hand off at"),
-    help: t(lang, "At this share the agent hands off and stops; the next model in its role chain takes over."),
+    help: t(lang, "At this share the helper hands its work over and stops; the next model on its role's list takes over."),
     default: lim.handoff_at, effect: EFFECT.pick,
   });
   add({
@@ -227,18 +228,18 @@ export function settingsFields(roster = {}) {
   });
 
   add({
-    group: "workers", path: "admission.max_workers", type: "int", label: t(lang, "Max. parallel workers"),
-    help: t(lang, "Hard cap on workers running at once. On auto, it is derived from memory telemetry."),
+    group: "workers", path: "admission.max_workers", type: "int", label: t(lang, "Max. helpers at once"),
+    help: t(lang, "At most this many helpers run at once. On auto, team-up works the number out from how much memory they need."),
     min: 1, max: 64, nullable: true, nullLabel: t(lang, "auto"), default: DEFAULT_ADMISSION.max_workers, effect: EFFECT.pick,
   });
   add({
-    group: "workers", path: "admission.fallback_max_workers", type: "int", label: t(lang, "Cap while telemetry is thin"),
-    help: t(lang, "Used on auto until enough worker samples exist to trust the derived cap."),
+    group: "workers", path: "admission.fallback_max_workers", type: "int", label: t(lang, "Limit until enough is measured"),
+    help: t(lang, "On auto, this limit applies until team-up has measured enough helpers to work out its own."),
     min: 1, max: 64, default: DEFAULT_ADMISSION.fallback_max_workers, effect: EFFECT.pick,
   });
   add({
-    group: "workers", path: "limits.idle_session_hours", type: "number", label: t(lang, "Stop idle worker sessions after"), unit: "h",
-    help: t(lang, "A worker's terminal session that has been idle this long is closed."),
+    group: "workers", path: "limits.idle_session_hours", type: "number", label: t(lang, "Close idle helpers after"), unit: "h",
+    help: t(lang, "A helper's terminal that has done nothing for this long is closed."),
     min: 0.25, max: 168, default: 2, effect: EFFECT.gc,
   });
   add({
@@ -269,7 +270,7 @@ export function settingsFields(roster = {}) {
   });
   for (const [key, label] of [
     ["idle_min", t(lang, "Read limits every … when nothing runs")],
-    ["active_min", t(lang, "Read limits every … while one agent runs")],
+    ["active_min", t(lang, "Read limits every … while one helper runs")],
     ["busy_min", t(lang, "Read limits every … while several run")],
   ]) {
     add({
@@ -301,7 +302,7 @@ export function settingsFields(roster = {}) {
 
   add({
     group: "spender", path: "usage_spender.subscriptions", type: "set", label: t(lang, "Spend the quota of"),
-    help: t(lang, "Subscriptions whose spare quota may be spent. Untick all to switch the spender off."),
+    help: t(lang, "Subscriptions whose spare quota may be spent. Untick all to switch the usage spender off."),
     options: opts(watched), default: SPENDER_DEFAULTS.subscriptions, effect: EFFECT.spender,
   });
   const hours = opts([...Array(24).keys()], (h) => `${String(h).padStart(2, "0")}:00`);
@@ -317,7 +318,7 @@ export function settingsFields(roster = {}) {
   });
   add({
     group: "spender", path: "usage_spender.implement", type: "bool", label: t(lang, "Implement fixes"),
-    help: t(lang, "On: TIM tasks and GitHub issues are implemented in a throwaway clone and opened as pull requests. Off: reviews and triage only."),
+    help: t(lang, "On: TIM tasks and GitHub issues are worked on in a separate copy of the repo and handed in as pull requests. Off: only reviews and sorting new issues."),
     default: SPENDER_DEFAULTS.implement, effect: EFFECT.spender,
   });
   for (const cli of watched) {

@@ -47,6 +47,10 @@ r0 action center · r1 projects · r2 specialists · r3 i18n · r4 live UI audit
 | collect (mark read) | Mark as read | Als gelesen markieren |
 | answer | Send answer | Antwort senden |
 | parked spender run | continues tonight from 23:00 | geht heute Nacht ab 23:00 weiter |
+| worker (simple view, Settings) | Helper | Helfer (Agent only in expert views) |
+| usage (subscription windows) | Usage | Nutzung (never Verbrauch/Auslastung) |
+| usage-spender job | Usage spender | Kontingent-Nutzer |
+| usage watcher service / usage watchdog job | Usage watcher / Usage watchdog | Nutzungsabfrage / Nutzungswächter |
 
 Never translate: CLI names, model ids, `cli:model`, role ids, run/TIM ids, paths,
 mailbox file names, status enum values in prompts, commands, cron expressions,
