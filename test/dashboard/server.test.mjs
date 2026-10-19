@@ -891,3 +891,28 @@ test("a bad collecting folder still lists waiting runs, under Other runs", () =>
       server.close();
     }
   }));
+
+test("the page carries the roster language in <html lang>, and /i18n.js loads before app.js", () =>
+  withHome(async ({ home, token }) => {
+    const { server } = createDashboardServer({ token });
+    const port = await listen(server);
+    try {
+      assert.match((await req(port, "/")).text, /<html lang="en">/, "no language set = English");
+      const cookie = await loginCookie(port, token);
+      const saved = await req(port, "/api/settings", { method: "POST", cookie, csrf: true, body: { path: "language", value: "de" } });
+      assert.equal(saved.status, 200, saved.text);
+      const page = (await req(port, "/")).text;
+      assert.match(page, /<html lang="de">/);
+      assert.ok(page.indexOf('src="/i18n.js"') < page.indexOf('src="/app.js"'));
+      const script = await req(port, "/i18n.js");
+      assert.equal(script.status, 200);
+      assert.match(script.headers.get("content-type"), /javascript/);
+      const preview = await req(port, "/api/automation/preview?schedule=0%206%20*%20*%20*", { cookie });
+      assert.equal(preview.json.text, "täglich um 06:00");
+      // A broken roster must not take the login page down.
+      fs.writeFileSync(path.join(home, "roster.json"), "{");
+      assert.match((await req(port, "/")).text, /<html lang="en">/);
+    } finally {
+      server.close();
+    }
+  }));

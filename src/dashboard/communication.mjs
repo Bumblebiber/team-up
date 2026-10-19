@@ -22,6 +22,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { loadJson, atomicWriteJson, atomicWriteText } from "../json-store.mjs";
 import { teamUpHome } from "../paths.mjs";
+import { t } from "./i18n.mjs";
 import { BUILTIN_JOBS } from "./automation.mjs";
 import { findEntry, readCrontab } from "./crontab.mjs";
 import { cronJobsPath, parseCronSections } from "./cron-jobs.mjs";
@@ -41,7 +42,7 @@ const KNOWN = [
 ];
 
 /** TIM's watchdogs, scheduled in the crontab next to team-up's jobs. */
-const TIM_SENDERS = [
+export const TIM_SENDERS = [
   { key: "tim-db-header-watchdog", title: "TIM database header", match: "tim-db-header-watchdog.sh", notifies: "Every 15 min, only when the database header looks corrupt." },
   { key: "tim-wal-watchdog", title: "TIM write-ahead log", match: "tim-wal-watchdog.sh", notifies: "Hourly, only when the WAL file grew past 50 MB and was truncated." },
   { key: "tim-snapshot-watchdog", title: "TIM backups", match: "tim-snapshot-watchdog.sh", notifies: "Hourly, only when the newest snapshot is older than 2 hours." },
@@ -122,8 +123,11 @@ const botOf = (cfg, id) => {
 /** Every bot here talks to one person; a bot without a chat id uses another's. */
 const anyChat = (cfg) => cfg.bots.map((b) => { try { return readEnvFile(b.env).TELEGRAM_CHAT_ID; } catch { return null; } }).find(Boolean);
 
-/** team-up and TIM jobs that send messages, plus your own jobs with notify on. */
-export function listSenders({ env = process.env, exec = execFileSync } = {}) {
+/**
+ * team-up and TIM jobs that send messages, plus your own jobs with notify on.
+ * `group` is an id the page sorts by; title and notifies are in `lang`.
+ */
+export function listSenders({ env = process.env, exec = execFileSync, lang = "en" } = {}) {
   let crontab = "";
   try { crontab = readCrontab({ exec }); } catch { /* unreadable: shown as not scheduled */ }
   const state = (match) => {
@@ -131,7 +135,7 @@ export function listSenders({ env = process.env, exec = execFileSync } = {}) {
   };
   const row = (group, key, title, notifies, match) => {
     const entry = match ? state(match) : null;
-    return { group, key, title, notifies, scheduled: !match || !!entry, enabled: !match || !!entry?.enabled };
+    return { group, key, title: t(lang, title), notifies: t(lang, notifies), scheduled: !match || !!entry, enabled: !match || !!entry?.enabled };
   };
   const out = [
     ...BUILTIN_JOBS.filter((j) => j.notifies).map((j) => row("team-up", senderKey(j.match), j.title, j.notifies, j.match)),
@@ -141,7 +145,7 @@ export function listSenders({ env = process.env, exec = execFileSync } = {}) {
   const sections = fs.existsSync(ini) ? parseCronSections(fs.readFileSync(ini, "utf8")) : [];
   for (const s of sections) {
     if (s.values.custom !== "true" || s.values.notify !== "true") continue;
-    out.push({ group: "Your jobs", key: s.name, title: s.name, notifies: s.values.description || "Its result after every run.",
+    out.push({ group: "Your jobs", key: s.name, title: s.name, notifies: s.values.description || t(lang, "Its result after every run."),
       scheduled: true, enabled: s.values.enabled !== "false" });
   }
   return out;
@@ -154,11 +158,11 @@ function readPollerStatus(env) {
 /** Claude models only: replies run `claude -p` (resume needs the same CLI). */
 export const replyModelOptions = (modelOptions) => modelOptions.filter((m) => m.startsWith("claude:"));
 
-export async function buildCommunicationView({ env = process.env, exec = execFileSync, fetchFn = fetch, modelOptions = [] } = {}) {
+export async function buildCommunicationView({ env = process.env, exec = execFileSync, fetchFn = fetch, modelOptions = [], lang = "en" } = {}) {
   const cfg = await loadComm({ env, fetchFn });
   const poller = readPollerStatus(env);
 
-  const senders = listSenders({ env, exec }).map((s) => ({ ...s, dest: cfg.routes[s.key] ?? null }));
+  const senders = listSenders({ env, exec, lang }).map((s) => ({ ...s, dest: cfg.routes[s.key] ?? null }));
   const jobs = (id) => senders.filter((s) => (s.dest ?? cfg.default) === id).length;
   const bots = cfg.bots.map((b) => {
     let tail = null;
@@ -261,13 +265,13 @@ export async function setReplies(input = {}, { env = process.env, fetchFn = fetc
   return {};
 }
 
-export async function sendTest(id, { env = process.env, fetchFn = fetch } = {}) {
+export async function sendTest(id, { env = process.env, fetchFn = fetch, lang = "en" } = {}) {
   const cfg = await loadComm({ env, fetchFn });
   const vars = readEnvFile(botOf(cfg, id).env);
   const res = await fetchFn(`https://api.telegram.org/bot${vars.TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: vars.TELEGRAM_CHAT_ID || anyChat(cfg), text: "Test from the team-up dashboard (Communication)." }),
+    body: JSON.stringify({ chat_id: vars.TELEGRAM_CHAT_ID || anyChat(cfg), text: t(lang, "Test from the team-up dashboard (Communication).") }),
     signal: AbortSignal.timeout(8000),
   }).then((r) => r.json()).catch(() => null);
   if (!res?.ok) throw new Error(`send failed: ${res?.description || "no answer"} — has the chat pressed Start on this bot?`);

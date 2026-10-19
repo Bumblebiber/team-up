@@ -5,6 +5,8 @@
 // only the five standard fields of digits, `*`, `/`, `-` and `,` pass, or one
 // of the named shortcuts. Step and range values are bounds-checked per field.
 
+import { t } from "./i18n.mjs";
+
 const FIELDS = [
   { name: "minute", min: 0, max: 59 },
   { name: "hour", min: 0, max: 23 },
@@ -86,38 +88,42 @@ export function nextRun(input, from = new Date()) {
 }
 
 const pad = (n) => String(n).padStart(2, "0");
-const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const ordinal = (n) => {
-  if (n >= 11 && n <= 13) return `${n}th`;
-  return `${n}${{ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"}`;
-};
+// 2026-01-04 is a Sunday: day d of the week is the 4th + d, in UTC.
+const weekday = (lang, d) => new Intl.DateTimeFormat(lang, { weekday: "long", timeZone: "UTC" })
+  .format(new Date(Date.UTC(2026, 0, 4 + (d % 7))));
+const list = (lang, items) => new Intl.ListFormat(lang, { type: "conjunction" }).format(items);
+const suffix = (n) => (n >= 11 && n <= 13 ? "th" : { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th");
 const single = (p) => /^\d+$/.test(p);
 const everyN = (p) => p.match(/^\*\/(\d+)$/)?.[1];
 
-/** Plain words for the common shapes; anything else is shown as cron text. */
-export function describeSchedule(input) {
+/** Plain words for the common shapes, in `lang`; anything else is shown as cron text. */
+export function describeSchedule(input, lang = "en") {
   let parsed;
   try {
     parsed = parseSchedule(input);
   } catch (e) {
-    return `invalid: ${e.message}`;
+    return t(lang, "invalid: {reason}", { reason: e.message });
   }
   const [m, h, dom, mon, dow] = parsed.parts;
   const time = single(m) && single(h) ? `${pad(h)}:${pad(m)}` : null;
   if (mon === "*") {
     if (dom === "*" && dow === "*") {
-      if (m === "*" && h === "*") return "every minute";
-      if (everyN(m) && h === "*") return `every ${everyN(m)} minutes`;
-      if (single(m) && h === "*") return `every hour at :${pad(m)}`;
-      if (single(m) && everyN(h)) return `every ${everyN(h)} hours at :${pad(m)}`;
-      if (time) return `daily at ${time}`;
-      if (single(m) && /^\d+(,\d+)+$/.test(h)) return `daily at ${h.split(",").map((x) => `${pad(x)}:${pad(m)}`).join(", ")}`;
+      if (m === "*" && h === "*") return t(lang, "every minute");
+      if (everyN(m) && h === "*") return t(lang, "every {n} minutes", { n: everyN(m) });
+      if (single(m) && h === "*") return t(lang, "every hour at :{mm}", { mm: pad(m) });
+      if (single(m) && everyN(h)) return t(lang, "every {n} hours at :{mm}", { n: everyN(h), mm: pad(m) });
+      if (time) return t(lang, "daily at {time}", { time });
+      if (single(m) && /^\d+(,\d+)+$/.test(h)) {
+        return t(lang, "daily at {time}", { time: list(lang, h.split(",").map((x) => `${pad(x)}:${pad(m)}`)) });
+      }
     }
     if (time && dom === "*" && /^[0-7](,[0-7])*$/.test(dow)) {
-      return `every ${dow.split(",").map((d) => DAYS[Number(d) % 7]).join(", ")} at ${time}`;
+      return t(lang, "every {days} at {time}", { days: list(lang, dow.split(",").map((d) => weekday(lang, Number(d)))), time });
     }
-    if (time && dom === "*" && dow === "1-5") return `weekdays at ${time}`;
-    if (time && single(dom) && dow === "*") return `monthly on the ${ordinal(Number(dom))} at ${time}`;
+    if (time && dom === "*" && dow === "1-5") return t(lang, "weekdays at {time}", { time });
+    if (time && single(dom) && dow === "*") {
+      return t(lang, "monthly on the {day}{suffix} at {time}", { day: Number(dom), suffix: suffix(Number(dom)), time });
+    }
   }
   return `cron "${parsed.expr}"`;
 }
