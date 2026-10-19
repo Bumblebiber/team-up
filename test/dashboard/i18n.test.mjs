@@ -71,7 +71,7 @@ const placeholders = (text) => new Set(text.match(/\{\w+\}/g) || []);
 function clientI18n(lang) {
   const ctx = vm.createContext({ document: { documentElement: { lang } } });
   vm.runInContext(read("src/dashboard/public/i18n.js"), ctx);
-  return vm.runInContext("({ LANG, I18N_DE, t, tp, fmtAgo, fmtDateTime })", ctx);
+  return vm.runInContext("({ LANG, I18N_DE, MANIFEST_DE, t, tp, fmtAgo, fmtDateTime })", ctx);
 }
 
 test("every t(lang, …) key in the server modules has a German entry, and no key is built from ${…}", () => {
@@ -219,6 +219,14 @@ test("browser t, tp, fmtAgo and fmtDateTime follow <html lang>", () => {
   assert.equal(de.fmtAgo(-2 * 36e5), "in 2 Stunden");
   assert.equal(de.fmtDateTime("not a date"), "—");
   assert.equal(de.fmtDateTime(new Date(2026, 9, 19, 14, 5).toISOString()), "19.10.26, 14:05");
+});
+
+test("every bundled extra's name has a German entry for the Team page", () => {
+  const { MANIFEST_DE } = clientI18n("de");
+  const names = fs.readdirSync(path.join(ROOT, "capabilities"), { withFileTypes: true }).filter((e) => e.isDirectory())
+    .map((e) => JSON.parse(read(`capabilities/${e.name}/capability.json`)).display_name);
+  assert.ok(names.length >= 4);
+  assert.deepEqual(names.filter((n) => !Object.hasOwn(MANIFEST_DE, n)), []);
 });
 
 test("i18n.js, md.js and app.js share one global scope without a clash", () => {

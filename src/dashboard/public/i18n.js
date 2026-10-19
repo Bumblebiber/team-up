@@ -273,14 +273,26 @@ const I18N_DE = {
   "No role: it does not start": "Keine Rolle: startet nicht",
   "Its own model list": "Eigene Modellliste",
   "Its own model list: {chain}": "Eigene Modellliste: {chain}",
-  "Custom model list…": "Eigene Modellliste…",
+  "Custom model list…": "Liste bearbeiten…",
   "The role decides which AI models it works with: the first one with quota left does the job.":
     "Die Rolle bestimmt die KI-Modelle für die Arbeit: Das erste mit freiem Kontingent übernimmt den Auftrag.",
   "{name} now works in the role {role}.": "{name} arbeitet jetzt in der Rolle {role}.",
   "{name} has no role now and does not start.": "{name} hat jetzt keine Rolle und startet nicht.",
   "The extras could not be loaded": "Die Extras ließen sich nicht laden",
   "Without a role it does not start.": "Ohne Rolle: startet nicht.",
-  "Its own list of models, set with “Custom model list…”.": "Eine eigene Liste von Modellen, festgelegt über „Eigene Modellliste…“.",
+  "Its own list of models, set with “Custom model list…”.": "Eine eigene Liste von Modellen, festgelegt über „Liste bearbeiten…“.",
+  "Saving replaces its own model list.": "Speichern ersetzt seine eigene Modellliste.",
+  "Replace its own model list?": "Eigene Modellliste ersetzen?",
+  "{name} runs on its own list of models. With the role {role} that list is gone; “Custom model list…” sets a new one.":
+    "{name} arbeitet mit einer eigenen Liste von Modellen. Mit der Rolle {role} ist diese Liste weg; „Liste bearbeiten…“ legt eine neue an.",
+  "writes and changes code": "schreibt und ändert Code",
+  "reviews changes": "prüft Änderungen",
+  "looks things up": "recherchiert",
+  "plans and splits up work": "plant und teilt Arbeit auf",
+  "writes tests": "schreibt Tests",
+  "designs user interfaces": "gestaltet Oberflächen",
+  "writes prompts for AI models": "schreibt Prompts für KI-Modelle",
+  "writes marketing text": "schreibt Marketingtexte",
   "This role starts with {model} right now.": "Diese Rolle startet gerade mit {model}.",
   "No model in this role has quota right now.": "Gerade hat kein Modell dieser Rolle freies Kontingent.",
   "Also in this role: {names}.": "Ebenfalls in dieser Rolle: {names}.",
@@ -919,3 +931,64 @@ function translateStatic(root = document.body) {
     }
   }
 }
+
+// What the bundled specialists and extras say about themselves (a manifest's
+// remit, an extra's name), keyed by the English text: a new version's changed
+// wording shows in English, marked as such, never as a stale translation.
+const MANIFEST_DE = {
+  // coding.codey
+  "implementing one ticket against a spec": "Ein Ticket nach Vorgabe umsetzen",
+  "writing the tests that cover what it implemented": "Die Tests schreiben, die das Umgesetzte abdecken",
+  "running the project's test action and reporting the result": "Die Tests des Projekts ausführen und das Ergebnis melden",
+  "changing the spec or the ticket it was given": "Die Vorgabe oder das Ticket ändern, das es bekommen hat",
+  "work outside the ticket, however small it looks": "Arbeit außerhalb des Tickets, so klein sie auch aussieht",
+  "writing outside its own clone": "Außerhalb seiner eigenen Arbeitskopie schreiben",
+  "authoritative review of its own change": "Die eigene Änderung abschließend prüfen",
+  "deployment, release, or publishing": "Ausrollen, Freigeben oder Veröffentlichen",
+  // marketing.martha
+  "positioning, ICP and messaging": "Positionierung, Zielkunden und Botschaften",
+  "market, competitor and customer research with provenance": "Markt-, Wettbewerbs- und Kundenrecherche mit Quellen",
+  "marketing copy in German and English": "Marketingtexte auf Deutsch und Englisch",
+  "go-to-market, launch and channel distribution": "Markteinführung, Launch und Verbreitung über Kanäle",
+  "search visibility: SEO, content and AI answer engines": "Sichtbarkeit in der Suche: SEO, Inhalte und KI-Antwortdienste",
+  "measurement, attribution and experiment design": "Messung, Zuordnung und Planung von Experimenten",
+  "pre-publication compliance check for Germany and the EU": "Rechtliche Prüfung vor dem Veröffentlichen für Deutschland und die EU",
+  "marketing review of existing material": "Vorhandenes Material aus Marketingsicht prüfen",
+  "publishing, posting, sending or scheduling anything": "Irgendetwas veröffentlichen, posten, versenden oder einplanen",
+  "spending or committing ad budget": "Werbebudget ausgeben oder zusagen",
+  "invented statistics, testimonials, logos, reviews or social proof": "Erfundene Zahlen, Kundenstimmen, Logos, Bewertungen oder Referenzen",
+  "claims the product cannot substantiate": "Behauptungen, die das Produkt nicht belegen kann",
+  "dark patterns, fake scarcity or fake urgency": "Manipulative Gestaltung, vorgetäuschte Knappheit oder Dringlichkeit",
+  "mass-produced pages without added value": "Massenhaft erzeugte Seiten ohne Mehrwert",
+  "code mutation or deployment": "Code ändern oder ausrollen",
+  "legal advice": "Rechtsberatung",
+  // research.reanna
+  "source discovery": "Quellen finden",
+  "evidence synthesis": "Belege zusammenführen",
+  "provenance": "Herkunft belegen",
+  "uncertainty reporting": "Unsicherheit offen benennen",
+  "capability scouting for other specialists": "Fähigkeiten für andere Spezialisten aufspüren",
+  "unsourced factual invention": "Erfundene Fakten ohne Quelle",
+  "code mutation": "Code ändern",
+  "deployment": "Ausrollen",
+  "installing or enabling capabilities": "Fähigkeiten installieren oder einschalten",
+  // review.revan
+  "two-axis review of a diff — repository standards and originating spec": "Änderungen doppelt prüfen: gegen die Regeln des Repos und gegen die ursprüngliche Vorgabe",
+  "defect finding on merged changes": "Fehler in übernommenen Änderungen finden",
+  "verification that a claimed fix does what it claims": "Prüfen, ob eine Korrektur wirklich tut, was sie verspricht",
+  "implementing or fixing what the review finds": "Umsetzen oder beheben, was die Prüfung findet",
+  "code mutation of any kind": "Code in jeder Form ändern",
+  "rewriting the spec it reviews against": "Die Vorgabe umschreiben, gegen die es prüft",
+  "product or roadmap decisions": "Entscheidungen über Produkt oder Fahrplan",
+  // testing.tessa
+  "test strategy": "Teststrategie",
+  "regression testing": "Regressionstests",
+  "verification review": "Prüfen, ob eine Korrektur wirkt",
+  "product roadmap": "Produkt-Fahrplan",
+  "unrelated implementation": "Umsetzungen, die nicht zur Aufgabe gehören",
+  // capabilities/*/capability.json display_name
+  "Ponytail (laziest solution that works)": "Ponytail (die einfachste Lösung, die funktioniert)",
+  "Ponytail (over-engineering review)": "Ponytail (Prüfung auf Überkonstruktion)",
+  "Context7 (live library documentation)": "Context7 (aktuelle Doku zu Bibliotheken)",
+  "Caveman (terse output style)": "Caveman (knapper Antwortstil)",
+};

@@ -1493,6 +1493,16 @@ const teamName = (s) => s.display_name || s.id;
 // A manifest's own words, not a translation: only its first letter changes.
 const capitalised = (text) => String(text ?? "").replace(/^\p{Ll}/u, (c) => c.toUpperCase());
 
+/** A manifest's own words (a remit, an extra's name): German when known, else English marked as English. */
+function manifestText(text) {
+  const de = LANG === "de" && Object.hasOwn(MANIFEST_DE, text) ? MANIFEST_DE[text] : null;
+  return { text: de ?? String(text ?? ""), lang: LANG === "de" && !de ? ' lang="en"' : "" };
+}
+const manifestItem = (text) => {
+  const m = manifestText(text);
+  return `<li${m.lang}>${esc(capitalised(m.text))}</li>`;
+};
+
 /** A translated sentence as HTML: escaped, each named value (agent text, a name, an id) in a translate="no" span. */
 function withNames(text, names) {
   return esc(text).replace(/\{(\w+)\}/g, (m, key) => (Object.hasOwn(names, key) ? `<span translate="no">${esc(names[key])}</span>` : m));
@@ -1554,7 +1564,7 @@ function teamCard(s, selected) {
       <span class="team-who"><span class="team-name" translate="no">${esc(teamName(s))}</span><span class="team-title">${esc(TEAM_TITLE[s.category] ?? TEAM_TITLE.other)}</span></span>
       ${teamStatus(s)}
     </span>
-    <span class="team-purpose" translate="no">${esc(capitalised(s.remit?.[0]))}</span>
+    <span class="team-purpose"${manifestText(s.remit?.[0]).lang}>${esc(capitalised(manifestText(s.remit?.[0]).text))}</span>
     <span class="team-model">${teamModelHtml(s)}</span>
     <span class="team-badges">${teamBadges(s)}</span>
     <span class="team-last">${teamLastJob(s)}</span>
@@ -1579,14 +1589,18 @@ function teamExtras(s) {
   const name = teamName(s);
   const rows = (s.assigned || []).map((a) => {
     const shared = a.reason === "target:all";
-    return `<li><span translate="no">${esc(a.display_name)}</span>
+    const extra = manifestText(a.display_name);
+    return `<li><span${extra.lang}>${esc(extra.text)}</span>
       <span class="muted">${shared ? esc(t("shared by the whole team")) : withNames(t("added for {name}"), { name })}</span>
       <button type="button" class="team-extra-remove" data-package="${esc(a.package)}" data-checksum="${esc(a.checksum_full)}"
-        data-name="${esc(a.display_name)}"${shared ? " data-shared" : ""}>${esc(t("Remove…"))}</button></li>`;
+        data-name="${esc(extra.text)}"${shared ? " data-shared" : ""}>${esc(t("Remove…"))}</button></li>`;
   }).join("");
   const held = new Set((s.assigned || []).map((a) => `${a.package}:${a.checksum_full}`));
   const pool = (capabilityPool?.packages || []).filter((p) => !held.has(`${p.package}:${p.checksum}`));
-  const options = pool.map((p) => `<option value="${esc(p.package)}" data-checksum="${esc(p.checksum)}" translate="no">${esc(p.display_name)}</option>`).join("");
+  const options = pool.map((p) => {
+    const m = manifestText(p.display_name);
+    return `<option value="${esc(p.package)}" data-checksum="${esc(p.checksum)}"${m.lang}>${esc(m.text)}</option>`;
+  }).join("");
   return `<ul class="team-extras">${rows || `<li class="muted">${esc(t("None yet."))}</li>`}</ul>
     <div class="form-row">
       <label for="team-extra-add">${esc(t("Add an extra"))}</label>
@@ -1595,10 +1609,25 @@ function teamExtras(s) {
     </div>`;
 }
 
+const MACHINERY_ROLES = new Set(["observer", "overseer", "summarizer", "scout", "team-up-architect", "advisor"]);
+// What a role is for, beside its id; a role someone added keeps its bare id.
+const ROLE_GLOSS = {
+  implementer: t("writes and changes code"),
+  reviewer: t("reviews changes"),
+  researcher: t("looks things up"),
+  planner: t("plans and splits up work"),
+  "test-writer": t("writes tests"),
+  "frontend-designer": t("designs user interfaces"),
+  "prompt-writer": t("writes prompts for AI models"),
+  marketer: t("writes marketing text"),
+};
+
 function teamModelSection(s) {
   const a = s.assignment;
   const current = a?.role ? `role:${a.role}` : a?.chain ? "chain" : "";
-  const roles = [...new Set([...(rolesData?.roles || []).map((r) => r.role), ...(a?.role ? [a.role] : [])])];
+  // team-up's own machinery is no job for a specialist; one already on such a role keeps it as an option.
+  const roles = [...new Set([...(rolesData?.roles || []).map((r) => r.role).filter((r) => isExpert() || !MACHINERY_ROLES.has(r)),
+    ...(a?.role ? [a.role] : [])])];
   // Model ids are for experts; the select already says "Its own model list".
   const chain = a?.chain && isExpert()
     ? `<p class="muted">${withNames(t("Its own model list: {chain}"), {
@@ -1608,7 +1637,7 @@ function teamModelSection(s) {
       <label for="team-role">${esc(t("Role"))}</label>
       <select id="team-role" data-current="${esc(current)}">
         <option value="">${esc(t("No role: it does not start"))}</option>
-        ${roles.map((r) => `<option value="role:${esc(r)}" translate="no">${esc(r)}</option>`).join("")}
+        ${roles.map((r) => `<option value="role:${esc(r)}" translate="no">${esc(r)}${ROLE_GLOSS[r] ? ` – ${esc(ROLE_GLOSS[r])}` : ""}</option>`).join("")}
         ${current === "chain" ? `<option value="chain">${esc(t("Its own model list"))}</option>` : ""}
       </select>
       <button type="button" id="team-role-save" class="primary">${esc(t("Save"))}</button>
@@ -1630,6 +1659,7 @@ function teamRoleHint(s, value, current) {
   if (!r) return "";
   const others = (r.usedBy || []).filter((u) => u.id !== s.id).map((u) => u.name || u.id);
   return [
+    current === "chain" ? esc(t("Saving replaces its own model list.")) : "",
     value === current ? ""
       : r.pick?.label ? withNames(t("This role starts with {model} right now."), { model: r.pick.label })
         : esc(t("No model in this role has quota right now.")),
@@ -1683,13 +1713,13 @@ function renderTeamDetail() {
     ${s.error ? `<p class="status-line err" translate="no">${esc(s.error)}</p>` : ""}
     <p class="team-last">${teamLastJob(s)}</p>
     <div class="team-cols">
-      <section><h3>${esc(t("Good at"))}</h3><ul translate="no">${(s.remit || []).map((r) => `<li>${esc(capitalised(r))}</li>`).join("") || "<li>—</li>"}</ul></section>
-      <section><h3>${esc(t("Won't do"))}</h3><ul translate="no">${(s.anti_remit || []).map((r) => `<li>${esc(capitalised(r))}</li>`).join("") || "<li>—</li>"}</ul></section>
+      <section><h3>${esc(t("Good at"))}</h3><ul>${(s.remit || []).map(manifestItem).join("") || "<li>—</li>"}</ul></section>
+      <section><h3>${esc(t("Won't do"))}</h3><ul>${(s.anti_remit || []).map(manifestItem).join("") || "<li>—</li>"}</ul></section>
     </div>
     <section><h3>${esc(t("Skills"))}</h3>
-      <h4>${esc(t("Built-in skills"))}</h4>
+      ${isExpert() ? `<h4>${esc(t("Built-in skills"))}</h4>
       <p class="muted">${withNames(t("They come with {name} and always stay."), { name })}</p>
-      <p class="caps" translate="no">${chips(bundled)}</p>
+      <p class="caps" translate="no">${chips(bundled)}</p>` : ""}
       <h4>${esc(t("Added extras"))}</h4>
       ${teamExtras(s)}
     </section>
@@ -1809,6 +1839,12 @@ $("#team-detail").addEventListener("click", async (e) => {
       title: withNames(t("Turn {name} off?"), { name }),
       text: withNames(t("Without a role {name} does not start, and nothing hands it work. Pick a role again to turn it back on."), { name }),
       yes: t("Turn off"),
+    })) return;
+    // `{ role }` drops its own list, and nothing keeps a copy.
+    if (role && $("#team-role").dataset.current === "chain" && !await confirmDialog({
+      title: esc(t("Replace its own model list?")),
+      text: withNames(t("{name} runs on its own list of models. With the role {role} that list is gone; “Custom model list…” sets a new one."), { name, role }),
+      yes: t("Replace"),
     })) return;
     await assignSpecialist(s.id, role ? { role } : {}, role
       ? withNames(t("{name} now works in the role {role}."), { name, role })
