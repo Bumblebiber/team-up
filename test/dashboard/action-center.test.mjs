@@ -217,6 +217,15 @@ test("item detail: the whole subject, and the body without the line it came from
   assert.equal(ask("h").subject, "keep A?");
   assert.match(ask("h").body, /^Some context first\.\n+Details\.$/, "the heading is the subject, not a second line below it");
   assert.equal(ask("p").body, "## Pane\nAllow this tool?", "a problem keeps the judge's text whole for the technical details");
+  const more = reader({
+    f: { "QUESTIONS.md": ["Run this?\n\n```bash\n# backup first\nnpm ci\n```", "2026-10-13T10:00:00Z"] },
+    d: { "QUESTIONS.md": ["Subject: Keep the old login?\n\n# Keep the old login?\n\nIt still works.", "2026-10-13T10:00:00Z"] },
+  });
+  const fenced = buildActionItem({ runId: "f", role: "x", status: "waiting_human" }, { read: more, now });
+  assert.equal(fenced.subject, "Run this?", "a # comment in a code block is no heading");
+  assert.match(fenced.body, /# backup first\nnpm ci/, "and it stays in the code");
+  const twice = buildActionItem({ runId: "d", role: "x", status: "waiting_human" }, { read: more, now });
+  assert.equal(twice.body, "It still works.", "a heading that repeats the Subject line shows once");
 });
 
 test("item detail: the whole newest question, the earlier one with its answer, the task, the result", () => {

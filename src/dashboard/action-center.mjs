@@ -33,18 +33,39 @@ const HEADING = /^#{1,6}\s+(?=\S)/;
 const QUESTION_PREFIX = /^(?:frage|question|decision needed)\s*:\s*/i;
 const plain = (s) => s.replace(/\*\*|`/g, "");
 
+const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+const headingText = (line) => oneLine(plain(line.replace(HEADING, "")).replace(QUESTION_PREFIX, ""));
+
+/** The first heading outside a fenced code block, where `# …` is a comment: its line index, or -1. */
+function firstHeading(lines) {
+  let fence = null;
+  for (const [i, line] of lines.entries()) {
+    if (fence) {
+      if (line.trim().startsWith(fence)) fence = null; // md.js closes a fence the same way
+    } else if (FENCE.test(line)) fence = line.match(FENCE)[1];
+    else if (HEADING.test(line)) return i;
+  }
+  return -1;
+}
+
 /**
  * A question's subject, whole, and its body without the line the subject came
- * from: a `Subject:` first line or the first heading. Else the task's title or
- * the first sentence, and the body stays whole.
+ * from: a `Subject:` first line (and a heading right below that repeats it) or
+ * the first heading. Else the task's title or the first sentence, and the body
+ * stays whole.
  */
 function questionParts(text, titles = []) {
   const lines = String(text ?? "").split("\n");
-  const without = (at) => lines.filter((l, i) => i !== at).join("\n").trim();
+  const without = (...at) => lines.filter((l, i) => !at.includes(i)).join("\n").trim();
   const subject = lines[0]?.trim().match(SUBJECT_LINE)?.[1];
-  if (subject) return { subject: oneLine(plain(subject)), body: without(0) };
-  const at = lines.findIndex((l) => HEADING.test(l));
-  if (at !== -1) return { subject: oneLine(plain(lines[at].replace(HEADING, "")).replace(QUESTION_PREFIX, "")), body: without(at) };
+  if (subject) {
+    const s = oneLine(plain(subject));
+    const next = lines.findIndex((l, i) => i > 0 && l.trim());
+    const repeats = next !== -1 && HEADING.test(lines[next]) && headingText(lines[next]) === s;
+    return { subject: s, body: repeats ? without(0, next) : without(0) };
+  }
+  const at = firstHeading(lines);
+  if (at !== -1) return { subject: headingText(lines[at]), body: without(at) };
   const title = titles.find((t) => typeof t === "string" && t.trim());
   const first = lines.map((l) => l.trim()).find(Boolean) ?? "";
   return { subject: oneLine(title ?? plain(first).split(/(?<=[.?!])\s/)[0]), body: lines.join("\n").trim() };
