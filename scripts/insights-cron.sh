@@ -63,9 +63,13 @@ STAMP_ID=$(date +%Y%m%d-%H%M)
 BRANCH="insights/$STAMP_ID"
 PROMPT="${JSON%.json}.prompt.md"
 TICKET="${JSON%.json}.ticket.md"
+# The report is written in roster.json "language" (missing = en).
+REPORT_LANGUAGE=$(python3 -c 'import json, sys; print("German" if json.load(open(sys.argv[1])).get("language") == "de" else "English")' \
+  "${TEAM_UP_HOME:-$HOME/.team-up}/roster.json" 2>/dev/null || echo English)
 sed -e "s|{{REPORT_MD}}|$MD|g" -e "s|{{REPORT_JSON}}|$JSON|g" \
     -e "s|{{REPORT_DIR}}|$OUT_DIR|g" -e "s|{{TICKET}}|$TICKET|g" \
     -e "s|{{BRANCH}}|$BRANCH|g" -e "s|{{TIM_PROJECT}}|${INSIGHTS_TIM_PROJECT:-P0073}|g" \
+    -e "s|{{LANGUAGE}}|$REPORT_LANGUAGE|g" \
     "$REPO/templates/insights-evaluator.md" > "$PROMPT"
 
 # The evaluator runs as a team-up worker on the CLI×model chosen in
