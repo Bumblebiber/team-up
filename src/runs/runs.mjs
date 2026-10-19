@@ -745,6 +745,24 @@ export function linkDispatchToRun(runId, session, { model, cli, effort, fast, he
   return true;
 }
 
+// The markers writeAnswer and escalateRun write. Bounded, so a run of unclosed
+// "<!--" in agent text stays linear.
+const SOURCE_MARKER = /<!-- source: [^\n<>]{1,100} -->/g;
+export const stripSourceMarkers = (text) => String(text ?? "").replace(SOURCE_MARKER, "");
+
+/**
+ * QUESTIONS.md as blocks, oldest first. escalateRun joins blocks with `---`
+ * before a source marker, so a question's own `---` rules stay inside it. A
+ * block's source is its leading marker, never one inside the question's text;
+ * a block without one is the worker's own.
+ */
+export function questionBlocks(raw) {
+  return String(raw ?? "").split(/\n---\n\n(?=<!-- source:)/).map((block) => ({
+    source: block.match(/^\s*<!-- source: (\S+) -->/)?.[1] ?? "worker",
+    text: stripSourceMarkers(block).trim(),
+  })).filter((b) => b.text);
+}
+
 export function writeAnswer(runId, body, { source = "parent" } = {}) {
   const header = `<!-- source: ${source} -->\n`;
   atomicWriteText(path.join(mailboxDir(runId), "ANSWER.md"), header + body.trim() + "\n");

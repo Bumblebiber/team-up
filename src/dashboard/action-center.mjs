@@ -9,6 +9,9 @@
 
 import { buildRunRow } from "./data.mjs";
 import { t } from "./i18n.mjs";
+import { questionBlocks, stripSourceMarkers } from "../runs/runs.mjs";
+
+export { questionBlocks };
 
 /** Order of the kinds in the list; inside a kind the newest comes first. */
 export const KIND_RANK = { question: 0, problem: 1, result: 2 };
@@ -24,19 +27,8 @@ function clip(text, max) {
   return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
 }
 
-/**
- * QUESTIONS.md as blocks, oldest first. escalateRun joins blocks with `---`
- * before a source marker, so a question's own `---` rules stay inside it; a
- * block without a marker is the worker's own.
- */
-export function questionBlocks(raw) {
-  return String(raw ?? "").split(/\n---\n\n(?=<!-- source:)/).map((block) => ({
-    source: [...block.matchAll(/<!-- source: (\S+) -->/g)].at(-1)?.[1] ?? "worker",
-    text: block.replace(/<!--[\s\S]*?-->/g, "").trim(),
-  })).filter((b) => b.text);
-}
-
-const SUBJECT_LINE = /^subject:[ \t]*(.+)$/i;
+// No `$`: before a U+2028, where `.` stops, it backtracked through a space run.
+const SUBJECT_LINE = /^subject:[ \t]*([^\n]+)/i;
 const QUESTION_PREFIX = /^(?:frage|question|decision needed)\s*:\s*/i;
 const plain = (s) => s.replace(/\*\*|`/g, "");
 
@@ -201,7 +193,7 @@ export function buildActionItem(state, ctx) {
   const answer = read(state.runId, "ANSWER.md");
   const blocks = questionBlocks(questions?.text);
   const last = blocks.at(-1) ?? null;
-  const answerText = answer ? answer.text.replace(/<!--[\s\S]*?-->/g, "").trim() : null;
+  const answerText = answer ? stripSourceMarkers(answer.text).trim() : null;
   const answeredNow = answeredAfterQuestion(questions, answer);
   const history = blocks.slice(0, -1).map((b) => ({ source: b.source, question: b.text, answer: null }));
   if (answerText && !answeredNow && questions) {

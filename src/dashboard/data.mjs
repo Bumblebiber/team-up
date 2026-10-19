@@ -1,4 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
 import { pick, limits } from "../roster/chain.mjs";
+import { runDir } from "../runs/runs.mjs";
+import { assertPathInsideRoot } from "../specialists/safe-id.mjs";
 import { SESSION_PREFIX } from "./projects.mjs";
 import { DEFAULT_UNCOLLECTED_DAYS } from "../runs/collect.mjs";
 
@@ -251,4 +255,43 @@ export function readMailboxFiles(runId, { readFile, runRoot, maxBytes = 256 * 10
     }
   }
   return out;
+}
+
+/** A mailbox file with its mtime, for the Inbox and the job cards; null when missing or unsafe. */
+export function readMailbox(runId, name, maxBytes = 256 * 1024) {
+  try {
+    const root = runDir(runId);
+    const text = safeReadMailboxFile(name, root, maxBytes);
+    return text == null ? null : { text, mtimeMs: fs.statSync(path.join(root, "mailbox", name)).mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+export function safeReadMailboxFile(name, runRoot, maxBytes = 256 * 1024) {
+  if (name.includes("..") || name.includes("/") || name.includes("\\")) {
+    throw new Error("invalid mailbox file name");
+  }
+  const realRunsRoot = fs.realpathSync(path.dirname(runRoot));
+  const realRunRoot = fs.realpathSync(runRoot);
+  const realMailbox = fs.realpathSync(path.join(runRoot, "mailbox"));
+  assertPathInsideRoot(realRunRoot, realRunsRoot);
+  assertPathInsideRoot(realMailbox, realRunRoot);
+  const filePath = assertPathInsideRoot(path.join(runRoot, "mailbox", name), runRoot);
+  let fd;
+  try {
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    // O_NONBLOCK: a FIFO opens at once, and fails this check, instead of blocking the server.
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error("invalid mailbox file");
+    const buffer = Buffer.alloc(Math.min(stat.size, maxBytes));
+    const read = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const content = buffer.subarray(0, read).toString("utf8");
+    return stat.size > maxBytes ? `${content}\n… [truncated]` : content;
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }

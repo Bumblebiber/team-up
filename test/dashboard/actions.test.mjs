@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
 import { clearMarkAction, markLimitedAction, markTargets, runAction } from "../../src/dashboard/actions.mjs";
 import { loadState } from "../../src/runs/runs.mjs";
 
@@ -101,4 +102,17 @@ test("merged and discarded also mark the result read; never on a run still going
   runAction("20261019T130000Z-took", "discarded");
   assert.equal(loadState("20261019T130000Z-took").outcome.value, "discarded");
   assert.deepEqual(loadState("20261019T130000Z-took").collected, collected);
+});
+
+test("answer reads the mailbox as the Inbox does: a FIFO for ANSWER.md is no answer and blocks nothing", () => {
+  plant("20261019T120000Z-fifo", "waiting_human");
+  const mb = path.join(home, "runs", "20261019T120000Z-fifo", "mailbox");
+  fs.writeFileSync(path.join(mb, "QUESTIONS.md"), "A or B?\n");
+  execFileSync("mkfifo", [path.join(mb, "ANSWER.md")]);
+  // In a child: a blocking open would hang this whole test run.
+  const actions = new URL("../../src/dashboard/actions.mjs", import.meta.url).href;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e",
+    `import { runAction } from ${JSON.stringify(actions)}; console.log(runAction("20261019T120000Z-fifo", "answer", { reason: "B" }).status);`],
+  { env: process.env, timeout: 10_000, encoding: "utf8" });
+  assert.equal(r.stdout.trim(), "watching", r.stderr || `ended by ${r.signal}`);
 });

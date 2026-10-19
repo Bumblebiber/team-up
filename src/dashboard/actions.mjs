@@ -12,8 +12,8 @@ import { usagePath, usageWritePath, teamUpHome } from "../paths.mjs";
 import { markLimited } from "../roster/chain.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import { resetCap } from "../admission/admission.mjs";
-import { cancelRun, loadState, mailboxDir, markCollected, setOutcome, setStatus, writeAnswer } from "../runs/runs.mjs";
-import { isValidRunId } from "./data.mjs";
+import { cancelRun, loadState, markCollected, setOutcome, setStatus, writeAnswer } from "../runs/runs.mjs";
+import { isValidRunId, readMailbox } from "./data.mjs";
 import { answeredAfterQuestion, inboxItem, questionBlocks } from "./action-center.mjs";
 import { readSpenderLedger } from "./run-project.mjs";
 
@@ -96,14 +96,7 @@ export function runAction(runId, action, { reason, env = process.env } = {}) {
   // An outcome on a running run would half-apply: recorded, but not collectable.
   if ((action === "merged" || action === "discarded") && !terminal) throw new Error(`run is still ${state.status}`);
   if (action === "answer" || action === "retry") {
-    const file = (name) => {
-      try {
-        const p = path.join(mailboxDir(runId), name);
-        return { text: fs.readFileSync(p, "utf8"), mtimeMs: fs.statSync(p).mtimeMs };
-      } catch {
-        return null;
-      }
-    };
+    const file = (name) => readMailbox(runId, name);
     const questions = file("QUESTIONS.md");
     // A second send would resume a parked run twice or overwrite the first answer.
     if (answeredAfterQuestion(questions, file("ANSWER.md"))) {
@@ -119,7 +112,7 @@ export function runAction(runId, action, { reason, env = process.env } = {}) {
     }
     if (action === "retry") {
       // The Inbox's own rule, so the button and the action never disagree.
-      const item = inboxItem(state, { read: (id, name) => file(name), ledger: readSpenderLedger(env) });
+      const item = inboxItem(state, { read: readMailbox, ledger: readSpenderLedger(env) });
       if (item?.kind !== "problem") throw new Error("only a technical problem can be retried; a question needs an answer");
       if (!item.retryable) {
         throw new Error("only a run the usage-spender parked can be retried, never one stopped on a credential or billing prompt: cancel it instead");

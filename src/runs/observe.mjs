@@ -12,6 +12,7 @@ import {
   captureTmuxPane,
   loadState,
   mailboxDir,
+  questionBlocks,
   setStatus,
 } from "./runs.mjs";
 import { pick } from "../roster/chain.mjs";
@@ -492,8 +493,7 @@ export function isProcessAlive(pid) {
 
 /** QUESTIONS.md whose last block the observer appended (escalateRun). */
 function questionsFromObserver(file) {
-  const sources = [...fs.readFileSync(file, "utf8").matchAll(/<!-- source: (\S+) -->/g)];
-  return sources.at(-1)?.[1] === "observer";
+  return questionBlocks(fs.readFileSync(file, "utf8")).at(-1)?.source === "observer";
 }
 
 /** Seconds since the newest of `files` in the mailbox; Infinity when none exists. */
@@ -591,7 +591,8 @@ export function escalateRun(runId, question, { source = "observer" } = {}) {
   const newBlock = [
     `<!-- source: ${source} -->`,
     "",
-    String(question || "Worker pane needs human attention.").trim(),
+    // The judge's text comes from the pane: a comment in it could pose as a source marker.
+    String(question || "Worker pane needs human attention.").trim().replace(/<!--/g, "<!—"),
     "",
   ].join("\n");
   const body = existing?.trim()
