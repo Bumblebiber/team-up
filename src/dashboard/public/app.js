@@ -79,7 +79,7 @@ function updateDashboardMetrics() {
   $("#kpi-worst-usage").textContent = worst ? `${worst[1].usedPct}%` : "—";
   $("#kpi-worst-usage-detail").textContent = worst
     ? `${worst[0]} · ${usageLevelName(worst[1].level)}`
-    : t("No usage windows");
+    : t("No usage readings yet");
   const usageLevel = Object.values(dashboardMetrics.usage?.windows || {}).some((window) => window.level === "red")
     ? "red"
     : Object.values(dashboardMetrics.usage?.windows || {}).some((window) => window.level === "amber")

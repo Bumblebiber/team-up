@@ -144,8 +144,6 @@ const I18N_DE = {
   "By project": "Nach Projekt",
   "Needs attention": "Braucht deine Aufmerksamkeit",
   "Dashboard overview": "Dashboard-Übersicht",
-  "Worst usage window": "Am stärksten ausgelastet",
-  "No usage windows": "Keine Kontingente",
   "High-priority TIM tasks": "TIM-Aufgaben mit hoher Priorität",
   "View TIM work": "TIM-Arbeit ansehen",
   "Usage": "Nutzung",
@@ -326,8 +324,8 @@ const I18N_DE = {
   "Set it up in a form instead": "Lieber im Formular einrichten",
 
   // Scheduled jobs (#/automation)
-  "Everything team-up runs on a schedule — what it does, when it runs next, what it costs — and jobs of your own: a prompt, a project folder, a model and a schedule.":
-    "Alles, was team-up nach Zeitplan ausführt – was es tut, wann es als Nächstes läuft, was es kostet – und deine eigenen Aufgaben: ein Prompt, ein Projektordner, ein Modell und ein Zeitplan.",
+  "Work that runs by itself on a schedule: what team-up does, when, and what it costs — plus jobs of your own.":
+    "Arbeit, die von selbst nach Zeitplan läuft: was team-up tut, wann und was es kostet – dazu deine eigenen Aufgaben.",
   "Your jobs": "Deine Aufgaben",
   "+ New job": "+ Neue Aufgabe",
   "Built-in jobs": "Eingebaute Aufgaben",
@@ -412,6 +410,144 @@ const I18N_DE = {
     "Nach einem Neustart wegen Speichermangels begrenzt team-up die Worker 24 Stunden lang; das hebt die Begrenzung jetzt auf",
   "Cap lifted.": "Begrenzung aufgehoben.",
   "There was no cap to lift.": "Es gab keine Begrenzung aufzuheben.",
+  // Static page text (index.html), translated once at boot by translateStatic()
+  "team-up dashboard": "team-up-Dashboard",
+  "Paste the access key from this file on the server:": "Füge den Zugangsschlüssel aus dieser Datei auf dem Server ein:",
+  "Access key": "Zugangsschlüssel",
+  "Sign in": "Anmelden",
+  "Changes need a confirmation code. The terminal that runs the dashboard prints it:":
+    "Änderungen brauchen einen Bestätigungscode. Das Terminal, in dem das Dashboard läuft, zeigt ihn an:",
+  "Request code": "Code anfordern",
+  "Confirm": "Bestätigen",
+  "Highest usage": "Höchste Auslastung",
+  "No usage readings yet": "Noch keine Nutzungswerte",
+  "Mark a model, provider or CLI as limited…": "Modell, Anbieter oder CLI als begrenzt markieren…",
+  "Takes it out of every chain until the time runs out — for a limit team-up cannot see (an API error, a provider outage).":
+    "Nimmt es aus jeder Kette, bis die Zeit abgelaufen ist – für ein Limit, das team-up nicht sieht (ein API-Fehler, ein Ausfall beim Anbieter).",
+  "Model, provider or CLI": "Modell, Anbieter oder CLI",
+  "Hours": "Stunden",
+  "Reason (optional)": "Grund (optional)",
+  "Mark limited": "Als begrenzt markieren",
+  "Live worker terminals, and the mailbox runs behind them. Click a run to read its prompt and result and to close it out.":
+    "Laufende Agenten-Terminals und die Mailbox-Aufträge dahinter. Klick auf einen Auftrag, um Prompt und Ergebnis zu lesen und ihn abzuschließen.",
+  "Terminals": "Terminals",
+  "Claude sessions": "Claude-Sitzungen",
+  "Every live Claude Code session on this host, the desktop app's chats included. A message arrives as a note from another session: the session acts on it within its own permissions. A terminal session or a working chat takes it at once; an idle desktop chat may hold it until it runs again. Stop ends the process; the conversation stays and the app restarts it on its next message.":
+    "Jede laufende Claude-Code-Sitzung auf diesem Rechner, die Chats der Desktop-App eingeschlossen. Eine Nachricht kommt als Notiz aus einer anderen Sitzung an: Die Sitzung handelt im Rahmen ihrer eigenen Rechte. Eine Terminal-Sitzung oder ein arbeitender Chat nimmt sie sofort an; ein untätiger Desktop-Chat hält sie eventuell zurück, bis er wieder läuft. Stoppen beendet den Prozess; die Unterhaltung bleibt, und die App startet sie mit der nächsten Nachricht neu.",
+  "outside tmux too": "auch außerhalb von tmux",
+  "Runs": "Aufträge",
+  "Running, or finished in the last 7 days and not yet collected": "Laufend oder in den letzten 7 Tagen beendet und noch nicht abgeholt",
+  "open only": "nur offene",
+  "What each project remembers: open tasks, ideas and bugs to start work on, and the whole memory to browse.":
+    "Was sich jedes Projekt merkt: offene Aufgaben, Ideen und Fehler, an denen du die Arbeit starten kannst, und das ganze Gedächtnis zum Durchstöbern.",
+  "View": "Ansicht",
+  "Open work": "Offene Arbeit",
+  "Explorer": "Explorer",
+  "Tasks": "Aufgaben",
+  "Ideas": "Ideen",
+  "Bugs": "Fehler",
+  "TIM explorer": "TIM-Explorer",
+  "A role is a job description with a fallback chain of models: the first one with quota left does the work. Drag a model from the roster onto a role to add it, drag chips to reorder a chain, ✕ or drag back to the roster to remove.":
+    "Eine Rolle ist eine Stellenbeschreibung mit einer Ersatzkette von Modellen: Das erste mit freiem Kontingent macht die Arbeit. Zieh ein Modell aus dem Roster auf eine Rolle, um es hinzuzufügen, zieh Chips, um eine Kette umzusortieren, und entferne einen mit ✕ oder indem du ihn zurück ins Roster ziehst.",
+  "Roles": "Rollen",
+  "+ Role": "+ Rolle",
+  "new role name": "Name der neuen Rolle",
+  "New role name": "Name der neuen Rolle",
+  "drop the first model here": "erstes Modell hier ablegen",
+  "Roster": "Roster",
+  "Every model team-up may use, by the CLI it runs on. Drag one onto a role.":
+    "Jedes Modell, das team-up nutzen darf, nach der CLI, auf der es läuft. Zieh eines auf eine Rolle.",
+  "Add or remove models": "Modelle hinzufügen oder entfernen",
+  "Subscription": "Abo",
+  "API key": "API-Schlüssel",
+  "Filter models…": "Modelle filtern…",
+  "Ask every CLI which models it offers now (takes a minute or two)":
+    "Jede CLI fragen, welche Modelle sie gerade anbietet (dauert ein, zwei Minuten)",
+  "Rescan CLIs": "CLIs neu abfragen",
+  "Always-on parts of team-up (systemd user units), shown for information. Manage them in a terminal:":
+    "Dauerhaft laufende Teile von team-up (systemd-User-Units), nur zur Information. Verwalten kannst du sie im Terminal:",
+  "How team-up and TIM reach you, and what happens when you answer.":
+    "Wie team-up und TIM dich erreichen und was passiert, wenn du antwortest.",
+  "How it works": "So funktioniert es",
+  "Every job sends to one place.": "Jede Aufgabe meldet sich an genau einer Stelle.",
+  "That is a Telegram bot, or only the bell at the top of this dashboard (no push on your phone).":
+    "Das ist ein Telegram-Bot oder nur die Glocke oben in diesem Dashboard (ohne Push aufs Handy).",
+  "Every Telegram message ends with where it came from:": "Jede Telegram-Nachricht endet mit ihrer Herkunft:",
+  "📂 folder · 🤖 AI tool and model · 🧵 session.": "📂 Ordner · 🤖 KI-Werkzeug und Modell · 🧵 Sitzung.",
+  "A report from a plain script says so instead.": "Bei einem Bericht von einem einfachen Skript steht stattdessen das.",
+  "Reply to a message to continue its session.": "Antworte auf eine Nachricht, um ihre Sitzung fortzusetzen.",
+  "In Telegram, swipe the message (or long-press → Reply) and write. Your text goes into exactly that session; its answer comes back as a reply, with the same footer. A message from a script, or a message you write without replying to one, starts a new session (settings under Replies).":
+    "Wisch in Telegram über die Nachricht (oder drück lange darauf → Antworten) und schreib. Dein Text geht genau in diese Sitzung; ihre Antwort kommt als Antwort zurück, mit derselben Fußzeile. Eine Nachricht von einem Skript oder eine, die du schreibst, ohne auf eine zu antworten, startet eine neue Sitzung (Einstellungen unter Antworten).",
+  "Where messages go": "Wohin Nachrichten gehen",
+  "Most jobs stay silent until something needs you. A change applies to the next message.":
+    "Die meisten Aufgaben bleiben still, bis etwas dich braucht. Eine Änderung gilt ab der nächsten Nachricht.",
+  "Replies": "Antworten",
+  "Bots": "Bots",
+  "+ Add a bot": "+ Bot hinzufügen",
+  "In Telegram, send /newbot to @BotFather and pick a name. It answers with a token (the bot's password).":
+    "Schick in Telegram /newbot an @BotFather und such dir einen Namen aus. Als Antwort kommt ein Token (das Passwort des Bots).",
+  "Open the new bot and press Start: a bot may only write to chats that opened it.":
+    "Öffne den neuen Bot und tippe auf Starten: Ein Bot darf nur in Chats schreiben, die ihn geöffnet haben.",
+  "Paste the token here. team-up checks it with Telegram and keeps it in a file only you can read; this page only ever shows its last four characters.":
+    "Füg das Token hier ein. team-up prüft es bei Telegram und bewahrt es in einer Datei auf, die nur du lesen kannst; diese Seite zeigt immer nur seine letzten vier Zeichen.",
+  "Bot token": "Bot-Token",
+  "Chat ID (optional)": "Chat-ID (optional)",
+  "Chat ID, only if not your own": "Chat-ID, nur wenn es nicht deine eigene ist",
+  "Add bot": "Bot hinzufügen",
+  "Leave the chat ID empty: the bot then writes to you, like the others.":
+    "Lass die Chat-ID leer: Dann schreibt der Bot dir, wie die anderen.",
+  "How each model provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.":
+    "Wie sich jeder Modell-Anbieter anmeldet: mit einem API-Schlüssel, den team-up verwahrt, mit der eigenen Anmeldung einer CLI oder mit einem Schlüssel, den die CLI selbst aufbewahrt.",
+  "The agent CLIs team-up drives: version, harness check, install, update and login. Click a row for its job log.":
+    "Die Agenten-CLIs, die team-up steuert: Version, Harness-Prüfung, Installation, Update und Anmeldung. Klick auf eine Zeile für ihr Job-Log.",
+  "Agent CLIs": "Agenten-CLIs",
+  "New AI repositories on GitHub, from the newest daily report of the trending scraper.":
+    "Neue KI-Repositorys auf GitHub, aus dem neuesten Tagesbericht des Trend-Scrapers.",
+  "Repositories": "Repositorys",
+  "Section": "Abschnitt",
+  "Click the screen and type: keys go straight to the session. Ctrl-C, Esc and the arrow keys reach it too; Ctrl-Esc closes the overlay.":
+    "Klick auf den Bildschirm und tippe: Die Tasten gehen direkt an die Sitzung. Strg-C, Esc und die Pfeiltasten kommen auch an; Strg-Esc schließt das Fenster.",
+  "Prompt": "Prompt",
+  "Chain entry": "Ketteneintrag",
+  "CLI · model · effort · fast": "CLI · Modell · Aufwand · schnell",
+  "Effort \"default\" = the model's own default, or the role's effort if it has one.":
+    "Aufwand „Standard“ = der eigene Standard des Modells oder der Aufwand der Rolle, falls sie einen hat.",
+  "Effort for the whole role": "Aufwand für die ganze Rolle",
+  "Chain — tried top to bottom; the first model with budget left wins":
+    "Kette – von oben nach unten probiert; das erste Modell mit freiem Kontingent gewinnt",
+  "+ Model": "+ Modell",
+  "Pinned version = the entry stays on that exact version even when a newer one ships.":
+    "Festgepinnte Version = der Eintrag bleibt genau bei dieser Version, auch wenn eine neuere erscheint.",
+  "Model still in use": "Modell wird noch genutzt",
+  "Replace it with": "Ersetzen durch",
+  "Remove from chains": "Aus den Ketten entfernen",
+  "Replace": "Ersetzen",
+  "New job": "Neue Aufgabe",
+  "On schedule, a helper starts in the project folder and does what the prompt says, with the model you pick. What it reports goes to the job's log, and to Telegram if you like.":
+    "Nach Zeitplan startet ein Helfer im Projektordner und tut, was im Prompt steht, mit dem Modell, das du auswählst. Was er berichtet, landet im Log der Aufgabe und, wenn du willst, auch in Telegram.",
+  "Lowercase letters, digits and dashes.": "Kleinbuchstaben, Ziffern und Bindestriche.",
+  "What it is for": "Wofür sie da ist",
+  "One line, shown in the list": "Eine Zeile, erscheint in der Liste",
+  "Schedule preset": "Zeitplan-Vorlage",
+  "Every hour": "Stündlich",
+  "Every 6 hours": "Alle 6 Stunden",
+  "Daily at 06:00": "Täglich um 06:00",
+  "Nightly at 02:00": "Nachts um 02:00",
+  "Weekdays at 09:00": "Montags bis freitags um 09:00",
+  "Mondays at 06:00": "Montags um 06:00",
+  "Monthly on the 1st at 06:00": "Monatlich am 1. um 06:00",
+  "Custom (cron)…": "Eigener Zeitplan (cron)…",
+  "Cron schedule": "Zeitplan (cron)",
+  "Project folder": "Projektordner",
+  "What should the helper do each time? Be specific: where to look, what to change or report, when to stop.":
+    "Was soll der Helfer jedes Mal tun? Sei konkret: wo er nachsehen soll, was er ändern oder melden soll, wann er aufhören soll.",
+  "Send the result to Telegram": "Ergebnis an Telegram schicken",
+  "Enabled": "Eingeschaltet",
+  "Save job": "Aufgabe speichern",
+  "Colour": "Farbe",
+  "No colour": "Keine Farbe",
+  "Reset this widget": "Dieses Widget zurücksetzen",
+  "Done": "Fertig",
 };
 
 function t(en, vars) {
@@ -444,23 +580,34 @@ function fmtDateTime(iso) {
   return new Intl.DateTimeFormat(LANG, { dateStyle: "short", timeStyle: "short" }).format(d);
 }
 
-const I18N_SKIP = 'code, pre, textarea, script, style, [translate="no"], [data-no-i18n]';
+// Skipped with everything inside, their own attributes too: agent content, names, ids.
+const I18N_SKIP = '[translate="no"], [data-no-i18n]';
+// Only their text is skipped: a textarea's placeholder is still the page's own words.
+const I18N_TEXT_SKIP = "code, pre, textarea, script, style";
 const I18N_ATTRS = ["placeholder", "title", "aria-label"];
+
+/** The dictionary key of a static text: trimmed, each run of whitespace one space. */
+const i18nKey = (text) => text.trim().replace(/\s+/g, " ");
 
 /**
  * Translate static markup under root once: text nodes and the placeholder,
- * title and aria-label attributes whose trimmed text is a dictionary key.
- * Agent content, names and ids sit in a [translate="no"] or [data-no-i18n]
- * subtree and are left alone, as are code, pre and textarea.
+ * title and aria-label attributes whose text (as i18nKey reads it) is a
+ * dictionary key. A [translate="no"] or [data-no-i18n] subtree is left alone;
+ * so is the text in code, pre and textarea. test/dashboard/i18n.test.mjs reads
+ * index.html by the same rules.
  */
 function translateStatic(root = document.body) {
   if (LANG === "en" || !root || (root.nodeType === 1 && root.matches(I18N_SKIP))) return;
+  // The whole text between its outer whitespace, which stays.
   const swap = (text) => {
-    const key = text.trim();
-    return key && Object.hasOwn(I18N_DE, key) ? text.replace(key, () => I18N_DE[key]) : text;
+    const key = i18nKey(text);
+    return key && Object.hasOwn(I18N_DE, key) ? text.replace(/^(\s*)[\s\S]*?(\s*)$/, (m, lead, tail) => lead + I18N_DE[key] + tail) : text;
   };
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (n.nodeType === 1 && n.matches(I18N_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    acceptNode: (n) => {
+      const skip = n.nodeType === 1 ? n.matches(I18N_SKIP) : n.parentElement?.closest(I18N_TEXT_SKIP);
+      return skip ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+    },
   });
   for (let n = root; n; n = walker.nextNode()) {
     if (n.nodeType === 3) n.nodeValue = swap(n.nodeValue);

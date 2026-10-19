@@ -9,10 +9,10 @@
 <body>
   <div id="login" class="login hidden">
     <h1>team-up dashboard</h1>
-    <p>Enter the token from <code>~/.team-up/dashboard-token</code></p>
+    <p>Paste the access key from this file on the server: <code>~/.team-up/dashboard-token</code></p>
     <form id="login-form">
-      <input type="password" id="token-input" autocomplete="off" placeholder="Bearer token" required>
-      <button type="submit">Login</button>
+      <input type="password" id="token-input" autocomplete="off" placeholder="Access key" aria-label="Access key" required>
+      <button type="submit">Sign in</button>
     </form>
     <p id="login-error" class="error hidden"></p>
   </div>
@@ -55,7 +55,7 @@
 
     <div class="workspace">
       <div id="admin-gate" class="admin-gate hidden">
-        <p>Write actions need a confirmation code from the terminal running <code>team-up dashboard</code>.</p>
+        <p>Changes need a confirmation code. The terminal that runs the dashboard prints it: <code>team-up dashboard</code></p>
         <button type="button" id="admin-challenge-btn">Request code</button>
         <form id="admin-confirm-form" class="hidden">
           <input type="text" id="admin-code-input" placeholder="123-456" autocomplete="off">
@@ -81,7 +81,7 @@
               <span>Finished, not read yet</span><strong id="kpi-uncollected-runs">—</strong><small>Results you have not read yet</small>
             </a>
             <a class="kpi-tile" href="#/overview">
-              <span>Worst usage window</span><strong id="kpi-worst-usage">—</strong><small id="kpi-worst-usage-detail">No usage windows</small>
+              <span>Highest usage</span><strong id="kpi-worst-usage">—</strong><small id="kpi-worst-usage-detail">No usage readings yet</small>
             </a>
             <a class="kpi-tile hidden" id="kpi-tim-tile" href="#/tim">
               <span>High-priority TIM tasks</span><strong id="kpi-tim-tasks">—</strong><small>View TIM work</small>
@@ -101,7 +101,7 @@
               <p class="muted">Takes it out of every chain until the time runs out — for a limit team-up cannot see (an API error, a provider outage).</p>
               <form id="mark-form" class="form-row">
                 <select id="mark-target" required aria-label="Model, provider or CLI"></select>
-                <label class="inline">for <input type="number" id="mark-hours" value="5" min="0.25" max="336" step="0.25" required> h</label>
+                <label class="inline">Hours <input type="number" id="mark-hours" value="5" min="0.25" max="336" step="0.25" required></label>
                 <input type="text" id="mark-reason" placeholder="Reason (optional)" maxlength="200">
                 <button type="submit" class="primary">Mark limited</button>
               </form>
@@ -168,9 +168,9 @@
         <section class="view" data-view="tim">
           <header class="page-head">
             <h1>TIM memory</h1>
-            <p>What every project remembers. <em>Open work</em> lists tasks, bugs and ideas — start a session on one. <em>Explorer</em> browses the whole memory as a tree or a graph.</p>
+            <p>What each project remembers: open tasks, ideas and bugs to start work on, and the whole memory to browse.</p>
           </header>
-          <div class="segmented" id="tim-views" role="group">
+          <div class="segmented" id="tim-views" role="group" aria-label="View">
             <button type="button" class="is-active" aria-pressed="true" data-tim-view="work">Open work</button>
             <button type="button" aria-pressed="false" data-tim-view="explorer">Explorer</button>
           </div>
@@ -252,7 +252,7 @@
         <section class="view" data-view="automation">
           <header class="page-head">
             <h1>Scheduled jobs</h1>
-            <p>Everything team-up runs on a schedule — what it does, when it runs next, what it costs — and jobs of your own: a prompt, a project folder, a model and a schedule.</p>
+            <p>Work that runs by itself on a schedule: what team-up does, when, and what it costs — plus jobs of your own.</p>
           </header>
           <p id="automation-status" class="status-line" aria-live="polite"></p>
           <section id="panel-custom-jobs" class="panel">
@@ -266,7 +266,7 @@
           </section>
           <section id="panel-services" class="panel" data-expert>
             <h2>Background services</h2>
-            <p class="muted">Always-on parts of team-up (systemd user units). Shown for information; manage them with <code>systemctl --user</code>.</p>
+            <p class="muted">Always-on parts of team-up (systemd user units), shown for information. Manage them in a terminal: <code>systemctl --user</code></p>
             <div id="services" class="table-wrap"></div>
           </section>
         </section>
@@ -280,9 +280,9 @@
           <section class="panel comm-how">
             <h2>How it works</h2>
             <ol>
-              <li><strong>Every job sends to one place</strong> — a Telegram bot, or only the bell at the top of this dashboard (no push on your phone).</li>
-              <li><strong>Every Telegram message ends with where it came from:</strong> 📂 folder · 🤖 CLI and model · 🧵 session. A report from a plain script says so instead.</li>
-              <li><strong>Reply to a message to continue its session.</strong> In Telegram, swipe the message (or long-press → Reply) and write. Your text goes into exactly that session; its answer comes back as a reply, with the same footer. A message from a script, or a message you write without replying to one, starts a new session (settings under <em>Replies</em>).</li>
+              <li><strong>Every job sends to one place.</strong> <span>That is a Telegram bot, or only the bell at the top of this dashboard (no push on your phone).</span></li>
+              <li><strong>Every Telegram message ends with where it came from:</strong> <span>📂 folder · 🤖 AI tool and model · 🧵 session.</span> <span>A report from a plain script says so instead.</span></li>
+              <li><strong>Reply to a message to continue its session.</strong> <span>In Telegram, swipe the message (or long-press → Reply) and write. Your text goes into exactly that session; its answer comes back as a reply, with the same footer. A message from a script, or a message you write without replying to one, starts a new session (settings under Replies).</span></li>
             </ol>
           </section>
           <section id="panel-comm-routes" class="panel">
@@ -300,16 +300,16 @@
             <details class="inline-form" id="comm-add-box">
               <summary>+ Add a bot</summary>
               <ol class="comm-steps">
-                <li>In Telegram, write <code>/newbot</code> to <strong>@BotFather</strong> and pick a name. It answers with a token.</li>
-                <li>Open the new bot and press <strong>Start</strong> — a bot may only write to chats that opened it.</li>
-                <li>Paste the token here. team-up checks it with Telegram and keeps it in an owner-only file; this page only ever shows its last four characters.</li>
+                <li>In Telegram, send /newbot to @BotFather and pick a name. It answers with a token (the bot's password).</li>
+                <li>Open the new bot and press Start: a bot may only write to chats that opened it.</li>
+                <li>Paste the token here. team-up checks it with Telegram and keeps it in a file only you can read; this page only ever shows its last four characters.</li>
               </ol>
               <form id="comm-add" class="form-row" autocomplete="off">
                 <input id="comm-token" type="password" placeholder="123456789:AA…" size="46" required aria-label="Bot token">
-                <input id="comm-chat" type="text" inputmode="numeric" placeholder="Chat id (optional)" size="18" aria-label="Chat id, only if not your own">
+                <input id="comm-chat" type="text" inputmode="numeric" placeholder="Chat ID (optional)" size="18" aria-label="Chat ID, only if not your own">
                 <button type="submit" class="primary">Add bot</button>
               </form>
-              <p class="muted">Leave the chat id empty: the bot then writes to you, like the others.</p>
+              <p class="muted">Leave the chat ID empty: the bot then writes to you, like the others.</p>
             </details>
           </section>
         </section>
@@ -382,7 +382,7 @@
       </div>
       <pre id="pane-output" class="term-screen" tabindex="0"></pre>
       <p class="muted term-hint">
-        Click the screen and type — keys go straight to the session.
+        Click the screen and type: keys go straight to the session.
         Ctrl-C, Esc and the arrow keys reach it too; Ctrl-Esc closes the overlay.
       </p>
     </div>
@@ -509,7 +509,7 @@
   <dialog id="job-editor" class="launch-dialog wide">
     <form id="job-editor-form">
       <h2 id="job-editor-title">New job</h2>
-      <p class="muted">A worker starts in the project folder on schedule and does what the prompt says, on the model you pick. Its output lands in the job's log; optionally also on Telegram.</p>
+      <p class="muted">On schedule, a helper starts in the project folder and does what the prompt says, with the model you pick. What it reports goes to the job's log, and to Telegram if you like.</p>
       <div class="form-grid">
         <label for="job-name">Name</label>
         <div><input type="text" id="job-name" required pattern="[a-z0-9][a-z0-9\-]{0,62}" placeholder="weekly-dependency-check" autocomplete="off">
@@ -539,7 +539,7 @@
         <label for="job-model">Model</label>
         <select id="job-model" required></select>
         <label for="job-prompt">Prompt</label>
-        <textarea id="job-prompt" rows="9" required placeholder="What should the worker do each time? Be specific: where to look, what to change or report, when to stop."></textarea>
+        <textarea id="job-prompt" rows="9" required placeholder="What should the helper do each time? Be specific: where to look, what to change or report, when to stop."></textarea>
         <span></span>
         <div class="checks">
           <label class="inline"><input type="checkbox" id="job-notify"> Send the result to Telegram</label>

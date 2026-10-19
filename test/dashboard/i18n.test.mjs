@@ -14,8 +14,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const read = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
 
 // ── Coverage: every English key has a German entry ───────────────────────
-// index.html's static texts join this check with the front-end pass, which
-// calls translateStatic(); today the page is not translated at all.
 
 /** Server modules whose text goes through t(lang, "…"). */
 const SERVER_SOURCES = [
@@ -87,6 +85,64 @@ test("every t(…) and tp(…) key in app.js has an entry in the browser diction
   const keys = literalKeys(read("src/dashboard/public/app.js"));
   assert.deepEqual(keys.filter((k) => k.includes("${")), [], "whole sentences with {placeholders}");
   assert.deepEqual(untranslated(keys, clientI18n("de").I18N_DE), []);
+});
+
+/**
+ * The static texts of index.html's body as translateStatic() sees them: text
+ * nodes and placeholder/title/aria-label, whitespace collapsed; nothing in a
+ * translate="no" or data-no-i18n element (its attributes neither), no text in
+ * code, pre, textarea, script or style. Only texts with a letter: "✎" and "→"
+ * stay as they are.
+ */
+function staticTexts(html) {
+  const body = html.slice(html.indexOf("<body"), html.lastIndexOf("</body>"));
+  const VOID = new Set(["input", "br", "img", "hr", "meta", "link", "source", "col", "wbr"]);
+  const TEXT_SKIP = new Set(["code", "pre", "textarea", "script", "style"]);
+  const decode = (s) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, "\u00a0").replace(/&amp;/g, "&");
+  const out = [];
+  const keep = (raw) => {
+    const key = decode(raw).trim().replace(/\s+/g, " ");
+    if (/\p{L}/u.test(key)) out.push(key);
+  };
+  const stack = [];
+  const tags = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>|([^<]+)/g;
+  for (const [, close, tag, attrs = "", text] of body.matchAll(tags)) {
+    const top = stack.at(-1) ?? { skip: false, textSkip: false };
+    if (text !== undefined) {
+      if (!top.skip && !top.textSkip) keep(text);
+    } else if (tag && close) {
+      const at = stack.map((e) => e.tag).lastIndexOf(tag.toLowerCase());
+      if (at !== -1) stack.length = at;
+    } else if (tag) {
+      const name = tag.toLowerCase();
+      const skip = top.skip || /(?:^|\s)(?:translate="no"|data-no-i18n)/.test(attrs);
+      if (!skip) for (const [, , value] of attrs.matchAll(/(?:^|\s)(placeholder|title|aria-label)="([^"]*)"/g)) keep(value);
+      if (!VOID.has(name)) stack.push({ tag: name, skip, textSkip: top.textSkip || TEXT_SKIP.has(name) });
+    }
+  }
+  return out;
+}
+
+/** The same in every language: the brand, product and tool names, example values of a field. */
+const STATIC_ALLOW = new Set([
+  "team-up", "TIM", "CLI", "CLIs", "Telegram",
+  "weekly-dependency-check", "~/projects/my-repo", "m h dom mon dow", "https://github.com/owner/repo#ref", "123456789:AA…",
+]);
+
+test("every static text of index.html has an entry in the browser dictionary", () => {
+  const texts = staticTexts(read("src/dashboard/public/index.html"));
+  assert.ok(texts.length > 150, "the reader found the page's texts");
+  const { I18N_DE } = clientI18n("de");
+  assert.deepEqual([...new Set(texts)].filter((k) => !Object.hasOwn(I18N_DE, k) && !STATIC_ALLOW.has(k)), []);
+});
+
+test("the index.html reader follows translateStatic's rules", () => {
+  const html = `<body><p title="A tip">One
+      line <code>skip me</code></p><span translate="no" title="Not this">Nor this</span>
+    <textarea placeholder="Typed here">not this</textarea><b data-no-i18n><i>No</i></b> ✎ <input aria-label="Field">
+    <a>Sessions &amp; runs</a></body>`;
+  assert.deepEqual(staticTexts(html), ["A tip", "One line", "Typed here", "Field", "Sessions & runs"]);
 });
 
 test("the key extraction sees every call shape the sources use", () => {
