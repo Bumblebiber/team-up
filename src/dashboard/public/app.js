@@ -1604,19 +1604,24 @@ function teamModelSection(s) {
     <p class="muted">${esc(t("The role decides which AI models it works with: the first one with quota left does the job."))}</p>${chain}`;
 }
 
-/** What the picked role means: who else is in it and the model it would start with now. */
-function teamRoleHint(s, value) {
+/**
+ * What the picked role means: who else is in it and, for a new pick, the model
+ * it would start with now. Its current role has "Works with" above: the model
+ * a launch of this specialist gets, which can differ from the role's own pick.
+ */
+function teamRoleHint(s, value, current) {
   if (!value) return esc(t("Without a role it does not start."));
   if (value === "chain") return esc(t("Its own list of models, set with “Custom model list…”."));
   const r = rolesData?.roles.find((x) => x.role === value.slice(5));
   if (!r) return "";
   const others = (r.usedBy || []).filter((u) => u.id !== s.id).map((u) => u.name || u.id);
   return [
-    r.pick?.label ? withNames(t("This role starts with {model} right now."), { model: r.pick.label })
-      : esc(t("No model in this role has quota right now.")),
+    value === current ? ""
+      : r.pick?.label ? withNames(t("This role starts with {model} right now."), { model: r.pick.label })
+        : esc(t("No model in this role has quota right now.")),
     others.length ? withNames(t("Also in this role: {names}."), { names: new Intl.ListFormat(LANG, { type: "conjunction" }).format(others) })
       : esc(t("No one else is in this role.")),
-  ].join(" ");
+  ].filter(Boolean).join(" ");
 }
 
 function teamTechnical(s) {
@@ -1697,7 +1702,7 @@ function teamRoleChanged() {
   const role = $("#team-role");
   $("#team-role-save").disabled = role.value === role.dataset.current;
   const s = findSpecialist(teamSelectedId());
-  if (s) $("#team-role-hint").innerHTML = teamRoleHint(s, role.value);
+  if (s) $("#team-role-hint").innerHTML = teamRoleHint(s, role.value, role.dataset.current);
 }
 
 async function assignCapability(id, pkg, checksum, action, note) {
