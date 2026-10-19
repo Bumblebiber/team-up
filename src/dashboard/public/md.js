@@ -21,8 +21,12 @@ const renderMarkdown = (() => {
     // Bounded and without "[" in the label, so a run of brackets stays linear. An image is its link.
     // \u0001 holds the href until the end: the emphasis passes below must not reach into it.
     const hrefs = [];
-    s = s.replace(/!?\[([^[\]\n]{1,300})\]\((https?:\/\/[^\s)]{1,2000})\)/gi,
-      (m, label, href) => `<a href="\u0001${hrefs.push(href) - 1}\u0001" target="_blank" rel="noopener noreferrer">${label}</a>`);
+    // No \u0000 in the URL: a code span there would be restored inside the href. The title shows
+    // where a link goes when its label looks like another URL.
+    s = s.replace(/!?\[([^[\]\n]{1,300})\]\((https?:\/\/[^\s)\u0000]{1,2000})\)/gi, (m, label, href) => {
+      const at = `\u0001${hrefs.push(href) - 1}\u0001`;
+      return `<a href="${at}" title="${at}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    });
     // No `_` emphasis: identifiers like todo_participants are everywhere in agent text.
     // A list item's continuation lines arrive joined by \n, so emphasis may span them.
     s = s.replace(/\*\*(?=\S)([^*]+?)\*\*/g, "<strong>$1</strong>");
@@ -31,11 +35,17 @@ const renderMarkdown = (() => {
   }
 
   const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
-  // Linear on purpose: a lazy text before optional closing #s backtracks cubically on long space runs.
-  const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
+  // Linear on purpose: a lazy text before optional closing #s backtracks cubically on long space runs,
+  // and `.*$` quadratically before a U+2028, where `.` stops. Lines are split on \n already.
+  const HEADING = /^\s{0,3}(#{1,6})\s+([^\n]*)/;
   const RULE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
-  const ITEM = /^\s*([-*+]|\d{1,9}[.)])\s+(.*)$/;
-  const TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+  const ITEM = /^\s*([-*+]|\d{1,9}[.)])\s+([^\n]*)/;
+  // Never two \s* in a row without a "|" between them: a space run would backtrack through both.
+  const TABLE_SEP = /^\s*(?:\|\s*)?:?-+:?\s*(?:\|\s*:?-+:?\s*)*(?:\|\s*)?$/;
+  // Every body row gets a cell per header column: a wide header over many short rows would
+  // multiply the output. Past these it is shown as the text it is.
+  const MAX_COLUMNS = 50;
+  const MAX_CELLS = 10_000;
   const cells = (line) => line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "").split(/(?<!\\)\|/)
     .map((c) => c.trim().replace(/\\\|/g, "|"));
   const isTable = (lines, i) => lines[i].includes("|") && i + 1 < lines.length && lines[i + 1].includes("|")
@@ -77,7 +87,12 @@ const renderMarkdown = (() => {
       if (isTable(lines, i)) {
         const head = cells(line);
         const rows = [];
+        const from = i;
         for (i += 2; i < lines.length && lines[i].includes("|") && lines[i].trim(); i++) rows.push(cells(lines[i]));
+        if (head.length > MAX_COLUMNS || head.length * rows.length > MAX_CELLS) {
+          out.push(`<pre><code>${escape(lines.slice(from, i).join("\n"))}</code></pre>`);
+          continue;
+        }
         const row = (r, tag) => `<tr>${head.map((h, c) => `<${tag}>${inline(r[c] ?? "")}</${tag}>`).join("")}</tr>`;
         out.push(`<div class="md-table"><table><thead>${row(head, "th")}</thead><tbody>${rows.map((r) => row(r, "td")).join("")}</tbody></table></div>`);
         continue;

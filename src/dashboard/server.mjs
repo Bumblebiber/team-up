@@ -180,6 +180,14 @@ function rejectQueryToken(url) {
   return /(^|&)(token|auth|access_token|bearer)=/i.test(search);
 }
 
+// Agent markdown goes through innerHTML: should an escape ever slip, only the page's own
+// scripts run. Inline style attributes stay (usage bars); the TIM viewer is a same-origin frame.
+const PAGE_HEADERS = {
+  "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    + "img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-src 'self'; frame-ancestors 'none'",
+  "X-Content-Type-Options": "nosniff",
+};
+
 function createMemo(ttlMs = 1000) {
   const cache = new Map();
   return {
@@ -1530,7 +1538,7 @@ export function createDashboardServer({
       const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8")
         .replace('<html lang="en">', `<html lang="${rosterLang(env)}">`);
       // no-cache: app.js needs the i18n.js of the same build, and the page the roster's language.
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache", ...PAGE_HEADERS });
       res.end(html);
       return;
     }
@@ -1538,7 +1546,7 @@ export function createDashboardServer({
     if (["/app.js", "/app.css", "/i18n.js", "/md.js"].includes(pathname)) {
       const file = path.join(PUBLIC_DIR, path.basename(pathname));
       const ext = pathname.endsWith(".css") ? "text/css" : "application/javascript";
-      res.writeHead(200, { "Content-Type": `${ext}; charset=utf-8`, "Cache-Control": "no-cache" });
+      res.writeHead(200, { "Content-Type": `${ext}; charset=utf-8`, "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" });
       res.end(fs.readFileSync(file, "utf8"));
       return;
     }

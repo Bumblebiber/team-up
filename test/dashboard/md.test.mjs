@@ -69,7 +69,7 @@ test("no raw HTML, no event handlers, no images", () => {
 
 test("links only for http(s), with noopener; javascript: stays text", () => {
   assert.equal(md("[docs](https://example.com/a?b=1&c=2)"),
-    '<p><a href="https://example.com/a?b=1&amp;c=2" target="_blank" rel="noopener noreferrer">docs</a></p>');
+    '<p><a href="https://example.com/a?b=1&amp;c=2" title="https://example.com/a?b=1&amp;c=2" target="_blank" rel="noopener noreferrer">docs</a></p>');
   const js = md("[x](javascript:alert(1)) [y](data:text/html,hi)");
   assert.doesNotMatch(js, /<a /);
   assert.match(js, /\[x\]\(javascript:alert\(1\)\)/);
@@ -98,16 +98,45 @@ test("hostile shapes stay linear: long space runs in a heading, a run of bracket
   }
 });
 
+test("hostile shapes stay linear: a space run before U+2028 in an item or a heading, around a table separator", () => {
+  const spaces = " ".repeat(80 * 1024);
+  for (const input of [`- ${spaces}x\u2028y`, `# ${spaces}x\u2028y`, `a|b\n${spaces}|x`, `a|b\n|-${spaces}x`, `a|b\n-${spaces}|${spaces}x`]) {
+    const start = performance.now();
+    md(input);
+    // 2-3 s before.
+    assert.ok(performance.now() - start < 250, `${JSON.stringify(input.slice(0, 8))}… took ${performance.now() - start} ms`);
+  }
+  assert.equal(md("- a\u2028b"), "<ul><li>a\u2028b</li></ul>");
+  assert.equal(md("| a | b |\n| :-- | --: |  \n| 1 | 2 |"), "<div class=\"md-table\"><table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table></div>");
+});
+
+test("a table whose header would multiply its rows stays text: the output grows with the input, not columns × rows", () => {
+  const h = 2000;
+  const input = `${"|a".repeat(h)}\n|-|-\n${"|\n".repeat(h)}`;
+  const start = performance.now();
+  const html = md(input);
+  assert.ok(performance.now() - start < 250, `took ${performance.now() - start} ms`);
+  assert.ok(html.length < 4 * input.length, `${html.length} characters from ${input.length}`);
+  assert.match(html, /^<pre><code>\|a\|a/);
+  assert.doesNotMatch(html, /<table/);
+});
+
+test("a code span inside a link's URL leaves the link text; a link's title shows where it goes", () => {
+  assert.doesNotMatch(md("[x](https://a.com/`y`)"), /href="[^"]*<code>/);
+  assert.equal(md("[https://github.com/x](https://evil.example)"),
+    '<p><a href="https://evil.example" title="https://evil.example" target="_blank" rel="noopener noreferrer">https://github.com/x</a></p>');
+});
+
 test("headings drop closing hashes; an image is its link; HTTPS in capitals links; NUL cannot spoof code", () => {
   assert.equal(md("## Title ##"), "<h4>Title</h4>");
   assert.equal(md("# C#"), "<h3>C#</h3>");
-  assert.equal(md("![shot](https://e.com/a.png)"), '<p><a href="https://e.com/a.png" target="_blank" rel="noopener noreferrer">shot</a></p>');
+  assert.equal(md("![shot](https://e.com/a.png)"), '<p><a href="https://e.com/a.png" title="https://e.com/a.png" target="_blank" rel="noopener noreferrer">shot</a></p>');
   assert.match(md("[x](HTTPS://e.com)"), /<a href="HTTPS:\/\/e\.com"/);
   assert.equal(md("`a` \u00000\u0000"), "<p><code>a</code> 0</p>");
 });
 
 test("emphasis markers inside a link's URL stay in the URL", () => {
   const html = md("see [the doc](https://example.com/a**b**c/*x*/) and **this**");
-  assert.match(html, /<a href="https:\/\/example\.com\/a\*\*b\*\*c\/\*x\*\/" target="_blank"/);
+  assert.match(html, /<a href="https:\/\/example\.com\/a\*\*b\*\*c\/\*x\*\/" title="[^"]+" target="_blank"/);
   assert.match(html, /<strong>this<\/strong>/);
 });

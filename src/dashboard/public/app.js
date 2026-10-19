@@ -3294,7 +3294,14 @@ function acQuestion(body, subject) {
   return same ? { subject: heading, body: rest.join("\n") } : { subject: s, body: text };
 }
 
-const acMd = (text) => `<div class="md" translate="no">${renderMarkdown(text)}</div>`;
+// Never throws: an item whose text cannot be rendered still opens, as plain text.
+function acMd(text) {
+  try {
+    return `<div class="md" translate="no">${renderMarkdown(text)}</div>`;
+  } catch {
+    return `<pre class="ac-raw" translate="no">${esc(text)}</pre>`;
+  }
+}
 
 function acProblemHtml(item) {
   const failed = item.status === "failed";

@@ -1005,6 +1005,9 @@ test("the page carries the roster language in <html lang>, and /i18n.js and /md.
       assert.match(page, /<html lang="de">/);
       // Revalidated every load: a cached old app.js would miss this build's i18n.js globals.
       assert.equal(pageRes.headers.get("cache-control"), "no-cache");
+      // Agent markdown reaches innerHTML: only the page's own scripts may run, and nothing frames it.
+      assert.match(pageRes.headers.get("content-security-policy"), /script-src 'self';.*object-src 'none';.*frame-ancestors 'none'/);
+      assert.equal(pageRes.headers.get("x-content-type-options"), "nosniff");
       assert.ok(page.indexOf('src="/i18n.js"') < page.indexOf('src="/app.js"'));
       assert.ok(page.indexOf('src="/md.js"') < page.indexOf('src="/app.js"'));
       for (const file of ["/i18n.js", "/md.js"]) {
@@ -1012,6 +1015,7 @@ test("the page carries the roster language in <html lang>, and /i18n.js and /md.
         assert.equal(script.status, 200, file);
         assert.match(script.headers.get("content-type"), /javascript/);
         assert.equal(script.headers.get("cache-control"), "no-cache", file);
+        assert.equal(script.headers.get("x-content-type-options"), "nosniff", file);
       }
       const preview = await req(port, "/api/automation/preview?schedule=0%206%20*%20*%20*", { cookie });
       assert.equal(preview.json.text, "täglich um 06:00");
