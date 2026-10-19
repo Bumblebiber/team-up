@@ -793,6 +793,8 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .ac-answer-foot, .ac-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
 button.chip-btn { justify-self: start; border-radius: 999px; font-size: 0.85rem; }
 .ac-error { margin: 0.5rem 0 0; color: var(--red); }
+.ac-expert { margin: 0.75rem 0 0; font-size: 0.85rem; }
+.ac-expert a { color: var(--accent); }
 .ac-error:empty { display: none; }
 .ac-menu { position: relative; }
 .ac-menu > summary { margin: 0; padding: 0.32rem 0.7rem; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; list-style: none; }

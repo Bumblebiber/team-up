@@ -93,6 +93,8 @@ const I18N_DE = {
   "Nothing to answer here. Mark it as read once you have seen it.":
     "Hier gibt es nichts zu beantworten. Markiere es als gelesen, sobald du es gesehen hast.",
   "Technical details": "Technische Details",
+  "Shortened here; the full text is in the task's FAILURE.md.": "Hier gekürzt; der ganze Text steht in der FAILURE.md des Auftrags.",
+  "Open run": "Auftrag öffnen",
   "The helper left no report.": "Der Helfer hat keinen Bericht hinterlassen.",
   "Full report": "Vollständiger Bericht",
   "Retry": "Erneut versuchen",

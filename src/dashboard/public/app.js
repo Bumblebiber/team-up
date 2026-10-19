@@ -2810,11 +2810,16 @@ function renderInbox() {
 }
 
 function renderInboxList() {
-  const c = acData.counts;
-  const n = { all: c.question + c.problem + c.result, ...c };
   const filter = acFilter();
   const names = acProjectNames();
   const project = acProject(names);
+  // The chips count what the project filter leaves.
+  const n = { all: 0, question: 0, problem: 0, result: 0 };
+  for (const i of acData.items) {
+    if (project && i.project?.name !== project) continue;
+    n.all += 1;
+    n[i.kind] += 1;
+  }
   const select = $("#ac-project");
   if (JSON.stringify(names) !== acProjectsKey) {
     acProjectsKey = JSON.stringify(names);
@@ -2832,7 +2837,7 @@ function renderInboxList() {
       <span class="ac-row-subject">${acSubjectHtml(i.subject)}</span></a></li>`).join("");
   let html;
   if (rows) html = `<ul class="ac-rows">${rows}</ul>`;
-  else if (!n.all) html = `<div class="ac-empty">${esc(t("Nothing is waiting for you."))}</div>`;
+  else if (!acData.items.length) html = `<div class="ac-empty">${esc(t("Nothing is waiting for you."))}</div>`;
   else html = `<div class="ac-empty"><p>${esc(t("Nothing here with this filter."))}</p><button type="button" data-ac-showall>${esc(t("Show all"))}</button></div>`;
 
   const key = filterHtml + html;
@@ -2886,7 +2891,10 @@ const acMd = (text) => `<div class="md" translate="no">${renderMarkdown(text)}</
 
 function acProblemHtml(item) {
   const failed = item.status === "failed";
-  const reason = item.result?.reason || "";
+  // A run that left no RESULT has its reason only in the subject, cut to one line.
+  const fromSubject = String(item.subject ?? "").match(/^Failed: ([\s\S]*)$/)?.[1] ?? "";
+  const reason = item.result?.reason || fromSubject;
+  const cut = !item.result?.reason && reason.endsWith("…");
   let explain;
   if (item.subject === AC_DENIED) {
     explain = t("The helper stopped at a prompt about a password, a login or a payment. team-up never answers those for you.");
@@ -2903,7 +2911,8 @@ function acProblemHtml(item) {
   else next = t("This one cannot be retried from here. You can cancel the task.");
   const raw = failed ? [reason, item.result?.markdown].filter(Boolean).join("\n\n") : item.body;
   return `<p class="ac-explain">${esc(explain)}</p><p>${esc(next)}</p>${raw
-    ? `<details class="ac-more-info"><summary>${esc(t("Technical details"))}</summary><pre class="ac-raw" translate="no">${esc(raw)}</pre></details>` : ""}`;
+    ? `<details class="ac-more-info"><summary>${esc(t("Technical details"))}</summary><pre class="ac-raw" translate="no">${esc(raw)}</pre>${cut
+      ? `<p class="muted">${esc(t("Shortened here; the full text is in the task's FAILURE.md."))}</p>` : ""}</details>` : ""}`;
 }
 
 function acResultHtml(item) {
@@ -2965,6 +2974,7 @@ function renderDetail(item, key) {
         ? `<p class="ac-history-label">${esc(t("Your answer"))}</p>${acMd(h.answer)}` : ""}</div>`).join("")}</details>`;
   }
   body += item.answer ? acAnsweredHtml(item) : acActionsHtml(item);
+  if (isExpert()) body += `<p class="ac-expert"><a href="#/runs" data-ac-open-run>${esc(t("Open run"))}</a></p>`;
   const box = $("#ac-detail");
   box.innerHTML = `${acBackHtml()}${meta ? `<p class="ac-detail-meta">${meta}</p>` : ""}
     <h2 class="ac-subject" tabindex="-1">${acSubjectHtml(item.subject)}</h2>${body}`;
@@ -3091,6 +3101,12 @@ const acCancelDialog = $("#ac-cancel");
 let acCancelTarget = null;
 
 acDetailBox.addEventListener("click", (e) => {
+  if (e.target.closest("[data-ac-open-run]") && acDetail) {
+    e.preventDefault();
+    location.hash = "#/runs";
+    selectRun(acDetail.runId);
+    return;
+  }
   if (e.target.closest("[data-ac-recommend]")) {
     const box = $("#ac-answer-text");
     box.value = t("Go with your recommendation.");
