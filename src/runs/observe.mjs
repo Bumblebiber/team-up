@@ -70,6 +70,8 @@ const VALID_STATES = new Set([
   "working", "waiting_input", "finished", "crashed", "login_required", "unknown",
 ]);
 const VALID_ACTIONS = new Set(["wait", "answer", "escalate"]);
+/** observerTick events that end in the judge or an escalation. */
+const STALL_EVENTS = new Set(["stall_detected", "post_answer_stall", "stall_ceiling_escalate"]);
 
 /** Trim trailing whitespace per line; preserve spinners and counters. */
 export function normalizePaneText(text) {
@@ -288,20 +290,39 @@ export function verifyVerdict(verdict, pane, ctx = {}) {
 }
 
 /**
+ * The folder Claude Code's workspace-trust dialog names, or null when the pane
+ * is not that dialog: "Accessing workspace:" above, its "Yes, I trust this
+ * folder" option and key hint the last lines on screen (all 53 captures in
+ * OBSERVATION.log, 2026-09/10). Claude Code hard-wraps a long path at the pane
+ * width and `capture-pane -J` joins only soft wraps, so the path's lines up to
+ * the next blank one are joined: an 85-char clone path read as its first 78
+ * chars, the fast path missed it and the judge asked Benni to trust the clone.
+ * Ink wraps at spaces and the join drops them, so a cwd with a space never
+ * matches (fails safe; spender clone paths have none). The last dialog on
+ * screen counts, not a stale one scrolled above it.
+ */
+export function claudeTrustWorkspace(pane) {
+  const lines = normalizePaneText(pane).split("\n").map((l) => l.trim());
+  const at = lines.lastIndexOf("Accessing workspace:");
+  const [yes, hint] = lines.filter(Boolean).slice(-2);
+  if (at === -1 || !/^(❯ )?Yes, I trust this folder$/.test(yes) || hint !== "Enter to confirm · Esc to cancel") return null;
+  const from = lines.findIndex((l, i) => i > at && l);
+  return lines.slice(from, lines.indexOf("", from)).join("");
+}
+
+/**
  * Claude Code's workspace-trust dialog, exactly as 20 claude workers sat on it
  * for 15-20 min each until the judge pressed [Down, Enter] past the 900 s
- * stall threshold (OBSERVATION.log, 2026-09; fixture in test/runs/fixtures).
+ * stall threshold (OBSERVATION.log, 2026-09; fixtures in test/runs/fixtures).
  * Only that screen matches: "No, exit" selected, and the workspace named is
- * the run's own cwd. Returns the keys, or null.
+ * the run's own cwd. Returns the keys, or null. The "No, continue without
+ * these permissions" variant (a repo with a headersHelper; none here) is
+ * deliberately not answered: the run fails instead.
  */
 export function claudeTrustPromptKeys(pane, cwd) {
-  const lines = normalizePaneText(pane).split("\n").map((l) => l.trim());
-  const at = lines.indexOf("Accessing workspace:");
-  const no = lines.indexOf("❯ No, exit");
-  if (at === -1 || no === -1) return null;
-  if (lines[no + 1] !== "Yes, I trust this folder") return null;
-  if (!lines.includes("Enter to confirm · Esc to cancel")) return null;
-  const shown = lines.slice(at + 1).find(Boolean);
+  const shown = claudeTrustWorkspace(pane);
+  const options = normalizePaneText(pane).split("\n").map((l) => l.trim()).filter(Boolean).slice(-3, -1);
+  if (shown === null || options.join("\n") !== "❯ No, exit\nYes, I trust this folder") return null;
   let real = null;
   try {
     real = fs.realpathSync(cwd);
@@ -342,6 +363,9 @@ export function answerClaudeTrustPrompt({ runId, state, loop, capture, deps = {}
   return true;
 }
 
+/** roster.json `language` → how the judge's question to the human is written; anything else is English. */
+const HUMAN_LANGUAGES = { de: "German (Deutsch, informal du)" };
+
 export function buildJudgePrompt({
   pane,
   cli,
@@ -350,6 +374,7 @@ export function buildJudgePrompt({
   elapsedSec,
   mailboxAgeSec = Infinity,
   silenceSec = DEFAULT_SILENCE_SEC,
+  language,
 }) {
   return [
     "You are an observer judging a frozen terminal pane from a coding CLI worker.",
@@ -360,7 +385,7 @@ export function buildJudgePrompt({
     '"reason":"one sentence",',
     '"action":"wait|answer|escalate",',
     '"keys":["Down","Enter"],',
-    '"question":"text when action=escalate",',
+    `"question":"text when action=escalate, in ${Object.hasOwn(HUMAN_LANGUAGES, language) ? HUMAN_LANGUAGES[language] : "English"} for a non-technical reader",`,
     '"evidence":"quoted pane lines"}',
     "",
     `run_id: ${runId}`,
@@ -769,6 +794,7 @@ export function handleStall({
     elapsedSec,
     mailboxAgeSec,
     silenceSec,
+    language: roster?.language,
   });
 
   let judgeResult;
@@ -988,6 +1014,33 @@ export async function runObserver(runId, deps = {}) {
       if (answerClaudeTrustPrompt({ runId, state, loop, capture, deps })) {
         await sleep(pollSec);
         continue;
+      }
+
+      // A trust dialog is confirmed by the fast path above or by nobody: the
+      // judge, shown the same screen on two nights, once confirmed it and once
+      // asked Benni whether to trust the clone (li88, 34tq, 2026-10). One it
+      // left on screen fails the run with the reason: never a question, never
+      // a judge call. A spender implement run failed here is never retaken
+      // (usage-spender.py recently_taken) until the inbox's Retry starts one.
+      const trustFolder = STALL_EVENTS.has(next.event) && state.worker?.cli === "claude"
+        ? claudeTrustWorkspace(capture)
+        : null;
+      if (trustFolder !== null) {
+        // Which guard of answerClaudeTrustPrompt declined it, in its order.
+        const cause = !claudeTrustPromptKeys(capture, state.cwd)
+          ? "it names a folder other than the run's cwd, or its cursor is not on \"No, exit\""
+          : loop.answeredPanes.has(paneFingerprint(capture)) ? "it was confirmed once and is still showing"
+          : matchesDenyPattern(capture) ? "the screen shows credential or billing wording"
+          : "the observer's auto-answer cap is reached";
+        const reason = `observer: Claude Code is stuck on its workspace-trust dialog for ${trustFolder}`
+          + ` (run cwd ${state.cwd}): ${cause}. If that is the right folder, open Claude Code there once,`
+          + " trust it, then retry the run.";
+        appendObservationLog(runId, { kind: "decision", action: "fail", reason }, deps);
+        // FAILURE.md first, as setWorkerMailboxStatus does: runs wait and
+        // ops-run.sh (the Telegram report) read the reason there.
+        atomicWriteText(path.join(mailboxDir(runId), "FAILURE.md"), reason);
+        setStatus(runId, "failed", { reason });
+        break;
       }
 
       if (next.event === "stall_detected") {
