@@ -12,8 +12,9 @@ import { usagePath, usageWritePath, teamUpHome } from "../paths.mjs";
 import { markLimited } from "../roster/chain.mjs";
 import { atomicWriteJson } from "../json-store.mjs";
 import { resetCap } from "../admission/admission.mjs";
-import { cancelRun, loadState, markCollected, setOutcome, setStatus, writeAnswer } from "../runs/runs.mjs";
+import { cancelRun, loadState, mailboxDir, markCollected, setOutcome, setStatus, writeAnswer } from "../runs/runs.mjs";
 import { isValidRunId } from "./data.mjs";
+import { answeredAfterQuestion, questionBlocks } from "./action-center.mjs";
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../bin/team-up.mjs");
 
@@ -48,11 +49,25 @@ export function admissionResetAction({ env = process.env } = {}) {
   return { lifted: resetCap({ env }) };
 }
 
+/**
+ * Retry of a problem — a run the observer stopped on something technical (a
+ * TUI prompt, a stall, a judge failure). There is nothing to decide, so the
+ * retry is an answer that says so: a parked spender run resumes in a fresh run
+ * in the next spawn window with this text; a live run goes back to being
+ * watched, and a worker that was not really stuck (most escalations on record)
+ * reads it and goes on. The dashboard presses no keys: which key a prompt wants
+ * is the observer's judgement, with its deny patterns and caps.
+ */
+export const RETRY_ANSWER = "Retry: the stop was a technical problem in the worker's terminal (a prompt or a stall), "
+  + "not a decision for the human, so there is nothing to choose. Continue the task from where it stopped.";
+
 const RUN_ACTIONS = {
   cancel: (id) => cancelRun(id),
   collect: (id) => markCollected(id, { note: "collected in the dashboard" }),
-  merged: (id) => setOutcome(id, "merged", { note: "dashboard" }),
-  discarded: (id) => setOutcome(id, "discarded", { note: "dashboard" }),
+  // Kept or thrown away, the result has been read: it leaves the Inbox too.
+  merged: (id) => (setOutcome(id, "merged", { note: "dashboard" }), markCollected(id, { note: "dashboard: merged" })),
+  discarded: (id) => (setOutcome(id, "discarded", { note: "dashboard" }), markCollected(id, { note: "dashboard: discarded" })),
+  retry: (id) => writeAnswer(id, RETRY_ANSWER, { source: "human (dashboard retry)" }),
   fail: (id, reason) => {
     const why = String(reason || "").replace(/[\r\n]+/g, " ").trim().slice(0, 300);
     if (!why) throw new Error("a failed run needs a reason — the insights job counts failures by it");
@@ -74,8 +89,27 @@ export function runAction(runId, action, { reason } = {}) {
   if (!state) throw new Error(`unknown run ${runId}`);
   const terminal = ["done", "failed", "cancelled"].includes(state.status);
   if ((action === "cancel" || action === "fail") && terminal) throw new Error(`run is already ${state.status}`);
-  if (action === "answer" && !["waiting_human", "waiting_decision"].includes(state.status)) {
-    throw new Error(`run is no longer waiting (${state.status})`);
+  // An outcome on a running run would half-apply: recorded, but not collectable.
+  if ((action === "merged" || action === "discarded") && !terminal) throw new Error(`run is still ${state.status}`);
+  if (action === "answer" || action === "retry") {
+    const file = (name) => {
+      try {
+        const p = path.join(mailboxDir(runId), name);
+        return { text: fs.readFileSync(p, "utf8"), mtimeMs: fs.statSync(p).mtimeMs };
+      } catch {
+        return null;
+      }
+    };
+    const questions = file("QUESTIONS.md");
+    // A second send would resume a parked run twice or overwrite the first answer.
+    if (answeredAfterQuestion(questions, file("ANSWER.md"))) {
+      throw Object.assign(new Error("already answered"), { status: 409 });
+    }
+    // waiting_decision is a capacity park: an answer would knock it out of its wait.
+    if (state.status !== "waiting_human") throw new Error(`run is no longer waiting (${state.status})`);
+    if (action === "retry" && questionBlocks(questions?.text).at(-1)?.source !== "observer") {
+      throw new Error("only a technical problem can be retried; a question needs an answer");
+    }
   }
   RUN_ACTIONS[action](runId, reason);
   return { status: loadState(runId)?.status ?? null };

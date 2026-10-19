@@ -49,5 +49,32 @@ test("answer writes ANSWER.md and puts a waiting run back on watch; refused once
   assert.equal(runAction("20261013T120000Z-ansr", "answer", { reason: "Use option B." }).status, "watching");
   const answer = fs.readFileSync(path.join(home, "runs", "20261013T120000Z-ansr", "mailbox", "ANSWER.md"), "utf8");
   assert.match(answer, /Use option B\./);
-  assert.throws(() => runAction("20261013T120000Z-ansr", "answer", { reason: "again" }), /no longer waiting/);
+  assert.throws(() => runAction("20261013T120000Z-ansr", "answer", { reason: "again" }), /^Error: already answered$/);
+  assert.match(fs.readFileSync(path.join(home, "runs", "20261013T120000Z-ansr", "mailbox", "ANSWER.md"), "utf8"), /option B/);
+  plant("20261013T120000Z-cpty", "waiting_decision");
+  assert.throws(() => runAction("20261013T120000Z-cpty", "answer", { reason: "x" }), /no longer waiting \(waiting_decision\)/);
+});
+
+test("retry answers only an observer's problem, with a fixed text; a worker's question needs a real answer", () => {
+  const mb = (id) => path.join(home, "runs", id, "mailbox");
+  plant("20261019T120000Z-stck", "waiting_human");
+  fs.writeFileSync(path.join(mb("20261019T120000Z-stck"), "QUESTIONS.md"), "<!-- source: observer -->\n\nTrust this folder?\n");
+  plant("20261019T120000Z-askd", "waiting_human");
+  fs.writeFileSync(path.join(mb("20261019T120000Z-askd"), "QUESTIONS.md"), "# A or B?\n");
+  assert.throws(() => runAction("20261019T120000Z-askd", "retry"), /a question needs an answer/);
+  assert.equal(runAction("20261019T120000Z-stck", "retry").status, "watching");
+  const answer = fs.readFileSync(path.join(mb("20261019T120000Z-stck"), "ANSWER.md"), "utf8");
+  assert.match(answer, /^<!-- source: human \(dashboard retry\) -->\nRetry: the stop was a technical problem/);
+  assert.throws(() => runAction("20261019T120000Z-stck", "retry"), /already answered/);
+});
+
+test("merged and discarded also mark the result read; never on a run still going", () => {
+  plant("20261019T130000Z-mrgd", "done");
+  plant("20261019T130000Z-busy", "watching");
+  runAction("20261019T130000Z-mrgd", "merged");
+  const state = loadState("20261019T130000Z-mrgd");
+  assert.equal(state.outcome.value, "merged");
+  assert.ok(state.collected);
+  assert.throws(() => runAction("20261019T130000Z-busy", "discarded"), /still watching/);
+  assert.equal(loadState("20261019T130000Z-busy").outcome, undefined);
 });

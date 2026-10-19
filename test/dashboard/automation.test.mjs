@@ -91,6 +91,23 @@ test("editCrontab backs up before writing and leaves an unchanged crontab alone"
   assert.equal(none.state.text, `${BLOCK_START}\n@daily /r/cron-job.sh x\n${BLOCK_END}\n`);
 });
 
+test("a job run through ops-run shows how its newest run ended and why", () => {
+  const { exec } = fakeCron(LIVE);
+  const states = [
+    { runId: "a", role: "cron-golden-task", status: "done", createdAt: "2026-09-15T01:00:00Z", finishedAt: "2026-09-15T01:30:00Z" },
+    { runId: "b", role: "cron-golden-task", status: "failed", createdAt: "2026-10-15T01:00:00Z",
+      finishedAt: "2026-10-15T01:00:26Z", failure: { error: "STATUS=failed" } },
+    { runId: "c", role: "implementer", status: "failed", createdAt: "2026-10-16T01:00:00Z" },
+  ];
+  const read = (runId, name) => (runId === "b" && name === "RESULT.md"
+    ? { text: "FAILED-PREFLIGHT: see report-2026-10.md\n# Report", mtimeMs: 0 } : null);
+  const view = buildAutomationView({ exec, states, read });
+  assert.deepEqual(view.builtin.find((j) => j.id === "golden-task").lastOutcome, {
+    runId: "b", status: "failed", at: "2026-10-15T01:00:26Z", reason: "FAILED-PREFLIGHT: see report-2026-10.md",
+  });
+  assert.equal(view.builtin.find((j) => j.id === "usage-spender").lastOutcome, null, "its host is no ops-run job");
+});
+
 test("built-in jobs: found by script, explained, switchable", () => {
   const { state, exec } = fakeCron(LIVE);
   const view = buildAutomationView({ exec, now: new Date(2026, 9, 10, 13, 0) });
@@ -98,6 +115,7 @@ test("built-in jobs: found by script, explained, switchable", () => {
   assert.equal(insights.installed, true);
   assert.equal(insights.when.text, "daily at 05:37");
   assert.ok(insights.what && insights.cost);
+  assert.equal(insights.lastOutcome, null, "no run yet");
   const stale = view.builtin.find((j) => j.id === "stale-runs");
   assert.equal(stale.knobs[0].value, "12");
   assert.equal(view.builtin.find((j) => j.id === "harness-health").installed, false);

@@ -19,6 +19,7 @@ import {
   setEntryEnabled, setEntryEnv, setEntrySchedule, withManagedBlock,
 } from "./crontab.mjs";
 import { cronJobsPath, parseCronSections, replaceCronSection } from "./cron-jobs.mjs";
+import { reasonLine } from "./action-center.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const RUNNER = path.join(REPO, "scripts", "cron-job.sh");
@@ -195,6 +196,24 @@ export function lastRunFromLog(text) {
   return null;
 }
 
+/**
+ * How the newest run of an ops-run job ended (role `cron-<job>`): status and
+ * its first reason line. ops-run collects it, so the Inbox never shows it —
+ * this card is where a failed night run says why.
+ */
+export function lastJobOutcome(job, states, read) {
+  const last = states.filter((s) => s.role === `cron-${job}`)
+    .reduce((a, s) => (!a || String(s.createdAt) > String(a.createdAt) ? s : a), null);
+  if (!last) return null;
+  const finished = ["done", "failed", "cancelled"].includes(last.status);
+  return {
+    runId: last.runId,
+    status: last.status,
+    at: last.finishedAt ?? last.createdAt ?? null,
+    reason: finished ? reasonLine(last, read) : null,
+  };
+}
+
 const customLine = (name, schedule) => `${schedule} ${RUNNER.includes(" ") ? `'${RUNNER}'` : RUNNER} ${name}`;
 
 /** The managed block's lines for the ini's enabled custom jobs. */
@@ -211,7 +230,10 @@ export function customCronLines(sections) {
     .filter(Boolean);
 }
 
-export function buildAutomationView({ env = process.env, exec = execFileSync, now = new Date(), modelOptions = [] } = {}) {
+/** @param states, read  the run states and a mailbox reader, for each ops-run job's last outcome */
+export function buildAutomationView({
+  env = process.env, exec = execFileSync, now = new Date(), modelOptions = [], states = [], read = () => null,
+} = {}) {
   let crontab = "";
   let crontabError = null;
   try {
@@ -230,6 +252,9 @@ export function buildAutomationView({ env = process.env, exec = execFileSync, no
       output: job.output ? tilde(job.output) : null, settings: job.settings ?? null, off: job.off ?? null,
       lastRun: newestMtime(job.output),
       model: job.model ? { ...job.model, value: section(job.model.job)?.model ?? null } : null,
+      // golden-task and insights run through ops-run as role cron-<ini section>; the spender's
+      // host is a plain tmux session, so it has no such run and stays null.
+      lastOutcome: job.model ? lastJobOutcome(job.model.job, states, read) : null,
     };
     if (job.source === "hermes") {
       const h = hermes.find((j) => JSON.stringify(j).includes(job.match));
