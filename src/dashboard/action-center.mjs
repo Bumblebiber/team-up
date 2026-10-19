@@ -14,7 +14,7 @@ import { questionBlocks, stripSourceMarkers } from "../runs/runs.mjs";
 export { questionBlocks };
 
 /** Order of the kinds in the list; inside a kind the newest comes first. */
-export const KIND_RANK = { question: 0, problem: 1, result: 2 };
+const KIND_RANK = { question: 0, problem: 1, result: 2 };
 
 const SUBJECT_MAX = 90;
 const TASK_MAX = 4 * 1024;
@@ -85,7 +85,7 @@ export function answeredAfterQuestion(questions, answer) {
  * logs a decision; only a deny pattern (credential or billing wording) sets
  * its `finding`.
  */
-export function lastEscalation(log) {
+function lastEscalation(log) {
   return String(log ?? "").split("\n").map((line) => {
     try {
       return JSON.parse(line);

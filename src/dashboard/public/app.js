@@ -401,7 +401,7 @@ async function refreshClaudeSessions() {
       <td>${esc(where)}</td>
       <td>${esc(s.status || "—")}</td>
       <td title="${esc(s.cwd || "")}">${esc((s.cwd || "—").replace(home, "~"))}</td>
-      <td>${s.updatedAt ? esc(fmtDateTime(new Date(s.updatedAt).toISOString())) : "—"}</td>
+      <td>${s.updatedAt ? esc(fmtWhen(new Date(s.updatedAt).toISOString())) : "—"}</td>
       <td class="row-actions">${steer} <button type="button" data-claude-stop class="danger">${esc(t("Stop"))}</button></td>
     </tr>`;
   }).join("");
@@ -546,7 +546,7 @@ async function refreshUsage() {
       <div class="bar"><span style="width:${w.usedPct != null ? Math.min(100, w.usedPct) : 0}%"></span></div>
       <div class="pct">${w.usedPct != null ? w.usedPct + "%" : "—"}</div>
       <div class="badges">${w.stale ? `<span class="badge unknown">${esc(t("Unknown"))}</span>` : levelBadge(w.level)}${collectorBadge(key, data.collectors?.[key.split(":")[0]], w.stale)}</div>
-      <div class="marked-item">${w.resets_at ? esc(t("Resets {when}")).replace("{when}", () => `<span class="nowrap">${esc(fmtDateTime(w.resets_at))}</span>`) : "—"}</div>
+      <div class="marked-item">${w.resets_at ? esc(t("Resets {when}")).replace("{when}", () => `<span class="nowrap">${esc(fmtWhen(w.resets_at))}</span>`) : "—"}</div>
     </div>`).join("");
   $("#usage-grid").innerHTML = rows || `<p>${esc(t("No usage readings yet"))}</p>`;
   const status = repairStatusLine(data.collectors);
@@ -2059,7 +2059,7 @@ function renderProjects() {
   const row = (p) => {
     const w = waiting.get(p.name) || 0;
     const chips = expert ? [
-      p.git && !p.mainBranch ? `<span class="tag warn">${esc(t("side branch {branch}")).replace("{branch}", () => `<span translate="no">${esc(p.branch)}</span>`)}</span>` : "",
+      p.git && !p.mainBranch ? `<span class="tag warn">${withNames(t("side branch {branch}"), { branch: p.branch })}</span>` : "",
       p.dirty ? `<span class="tag">${esc(t("uncommitted changes"))}</span>` : "",
     ].filter(Boolean).join(" ") : "";
     return `<tr data-row="${esc(p.name)}">
@@ -2131,7 +2131,7 @@ function openSessionDialog(p) {
   const select = $("#project-session-cli");
   select.innerHTML = clis.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
   select.value = clis.includes(last) ? last : clis.includes("claude") ? "claude" : clis[0] || "";
-  $("#project-session-title").innerHTML = esc(t("Open a session in {project}")).replace("{project}", () => `<span translate="no">${esc(p.name)}</span>`);
+  $("#project-session-title").innerHTML = withNames(t("Open a session in {project}"), { project: p.name });
   $("#project-session-status").textContent = "";
   sessionDialog.dataset.dir = p.path;
   sessionDialog.showModal();
@@ -2775,6 +2775,8 @@ function builtinJobCard(j) {
     : "";
   // The result is of the last run through ops-run; lighter activity since then is not a run.
   const outcomeOld = j.lastOutcome && Date.parse(j.lastRun) - Date.parse(j.lastOutcome.at) > 864e5;
+  // The raw line (a path, English) is for experts on the card; simple view has it under the details.
+  const failReason = j.lastOutcome?.status === "failed" ? j.lastOutcome.reason : null;
   return `<article class="job${j.installed && j.enabled ? "" : " is-off"}" data-builtin="${esc(j.id)}">
     <div class="job-head">
       <h3>${esc(j.title)}</h3>${state}<span class="tag">${esc(j.llm ? t("uses AI") : t("no AI"))}</span>
@@ -2786,8 +2788,8 @@ function builtinJobCard(j) {
       <span><b>${esc(t("Last activity"))}</b> ${esc(fmtWhen(j.lastRun))}</span>
       ${j.lastOutcome ? `<span><b>${esc(outcomeOld ? t("Last full run") : t("Last result"))}</b> ${outcomeTag(j.lastOutcome)} ${esc(fmtWhen(j.lastOutcome.at))}</span>` : ""}
     </div>
-    ${j.lastOutcome?.status === "failed" && j.lastOutcome.reason
-      ? `<p class="job-fail">${withNames(t("Why: {reason}"), { reason: j.lastOutcome.reason })}</p>` : ""}
+    ${failReason ? `<p class="job-fail">${isExpert() ? withNames(t("Why: {reason}"), { reason: failReason })
+      : esc(t("The last run failed. The reason is under “Details & settings”."))}</p>` : ""}
     <p>${esc(j.what)}</p>
     <p class="cost">${esc(t("Cost: {cost}", { cost: j.cost }))}</p>
     <details><summary>${esc(t("Details & settings"))}</summary>
@@ -2795,6 +2797,7 @@ function builtinJobCard(j) {
         ${modelRow}${knobs}${schedule}
         <span class="muted">${esc(t("Scheduled in"))}</span><span>${esc(j.where)}</span>
         ${j.output ? `<span class="muted">${esc(t("Output"))}</span><code>${esc(j.output)}</code>` : ""}
+        ${failReason && !isExpert() ? `<span class="muted">${esc(t("Why it failed"))}</span><code translate="no">${esc(failReason)}</code>` : ""}
         ${j.off ? `<span class="muted">${esc(t("To stop it"))}</span><span>${esc(j.off)}</span>` : ""}
         ${j.settings ? `<span></span><a href="#/settings" data-settings-group="${esc(j.settings)}">${esc(t("Open its settings"))} <span aria-hidden="true">→</span></a>` : ""}
       </div>
@@ -3157,7 +3160,7 @@ function acWhenHtml(item) {
   if (item.status === "failed") return esc(t("Failed {ago}", { ago }));
   if (item.kind === "problem") return esc(t("Stopped {ago}", { ago }));
   if (!isExpert()) return esc(t("A helper asked {ago}", { ago }));
-  return esc(t("{who} asked {ago}", { ago })).replace("{who}", () => `<span translate="no">${esc(`${item.role} (${item.worker})`)}</span>`);
+  return withNames(t("{who} asked {ago}", { ago }), { who: `${item.role} (${item.worker})` });
 }
 
 function acCountsText(c) {
@@ -3958,6 +3961,9 @@ function tagColumns(table) {
   }
 }
 
+// tagColumns' scope (the table-wrap id without -table) → the table's name on the page.
+const PANEL_TABLES = { tmux: "tmux", claude: t("Claude sessions"), runs: t("Runs") };
+
 function openPanelEditor(panel) {
   const dialog = $("#panel-editor");
   const prefs = readStored(PANEL_PREFS_KEY, {});
@@ -3968,6 +3974,13 @@ function openPanelEditor(panel) {
   const cols = new Map();
   // A column by its header as shown; the key under it stays English (tagColumns).
   panel.querySelectorAll("th[data-col]").forEach((cell) => cols.set(cell.dataset.col, cell.textContent.trim() || cell.dataset.col));
+  // Several tables in one panel (Terminals) share headers like Status: a shared one names its table.
+  const names = [...cols.values()];
+  for (const [k, name] of cols) {
+    if (names.indexOf(name) === names.lastIndexOf(name)) continue;
+    const scope = k.slice(0, k.indexOf(":"));
+    cols.set(k, `${PANEL_TABLES[scope] ?? scope} › ${name}`);
+  }
   const rows = new Map();
   panel.querySelectorAll("[data-row]").forEach((el) => rows.set(el.dataset.row, el.dataset.row));
   // Rows that start hidden (a CLI team-up can install but the roster doesn't
@@ -4034,7 +4047,8 @@ function enablePanelChrome() {
 let notifications = [];
 
 async function refreshNotifications() {
-  notifications = (await api("/api/notifications")).items || [];
+  // A new model family points to Roles & Models, an expert view: it is news only there.
+  notifications = ((await api("/api/notifications")).items || []).filter((n) => isExpert() || n.kind !== "model-family");
   const unread = notifications.filter((n) => !n.read).length;
   $("#bell-count").textContent = unread > 9 ? "9+" : String(unread);
   $("#bell-count").classList.toggle("hidden", !unread);
@@ -4085,6 +4099,8 @@ function setExpert(on) {
   projectsKey = "";
   renderProjects();
   renderTeam();
+  renderAutomation();
+  refreshNotifications().catch(() => {});
   if (acDetail?.key) {
     acDetail.key = "expert";
     loadDetail(acDetail.runId);
@@ -4094,6 +4110,12 @@ function setExpert(on) {
 for (const box of document.querySelectorAll(".expert-toggle")) box.checked = isExpert();
 document.addEventListener("change", (e) => {
   if (e.target.matches?.(".expert-toggle")) setExpert(e.target.checked);
+});
+
+// The views are hash routes: "#main" would be one, so the skip link moves focus itself.
+$(".skip-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  $("#main").focus();
 });
 
 // The same edit as Settings → General → Language; the page reloads in the new one.

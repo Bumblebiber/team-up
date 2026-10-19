@@ -38,7 +38,7 @@ export const DE = {
     "Welche Abos team-up beobachtet und wie oft es ihre Limits liest. Das Panel „Nutzung“ in der Übersicht zeigt, was dabei herauskam.",
   "Usage spender": "Kontingent-Nutzer",
   "At night, spare subscription quota is spent on PR reviews, audits and small fixes in your repos — paced so a weekly window is used up by its reset, never more. One task at a time.":
-    "Nachts wird übriges Abo-Kontingent für PR-Reviews, Audits und kleine Fixes in deinen Repos verbraucht — so dosiert, dass ein Wochenfenster bis zu seinem Reset aufgebraucht ist, nie mehr. Ein Auftrag nach dem anderen.",
+    "Nachts wird übriges Abo-Kontingent für Prüfungen von Änderungen, Code-Durchsichten und kleine Korrekturen in deinen Projekten verbraucht — so dosiert, dass ein Wochenfenster bis zu seinem Zurücksetzen aufgebraucht ist, nie mehr. Ein Auftrag nach dem anderen.",
   "Telemetry": "Telemetrie",
   "Memory and pressure samples every 30 seconds. They size the worker limit on auto and judge whether team-up caused a restart.":
     "Alle 30 Sekunden Messwerte zu Speicher und Speicherdruck. Sie bestimmen die Agenten-Obergrenze auf automatisch und beurteilen, ob team-up einen Neustart verursacht hat.",
@@ -113,7 +113,7 @@ export const DE = {
     "Bei diesem Anteil übergibt der Helfer seine Arbeit und hört auf; das nächste Modell auf der Liste seiner Rolle übernimmt.",
   "Hand off at (5-hour windows)": "Übergabe bei (5-Stunden-Fenster)",
   "The same for short windows (5 hours, sessions). They refill fast, so stopping earlier costs little.":
-    "Dasselbe für kurze Fenster (5 Stunden, Sessions). Sie füllen sich schnell wieder auf, früher aufzuhören kostet also wenig.",
+    "Dasselbe für kurze Fenster (5 Stunden, Sitzungen). Sie füllen sich schnell wieder auf, früher aufzuhören kostet also wenig.",
   "Look-ahead": "Vorausschau",
   "Routing projects a short window's burn rate this far ahead and skips a model that would run out. 0 turns the projection off.":
     "Die Modellwahl rechnet die Nutzung eines kurzen Fensters so weit voraus und überspringt ein Modell, dem das Kontingent ausgehen würde. 0 schaltet die Vorausschau ab.",
@@ -144,7 +144,7 @@ export const DE = {
     "So viele Speicher-Messwerte von Agenten braucht es, bevor automatisch die Obergrenze daraus abgeleitet wird.",
   "Watched subscriptions": "Beobachtete Abos",
   "CLIs whose usage windows are read and shown. An unwatched CLI still runs; its limits just go unchecked.":
-    "CLIs, deren Nutzungsfenster gelesen und angezeigt werden. Eine nicht beobachtete CLI läuft trotzdem, nur ihre Limits prüft niemand.",
+    "KI-Werkzeuge, deren Nutzungsfenster gelesen und angezeigt werden. Ein nicht beobachtetes Werkzeug läuft trotzdem, nur seine Limits prüft niemand.",
   "Read limits every … when nothing runs": "Limits lesen alle … wenn nichts läuft",
   "Read limits every … while one helper runs": "Limits lesen alle … während ein Helfer läuft",
   "Read limits every … while several run": "Limits lesen alle … während mehrere laufen",
@@ -205,7 +205,7 @@ export const DE = {
     "Nimm unter Einstellungen → Kontingent-Nutzer bei jedem Abo das Häkchen raus oder schalte die Aufgabe hier ab.",
   "Run insights": "Auswertung der Aufträge",
   "Reads the logs of all team-up tasks every 48 hours and turns them into findings: why tasks failed, helpers that got stuck, slow steps. Only when the findings changed does an AI model judge them, note them in TIM and prepare at most one fix — merged into main only if the tests pass in its own copy of the repo.":
-    "Liest alle 48 Stunden die Logs aller team-up-Aufträge und macht daraus Befunde: warum Aufträge fehlschlugen, welche Helfer hängen blieben, welche Schritte langsam sind. Nur wenn sich die Befunde geändert haben, beurteilt ein KI-Modell sie, hält sie in TIM fest und bereitet höchstens einen Fix vor — der nur dann in main gemergt wird, wenn die Tests in seiner eigenen Kopie des Repos durchlaufen.",
+    "Liest alle 48 Stunden die Logs aller team-up-Aufträge und macht daraus Befunde: warum Aufträge fehlschlugen, welche Helfer hängen blieben, welche Schritte langsam sind. Nur wenn sich die Befunde geändert haben, beurteilt ein KI-Modell sie, hält sie in TIM fest und bereitet höchstens eine Korrektur vor — die nur dann übernommen wird, wenn die Tests in seiner eigenen Kopie des Repos durchlaufen.",
   "Every 48 h, only when the logs show something new: findings and the one fix, if any.":
     "Alle 48 h, nur wenn die Logs etwas Neues zeigen: die Befunde und der eine Fix, falls es einen gibt.",
   "An AI model only when the findings changed — at most once every 2 days.":
@@ -224,7 +224,7 @@ export const DE = {
   "Report runs quiet for longer than": "Aufträge melden, die still sind seit mehr als",
   "Health check": "Gesundheitscheck",
   "Every 2 hours it runs team-up doctor, a self-check of the AI tools: their versions, their permissions, and whether a specialist can still start. It reports serious findings. It exists because a silent update of claude once stopped every specialist from starting and nobody noticed.":
-    "Führt alle 2 Stunden team-up doctor aus, einen Selbsttest der KI-Werkzeuge: ihre Versionen, ihre Rechte und ob ein Spezialist noch starten kann. Er meldet schwere Befunde. Es gibt ihn, weil ein stilles Update von claude einmal jeden Spezialisten am Starten gehindert hat und es niemand merkte.",
+    "Führt alle 2 Stunden einen Selbsttest der KI-Werkzeuge aus (team-up doctor): ihre Versionen, ihre Rechte und ob ein Spezialist noch starten kann. Er meldet schwere Befunde. Es gibt ihn, weil ein stilles Update von claude einmal jeden Spezialisten am Starten gehindert hat und es niemand merkte.",
   "Every 2 h, only on serious findings: an update of an AI tool that stops specialists from starting.":
     "Alle 2 h, nur bei schweren Befunden: ein Update eines KI-Werkzeugs, das Spezialisten am Starten hindert.",
   "Model updates": "Modell-Updates",

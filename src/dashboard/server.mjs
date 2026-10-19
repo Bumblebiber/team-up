@@ -1671,8 +1671,9 @@ export function createDashboardServer({
     }
 
     if (pathname === "/api/specialists") {
-      // Reads a handful of JSON indexes, the run states once and no subprocess,
-      // but nothing here changes between polls — the 30s memo keeps it off the
+      // Reads a handful of JSON indexes and the run states once; resolving a last
+      // run's project can cost one bounded `git remote` per repo (cached 10 min).
+      // Nothing here changes between polls — the 30s memo keeps it off the
       // 5s cycle. Edits that move a specialist's model invalidate it.
       const data = clisMemo.get("specialists", () => sanitizeForDashboard(buildSpecialistsView({
         env,

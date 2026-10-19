@@ -414,19 +414,19 @@ tr.greyed td { opacity: 0.55; }
     border-bottom: 1px solid var(--border);
   }
   .sidebar-brand { padding: 0.6rem 0.75rem; }
+  /* Wrapped onto a second line: a strip that scrolls hid every view after Team, with nothing to say so. */
   .sidebar-nav {
     flex: 0 0 auto;
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: stretch;
-    gap: 0.5rem;
-    overflow-x: auto;
+    gap: 0.25rem 0.5rem;
     padding: 0.5rem 0.6rem;
-    scrollbar-width: thin;
   }
   .sidebar-nav > a, .nav-group { flex: 0 0 auto; }
   .sidebar-nav > a { white-space: nowrap; }
-  /* A <details> is no flex container: its links flow inline on one line. */
-  .nav-group { display: block; padding: 0; border: 0; white-space: nowrap; }
+  /* A <details> is no flex container: its links flow inline. */
+  .nav-group { display: block; padding: 0; border: 0; }
   .nav-group > summary { display: inline; padding: 0 0.2rem; }
   .sidebar-nav .nav-group a { display: inline-flex; padding: 0.4rem 0.45rem; }
   main { padding: 0.75rem; }
@@ -722,7 +722,16 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid > label { margin: 0; }
   .nav-ico { display: none; }
+  /* iOS zooms into a field below 16px; a thumb needs a 44px target. */
+  select, input[type="text"], input[type="number"], input[type="search"], input[type="password"], textarea { font-size: 16px; }
+  button.primary { min-height: 44px; }
 }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+.skip-link { position: absolute; left: -999px; top: 0.5rem; z-index: 100; padding: 0.4rem 0.7rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+.skip-link:focus { left: 0.5rem; }
+#main:focus { outline: none; }
 #chip-editor .ce-up, #chip-editor .ce-down, #chip-editor .ce-remove { display: none; }
 .palette-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .ce-fast-label[hidden] { display: none; }
