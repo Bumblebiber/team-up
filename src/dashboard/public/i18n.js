@@ -164,7 +164,7 @@ const I18N_DE = {
   "Test command": "Testbefehl",
   "Sessions": "Sitzungen",
   "Open session…": "Sitzung öffnen…",
-  "{n} waiting in {project}: open the inbox": "{n} wartet in {project}: Posteingang öffnen",
+  "{n} waiting in {project}: open the inbox": "{n} offen in {project}: Posteingang öffnen",
   "No projects in this folder yet.": "In diesem Ordner gibt es noch keine Projekte.",
   "Could not load the projects: {error}": "Die Projekte ließen sich nicht laden: {error}",
   "Other folders ({n})": "Andere Ordner ({n})",
@@ -254,7 +254,7 @@ const I18N_DE = {
   "They come with {name} and always stay.": "Sie gehören zu {name} und bleiben immer.",
   "Added extras": "Hinzugefügte Extras",
   "shared by the whole team": "für das ganze Team",
-  "only for {name}": "nur für {name}",
+  "added for {name}": "für {name} hinzugefügt",
   "Remove…": "Entfernen…",
   "None yet.": "Noch keine.",
   "Add an extra": "Extra hinzufügen",
@@ -276,8 +276,8 @@ const I18N_DE = {
     "{extra} gilt für das ganze Team. {name} bekommt es nicht mehr, alle anderen behalten es. Du kannst es jederzeit wieder hinzufügen.",
   "Leave it out": "Weglassen",
   "Remove {extra} from {name}?": "{extra} bei {name} entfernen?",
-  "Only {name} has this extra. It is removed; you can add it again any time.":
-    "Nur {name} hat dieses Extra. Es wird entfernt; du kannst es jederzeit wieder hinzufügen.",
+  "{name} no longer gets this extra. You can add it again any time.":
+    "{name} bekommt dieses Extra nicht mehr. Du kannst es jederzeit wieder hinzufügen.",
   "Id": "ID",
   "Version": "Version",
   "Installed versions": "Installierte Versionen",

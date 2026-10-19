@@ -1557,7 +1557,7 @@ function teamExtras(s) {
   const rows = (s.assigned || []).map((a) => {
     const shared = a.reason === "target:all";
     return `<li><span translate="no">${esc(a.display_name)}</span>
-      <span class="muted">${shared ? esc(t("shared by the whole team")) : withNames(t("only for {name}"), { name })}</span>
+      <span class="muted">${shared ? esc(t("shared by the whole team")) : withNames(t("added for {name}"), { name })}</span>
       <button type="button" class="team-extra-remove" data-package="${esc(a.package)}" data-checksum="${esc(a.checksum_full)}"
         data-name="${esc(a.display_name)}"${shared ? " data-shared" : ""}>${esc(t("Remove…"))}</button></li>`;
   }).join("");
@@ -1576,10 +1576,11 @@ function teamModelSection(s) {
   const a = s.assignment;
   const current = a?.role ? `role:${a.role}` : a?.chain ? "chain" : "";
   const roles = [...new Set([...(rolesData?.roles || []).map((r) => r.role), ...(a?.role ? [a.role] : [])])];
-  const chain = a?.chain
+  // Model ids are for experts; the select already says "Its own model list".
+  const chain = a?.chain && isExpert()
     ? `<p class="muted">${withNames(t("Its own model list: {chain}"), {
       chain: a.chain.map((e) => (typeof e === "string" ? e : `${e.cli ? `${e.cli}:` : ""}${e.model}`)).join(" → ") })}</p>` : "";
-  return `<p>${teamModelHtml(s)}</p>${s.model ? "" : `<p class="muted" translate="no">${esc(s.modelReason || "")}</p>`}
+  return `<p>${teamModelHtml(s)}</p>${s.model || !isExpert() ? "" : `<p class="muted" translate="no">${esc(s.modelReason || "")}</p>`}
     <div class="form-row">
       <label for="team-role">${esc(t("Role"))}</label>
       <select id="team-role" data-current="${esc(current)}">
@@ -1620,8 +1621,10 @@ function renderTeamDetail() {
     box.innerHTML = "";
     return;
   }
-  // A role picked and not saved yet survives a redraw (a roles change, a save elsewhere).
-  const picked = teamOpenId === s.id ? $("#team-role")?.value : undefined;
+  // A role picked and not saved yet survives a redraw (a roles change, an extra added),
+  // unless what it runs on changed meanwhile (a saved custom model list): then the new one shows.
+  const old = teamOpenId === s.id ? $("#team-role") : null;
+  const picked = old && old.value !== old.dataset.current ? { value: old.value, current: old.dataset.current } : null;
   const name = teamName(s);
   const bundled = [...(s.bundled?.skills || []), ...(s.bundled?.mcps || []).map((m) => `mcp:${m}`)];
   box.innerHTML = `<div class="team-detail-head">${avatar(s)}
@@ -1647,7 +1650,8 @@ function renderTeamDetail() {
     ${isExpert() ? teamTechnical(s) : ""}`;
   box.classList.remove("hidden");
   const role = $("#team-role");
-  role.value = picked !== undefined && [...role.options].some((o) => o.value === picked) ? picked : role.dataset.current;
+  role.value = picked && picked.current === role.dataset.current && [...role.options].some((o) => o.value === picked.value)
+    ? picked.value : role.dataset.current;
   teamRoleChanged();
   if (teamOpenId !== s.id) {
     teamOpenId = s.id;
@@ -1748,7 +1752,7 @@ $("#team-detail").addEventListener("click", async (e) => {
       yes: t("Leave it out"),
     } : {
       title: withNames(t("Remove {extra} from {name}?"), { extra, name }),
-      text: withNames(t("Only {name} has this extra. It is removed; you can add it again any time."), { name }),
+      text: withNames(t("{name} no longer gets this extra. You can add it again any time."), { name }),
       yes: t("Remove"),
     });
     if (ok) {
