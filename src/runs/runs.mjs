@@ -117,6 +117,9 @@ export function promptHasMailboxProtocol(text) {
 /** In the language line of every language: a prompt that has it was wrapped already. */
 const SUBJECT_MARKER = "one line `Subject: …`";
 
+// The human may not code, and answers in the dashboard or on Telegram.
+const PLAIN_WORDS = "Write it for someone who does not code: open with what needs deciding and what each option changes for them, in plain words; file paths, ids and commands come after that. They answer in the dashboard or on Telegram, so never ask them to edit or create a file.";
+
 /**
  * What a worker is told about the human who answers QUESTIONS.md: a plain
  * `Subject:` line first (the dashboard inbox shows it), and with roster
@@ -130,8 +133,8 @@ export function humanLanguageLine() {
     /* an unreadable roster: English */
   }
   return language === "de"
-    ? 'Write QUESTIONS.md for the human in German (Deutsch, informal "du"), starting with one line `Subject: …` (≤ 70 characters, plain language, no file names or ids). Everything else you write — RESULT.json, RESULT.md, code, commits, notes for the parent — stays in English. Keep commands, paths, identifiers and quoted output verbatim.'
-    : "Start QUESTIONS.md with one line `Subject: …` (≤ 70 characters, plain language, no file names or ids).";
+    ? 'Write QUESTIONS.md for the human in German (Deutsch, informal "du"), starting with one line `Subject: …` (≤ 70 characters, plain language, no file names or ids). Everything else you write — RESULT.json, RESULT.md, code, commits, notes for the parent — stays in English. Keep commands, paths, identifiers and quoted output verbatim. ' + PLAIN_WORDS
+    : "Start QUESTIONS.md with one line `Subject: …` (≤ 70 characters, plain language, no file names or ids). " + PLAIN_WORDS;
 }
 
 /**
