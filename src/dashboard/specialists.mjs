@@ -48,8 +48,6 @@ const insideClone = (cwd, roots) => {
   const dir = real(cwd) ?? path.resolve(cwd);
   return roots.some((root) => dir === root || isInside(dir, root));
 };
-/** What the resolver falls back to for a clone: its folder, or the task folder above repo/wt/clone. */
-const cloneName = (cwd) => path.basename(/^(?:repo|wt|clone)$/.test(path.basename(cwd)) ? path.dirname(cwd) : cwd);
 
 /**
  * `{label, name}` like an inbox item's project, or null when no project is
@@ -62,7 +60,7 @@ function runProject(state, roots, projectOf) {
   const clone = Boolean(cwd) && insideClone(cwd, roots);
   if (!projectOf) return !cwd || clone ? null : { label: null, name: path.basename(real(cwd) ?? path.resolve(cwd)) };
   const p = projectOf(state);
-  return clone && p?.name === cloneName(cwd) ? null : p;
+  return clone && p?.guessed ? null : p;
 }
 
 function lastRunView(state, now, roots, projectOf) {

@@ -137,9 +137,10 @@ export function createProjectResolver({ exec = execFileSync, env = process.env, 
       if (dir) return { label: f.repos.get(dir) ?? null, name: path.basename(dir) };
       if (project && !path.isAbsolute(project)) return { label: /^P\d+$/.test(project) ? project : null, name: project };
       // A task clone's checkout is …/tasks/<task>/repo (or wt, clone): the task names it.
+      // A guess, flagged: a clone folder's name is no project (the Team page shows none).
       const p = cwd || project;
       const base = path.basename(/^(?:repo|wt|clone)$/.test(path.basename(p)) ? path.dirname(p) : p);
-      return base ? { label: null, name: base } : null;
+      return base ? { label: null, name: base, guessed: true } : null;
     };
   };
 }

@@ -70,7 +70,8 @@ test("a run resolves to its repo: label, path, cwd, ledger, origin, then a name"
     [{ runId: "L", cwd: "/gone/clone" }, { label: "P0065", name: "SpaceColosseum" }],
     [{ cwd: path.join(projects, "golden-task") }, { label: null, name: "golden-task" }],
     [{ project: "P0099", cwd: "/x/y" }, { label: "P0099", name: "P0099" }],
-    [{ cwd: "/gone/elsewhere" }, { label: null, name: "elsewhere" }],
+    // The last resort is a guess, and says so: the Team page shows none for a clone's guess.
+    [{ cwd: "/gone/elsewhere" }, { label: null, name: "elsewhere", guessed: true }],
   ];
   for (const [state, want] of cases) assert.deepEqual(projectOf(state), want, JSON.stringify(state));
 
@@ -82,7 +83,7 @@ test("a run resolves to its repo: label, path, cwd, ledger, origin, then a name"
 
 test("a bad collecting folder resolves to names instead of failing", () => {
   const projectOf = createProjectResolver({ exec: () => "" })("not/absolute");
-  assert.deepEqual(projectOf({ cwd: "/a/b" }), { label: null, name: "b" });
+  assert.deepEqual(projectOf({ cwd: "/a/b" }), { label: null, name: "b", guessed: true });
   assert.equal(projectOf({}), null);
 });
 
@@ -112,6 +113,6 @@ test("the repos' origins are asked once per 10 minutes, though the folder is res
 
 test("a task clone that is gone is named by its task, not by its checkout folder", () => {
   const projectOf = createProjectResolver({ exec: () => "" })("");
-  assert.deepEqual(projectOf({ cwd: "/gone/projects/tasks/fix-sync/repo" }), { label: null, name: "fix-sync" });
-  assert.deepEqual(projectOf({ cwd: "/gone/projects/tasks/fix-sync/wt" }), { label: null, name: "fix-sync" });
+  assert.deepEqual(projectOf({ cwd: "/gone/projects/tasks/fix-sync/repo" }), { label: null, name: "fix-sync", guessed: true });
+  assert.deepEqual(projectOf({ cwd: "/gone/projects/tasks/fix-sync/wt" }), { label: null, name: "fix-sync", guessed: true });
 });

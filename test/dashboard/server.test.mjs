@@ -899,7 +899,7 @@ test("a bad collecting folder still lists waiting runs; runs carry a project nam
     try {
       const r = await req(port, "/api/action-center?dir=not-absolute", { token });
       assert.equal(r.status, 200, r.text);
-      assert.deepEqual(acItem(r, runId).project, { label: null, name: "tmp" });
+      assert.deepEqual(acItem(r, runId).project, { label: null, name: "tmp", guessed: true });
       const runs = await req(port, "/api/runs", { token });
       assert.equal(runs.json.runs.find((row) => row.runId === runId).project, "tmp");
     } finally {
@@ -976,7 +976,7 @@ test("the Team and Roles routes carry model, last run and who uses a role", () =
       assert.equal(reanna.category, "research");
       assert.deepEqual([reanna.model, reanna.modelReason], ["m", null]);
       assert.equal(reanna.lastRun.runId, runId);
-      assert.deepEqual(reanna.lastRun.project, { label: null, name: "tmp" });
+      assert.deepEqual(reanna.lastRun.project, { label: null, name: "tmp", guessed: true });
     } finally {
       server.close();
     }
