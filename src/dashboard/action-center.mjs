@@ -22,31 +22,38 @@ const RESULT_MAX = 64 * 1024;
 
 const isCron = (state) => String(state.role ?? "").startsWith("cron-");
 
+const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
+
 function clip(text, max) {
-  const s = String(text ?? "").replace(/\s+/g, " ").trim();
+  const s = oneLine(text);
   return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
 }
 
 // No `$`: before a U+2028, where `.` stops, it backtracked through a space run.
 const SUBJECT_LINE = /^subject:[ \t]*([^\n]+)/i;
+const HEADING = /^#{1,6}\s+(?=\S)/;
 const QUESTION_PREFIX = /^(?:frage|question|decision needed)\s*:\s*/i;
 const plain = (s) => s.replace(/\*\*|`/g, "");
 
-/** A `Subject:` first line, a first heading, the task's title, or the first sentence. */
-export function questionSubject(text, titles = []) {
+/**
+ * A question's subject, whole, and its body without the line the subject came
+ * from: a `Subject:` first line or the first heading. Else the task's title or
+ * the first sentence, and the body stays whole.
+ */
+function questionParts(text, titles = []) {
   const lines = String(text ?? "").split("\n");
+  const without = (at) => lines.filter((l, i) => i !== at).join("\n").trim();
   const subject = lines[0]?.trim().match(SUBJECT_LINE)?.[1];
-  if (subject) return clip(plain(subject), SUBJECT_MAX);
-  const heading = lines.map((l) => l.match(/^#{1,6}\s+(.+)/)?.[1]).find(Boolean);
-  if (heading) return clip(plain(heading).replace(QUESTION_PREFIX, ""), SUBJECT_MAX);
+  if (subject) return { subject: oneLine(plain(subject)), body: without(0) };
+  const at = lines.findIndex((l) => HEADING.test(l));
+  if (at !== -1) return { subject: oneLine(plain(lines[at].replace(HEADING, "")).replace(QUESTION_PREFIX, "")), body: without(at) };
   const title = titles.find((t) => typeof t === "string" && t.trim());
-  if (title) return clip(title, SUBJECT_MAX);
   const first = lines.map((l) => l.trim()).find(Boolean) ?? "";
-  return clip(plain(first).split(/(?<=[.?!])\s/)[0], SUBJECT_MAX);
+  return { subject: oneLine(title ?? plain(first).split(/(?<=[.?!])\s/)[0]), body: lines.join("\n").trim() };
 }
 
-/** The question without its `Subject:` line: the subject is shown as the heading. */
-const questionBody = (text) => String(text ?? "").replace(/^\s*subject:[^\n]*\n?/i, "").trim();
+/** The list's subject: a `Subject:` first line, a first heading, the task's title, or the first sentence. */
+export const questionSubject = (text, titles) => clip(questionParts(text, titles).subject, SUBJECT_MAX);
 
 function resultJson(state, read) {
   try {
@@ -135,7 +142,11 @@ export function inboxItem(state, ctx) {
     const parked = Boolean(spender?.parked);
     let subject;
     if (denied) subject = t(lang, "Needs you: a credential or billing prompt");
-    else if (source === "observer") subject = t(lang, "Stuck on a technical prompt");
+    // The task's title, when known, tells Retry from Cancel; first the plain part, which the clip keeps.
+    else if (source === "observer") {
+      const title = state.title || spender?.title;
+      subject = title ? t(lang, "Stuck on a technical prompt: {title}", { title }) : t(lang, "Stuck on a technical prompt");
+    }
     else if (last) subject = questionSubject(last.text, [state.title, spender?.title]);
     else subject = clip(state.title || spender?.title || t(lang, "{role} is waiting for your answer", { role }), SUBJECT_MAX);
     return item({
@@ -195,6 +206,9 @@ export function buildActionItem(state, ctx) {
   const last = blocks.at(-1) ?? null;
   const answerText = answer ? stripSourceMarkers(answer.text).trim() : null;
   const answeredNow = answeredAfterQuestion(questions, answer);
+  const parts = last ? questionParts(last.text, [state.title, ctx.ledger?.get(state.runId)?.title]) : null;
+  // A problem's subject is the server's sentence; the judge's text stays whole for "Technical details".
+  const problem = item?.kind === "problem";
   const history = blocks.slice(0, -1).map((b) => ({ source: b.source, question: b.text, answer: null }));
   if (answerText && !answeredNow && questions) {
     if (history.length) history.at(-1).answer = answerText;
@@ -208,8 +222,9 @@ export function buildActionItem(state, ctx) {
   }
   return {
     ...(item ?? { id: `run:${state.runId}`, runId: state.runId, kind: null, status: state.status }),
-    subject: item?.subject ?? (last ? questionSubject(last.text, [state.title]) : state.title ?? null),
-    body: last ? questionBody(last.text) : null,
+    // The list cuts the subject to a row; the item shows it whole and leaves it out of the body.
+    subject: problem || item?.kind === "result" ? item.subject : parts?.subject ?? item?.subject ?? state.title ?? null,
+    body: last ? (problem ? last.text : parts.body) : null,
     source: last?.source ?? item?.source ?? null,
     answer: answeredNow ? answerText : null,
     history,

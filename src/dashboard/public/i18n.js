@@ -66,6 +66,7 @@ const I18N_DE = {
   "This is no longer waiting for you.": "Das wartet nicht mehr auf dich.",
   "Already answered.": "Schon beantwortet.",
   "Your answer": "Deine Antwort",
+  "After your answer it continues tonight from {start}:00.": "Nach deiner Antwort geht es heute Nacht ab {start}:00 weiter.",
   "Go with the recommendation": "Empfehlung übernehmen",
   "Go with your recommendation.": "Mach es so, wie du es empfiehlst.",
   "Ctrl+Enter or ⌘+Enter sends": "Strg+Enter oder ⌘+Enter sendet",

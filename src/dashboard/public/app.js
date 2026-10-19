@@ -3050,7 +3050,7 @@ const AC_FILTERS = [["all", t("All")], ["question", t("Questions")], ["problem",
 const AC_KIND = { question: t("Question"), problem: t("Problem"), result: t("Result") };
 // A recommendation the agent made; "I do not recommend" or "nicht empfehlenswert" is none.
 // [ \t], not \s: with the m flag, \s* spans newlines and a run of blank lines turns quadratic.
-const AC_RECOMMENDS = /\*\*(?:my |meine )?(?:recommendation|recommended|empfehlung|empfohlen)\b|^[ \t]*(?:my |meine )?(?:recommendation|empfehlung)[ \t]*:|\b(?:I|I'd|I would) recommend\b|\bich empfehle\b|\bmeine empfehlung\b/im;
+const AC_RECOMMENDS = /\*\*(?:my |meine )?(?:recommendation|recommended|empfehlung|empfohlen)\b|^[ \t]*(?:my |meine )?(?:recommendation|empfehlung)[ \t]*:|^#{1,6}[ \t]*(?:my |meine )?(?:recommendation|empfehlung)\b|\b(?:I|I'd|I would) recommend\b|\bich empfehle\b|\bmeine empfehlung\b/im;
 // Server errors a person can hit from the inbox, in their words.
 const AC_ERRORS = [
   [/^already answered/, t("Already answered.")],
@@ -3278,22 +3278,6 @@ async function loadDetail(runId) {
 
 const acBackHtml = () => `<a class="ac-back" href="#/actions"><span aria-hidden="true">←</span> ${esc(t("Back to inbox"))}</a>`;
 
-/**
- * A question's subject and body. A first heading that repeats the subject
- * leaves the body; it also stands in for a subject the server cut at 90
- * characters, so the whole of it stays readable.
- */
-function acQuestion(body, subject) {
-  const text = String(body ?? "");
-  const s = String(subject ?? "");
-  const [first, ...rest] = text.split("\n");
-  // As the server reads it: no ** or `, one space, without a "Question:" prefix.
-  const heading = first.match(/^#{1,6}\s+(.+)/)?.[1].replace(/\*\*|`/g, "").replace(/\s+/g, " ").trim()
-    .replace(/^(?:frage|question|decision needed)\s*:\s*/i, "");
-  const same = heading && (heading === s || (s.endsWith("…") && heading.startsWith(s.slice(0, -1))));
-  return same ? { subject: heading, body: rest.join("\n") } : { subject: s, body: text };
-}
-
 // Never throws: an item whose text cannot be rendered still opens, as plain text.
 function acMd(text) {
   try {
@@ -3340,6 +3324,7 @@ function acActionsHtml(item) {
   const button = (action, label, cls = "") => `<button type="button" data-ac-act="${action}"${cls ? ` class="${cls}"` : ""}>${esc(label)}</button>`;
   if (item.kind === "question") {
     return `<form class="ac-answer" data-run="${esc(item.runId)}">
+      ${item.parked ? `<p class="muted">${esc(t("After your answer it continues tonight from {start}:00.", { start: hour(item.resumeWindow?.start ?? 23) }))}</p>` : ""}
       <label for="ac-answer-text">${esc(t("Your answer"))}</label>
       ${AC_RECOMMENDS.test(item.body || "") ? `<button type="button" class="chip-btn" data-ac-recommend>${esc(t("Go with the recommendation"))}</button>` : ""}
       <textarea id="ac-answer-text" rows="5" required></textarea>
@@ -3372,13 +3357,11 @@ function renderDetail(item, key) {
     item.project ? `<span translate="no">${esc(item.project.name)}</span>` : "",
     item.kind ? `<span class="ac-ago">${acWhenHtml(item)}</span>` : "",
   ].filter(Boolean).join('<span aria-hidden="true">·</span>');
-  const question = item.kind === "problem" || item.kind === "result" ? { subject: item.subject, body: "" }
-    : acQuestion(item.body, item.subject);
   let body = "";
   if (!item.kind && !item.answer) body += `<p class="ac-note">${esc(t("This is no longer waiting for you."))}</p>`;
   if (item.kind === "problem") body += acProblemHtml(item);
   else if (item.kind === "result") body += acResultHtml(item);
-  else if (question.body) body += acMd(question.body);
+  else if (item.body) body += acMd(item.body);
   if (item.task) {
     body += `<details class="ac-more-info"><summary>${esc(t("What the helper was doing"))}</summary>${acMd(item.task)}</details>`;
   }
@@ -3392,7 +3375,7 @@ function renderDetail(item, key) {
   if (isExpert()) body += `<p class="ac-expert"><a href="#/runs" data-ac-open-run>${esc(t("Open run"))}</a></p>`;
   const box = $("#ac-detail");
   box.innerHTML = `${acBackHtml()}${meta ? `<p class="ac-detail-meta">${meta}</p>` : ""}
-    <h2 class="ac-subject" tabindex="-1">${acSubjectHtml(question.subject)}</h2>${body}`;
+    <h2 class="ac-subject" tabindex="-1">${acSubjectHtml(item.subject)}</h2>${body}`;
   const answer = $("#ac-answer-text");
   if (answer) answer.value = acDraft(item.runId);
   if (fresh) {
@@ -3567,10 +3550,7 @@ acDetailBox.addEventListener("submit", (e) => {
   acAct(form.dataset.run, "answer", form.querySelector("textarea").value, form.querySelector('[type="submit"]'));
 });
 
-const acCancelDialog = $("#ac-cancel");
-let acCancelTarget = null;
-
-acDetailBox.addEventListener("click", (e) => {
+acDetailBox.addEventListener("click", async (e) => {
   if (e.target.closest("[data-ac-open-run]") && acDetail) {
     e.preventDefault();
     location.hash = "#/runs";
@@ -3594,21 +3574,14 @@ acDetailBox.addEventListener("click", (e) => {
   }
   const btn = e.target.closest("[data-ac-act]");
   if (!btn || !acDetail) return;
-  if (btn.dataset.acAct === "cancel") {
-    acCancelTarget = { runId: acDetail.runId, btn };
-    acCancelDialog.returnValue = "";
-    acCancelDialog.showModal();
-    return;
-  }
-  acAct(acDetail.runId, btn.dataset.acAct, null, btn);
-});
-
-acCancelDialog.addEventListener("close", () => {
-  const target = acCancelTarget;
-  acCancelTarget = null;
-  if (!target) return;
-  if (acCancelDialog.returnValue === "cancel") acAct(target.runId, "cancel", null, target.btn);
-  else target.btn.focus();
+  const { runId } = acDetail;
+  if (btn.dataset.acAct === "cancel" && !await confirmDialog({
+    title: esc(t("Cancel this task?")),
+    text: esc(t("The helper stops for good and the task leaves your inbox. This cannot be undone.")),
+    yes: t("Cancel task"),
+    no: t("Keep it"),
+  })) return;
+  acAct(runId, btn.dataset.acAct, null, btn);
 });
 
 onEnter.actions = () => {

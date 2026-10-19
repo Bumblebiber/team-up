@@ -305,6 +305,7 @@ export const DE = {
   // action-center.mjs — the subject of an inbox item the server words itself
   "Needs you: a credential or billing prompt": "Braucht dich: eine Abfrage zu Zugangsdaten oder Bezahlung",
   "Stuck on a technical prompt": "Hängt an einer technischen Abfrage fest",
+  "Stuck on a technical prompt: {title}": "Hängt an einer technischen Abfrage fest: {title}",
   "{role} is waiting for your answer": "{role} wartet auf deine Antwort",
   "Failed|subject": "Fehlgeschlagen",
   "Stopped by the watcher": "Vom Aufpasser gestoppt",

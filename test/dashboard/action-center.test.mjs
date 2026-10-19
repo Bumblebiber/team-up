@@ -169,6 +169,9 @@ test("the server's own subjects come in the roster language; an agent's subject 
     asks: "Welche Datenbank?",
   });
   assert.equal(subject("en").watched, "Stopped by the watcher");
+  // A known task title tells Retry from Cancel; the plain part comes first, so a cut keeps it.
+  const titled = buildActionCenter({ states: [{ ...states[0], title: "Review PR #7" }], read, now, lang: "de" }).items[0];
+  assert.equal(titled.subject, "Hängt an einer technischen Abfrage fest: Review PR #7");
 });
 
 test("the project is resolved only for a run that is listed", () => {
@@ -199,6 +202,21 @@ test("reason line: FAILURE.md, RESULT summary, RESULT.md, recorded reason; never
   assert.equal(reasonLine(state, reader({ r: {
     "FAILURE.md": ["\nworker gave up\n", "2026-10-13T00:00:00Z"], "RESULT.md": ["# other", "2026-10-13T00:00:00Z"],
   } })), "worker gave up");
+});
+
+test("item detail: the whole subject, and the body without the line it came from", () => {
+  const long = `${"word ".repeat(40)}end`;
+  const read = reader({
+    s: { "QUESTIONS.md": [`Subject: ${long}\n\nWhich one?`, "2026-10-13T10:00:00Z"] },
+    h: { "QUESTIONS.md": ["Some context first.\n\n## Decision needed: keep **A**?\n\nDetails.", "2026-10-13T10:00:00Z"] },
+    p: { "QUESTIONS.md": [observerBlock("## Pane\nAllow this tool?"), "2026-10-13T10:00:00Z"] },
+  });
+  const ask = (runId) => buildActionItem({ runId, role: "x", status: "waiting_human" }, { read, now });
+  assert.equal(ask("s").subject, long.trim(), "not cut at 90 characters, and the body no longer has it");
+  assert.equal(ask("s").body, "Which one?");
+  assert.equal(ask("h").subject, "keep A?");
+  assert.match(ask("h").body, /^Some context first\.\n+Details\.$/, "the heading is the subject, not a second line below it");
+  assert.equal(ask("p").body, "## Pane\nAllow this tool?", "a problem keeps the judge's text whole for the technical details");
 });
 
 test("item detail: the whole newest question, the earlier one with its answer, the task, the result", () => {
