@@ -197,8 +197,16 @@ test("a specialist's last run is its newest, under its old id too", () =>
       run("r3", "implementer", "2026-10-19T11:30:00Z"),
       run("r4", "specialist:testing.hannes", "2026-10-17T12:00:00Z"),
     ];
-    const [codey] = buildSpecialistsView({ states, now }).specialists;
-    assert.deepEqual(codey.lastRun, { runId: "r2", status: "done", project: "task-ultratodo", ageMs: 3_600_000 });
+    const env = { ...process.env, TEAM_UP_TASKS_ROOT: "/home/x/projects/tasks" };
+    const [codey] = buildSpecialistsView({ states, now, env }).specialists;
+    // A clone's folder name is no project: the run shows none until §1 resolves it.
+    assert.deepEqual(codey.lastRun,
+      { runId: "r2", status: "done", project: null, createdAt: "2026-10-19T11:00:00Z", ageMs: 3_600_000 });
+    const [inRepo] = buildSpecialistsView({ states: [states[0]], now, env }).specialists;
+    assert.deepEqual(inRepo.lastRun.project, { label: null, name: "tim" });
+    // team-up's own home holds the spender's clones.
+    const smoke = run("r5", "specialist:coding.codey", "2026-10-19T11:59:00Z", path.join(home, "clones", "smoke"));
+    assert.equal(buildSpecialistsView({ states: [smoke], now, env }).specialists[0].lastRun.project, null);
 
     // Re-plant codey as tessa: runs of the pre-rename id are hers.
     const index = JSON.parse(fs.readFileSync(path.join(home, "specialists-index.json"), "utf8"));

@@ -35,7 +35,7 @@ function git(dir, args, { timeout = 10_000 } = {}) {
   return r.status === 0 ? r.stdout : null;
 }
 
-function real(p) {
+export function real(p) {
   try {
     return fs.realpathSync(p);
   } catch {
@@ -44,7 +44,7 @@ function real(p) {
 }
 
 /** True when `child` is strictly below `parent` (both real paths). */
-function isInside(child, parent) {
+export function isInside(child, parent) {
   const rel = path.relative(parent, child);
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }

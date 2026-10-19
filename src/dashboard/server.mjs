@@ -1015,6 +1015,7 @@ export function createDashboardServer({
         );
         clisMemo.invalidate("specialists");
         clisMemo.invalidate("capability-pool");
+        memo.invalidate("roles"); // a reinstall can rename who "Used by" shows
         // The client reads `error`; without it a refused install reaches the
         // panel as a bare "Bad Request" and the reason is lost.
         jsonResponse(res, result.ok ? 200 : 400, {
@@ -1040,6 +1041,7 @@ export function createDashboardServer({
         appendAudit({ actor: "127.0.0.1", action: "specialist.assign",
           target: `${specialistId}:${body.role ?? (body.chain ? "chain" : "none")}`, result: "ok" }, { env });
         clisMemo.invalidate("specialists");
+        memo.invalidate("roles"); // its "Used by"
         jsonResponse(res, 200, { ok: true, backup: path.basename(written.backup) });
       } catch (e) {
         appendAudit({ actor: "127.0.0.1", action: "specialist.assign", target: specialistId, result: "fail" }, { env });

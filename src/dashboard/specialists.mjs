@@ -11,6 +11,9 @@ import { resolveCapabilities } from "../capabilities/resolve.mjs";
 import { resolveProfile, specialistAssignment } from "../roster/profile.mjs";
 import { COMMAND_BROKER_CAPABILITY, CONTEXT_ISOLATION_CAPABILITY } from "../harness/capabilities.mjs";
 import { modelLabel } from "./roles.mjs";
+import { ageMs } from "./data.mjs";
+import { cloneRoots } from "./projects.mjs";
+import { real, isInside } from "../runs/clone-cleanup.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,15 +44,26 @@ function latestRuns(states) {
   return latest;
 }
 
-function lastRunView(state, now) {
+/**
+ * `{label, name}` like an inbox item's project, or null for a run in a clone.
+ * ponytail: label null and name = cwd basename, until the run→project resolver
+ * (spec §1) lands; then a clone run resolves to its real project too.
+ */
+function runProject(cwd, roots) {
+  if (!cwd) return null;
+  const dir = real(cwd) ?? path.resolve(cwd);
+  if (roots.some((root) => dir === root || isInside(dir, root))) return null;
+  return { label: null, name: path.basename(dir) };
+}
+
+function lastRunView(state, now, roots) {
   if (!state) return null;
-  const ageMs = now - Date.parse(state.createdAt);
   return {
     runId: state.runId,
     status: state.status,
-    // ponytail: cwd basename; a clone's folder name, until runs resolve to their project.
-    project: state.cwd ? path.basename(state.cwd) : null,
-    ageMs: Number.isFinite(ageMs) ? ageMs : null,
+    project: runProject(state.cwd, roots),
+    createdAt: state.createdAt ?? null,
+    ageMs: ageMs(state.createdAt, now),
   };
 }
 
@@ -74,7 +88,7 @@ function currentModel(id, manifest, { roster, usage, store, now }) {
   if (cell) return { model: modelLabel(roster, store, cell.model, cell.cli), modelReason: null };
   return {
     model: null,
-    modelReason: resolved.skipped.map((s) => (s.model === "*" ? s.reason : `${s.model}: ${s.reason}`)).join("; "),
+    modelReason: resolved.skipped.slice(0, 6).map((s) => (s.model === "*" ? s.reason : `${s.model}: ${s.reason}`)).join("; "),
   };
 }
 
@@ -94,7 +108,7 @@ function bundled(manifest) {
  * resolveCapabilities() the launcher uses — reimplementing "all minus exclude"
  * here would let the dashboard drift from what a run really materialises.
  */
-function describe(id, { env, assignments, installedCaps, versions, roster, usage, store, now, lastRun }) {
+function describe(id, { env, assignments, installedCaps, versions, roster, usage, store, now, lastRun, roots }) {
   const loaded = loadInstalledManifest(id, { env });
   if (!loaded) return { id, error: "not installed" };
   const manifest = loaded.manifest || {};
@@ -150,7 +164,7 @@ function describe(id, { env, assignments, installedCaps, versions, roster, usage
     category: category(id),
     assignment: specialistAssignment(roster, id),
     ...currentModel(id, manifest, { roster, usage, store, now }),
-    lastRun: lastRunView(lastRun, now),
+    lastRun: lastRunView(lastRun, now, roots),
   };
 }
 
@@ -180,6 +194,7 @@ export function buildSpecialistsView({
   const assignments = loadAssignments({ env }).assignments ?? [];
   const installedCaps = listInstalledCapabilities({ env });
   const lastRuns = latestRuns(states);
+  const roots = cloneRoots(env);
   const specialists = Object.keys(index.specialists ?? {})
     .sort()
     .map((id) =>
@@ -193,6 +208,7 @@ export function buildSpecialistsView({
         store,
         now,
         lastRun: lastRuns.get(id),
+        roots,
       }),
     );
   return { specialists };

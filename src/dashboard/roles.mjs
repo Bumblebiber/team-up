@@ -56,7 +56,7 @@ function chainView(roster, store, chain, now) {
 const roleUsers = (roster, role) =>
   Object.entries(roster?.specialists || {}).filter(([, s]) => s?.role === role).map(([id]) => id);
 
-/** `nameOf` turns a specialist id into the name the panel shows. */
+/** `usedBy` is `[{id, name}]`: `nameOf` turns a specialist id into the name the panel shows. */
 export function buildRolesView(roster, usage, store, now = Date.now(), { nameOf = (id) => id } = {}) {
   const roles = Object.entries(roster?.roles || {})
     .sort(([a], [b]) => a.localeCompare(b))
@@ -65,7 +65,7 @@ export function buildRolesView(roster, usage, store, now = Date.now(), { nameOf 
       return {
         role,
         protected: own(PROTECTED_ROLES, role) ? PROTECTED_ROLES[role] : null,
-        usedBy: roleUsers(roster, role).map(nameOf),
+        usedBy: roleUsers(roster, role).map((id) => ({ id, name: nameOf(id) })),
         effort: spec?.effort ?? null,
         chain: chainView(roster, store, spec?.chain || [], now),
         pick: result.model

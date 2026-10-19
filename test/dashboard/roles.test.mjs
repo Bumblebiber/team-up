@@ -69,7 +69,7 @@ test("roles view carries pick, chain state and labels", () => {
 test("a role names the specialists that run on it", () => {
   const names = { "code-writer": "Codey" };
   const view = buildRolesView(roster, {}, store, Date.now(), { nameOf: (id) => names[id] ?? id });
-  assert.deepEqual(view.roles.find((r) => r.role === "implementer").usedBy, ["Codey"]);
+  assert.deepEqual(view.roles.find((r) => r.role === "implementer").usedBy, [{ id: "code-writer", name: "Codey" }]);
   assert.deepEqual(view.roles.find((r) => r.role === "planner").usedBy, []);
 });
 

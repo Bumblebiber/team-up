@@ -13,6 +13,7 @@ import {
   trustProjectPolicyForProject,
 } from "../../src/dashboard/projects.mjs";
 import { validateCommandPolicy } from "../../src/commands/policy.mjs";
+import { taskSessionName } from "../../src/dashboard/tim.mjs";
 
 const ROSTER = { clis: { claude: { cmd: ["claude", "--model", "{model}", "{prompt}"] } } };
 
@@ -51,14 +52,17 @@ test("a project does not claim the sessions of a project whose name extends it",
   for (const name of ["team-up", "team-up-with-codey", "hmem", "hmem-sync"]) {
     fs.mkdirSync(path.join(root, name, ".git"), { recursive: true });
   }
+  const task = taskSessionName("team-up", "claude", "01JTASKULID");
   const sessions = [
     "team-up-proj-team-up-claude",
     "team-up-proj-team-up-with-codey-claude",
     "team-up-proj-hmem-sync-codex",
+    task,
   ];
   const { projects } = listProjects(root, { exec: () => "", sessions, clis: ["claude", "codex"] });
   const of = (name) => projects.find((p) => p.name === name).sessions;
-  assert.deepEqual(of("team-up"), ["team-up-proj-team-up-claude"]);
+  // A TIM task session runs in its project too.
+  assert.deepEqual(of("team-up"), ["team-up-proj-team-up-claude", task].sort());
   assert.deepEqual(of("team-up-with-codey"), ["team-up-proj-team-up-with-codey-claude"]);
   assert.deepEqual(of("hmem"), []);
   assert.deepEqual(of("hmem-sync"), ["team-up-proj-hmem-sync-codex"]);
