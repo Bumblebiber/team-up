@@ -681,6 +681,13 @@ tr.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .job details > summary { font-size: 0.85rem; }
 .job .knobs { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 0.8rem; align-items: center; margin: 0.5rem 0; font-size: 0.86rem; }
 .job .knobs select { max-width: 22rem; }
+.job .knobs > * { min-width: 0; overflow-wrap: anywhere; }
+.job-list { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 700px) {
+  /* A phone: each setting's name above its control; a long German label never widens the card. */
+  .job .knobs { grid-template-columns: minmax(0, 1fr); gap: 0.15rem; }
+  .job .knobs select, .job .knobs input[type="text"] { width: 100%; max-width: 100%; }
+}
 .switch { position: relative; display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; }
 .switch input { appearance: none; width: 2.1rem; height: 1.2rem; margin: 0; border-radius: 999px; background: var(--border); position: relative; cursor: pointer; transition: background 0.15s; }
 .switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: calc(1.2rem - 4px); height: calc(1.2rem - 4px); border-radius: 50%; background: #fff; transition: transform 0.15s; box-shadow: 0 1px 2px rgb(0 0 0 / 30%); }

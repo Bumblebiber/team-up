@@ -2218,6 +2218,8 @@ const TIM_KINDS = {
 const TIM_STATUS = {
   todo: t("to do"), open: t("open"), in_progress: t("in progress"), review: t("in review"), blocked: t("blocked"), done: t("done"),
 };
+// The older word scale of priorities; P0–P3 stay as they are.
+const TIM_PRIORITY = { critical: t("critical"), high: t("high"), medium: t("medium"), low: t("low") };
 
 function readStored(key, fallback) {
   try {
@@ -2287,7 +2289,7 @@ async function refreshTim() {
       <summary><span translate="no">${esc(p.title.split(" | ")[0])}</span> <span class="muted">${p.items.length}</span></summary>
       <ul class="tim-items">${p.items.map((item) => `
         <li>
-          <span class="muted">${esc(TIM_STATUS[item.status] ?? item.status)}${item.priority ? ` <span class="tag ${priorityTone(item.priority)}">${esc(item.priority)}</span>` : ""}</span>
+          <span class="muted">${esc(TIM_STATUS[item.status] ?? item.status)}${item.priority ? ` <span class="tag ${priorityTone(item.priority)}">${esc(TIM_PRIORITY[String(item.priority).toLowerCase()] ?? item.priority)}</span>` : ""}</span>
           <span translate="no">${esc(item.title)}</span>
           ${item.sessions.length
             ? item.sessions.map((sess) => `<a href="#" class="session-link" data-session="${esc(sess)}">${esc(t("running"))}</a>`).join(" ")

@@ -405,7 +405,7 @@ const I18N_DE = {
   "Backup: {file}": "Sicherung: {file}",
   "Lift the post-restart cap": "Begrenzung nach dem Neustart aufheben",
   "After a memory-caused restart team-up caps workers for 24 h; this lifts it now":
-    "Nach einem Neustart wegen Speichermangels begrenzt team-up die Worker 24 Stunden lang; das hebt die Begrenzung jetzt auf",
+    "Nach einem Neustart wegen Speichermangels begrenzt team-up die Agenten 24 Stunden lang; das hebt die Begrenzung jetzt auf",
   "Cap lifted.": "Begrenzung aufgehoben.",
   "There was no cap to lift.": "Es gab keine Begrenzung aufzuheben.",
   // Static page text (index.html), translated once at boot by translateStatic()
@@ -840,6 +840,11 @@ const I18N_DE = {
   // Scheduled jobs: AI tag
   "uses AI": "nutzt KI",
   "no AI": "ohne KI",
+  // TIM memory: priority words
+  "critical": "kritisch",
+  "high": "hoch",
+  "medium": "mittel",
+  "low": "niedrig",
 };
 
 function t(en, vars) {
