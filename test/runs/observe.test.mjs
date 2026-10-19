@@ -1292,7 +1292,10 @@ test("a trust dialog for another folder fails the run once it stalls: no judge, 
   assert.equal(judgeCalls, 0);
   const error = assertTrustFailure(runId);
   assert.match(error, /team-up-canary-review \(run cwd \/home\/bbbee\/projects\/tasks\/other\): it names a folder other than/);
-  assert.match(error, /open Claude Code there once, trust it, then retry the run\.$/);
+  // A failed run has no Retry: the text names the way that exists.
+  assert.match(error, /open Claude Code there once and trust it\. A failed run cannot be retried: start the task again by hand/);
+  assert.match(error, /usage-spender task, also delete its row in reports\/usage-spender\/ledger\.json and its clone under spender\/clones/);
+  assert.doesNotMatch(error, /retry the run/);
 }));
 
 test("another cli's pane is never failed as a Claude trust dialog: it goes to the judge as before", withTempRuns(async () => {

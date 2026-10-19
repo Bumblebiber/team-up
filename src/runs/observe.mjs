@@ -333,17 +333,25 @@ export function claudeTrustPromptKeys(pane, cwd) {
   return shown === cwd || shown === real ? ["Down", "Enter"] : null;
 }
 
+/** Why answerClaudeTrustPrompt leaves the dialog on screen, or null when it answers it. */
+export function trustPromptDecline({ state, loop, capture }) {
+  if (state.worker?.cli !== "claude") return "the worker is not Claude Code";
+  if (!claudeTrustPromptKeys(capture, state.cwd)) return "it names a folder other than the run's cwd, or its cursor is not on \"No, exit\"";
+  if (loop.answeredPanes.has(paneFingerprint(capture))) return "it was confirmed once and is still showing";
+  if (matchesDenyPattern(capture)) return "the screen shows credential or billing wording";
+  if (loop.autoAnswerCount >= MAX_AUTO_ANSWERS) return "the observer's auto-answer cap is reached";
+  return null;
+}
+
 /**
  * Answer that dialog at once: no judge call, no stall wait. Same bookkeeping
  * as a judged answer (cap, repeat-pane guard, post-answer stall escalation),
  * and the deny patterns still apply. Never writes ~/.claude.json.
  */
 export function answerClaudeTrustPrompt({ runId, state, loop, capture, deps = {} }) {
-  if (state.worker?.cli !== "claude") return false;
+  if (trustPromptDecline({ state, loop, capture })) return false;
   const keys = claudeTrustPromptKeys(capture, state.cwd);
   const fp = paneFingerprint(capture);
-  if (!keys || loop.answeredPanes.has(fp) || matchesDenyPattern(capture)) return false;
-  if (loop.autoAnswerCount >= MAX_AUTO_ANSWERS) return false;
   const {
     log = (entry) => appendObservationLog(runId, entry, deps),
     sendKeys = (k) => sendTmuxKeys(state.worker.tmux, k, deps),
@@ -1021,21 +1029,18 @@ export async function runObserver(runId, deps = {}) {
       // judge, shown the same screen on two nights, once confirmed it and once
       // asked Benni whether to trust the clone (li88, 34tq, 2026-10). One it
       // left on screen fails the run with the reason: never a question, never
-      // a judge call. A spender implement run failed here is never retaken
-      // (usage-spender.py recently_taken) until the inbox's Retry starts one.
+      // a judge call. A failed run has no Retry, and a spender implement task
+      // failed here is never retaken (usage-spender.py recently_taken) while
+      // its clone blocks prepare_clone: the reason says how to rerun it by hand.
       const trustFolder = STALL_EVENTS.has(next.event) && state.worker?.cli === "claude"
         ? claudeTrustWorkspace(capture)
         : null;
       if (trustFolder !== null) {
-        // Which guard of answerClaudeTrustPrompt declined it, in its order.
-        const cause = !claudeTrustPromptKeys(capture, state.cwd)
-          ? "it names a folder other than the run's cwd, or its cursor is not on \"No, exit\""
-          : loop.answeredPanes.has(paneFingerprint(capture)) ? "it was confirmed once and is still showing"
-          : matchesDenyPattern(capture) ? "the screen shows credential or billing wording"
-          : "the observer's auto-answer cap is reached";
         const reason = `observer: Claude Code is stuck on its workspace-trust dialog for ${trustFolder}`
-          + ` (run cwd ${state.cwd}): ${cause}. If that is the right folder, open Claude Code there once,`
-          + " trust it, then retry the run.";
+          + ` (run cwd ${state.cwd}): ${trustPromptDecline({ state, loop, capture })}. If that is the right folder,`
+          + " open Claude Code there once and trust it. A failed run cannot be retried: start the task again by hand."
+          + " For a usage-spender task, also delete its row in reports/usage-spender/ledger.json and its clone"
+          + " under spender/clones in the team-up home, or the spender never takes it again.";
         appendObservationLog(runId, { kind: "decision", action: "fail", reason }, deps);
         // FAILURE.md first, as setWorkerMailboxStatus does: runs wait and
         // ops-run.sh (the Telegram report) read the reason there.
