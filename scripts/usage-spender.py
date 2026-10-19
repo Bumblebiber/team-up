@@ -704,7 +704,8 @@ def host_prompt(runs, verdicts, date, host, language="en"):
     windows = "\n".join(f"- {k}: {v}" for k, v in verdicts.items())
     return HOST_PROMPT.format(date=date, teamup=" ".join(TEAMUP), runs="\n".join(map(line, runs)), host=host,
                               windows=windows, telegram=TELEGRAM, label=LABEL,
-                              language=LANGUAGES.get(language, LANGUAGES["en"]))
+                              # a hand-edited list or dict is unhashable: English, not a crashed tick
+                              language=LANGUAGES.get(language if isinstance(language, str) else "en", LANGUAGES["en"]))
 
 
 def cron_model(job, default, path=CRON_JOBS):
@@ -916,6 +917,7 @@ def selftest():
     # the Telegram summary is in the roster's language; an unknown one falls back to English
     assert "written in English" in hp and "written in German" in host_prompt([], {}, "d", "h", "de")
     assert "written in English" in host_prompt([], {}, "d", "h", "xx")
+    assert "written in English" in host_prompt([], {}, "d", "h", ["de"])  # a hand edit: no TypeError
 
     # answered parked runs: in order; rc 2 blocks that cli and tries the next, rc 3 or a spawn ends the tick;
     # a cli switched off or implement off keeps its row parked

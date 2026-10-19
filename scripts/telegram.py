@@ -136,7 +136,7 @@ TEXT = {
 def language():
     """Read once per message, so one message never mixes two languages."""
     lang = (read_json(ROSTER, {}) or {}).get("language")
-    return lang if lang in TEXT else "en"
+    return lang if isinstance(lang, str) and lang in TEXT else "en"  # a hand-edited list or dict too
 
 
 def say(key, lang, **values):
