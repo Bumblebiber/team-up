@@ -199,7 +199,7 @@ test("a specialist's last run is its newest, under its old id too", () =>
     ];
     const env = { ...process.env, TEAM_UP_TASKS_ROOT: "/home/x/projects/tasks" };
     const [codey] = buildSpecialistsView({ states, now, env }).specialists;
-    // A clone's folder name is no project: the run shows none until §1 resolves it.
+    // A clone's folder name is no project: without a resolver, a clone run names none.
     assert.deepEqual(codey.lastRun,
       { runId: "r2", status: "done", project: null, createdAt: "2026-10-19T11:00:00Z", ageMs: 3_600_000 });
     const [inRepo] = buildSpecialistsView({ states: [states[0]], now, env }).specialists;
