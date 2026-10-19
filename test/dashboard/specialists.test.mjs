@@ -207,6 +207,16 @@ test("a specialist's last run is its newest, under its old id too", () =>
     // team-up's own home holds the spender's clones.
     const smoke = run("r5", "specialist:coding.codey", "2026-10-19T11:59:00Z", path.join(home, "clones", "smoke"));
     assert.equal(buildSpecialistsView({ states: [smoke], now, env }).specialists[0].lastRun.project, null);
+    // With the run→project resolver a clone run names its real project; the
+    // resolver's last resort, the clone folder's own name, still names none.
+    const resolved = { label: "P0079", name: "ultratodo" };
+    const viaResolver = (projectOf, state = states[1]) =>
+      buildSpecialistsView({ states: [state], now, env, projectOf }).specialists[0].lastRun.project;
+    assert.deepEqual(viaResolver(() => resolved), resolved);
+    assert.equal(viaResolver(() => ({ label: null, name: "task-ultratodo" })), null);
+    const taskRepo = run("r6", "specialist:coding.codey", "2026-10-19T11:59:00Z", "/home/x/projects/tasks/task-ultratodo/repo");
+    assert.equal(viaResolver(() => ({ label: null, name: "task-ultratodo" }), taskRepo), null);
+    assert.deepEqual(viaResolver(() => resolved, states[0]), resolved, "outside a clone the resolver always wins");
 
     // Re-plant codey as tessa: runs of the pre-rename id are hers.
     const index = JSON.parse(fs.readFileSync(path.join(home, "specialists-index.json"), "utf8"));

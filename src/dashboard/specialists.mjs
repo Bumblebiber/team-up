@@ -44,24 +44,33 @@ function latestRuns(states) {
   return latest;
 }
 
-/**
- * `{label, name}` like an inbox item's project, or null for a run in a clone.
- * ponytail: label null and name = cwd basename, until the run→project resolver
- * (spec §1) lands; then a clone run resolves to its real project too.
- */
-function runProject(cwd, roots) {
-  if (!cwd) return null;
+const insideClone = (cwd, roots) => {
   const dir = real(cwd) ?? path.resolve(cwd);
-  if (roots.some((root) => dir === root || isInside(dir, root))) return null;
-  return { label: null, name: path.basename(dir) };
+  return roots.some((root) => dir === root || isInside(dir, root));
+};
+/** What the resolver falls back to for a clone: its folder, or the task folder above repo/wt/clone. */
+const cloneName = (cwd) => path.basename(/^(?:repo|wt|clone)$/.test(path.basename(cwd)) ? path.dirname(cwd) : cwd);
+
+/**
+ * `{label, name}` like an inbox item's project, or null when no project is
+ * known. `projectOf` is the run→project resolver (run-project.mjs), which also
+ * names the real project of a run in a clone; without it a clone names none.
+ * Either way a clone folder's own name is no project.
+ */
+function runProject(state, roots, projectOf) {
+  const cwd = state.cwd;
+  const clone = Boolean(cwd) && insideClone(cwd, roots);
+  if (!projectOf) return !cwd || clone ? null : { label: null, name: path.basename(real(cwd) ?? path.resolve(cwd)) };
+  const p = projectOf(state);
+  return clone && p?.name === cloneName(cwd) ? null : p;
 }
 
-function lastRunView(state, now, roots) {
+function lastRunView(state, now, roots, projectOf) {
   if (!state) return null;
   return {
     runId: state.runId,
     status: state.status,
-    project: runProject(state.cwd, roots),
+    project: runProject(state, roots, projectOf),
     createdAt: state.createdAt ?? null,
     ageMs: ageMs(state.createdAt, now),
   };
@@ -108,7 +117,7 @@ function bundled(manifest) {
  * resolveCapabilities() the launcher uses — reimplementing "all minus exclude"
  * here would let the dashboard drift from what a run really materialises.
  */
-function describe(id, { env, assignments, installedCaps, versions, roster, usage, store, now, lastRun, roots }) {
+function describe(id, { env, assignments, installedCaps, versions, roster, usage, store, now, lastRun, roots, projectOf }) {
   const loaded = loadInstalledManifest(id, { env });
   if (!loaded) return { id, error: "not installed" };
   const manifest = loaded.manifest || {};
@@ -164,7 +173,7 @@ function describe(id, { env, assignments, installedCaps, versions, roster, usage
     category: category(id),
     assignment: specialistAssignment(roster, id),
     ...currentModel(id, manifest, { roster, usage, store, now }),
-    lastRun: lastRunView(lastRun, now, roots),
+    lastRun: lastRunView(lastRun, now, roots, projectOf),
   };
 }
 
@@ -180,7 +189,8 @@ export function specialistName(id, { env = process.env } = {}) {
 
 /**
  * `states` is the run list the caller already holds (runs are read once, not
- * per specialist); `roster`, `usage` and `store` feed the model label.
+ * per specialist); `roster`, `usage` and `store` feed the model label;
+ * `projectOf` (createProjectResolver) names a last run's project.
  */
 export function buildSpecialistsView({
   env = process.env,
@@ -189,6 +199,7 @@ export function buildSpecialistsView({
   store = null,
   states = [],
   now = Date.now(),
+  projectOf = null,
 } = {}) {
   const index = listInstalled(env) || {};
   const assignments = loadAssignments({ env }).assignments ?? [];
@@ -209,6 +220,7 @@ export function buildSpecialistsView({
         now,
         lastRun: lastRuns.get(id),
         roots,
+        projectOf,
       }),
     );
   return { specialists };

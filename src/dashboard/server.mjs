@@ -1704,6 +1704,7 @@ export function createDashboardServer({
         store: loadModelsStore(env),
         states: listAllStates(),
         now: ts,
+        projectOf: projectsIn(""),
       })));
       jsonResponse(res, 200, data);
       return;
