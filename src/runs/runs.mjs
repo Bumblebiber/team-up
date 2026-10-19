@@ -9,7 +9,7 @@ import { telemetryConfig } from "../telemetry/config.mjs";
 import { findStaleRuns, findOrphanSessions, DEFAULT_THRESHOLD_MS } from "./stale.mjs";
 import { findUncollectedRuns, DEFAULT_UNCOLLECTED_DAYS } from "./collect.mjs";
 import { listTmuxSessions } from "./tmux.mjs";
-import { cleanupRunClone, sweepClones, tasksRoot } from "./clone-cleanup.mjs";
+import { cleanupRunClone, sweepClones, tasksRoots } from "./clone-cleanup.mjs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -1547,7 +1547,7 @@ function cmdOutcome(args) {
   console.log(`${runId}: ${state.outcome.value}`);
 }
 
-/** Backlog of clones under the tasks root whose runs are merged/discarded. Dry run unless --apply. */
+/** Backlog of clones under the tasks roots whose runs are merged/discarded. Dry run unless --apply. */
 function cmdSweepClones(args) {
   const apply = args.includes("--apply");
   const rows = sweepClones({ states: listAllStates({ onCorrupt: () => {} }), apply });
@@ -1562,7 +1562,7 @@ function cmdSweepClones(args) {
     console.log(`${r.kind.padEnd(12)} ${gb(r.bytes).padStart(6)} GB  ${r.dir}${r.reason ? `  (${r.reason})` : ""}`);
   }
   const done = apply ? "removed" : "would_remove";
-  console.log(`${tasksRoot()}: ${done} ${count(done)} clones, ${gb(sum(done))} GB · kept ${count("kept")} (${gb(sum("kept"))} GB)`
+  console.log(`${tasksRoots().join(" + ")}: ${done} ${count(done)} clones, ${gb(sum(done))} GB · kept ${count("kept")} (${gb(sum("kept"))} GB)`
     + ` · no outcome recorded ${count("no_outcome")} (${gb(sum("no_outcome"))} GB)${apply ? "" : " · dry run, --apply deletes"}`);
 }
 

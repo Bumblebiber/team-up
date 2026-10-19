@@ -1,12 +1,13 @@
 // clone-cleanup.mjs — remove a writer's sandbox clone once its run is merged or discarded.
 //
-// Every clone-per-writer checkout lives under the tasks root (~/projects/tasks).
-// Nothing removed them after the merge, and the root grew to ~38 GB of repo
-// copies with node_modules. The run's record (STATE, mailbox RESULT.md) lives
-// in ~/.team-up/runs and is never touched here. Untracked and ignored files in
-// the clone are kept in place: ignored is often work output (HANDOFF-*.md,
-// .env, *.db, data/, .claude/, a .team-up/ TICKET.md via info/exclude). Only
-// .git, tracked files and ignored paths named in REGENERABLE go.
+// Every clone-per-writer checkout lives under the tasks root (~/.team-up/clones;
+// ~/projects/tasks before 2026-10-19, still swept). Nothing removed them after
+// the merge, and the root grew to ~38 GB of repo copies with node_modules. The
+// run's record (STATE, mailbox RESULT.md) lives in ~/.team-up/runs and is never
+// touched here. Untracked and ignored files in the clone are kept in place:
+// ignored is often work output (HANDOFF-*.md, .env, *.db, data/, .claude/, a
+// .team-up/ TICKET.md via info/exclude). Only .git, tracked files and ignored
+// paths named in REGENERABLE go.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,7 +23,12 @@ const REGENERABLE = new Set([
 ]);
 
 export function tasksRoot(env = process.env) {
-  return env.TEAM_UP_TASKS_ROOT || path.join(os.homedir(), "projects", "tasks");
+  return env.TEAM_UP_TASKS_ROOT || path.join(teamUpHome(env), "clones");
+}
+
+/** Every root cleanup covers: the current one and the legacy ~/projects/tasks with older runs' clones. */
+export function tasksRoots(env = process.env) {
+  return [...new Set([tasksRoot(env), path.join(os.homedir(), "projects", "tasks")])];
 }
 
 function git(dir, args, { timeout = 10_000 } = {}) {
@@ -195,11 +201,11 @@ export function logCleanup(entry, env = process.env) {
  * Called when a run gets its outcome. Never throws: recording the outcome
  * must not fail because a clone could not be removed.
  */
-export function cleanupRunClone(state, { root = tasksRoot(), states = [], log = console.error } = {}) {
+export function cleanupRunClone(state, { root, states = [], log = console.error } = {}) {
   const results = [];
   try {
-    for (const dir of cloneTargets(state.cwd, { root })) {
-      const verdict = cloneVerdict(dir, { root, states });
+    for (const r of root ? [root] : tasksRoots()) for (const dir of cloneTargets(state.cwd, { root: r })) {
+      const verdict = cloneVerdict(dir, { root: r, states });
       if (!verdict.ok) {
         results.push({ dir, removed: false, reason: verdict.reason });
         log(`clone kept: ${dir} (${verdict.reason})`);
@@ -223,25 +229,27 @@ function duBytes(dir) {
 }
 
 /**
- * Backlog sweep: every clone under the tasks root whose runs are all finished
+ * Backlog sweep: every clone under the tasks roots whose runs are all finished
  * and at least one has an outcome. Dry run unless `apply`.
  */
-export function sweepClones({ root = tasksRoot(), states = [], apply = false, size = duBytes } = {}) {
+export function sweepClones({ root, states = [], apply = false, size = duBytes } = {}) {
   const byTarget = new Map();
-  for (const s of states) {
-    for (const dir of cloneTargets(s.cwd, { root })) {
-      if (!byTarget.has(dir)) byTarget.set(dir, []);
-      byTarget.get(dir).push(s);
+  for (const r of root ? [root] : tasksRoots()) {
+    for (const s of states) {
+      for (const dir of cloneTargets(s.cwd, { root: r })) {
+        if (!byTarget.has(dir)) byTarget.set(dir, { root: r, runs: [] });
+        byTarget.get(dir).runs.push(s);
+      }
     }
   }
   const rows = [];
-  for (const [dir, runs] of byTarget) {
+  for (const [dir, { root: r, runs }] of byTarget) {
     const bytes = size(dir);
     if (!runs.some((s) => s.outcome?.value === "merged" || s.outcome?.value === "discarded")) {
       rows.push({ dir, bytes, kind: "no_outcome" });
       continue;
     }
-    const verdict = cloneVerdict(dir, { root, states });
+    const verdict = cloneVerdict(dir, { root: r, states });
     if (!verdict.ok) {
       rows.push({ dir, bytes, kind: "kept", reason: verdict.reason });
       continue;

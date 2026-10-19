@@ -11,7 +11,7 @@ import {
 } from "../commands/policy.mjs";
 import { isPolicyTrusted, trustProjectPolicy } from "../specialists/approvals.mjs";
 import { commandExists } from "./clis.mjs";
-import { tasksRoot, real } from "../runs/clone-cleanup.mjs";
+import { tasksRoots, real } from "../runs/clone-cleanup.mjs";
 import { teamUpHome } from "../paths.mjs";
 
 export const SESSION_PREFIX = "team-up-proj-";
@@ -283,13 +283,13 @@ function gitInfo(dir, exec) {
 }
 
 /**
- * Where writer clones live, never a project a person works in: the clone root,
- * ~/projects/tasks (old clones stay there after TEAM_UP_TASKS_ROOT moves it)
- * and team-up's own home (the spender's clones). Raw and real paths both, so a
+ * Where writer clones live, never a project a person works in: the clone
+ * roots (~/.team-up/clones and the legacy ~/projects/tasks) and team-up's own
+ * home (the spender's clones). Raw and real paths both, so a
  * deleted clone under a symlinked root still matches.
  */
 export const cloneRoots = (env = process.env) => [...new Set(
-  [tasksRoot(env), path.join(os.homedir(), "projects", "tasks"), teamUpHome(env)]
+  [...tasksRoots(env), teamUpHome(env)]
     .flatMap((p) => [path.resolve(p), real(p)])
     .filter(Boolean),
 )];

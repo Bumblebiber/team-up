@@ -75,6 +75,12 @@ directory cannot follow either pointer, so git stops working inside it.
 A full clone is self-contained and disposable. That is what makes it safe to
 let a writer use git freely inside one.
 
+Clone into `~/.team-up/clones/<slug>` (`$TEAM_UP_TASKS_ROOT` when set): clone
+cleanup removes it once its run has an outcome and its commits are on origin
+main. Not under `~/projects`: a writer there walks up into whatever
+`CLAUDE.md` or `AGENTS.md` sits above it, and the dashboard lists the folder
+as a project.
+
 The orchestrator makes the clone runnable before it dispatches: install the
 dependencies once inside it (`npm ci --prefer-offline` for a Node repo). A
 fresh clone has no `node_modules`, and the writer cannot fix that — it has no

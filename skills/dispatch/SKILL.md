@@ -46,7 +46,7 @@ Quick self-check before any status message: can you answer "what is `$RUNS wait`
 
 ```text
 # WRONG — looks busy, notifies nobody
-$ROSTER dispatch --role planner --prompt-file PLANNER_PROMPT.md --dir ~/tasks/foo
+$ROSTER dispatch --role planner --prompt-file PLANNER_PROMPT.md --dir ~/.team-up/clones/foo
 # → prints tmux session; parent moves on; human waits; worker may even be
 #   stuck on an interactive prompt with zero artifacts written
 ```
@@ -54,7 +54,7 @@ $ROSTER dispatch --role planner --prompt-file PLANNER_PROMPT.md --dir ~/tasks/fo
 ```text
 # RIGHT — parent gets a status back
 $RUNS create … --prompt-file PLANNER_PROMPT.md   # → runId
-$ROSTER dispatch --role planner --prompt-file PLANNER_PROMPT.md --dir ~/tasks/foo --run-id <runId>
+$ROSTER dispatch --role planner --prompt-file PLANNER_PROMPT.md --dir ~/.team-up/clones/foo --run-id <runId>
 # spawn cheap in-host watcher: only `$RUNS wait <runId>`, return status, exit
 ```
 
@@ -111,7 +111,7 @@ Full protocol detail lives in the `roster` skill § Cross-CLI runs.
 ```bash
 ROSTER="team-up"
 RUNS="team-up runs"
-TASK_DIR="$HOME/tasks/task-foo"        # absolute: a quoted ~ does not expand
+TASK_DIR="$HOME/.team-up/clones/task-foo"  # absolute: a quoted ~ does not expand
 PROMPT="$TASK_DIR/PLANNER_PROMPT.md"   # bare task text is fine — create wraps it
 
 # 1) Mailbox (wraps PROMPT with templates/worker-prompt.md → HEARTBEAT + STATUS=done)

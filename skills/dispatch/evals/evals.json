@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "You are the Overseer. A team-up roster exists. Task dir ~/projects/tasks/task-usage-balance-fix/ already has SPEC.md and PLANNER_PROMPT.md. Spawn a planner (Claude via team-up) to grill+plan the Usage & Balance Checker fix. Do NOT actually run commands — write the exact ordered steps/commands you would run, then stop. Return only that plan.",
+      "prompt": "You are the Overseer. A team-up roster exists. Task dir ~/.team-up/clones/task-usage-balance-fix/ already has SPEC.md and PLANNER_PROMPT.md. Spawn a planner (Claude via team-up) to grill+plan the Usage & Balance Checker fix. Do NOT actually run commands — write the exact ordered steps/commands you would run, then stop. Return only that plan.",
       "expected_output": "Ordered spawn plan that includes runs create, team-up dispatch with --run-id, and a cheap in-host watcher that only runs `runs wait`. Must NOT be bare team-up dispatch alone.",
       "files": [],
       "expectations": [
@@ -15,7 +15,7 @@
     },
     {
       "id": 2,
-      "prompt": "PLAN.md is ready in ~/projects/tasks/task-foo/. Roster is configured. Spawn the implementer phase so you get notified when it finishes. Do NOT execute — list the exact commands/steps only.",
+      "prompt": "PLAN.md is ready in ~/.team-up/clones/task-foo/. Roster is configured. Spawn the implementer phase so you get notified when it finishes. Do NOT execute — list the exact commands/steps only.",
       "expected_output": "Complete Path B: create run → dispatch --run-id implementer → watcher runs wait.",
       "files": [],
       "expectations": [

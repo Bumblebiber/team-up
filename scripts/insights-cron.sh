@@ -99,7 +99,7 @@ if [ "$RC" -eq 0 ]; then echo "$HASH" > "$HASH_FILE"; else rm -f "$STAMP"; fi
 # The one fix. Deterministic on purpose: the evaluator's Bash cannot block for
 # the 90 minutes a worker takes, and a push should not hang on a model's mood.
 fix_ticket() {
-  local tu="$REPO/bin/team-up.mjs" clone="$HOME/projects/tasks/insights-$STAMP_ID"
+  local tu="$REPO/bin/team-up.mjs" clone="${TEAM_UP_TASKS_ROOT:-${TEAM_UP_HOME:-$HOME/.team-up}/clones}/insights-$STAMP_ID"
   # From GitHub, not the local checkout: its main may lag, and the PR must apply.
   git clone -q -b main "$(git -C "$REPO" remote get-url origin)" "$clone" || return 1
   git -C "$clone" switch -q -c "$BRANCH" || return 1

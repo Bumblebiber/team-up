@@ -174,6 +174,24 @@ test("sweep is a dry run by default and skips clones without an outcome", () => 
   } finally { t.done(); }
 });
 
+test("by default cleanup covers ~/.team-up/clones and the legacy ~/projects/tasks", () => {
+  const t = setup();
+  // Both live under the preload's scratch TEAM_UP_HOME and HOME.
+  const clones = [path.join(process.env.TEAM_UP_HOME, "clones"), path.join(os.homedir(), "projects", "tasks")]
+    .map((root, i) => path.join(root, `task-${i}`));
+  try {
+    for (const clone of clones) execFileSync("git", ["clone", "-q", t.source, clone]);
+    const states = clones.map((cwd, i) => ({ runId: `d${i}`, status: "done", cwd, outcome: { value: "merged" } }));
+    const rows = sweepClones({ states, size: () => 1 });
+    assert.deepEqual(rows.map((r) => [r.kind, r.dir]).sort(), clones.map((c) => ["would_remove", c]).sort());
+    const [r] = cleanupRunClone(states[1], { log: () => {} });
+    assert.equal(r.removed, true, r.reason);
+  } finally {
+    t.done();
+    for (const clone of clones) fs.rmSync(clone, { recursive: true, force: true });
+  }
+});
+
 test("state writes still work once the run's clone is gone", async () => {
   const t = setup();
   try {
