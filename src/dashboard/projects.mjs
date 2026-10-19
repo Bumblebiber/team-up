@@ -11,6 +11,7 @@ import {
 } from "../commands/policy.mjs";
 import { isPolicyTrusted, trustProjectPolicy } from "../specialists/approvals.mjs";
 import { commandExists } from "./clis.mjs";
+import { tasksRoot } from "../runs/clone-cleanup.mjs";
 
 export const SESSION_PREFIX = "team-up-proj-";
 
@@ -280,9 +281,34 @@ function gitInfo(dir, exec) {
   }
 }
 
-export function listProjects(dirInput, { exec = execFileSync, sessions = null, env = process.env } = {}) {
+const realOrNull = (p) => {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Why a folder is not a project a person works in, or null when it is one.
+ * The clone root holds every writer's sandbox checkout; ~/projects/tasks stays
+ * on the list after TEAM_UP_TASKS_ROOT moves it, since old clones live there.
+ */
+function otherReason(full, name, git, cloneRoots) {
+  if (cloneRoots.includes(realOrNull(full))) return "clones";
+  if (name.startsWith("team-up-with-")) return "specialist-bundle";
+  return git ? null : "not-git";
+}
+
+/**
+ * `clis` are the roster's CLI names. A session belongs to a project only under
+ * its exact projectSessionName, so `team-up` does not claim the sessions of
+ * `team-up-with-codey`.
+ */
+export function listProjects(dirInput, { exec = execFileSync, sessions = null, clis = [], env = process.env } = {}) {
   const dir = resolveCollectingDir(dirInput);
   const live = sessions ?? listTmuxSessions({ exec });
+  const cloneRoots = [tasksRoot(env), path.join(os.homedir(), "projects", "tasks")].map(realOrNull).filter(Boolean);
   const projects = fs.readdirSync(dir)
     .filter((name) => !name.startsWith("."))
     .map((name) => {
@@ -297,12 +323,20 @@ export function listProjects(dirInput, { exec = execFileSync, sessions = null, e
       }
       if (!st.isDirectory()) return null;
       const git = fs.existsSync(path.join(full, ".git"));
+      const { branch, dirty } = git ? gitInfo(full, exec) : { branch: null, dirty: false };
+      const own = new Set(clis.map((cli) => projectSessionName(name, cli)));
+      const other = otherReason(full, name, git, cloneRoots);
       return {
         name,
         path: full,
         git,
-        ...(git ? gitInfo(full, exec) : { branch: null, dirty: false }),
-        sessions: live.filter((s) => s.startsWith(`${SESSION_PREFIX}${slug(name)}-`)).sort(),
+        branch,
+        dirty,
+        // A detached head ("(detached)") is a side branch too.
+        mainBranch: branch == null || branch === "main" || branch === "master",
+        other: other != null,
+        otherReason: other,
+        sessions: live.filter((s) => own.has(s)).sort(),
         policy: projectPolicyStatus(full, env),
       };
     })

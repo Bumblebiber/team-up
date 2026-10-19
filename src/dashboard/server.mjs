@@ -1357,8 +1357,9 @@ export function createDashboardServer({
     if (pathname === "/api/projects") {
       const dir = url.searchParams.get("dir") || "";
       try {
-        const data = memo.get(`projects:${dir}`, () => listProjects(dir, { exec, env }));
-        jsonResponse(res, 200, { ...data, clis: Object.keys(loadRoster(env).clis || {}).sort() });
+        const clis = Object.keys(loadRoster(env).clis || {}).sort();
+        const data = memo.get(`projects:${dir}`, () => listProjects(dir, { exec, env, clis }));
+        jsonResponse(res, 200, { ...data, clis });
       } catch (e) {
         jsonResponse(res, 400, { error: String(e.message || e) });
       }

@@ -40,9 +40,57 @@ test("listProjects reports the project's own tmux sessions", (t) => {
   const root = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const sessions = ["team-up-proj-alpha-claude", "team-up-proj-beta-codex", "team-up-pass-x"];
-  const { projects } = listProjects(root, { exec: () => "", sessions });
+  const { projects } = listProjects(root, { exec: () => "", sessions, clis: ["claude", "codex"] });
   assert.deepEqual(projects[0].sessions, ["team-up-proj-alpha-claude"]);
   assert.deepEqual(projects[1].sessions, ["team-up-proj-beta-codex"]);
+});
+
+test("a project does not claim the sessions of a project whose name extends it", (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const name of ["team-up", "team-up-with-codey", "hmem", "hmem-sync"]) {
+    fs.mkdirSync(path.join(root, name, ".git"), { recursive: true });
+  }
+  const sessions = [
+    "team-up-proj-team-up-claude",
+    "team-up-proj-team-up-with-codey-claude",
+    "team-up-proj-hmem-sync-codex",
+  ];
+  const { projects } = listProjects(root, { exec: () => "", sessions, clis: ["claude", "codex"] });
+  const of = (name) => projects.find((p) => p.name === name).sessions;
+  assert.deepEqual(of("team-up"), ["team-up-proj-team-up-claude"]);
+  assert.deepEqual(of("team-up-with-codey"), ["team-up-proj-team-up-with-codey-claude"]);
+  assert.deepEqual(of("hmem"), []);
+  assert.deepEqual(of("hmem-sync"), ["team-up-proj-hmem-sync-codex"]);
+});
+
+test("clone roots, non-git folders and specialist bundles are other folders", (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "clones", "task-x", ".git"), { recursive: true });
+  fs.mkdirSync(path.join(root, "team-up-with-codey", ".git"), { recursive: true });
+  const env = { ...process.env, TEAM_UP_TASKS_ROOT: path.join(root, "clones") };
+  const { projects } = listProjects(root, { exec: () => "", sessions: [], env });
+  const row = (name) => projects.find((p) => p.name === name);
+  assert.deepEqual([row("alpha").other, row("alpha").otherReason], [false, null]);
+  assert.deepEqual([row("beta").other, row("beta").otherReason], [true, "not-git"]);
+  assert.deepEqual([row("clones").other, row("clones").otherReason], [true, "clones"]);
+  assert.equal(row("team-up-with-codey").otherReason, "specialist-bundle");
+});
+
+test("mainBranch is false only for a side branch or a detached head", (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const onBranch = (branch) => {
+    const exec = () => `# branch.oid abc\n# branch.head ${branch}\n`;
+    return listProjects(root, { exec, sessions: [] }).projects.find((p) => p.name === "alpha");
+  };
+  assert.equal(onBranch("main").mainBranch, true);
+  assert.equal(onBranch("master").mainBranch, true);
+  assert.equal(onBranch("feature/x").mainBranch, false);
+  assert.equal(onBranch("(detached)").mainBranch, false);
+  // Not a git repo: no branch, nothing to warn about.
+  assert.equal(listProjects(root, { exec: () => "", sessions: [] }).projects.find((p) => p.name === "beta").mainBranch, true);
 });
 
 test("a collecting folder outside the home directory is refused", () => {
