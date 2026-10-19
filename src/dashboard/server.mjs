@@ -1572,10 +1572,12 @@ export function createDashboardServer({
 
     if (pathname === "/api/runs") {
       const activeOnly = url.searchParams.get("active") === "1";
-      const data = memo.get(`runs:${activeOnly}`, () => {
+      // The Projects page's collecting folder, as the Inbox resolves projects.
+      const dir = url.searchParams.get("dir") || "";
+      const data = memo.get(`runs:${activeOnly}:${dir}`, () => {
         const states = listAllStates();
         const heartbeats = heartbeatMtimes();
-        return buildRunsView(states, { activeOnly, heartbeats, now: ts, projectOf: projectsIn("") });
+        return buildRunsView(states, { activeOnly, heartbeats, now: ts, projectOf: projectsIn(dir), ledger: readSpenderLedger(env) });
       });
       jsonResponse(res, 200, data);
       return;
@@ -1593,7 +1595,7 @@ export function createDashboardServer({
         jsonResponse(res, 404, { error: "run not found" });
         return;
       }
-      const data = memo.get(`run:${runId}`, () => {
+      const data = memo.get(`run:${runId}:${url.searchParams.get("dir") || ""}`, () => {
         const root = runDir(runId);
         const mailbox = readMailboxFiles(runId, {
           runRoot: root,
@@ -1603,7 +1605,7 @@ export function createDashboardServer({
         return sanitizeForDashboard({
           state,
           mailbox,
-          row: buildRunsView([state], { heartbeats, now: ts, projectOf: projectsIn("") }).runs[0],
+          row: buildRunsView([state], { heartbeats, now: ts, projectOf: projectsIn(url.searchParams.get("dir") || ""), ledger: readSpenderLedger(env) }).runs[0],
         });
       });
       jsonResponse(res, 200, data);

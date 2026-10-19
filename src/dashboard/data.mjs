@@ -6,7 +6,10 @@ import { assertPathInsideRoot } from "../specialists/safe-id.mjs";
 import { SESSION_PREFIX } from "./projects.mjs";
 import { DEFAULT_UNCOLLECTED_DAYS } from "../runs/collect.mjs";
 
-const WAITING_HUMAN = new Set(["waiting_human", "waiting_decision"]);
+// No worker runs these: one waits for Benni, the others for room on the machine.
+const NO_WORKER = new Set(["waiting_human", "waiting_capacity", "waiting_decision"]);
+/** A scheduled job's run: it reports on its job card, never in the Inbox or as waiting. */
+export const isCron = (state) => String(state.role ?? "").startsWith("cron-");
 
 export { RUN_ID_PATTERN, isValidRunId } from "../runs/runs.mjs";
 
@@ -80,15 +83,22 @@ export function buildRunRow(state, { heartbeatMtimeMs = null, now = Date.now() }
  * @param projectOf state → { label, name } | null (createProjectResolver): the
  *   row's project becomes that name — a clone's run otherwise names none.
  */
-export function buildRunsView(states, { activeOnly = false, heartbeats = {}, now = Date.now(), projectOf = null } = {}) {
-  let pairs = states.map((s) => [s, buildRunRow(s, { heartbeatMtimeMs: heartbeats[s.runId] ?? null, now })]);
-  const all = pairs.map(([, r]) => r);
-  // Counted over every run, so the overview needs no full list on each poll.
+export function buildRunsView(states, { activeOnly = false, heartbeats = {}, now = Date.now(), projectOf = null, ledger = new Map() } = {}) {
+  let pairs = states.map((s) => {
+    const r = buildRunRow(s, { heartbeatMtimeMs: heartbeats[s.runId] ?? null, now });
+    // An answer to a run the usage-spender parked puts it back on watch, but its worker
+    // only starts in the next spawn window.
+    return [s, { ...r, working: r.active && !NO_WORKER.has(r.status) && !ledger.get(s.runId)?.parked }];
+  });
+  const all = pairs.map(([s, r]) => ({ ...r, cron: isCron(s) }));
+  // Counted over every run, so the overview needs no full list on each poll. Scheduled
+  // jobs report on their job card, like the Inbox leaves them out.
   const counts = {
     active: all.filter((r) => r.active).length,
-    waiting: all.filter((r) => WAITING_HUMAN.has(r.status)).length,
+    working: all.filter((r) => r.working).length,
+    waiting: all.filter((r) => r.status === "waiting_human" && !r.cron).length,
     uncollected: all.filter((r) => r.uncollected).length,
-    failedUncollected: all.filter((r) => r.uncollected && r.status === "failed").length,
+    failedUncollected: all.filter((r) => r.uncollected && r.status === "failed" && !r.cron).length,
   };
   // "Open" = still running or finished with nobody having read the result.
   if (activeOnly) pairs = pairs.filter(([, r]) => r.active || r.uncollected);

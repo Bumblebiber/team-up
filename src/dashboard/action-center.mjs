@@ -7,7 +7,7 @@
 // Pure: the server hands in the run states and a mailbox reader,
 // `read(runId, name) → { text, mtimeMs } | null`.
 
-import { buildRunRow } from "./data.mjs";
+import { buildRunRow, isCron } from "./data.mjs";
 import { t } from "./i18n.mjs";
 import { questionBlocks, stripSourceMarkers } from "../runs/runs.mjs";
 
@@ -19,8 +19,6 @@ export const KIND_RANK = { question: 0, problem: 1, result: 2 };
 const SUBJECT_MAX = 90;
 const TASK_MAX = 4 * 1024;
 const RESULT_MAX = 64 * 1024;
-
-const isCron = (state) => String(state.role ?? "").startsWith("cron-");
 
 const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
 

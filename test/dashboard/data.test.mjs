@@ -85,13 +85,21 @@ test("runs view counts every run and the open filter keeps uncollected ones", ()
     { runId: "failed-open", status: "failed", finishedAt: recent },
     { runId: "done-open", status: "done", finishedAt: recent },
     { runId: "done-collected", status: "done", collected: true, finishedAt: recent },
+    // Answered while the spender had it parked: watched, but no worker until the next window.
+    { runId: "answered-parked", status: "watching" },
+    // Scheduled jobs report on their job card, not as runs waiting or failed for you.
+    { runId: "cron-failed", role: "cron-golden-task", status: "failed", finishedAt: recent },
+    { runId: "cron-asking", role: "cron-golden-task", status: "waiting_human" },
   ];
-  const all = buildRunsView(states, { now });
-  assert.deepEqual(all.counts, { active: 3, waiting: 2, uncollected: 2, failedUncollected: 1 });
-  const open = buildRunsView(states, { now, activeOnly: true });
+  const ledger = new Map([["answered-parked", { run_id: "answered-parked", parked: recent }]]);
+  const all = buildRunsView(states, { now, ledger });
+  assert.deepEqual(all.counts, { active: 5, working: 1, waiting: 1, uncollected: 3, failedUncollected: 1 });
+  const open = buildRunsView(states, { now, ledger, activeOnly: true });
   assert.deepEqual(open.counts, all.counts);
   assert.deepEqual(open.runs.map((r) => r.runId).sort(),
-    ["asking", "deciding", "done-open", "failed-open", "running"]);
+    ["answered-parked", "asking", "cron-asking", "cron-failed", "deciding", "done-open", "failed-open", "running"]);
+  // Working: a worker runs it now. Not a question, a capacity park, or an answered parked run.
+  assert.deepEqual(open.runs.filter((r) => r.working).map((r) => r.runId), ["running"]);
 });
 
 test("runs view names each row's resolved project, and resolves only the rows it returns", () => {

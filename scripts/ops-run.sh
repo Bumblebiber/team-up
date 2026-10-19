@@ -80,7 +80,7 @@ cat "$MB/FAILURE.md" 2>/dev/null || true
 cat "$MB/QUESTIONS.md" 2>/dev/null || true
 # Reported on stdout, so it is read: no intake ever comes for a scheduled job. The Inbox leaves
 # cron runs out, so nobody would answer a question either: it ends here, worker and slot freed.
-if [[ "$STATUS" == waiting_human || "$STATUS" == waiting_decision ]]; then
+if [[ "$STATUS" == waiting_human ]]; then
   "${TEAMUP[@]}" runs cancel "$RUN" >/dev/null 2>&1 || true
 fi
 "${TEAMUP[@]}" runs collect "$RUN" --note "ops-run: $STATUS, reported on stdout" >/dev/null 2>&1 || true

@@ -62,9 +62,9 @@ function updateNavBadge(id, text, tone = "", visible = Boolean(text), title = ""
 const URGENT_PRIORITIES = new Set(["P0", "P1", "0", "1", "CRITICAL", "HIGH"]);
 
 function updateDashboardMetrics() {
-  const { active = 0, waiting = 0, failedUncollected: failed = 0 } = dashboardMetrics.runCounts || {};
-  // Waiting runs count as active; they wait for you and are in the inbox.
-  $("#kpi-active-runs").textContent = String(Math.max(0, active - waiting));
+  const { active = 0, working = 0, waiting = 0, failedUncollected: failed = 0 } = dashboardMetrics.runCounts || {};
+  // Only runs a worker runs now: not one waiting for you, for room, or for tonight's window.
+  $("#kpi-active-runs").textContent = String(working);
 
   const runsTone = waiting || failed ? "red" : "";
   const runsBadge = active ? String(active) : failed ? "!" : "";
@@ -286,7 +286,7 @@ function repairStatusLine(collectors = {}) {
 const th = (key, label) => `<th data-col-key="${esc(key)}">${esc(label)}</th>`;
 
 async function refreshRuns() {
-  const data = await api(`/api/runs?active=${$("#active-only").checked ? "1" : "0"}`);
+  const data = await api(`/api/runs?active=${$("#active-only").checked ? "1" : "0"}&dir=${encodeURIComponent(readProjectsDir())}`);
   dashboardMetrics.runCounts = data.counts;
   runsRows = data.runs;
   updateDashboardMetrics();
@@ -357,7 +357,7 @@ $("#run-actions").addEventListener("click", async (e) => {
 
 async function selectRun(runId) {
   selectedRun = runId;
-  const data = await api(`/api/runs/${runId}`);
+  const data = await api(`/api/runs/${runId}?dir=${encodeURIComponent(readProjectsDir())}`);
   renderRunActions(runId, data.state);
   $("#runs-table").querySelectorAll("tr[data-run]").forEach((tr) => tr.classList.toggle("selected", tr.dataset.run === runId));
   const parts = [];
@@ -1547,7 +1547,7 @@ function teamLastJob(s) {
   if (r.status === "done") return withNames(t("Last job: done {ago}, in {project}", { ago }), names);
   if (r.status === "failed") return withNames(t("Last job: failed {ago}, in {project}", { ago }), names);
   if (r.status === "cancelled") return withNames(t("Last job: cancelled {ago}, in {project}", { ago }), names);
-  if (WAITING_STATUSES.has(r.status)) return withNames(t("Last job: started {ago}, waiting for you, in {project}", { ago }), names);
+  if (r.status === "waiting_human") return withNames(t("Last job: started {ago}, waiting for you, in {project}", { ago }), names);
   return withNames(t("Last job: started {ago}, still working, in {project}", { ago }), names);
 }
 
@@ -1980,7 +1980,6 @@ async function pullPrefs() {
 // takes it per request and never stores it.
 const PROJECTS_DIR_KEY = "teamup.projectsDir";
 const SESSION_CLI_KEY = "teamup.sessionCli";
-const WAITING_STATUSES = new Set(["waiting_human", "waiting_decision"]);
 const OTHER_REASON = {
   clones: t("clone folder"),
   "not-git": t("not a git repository"),
@@ -2048,12 +2047,13 @@ function renderProjects() {
   for (const i of acData?.items || []) {
     if (i.kind !== "result" && i.project?.name) waiting.set(i.project.name, (waiting.get(i.project.name) || 0) + 1);
   }
-  // A waiting run is not working: it waits for you, and is counted there.
+  // As "Working now" on the overview: a waiting run is counted under waiting, a parked one works tonight.
   const working = new Map();
   for (const r of runsRows) {
-    if (r.active && !WAITING_STATUSES.has(r.status) && r.project) working.set(r.project, (working.get(r.project) || 0) + 1);
+    if (r.working && r.project) working.set(r.project, (working.get(r.project) || 0) + 1);
   }
-  const count = (n) => (n ? String(n) : '<span class="muted">0</span>');
+  // Nothing for 0: most rows have nothing, and on a phone each zero was a line of its own.
+  const count = (n) => (n ? String(n) : "");
   // data-label: on a phone the header row goes and each cell names itself.
   const label = (text) => ` data-label="${esc(text)}"`;
   const row = (p) => {
@@ -2065,7 +2065,7 @@ function renderProjects() {
     return `<tr data-row="${esc(p.name)}">
       <td><span class="project-name" translate="no">${esc(p.name)}</span>${chips ? ` ${chips}` : ""}</td>
       <td${label(t("Waiting for you"))}>${w ? `<a href="#/actions" class="project-inbox" data-project="${esc(p.name)}"
-        aria-label="${esc(t("{n} waiting in {project}: open the inbox", { n: w, project: p.name }))}">${w}</a>` : count(0)}</td>
+        aria-label="${esc(t("{n} waiting in {project}: open the inbox", { n: w, project: p.name }))}">${w}</a>` : ""}</td>
       <td${label(t("Working now"))}>${count(working.get(p.name) || 0)}</td>
       ${expert ? `<td class="nowrap"${label(t("Test command"))}>${policyCell(p)}</td>
       <td translate="no"${label(t("Sessions"))}>${p.sessions.map((s) => `<a href="#" class="session-link" data-session="${esc(s)}">${esc(s.replace(/^team-up-proj-/, ""))}</a>`).join(" ") || "—"}</td>` : ""}

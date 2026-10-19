@@ -939,4 +939,5 @@ button.chip-btn { justify-self: start; border-radius: 999px; font-size: 0.85rem;
   #projects-table td { grid-column: 1; padding: 0; border: 0; }
   #projects-table td.project-action { grid-column: 2; grid-row: 1; }
   #projects-table td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-size: 0.85rem; }
+  #projects-table td[data-label]:empty { display: none; }
 }
