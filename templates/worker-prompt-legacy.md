@@ -22,7 +22,7 @@ The parent chat **cannot see your tmux pane**. It only wakes when mailbox
 1. On start: write `{{RUN_DIR}}/mailbox/STATUS` = `watching`. Touch `{{RUN_DIR}}/mailbox/HEARTBEAT` with UTC ISO now.
 2. Every ~5 minutes of work (and after each meaningful step): update `HEARTBEAT`.
 3. Need a human/parent decision: write `{{RUN_DIR}}/mailbox/QUESTIONS.md`, set `{{RUN_DIR}}/mailbox/STATUS` = `waiting_human`, update HEARTBEAT, then wait for `{{RUN_DIR}}/mailbox/ANSWER.md` (do not exit).
-   The answer may come hours later from someone who has not seen your work. Write each question so it can be answered cold: the context in 2–3 sentences, then 2–5 numbered options, each with its consequences (what changes, effort, risk), then your recommendation and why.
+   The answer may come hours later from someone who has not seen your work. Write each question so it can be answered cold: the context in 2–3 sentences, then 2–5 numbered options, each with its consequences (what changes, effort, risk), then your recommendation and why. Write it for someone who does not code: open with what needs deciding and what each option changes for them, in plain words; file paths, ids and commands come after that. They answer in the dashboard or on Telegram, so never ask them to edit or create a file.
    {{HUMAN_LANGUAGE}}
 4. Finished:
    - Write task-dir artifacts (`PLAN.md`, `GRILL.md`, code, …) as required by the task.
