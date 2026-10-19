@@ -1,0 +1,28 @@
+
+────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /home/bbbee/.team-up/spender/clones/pr-ZF-IT-Automation-SpaceColosseum-2-6c871
+ aca58d6
+
+ Quick safety check: Is this a project you created or one you trust? (Like your
+ own code, a well-known open source project, or work from your team). If not,
+ take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ ⚠ This folder pre-approves 4 tool permissions in .claude/settings.local.json:
+   Bash(git -C "C:/Users/benni/Documents/Colosseum - Next Level" status),
+ Bash(gh auth:*), Bash(git init:*), and Bash(git add:*)
+ These will apply without asking. Only proceed if you trust this configuration.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+
+
+
+
