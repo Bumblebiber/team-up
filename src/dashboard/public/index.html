@@ -19,7 +19,11 @@
 
   <div id="app" class="app hidden">
     <aside class="sidebar">
-      <header class="sidebar-brand"><h1>team-up</h1><small>agent roster</small>
+      <header class="sidebar-brand"><h1>team-up</h1>
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" data-lang="en" lang="en" translate="no" aria-label="English">EN</button>
+          <button type="button" data-lang="de" lang="de" translate="no" aria-label="Deutsch">DE</button>
+        </div>
         <button type="button" id="bell" class="bell" title="Notifications" aria-label="Notifications" aria-expanded="false"><span aria-hidden="true">🔔</span><span id="bell-count" class="bell-count hidden"></span></button>
       </header>
       <section id="bell-panel" class="bell-panel hidden" aria-label="Notifications">
@@ -29,30 +33,24 @@
       <nav class="sidebar-nav" aria-label="Dashboard views">
         <a href="#/overview" data-route="overview"><span class="nav-ico" aria-hidden="true">◎</span>Overview<span id="badge-overview" class="nav-badge hidden"></span></a>
         <a href="#/actions" data-route="actions"><span class="nav-ico" aria-hidden="true">✓</span>Inbox<span id="badge-actions" class="nav-badge hidden"></span></a>
-        <details class="nav-group" open>
-          <summary>Work</summary>
-          <a href="#/runs" data-route="runs"><span class="nav-ico" aria-hidden="true">▶</span>Sessions &amp; Runs<span id="badge-runs" class="nav-badge hidden"></span></a>
-          <a href="#/projects" data-route="projects"><span class="nav-ico" aria-hidden="true">▤</span>Projects</a>
-          <a href="#/tim" data-route="tim" id="nav-tim" class="hidden"><span class="nav-ico" aria-hidden="true">✦</span>TIM memory<span id="badge-tim" class="nav-badge hidden"></span></a>
-        </details>
-        <details class="nav-group" open>
-          <summary>Team</summary>
-          <a href="#/roles" data-route="roles"><span class="nav-ico" aria-hidden="true">⇄</span>Roles &amp; Models</a>
-          <a href="#/specialists" data-route="specialists"><span class="nav-ico" aria-hidden="true">☰</span>Specialists</a>
-        </details>
-        <details class="nav-group" open>
-          <summary>Automation</summary>
-          <a href="#/automation" data-route="automation"><span class="nav-ico" aria-hidden="true">⏱</span>Scheduled jobs<span id="badge-automation" class="nav-badge hidden"></span></a>
-          <a href="#/communication" data-route="communication"><span class="nav-ico" aria-hidden="true">✉</span>Communication<span id="badge-communication" class="nav-badge hidden"></span></a>
-        </details>
-        <details class="nav-group" open>
-          <summary>System</summary>
-          <a href="#/settings" data-route="settings"><span class="nav-ico" aria-hidden="true">⚙</span>Settings</a>
+        <a href="#/projects" data-route="projects"><span class="nav-ico" aria-hidden="true">▤</span>Projects</a>
+        <a href="#/specialists" data-route="specialists"><span class="nav-ico" aria-hidden="true">☰</span>Team</a>
+        <a href="#/tim" data-route="tim" id="nav-tim" class="hidden"><span class="nav-ico" aria-hidden="true">✦</span>TIM memory<span id="badge-tim" class="nav-badge hidden"></span></a>
+        <a href="#/automation" data-route="automation"><span class="nav-ico" aria-hidden="true">⏱</span>Scheduled jobs<span id="badge-automation" class="nav-badge hidden"></span></a>
+        <a href="#/communication" data-route="communication"><span class="nav-ico" aria-hidden="true">✉</span>Communication<span id="badge-communication" class="nav-badge hidden"></span></a>
+        <a href="#/settings" data-route="settings"><span class="nav-ico" aria-hidden="true">⚙</span>Settings</a>
+        <details class="nav-group" open data-expert>
+          <summary>Expert view</summary>
+          <a href="#/runs" data-route="runs"><span class="nav-ico" aria-hidden="true">▶</span>Sessions &amp; runs<span id="badge-runs" class="nav-badge hidden"></span></a>
+          <a href="#/roles" data-route="roles"><span class="nav-ico" aria-hidden="true">⇄</span>Roles &amp; models</a>
           <a href="#/providers" data-route="providers"><span class="nav-ico" aria-hidden="true">⚿</span>Providers</a>
           <a href="#/clis" data-route="clis"><span class="nav-ico" aria-hidden="true">⌘</span>CLIs</a>
+          <a href="#/trending" data-route="trending"><span class="nav-ico" aria-hidden="true">↗</span>AI trending</a>
         </details>
-        <a href="#/trending" data-route="trending" class="nav-trending"><span class="nav-ico" aria-hidden="true">↗</span>AI Trending</a>
       </nav>
+      <div class="sidebar-foot">
+        <label class="switch"><input type="checkbox" class="expert-toggle"> Expert view</label>
+      </div>
     </aside>
 
     <div class="workspace">
@@ -73,8 +71,8 @@
             <p>What needs you right now, and how much of each subscription is left.</p>
           </header>
           <div class="kpi-grid" aria-label="Dashboard overview">
-            <a class="kpi-tile" href="#/runs">
-              <span>Active runs</span><strong id="kpi-active-runs">—</strong><small>Sessions &amp; Runs</small>
+            <a class="kpi-tile" href="#/projects">
+              <span>Working now</span><strong id="kpi-active-runs">—</strong><small>By project</small>
             </a>
             <a class="kpi-tile" href="#/actions">
               <span>Waiting on you</span><strong id="kpi-waiting-runs">—</strong><small>Questions and problems</small>
@@ -98,7 +96,7 @@
             <div id="usage-grid" class="usage-grid"></div>
             <div id="usage-repair-status" class="repair-status hidden"></div>
             <div id="marked-list"></div>
-            <details class="inline-form" id="mark-details">
+            <details class="inline-form" id="mark-details" data-expert>
               <summary>Mark a model, provider or CLI as limited…</summary>
               <p class="muted">Takes it out of every chain until the time runs out — for a limit team-up cannot see (an API error, a provider outage).</p>
               <form id="mark-form" class="form-row">
@@ -134,7 +132,7 @@
 
         <section class="view" data-view="runs">
           <header class="page-head">
-            <h1>Sessions &amp; Runs</h1>
+            <h1>Sessions &amp; runs</h1>
             <p>Live worker terminals, and the mailbox runs behind them. Click a run to read its prompt and result and to close it out.</p>
           </header>
           <section id="panel-sessions" class="panel">
@@ -152,24 +150,18 @@
         <section class="view" data-view="projects">
           <header class="page-head">
             <h1>Projects</h1>
-            <p>Every repo in your projects folder: open a session in it, and give specialists a command policy they may run.</p>
+            <p>Every project in your projects folder: what waits for you there, what is being worked on, and a session to work in it yourself.</p>
           </header>
           <section id="panel-projects" class="panel">
-        <h2>Repositories</h2>
-        <div class="toolbar">
-          <label>Folder
-            <input type="text" id="projects-dir" placeholder="~/projects" autocomplete="off">
-          </label>
-          <select id="projects-cli" aria-label="CLI for new sessions"></select>
-          <input type="text" id="projects-new-name" placeholder="new-project" autocomplete="off" aria-label="New project name">
-          <button type="button" id="projects-new" title="Create the folder, git init, and — with TIM installed — the TIM project and its .tim-project marker">New project</button>
-          <button type="button" id="projects-fix-all" title="Write unambiguous missing command policies and trust the ones it wrote">Fix all</button>
-          <label title="On every refresh: write unambiguous missing .team-up/commands.json files (uncommitted); trusts nothing">
-            <input type="checkbox" id="projects-auto"> auto-fix
-          </label>
-        </div>
-        <p id="projects-status" class="muted"></p>
-        <div id="projects-table" class="table-wrap"></div>
+            <h2>Your projects</h2>
+            <div class="toolbar"><button type="button" id="projects-new" class="primary">+ New project</button></div>
+            <p id="projects-status" class="status-line" aria-live="polite"></p>
+            <div id="projects-table" class="table-wrap"></div>
+            <p class="muted projects-explain" data-expert>Test command: the command a specialist may run in this project to test its work, outside its sandbox. Ready means you approved exactly that command.</p>
+            <details id="projects-other" class="projects-other hidden">
+              <summary id="projects-other-summary"></summary>
+              <ul id="projects-other-list"></ul>
+            </details>
           </section>
         </section>
 
@@ -179,16 +171,16 @@
             <p>What every project remembers. <em>Open work</em> lists tasks, bugs and ideas — start a session on one. <em>Explorer</em> browses the whole memory as a tree or a graph.</p>
           </header>
           <div class="segmented" id="tim-views" role="tablist">
-            <button type="button" role="tab" class="is-active" data-tim-view="work">Open work</button>
-            <button type="button" role="tab" data-tim-view="explorer">Explorer</button>
+            <button type="button" role="tab" class="is-active" aria-selected="true" data-tim-view="work">Open work</button>
+            <button type="button" role="tab" aria-selected="false" data-tim-view="explorer">Explorer</button>
           </div>
           <section id="panel-tim" class="panel hidden" data-tim-pane="work">
         <h2>Open work</h2>
         <div class="toolbar">
-          <span class="segmented small" id="tim-tabs">
-            <button type="button" class="tim-tab is-active" data-kind="task">Tasks</button>
-            <button type="button" class="tim-tab" data-kind="idea">Ideas</button>
-            <button type="button" class="tim-tab" data-kind="bug">Bugs</button>
+          <span class="segmented small" id="tim-tabs" role="tablist">
+            <button type="button" role="tab" class="tim-tab is-active" aria-selected="true" data-kind="task">Tasks</button>
+            <button type="button" role="tab" class="tim-tab" aria-selected="false" data-kind="idea">Ideas</button>
+            <button type="button" role="tab" class="tim-tab" aria-selected="false" data-kind="bug">Bugs</button>
           </span>
         </div>
         <p id="tim-status" class="muted"></p>
@@ -202,7 +194,7 @@
 
         <section class="view" data-view="roles">
           <header class="page-head">
-            <h1>Roles &amp; Models</h1>
+            <h1>Roles &amp; models</h1>
             <p>A role is a job description with a fallback chain of models: the first one with quota left does the work. Drag a model from the roster onto a role to add it, drag chips to reorder a chain, ✕ or drag back to the roster to remove.</p>
           </header>
           <div class="roles-board">
@@ -218,8 +210,8 @@
                 <div class="role-name"><input type="text" id="role-new-name" placeholder="new role name" pattern="[a-z0-9][a-z0-9._\-]*" autocomplete="off" aria-label="New role name"></div>
                 <div class="chain-drop" data-role="" data-new="1"><span class="muted">drop the first model here</span></div>
                 <div class="row-actions">
-                  <button type="button" id="role-new-form" title="Set it up in a form instead">✎</button>
-                  <button type="button" id="role-new-cancel" title="Cancel">✕</button>
+                  <button type="button" id="role-new-form" title="Set it up in a form instead" aria-label="Set it up in a form instead">✎</button>
+                  <button type="button" id="role-new-cancel" title="Cancel" aria-label="Cancel">✕</button>
                 </div>
               </div>
             </div>
@@ -232,9 +224,9 @@
             <details id="catalogue-box">
               <summary>Add or remove models</summary>
               <div class="toolbar">
-                <span class="segmented small" id="catalogue-tabs">
-                  <button type="button" class="tim-tab is-active" data-kind="subscription">Subscription</button>
-                  <button type="button" class="tim-tab" data-kind="api">API key</button>
+                <span class="segmented small" id="catalogue-tabs" role="tablist">
+                  <button type="button" role="tab" class="tim-tab is-active" aria-selected="true" data-kind="subscription">Subscription</button>
+                  <button type="button" role="tab" class="tim-tab" aria-selected="false" data-kind="api">API key</button>
                 </span>
                 <input type="search" id="catalogue-search" placeholder="Filter models…">
                 <button type="button" id="models-scan" title="Ask every CLI which models it offers now (takes a minute or two)">Rescan CLIs</button>
@@ -248,31 +240,13 @@
 
         <section class="view" data-view="specialists">
           <header class="page-head">
-            <h1>Specialists</h1>
-            <p>Installed specialist bundles: what each is for, which role or chain it runs on, and which capability packages it may use.</p>
+            <h1>Team</h1>
+            <p>Your specialists: what each one is good at, what it may do, and which AI model it works with. Open one to change its role or its extras.</p>
           </header>
-          <section id="panel-specialists" class="panel">
-        <h2>Specialist</h2>
-        <div class="toolbar">
-          <select id="specialist-select" aria-label="Specialist"></select>
-          <span id="specialist-meta" class="muted"></span>
-        </div>
-        <div id="specialist-detail"></div>
-        <div class="toolbar">
-          <select id="capability-select" aria-label="Capability package"></select>
-          <button type="button" id="capability-assign">Assign capability</button>
-        </div>
-        <p id="capability-status" class="muted"></p>
-        <details>
-          <summary>Install a specialist from GitHub</summary>
-          <div class="toolbar">
-            <input type="text" id="specialist-repo" placeholder="https://github.com/owner/repo#ref">
-            <input type="text" id="specialist-subdir" placeholder="subdir (optional)">
-            <button type="button" id="specialist-install">Install</button>
-          </div>
-          <p id="specialist-install-status" class="muted"></p>
-        </details>
-          </section>
+          <div class="toolbar" data-expert><button type="button" id="specialist-add">Add a specialist…</button></div>
+          <p id="team-status" class="status-line" aria-live="polite"></p>
+          <div id="team-grid"></div>
+          <section id="team-detail" class="team-detail hidden" aria-labelledby="team-detail-name"></section>
         </section>
 
         <section class="view" data-view="automation">
@@ -290,7 +264,7 @@
             <h2>Built-in jobs</h2>
             <div id="builtin-jobs" class="job-list"></div>
           </section>
-          <section id="panel-services" class="panel">
+          <section id="panel-services" class="panel" data-expert>
             <h2>Background services</h2>
             <p class="muted">Always-on parts of team-up (systemd user units). Shown for information; manage them with <code>systemctl --user</code>.</p>
             <div id="services" class="table-wrap"></div>
@@ -343,11 +317,11 @@
         <section class="view" data-view="settings">
           <header class="page-head">
             <h1>Settings</h1>
-            <p>Every roster setting, explained. A change is checked, saved to <code>~/.team-up/roster.json</code> with a backup, and takes effect as noted under it.</p>
+            <p>Every setting, explained. A change is checked and saved with a backup, and takes effect as noted under it.</p>
           </header>
           <div class="toolbar settings-toolbar">
             <input type="search" id="settings-search" placeholder="Search settings…" aria-label="Search settings">
-            <label class="inline"><input type="checkbox" id="settings-advanced"> Show advanced</label>
+            <label class="inline" data-expert><input type="checkbox" id="settings-advanced"> Show advanced</label>
           </div>
           <p id="settings-status" class="status-line" aria-live="polite"></p>
           <div id="settings-body" class="settings"></div>
@@ -382,7 +356,7 @@
 
         <section class="view" data-view="trending">
           <header class="page-head">
-            <h1>AI Trending</h1>
+            <h1>AI trending</h1>
             <p>New AI repositories on GitHub, from the newest daily report of the trending scraper.</p>
           </header>
           <section id="panel-trending" class="panel">
@@ -445,15 +419,44 @@
 
   <dialog id="policy-editor" class="launch-dialog">
     <form id="policy-editor-form">
-      <h2>Command policy</h2>
-      <p id="policy-editor-where" class="muted"></p>
-      <label for="policy-editor-json">.team-up/commands.json</label>
+      <h2>Test command</h2>
+      <p id="policy-editor-where" class="muted" translate="no"></p>
+      <label for="policy-editor-json" translate="no">.team-up/commands.json</label>
       <textarea id="policy-editor-json" rows="14" spellcheck="false"></textarea>
-      <p class="muted">Written into the checkout, not committed. An existing file is never overwritten.</p>
+      <p class="muted">Written into the project, not committed. An existing file is never overwritten.</p>
       <p id="policy-editor-status" class="muted"></p>
       <menu>
-        <button type="button" id="policy-editor-cancel">Cancel</button>
+        <button type="button" data-close>Cancel</button>
         <button type="submit">Create</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="project-session" class="launch-dialog">
+    <form id="project-session-form">
+      <h2 id="project-session-title"></h2>
+      <p>Starts an AI assistant in this project, in a terminal you can type into. If it already runs there, this opens it.</p>
+      <label for="project-session-cli">Assistant</label>
+      <select id="project-session-cli" translate="no"></select>
+      <p id="project-session-status" class="status-line err" role="alert"></p>
+      <menu>
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="primary">Start session</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="project-new" class="launch-dialog">
+    <form id="project-new-form">
+      <h2>New project</h2>
+      <p>Creates a folder for it in your projects folder and sets it up for version control (git). With TIM installed, the project also gets its own memory.</p>
+      <label for="project-new-name">Name</label>
+      <input type="text" id="project-new-name" required autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" aria-describedby="project-new-hint">
+      <p id="project-new-hint" class="muted">Letters, digits, dots, dashes and underscores; it starts with a letter or digit.</p>
+      <p id="project-new-status" class="status-line err" role="alert"></p>
+      <menu>
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="primary">Create project</button>
       </menu>
     </form>
   </dialog>
@@ -566,6 +569,33 @@
       <menu>
         <button type="submit" value="keep" autofocus>Keep it</button>
         <button type="submit" value="cancel" class="danger">Cancel task</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="specialist-install-dialog" class="launch-dialog">
+    <form id="specialist-install-form">
+      <h2>Add a specialist</h2>
+      <p>Installs a specialist from a GitHub repository. Installing grants it the permissions its package lists: whether it may change files, use the internet and run commands. Install only from sources you trust.</p>
+      <label for="specialist-repo">GitHub repository</label>
+      <input type="text" id="specialist-repo" required placeholder="https://github.com/owner/repo#ref" autocomplete="off" spellcheck="false">
+      <label for="specialist-subdir">Folder in the repository (optional)</label>
+      <input type="text" id="specialist-subdir" autocomplete="off" spellcheck="false">
+      <p id="specialist-install-status" class="status-line" role="status"></p>
+      <menu>
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="primary">Install</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="confirm" class="launch-dialog">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-text"></p>
+      <menu>
+        <button type="submit" value="no" id="confirm-no" autofocus></button>
+        <button type="submit" value="yes" id="confirm-yes" class="danger"></button>
       </menu>
     </form>
   </dialog>

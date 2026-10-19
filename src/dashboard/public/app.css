@@ -838,3 +838,83 @@ button.chip-btn { justify-self: start; border-radius: 999px; font-size: 0.85rem;
   .inbox-detail { position: static; max-height: none; overflow: visible; padding: 0.9rem 1rem 1.1rem; background: var(--surface); }
   .ac-back { display: inline-flex; }
 }
+
+/* Expert view: off, the technical parts leave the page (the class is on <html>,
+   so it reaches the dialogs too). A direct link to a hidden view still opens it. */
+:root:not(.is-expert) [data-expert] { display: none !important; }
+
+/* Sidebar: language switch beside the bell, expert switch at the bottom. */
+.sidebar-brand { align-items: center; }
+.sidebar-brand .bell { margin-left: 0; }
+.lang-switch { display: inline-flex; margin-left: auto; padding: 1px; gap: 1px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); }
+.lang-switch button { min-width: 1.9rem; min-height: 1.6rem; padding: 0 0.35rem; border: 0; border-radius: 5px; background: none; color: var(--muted); font-size: 0.75rem; font-weight: 600; }
+.lang-switch button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 12%); }
+.sidebar-foot { padding: 0.6rem 0.9rem 0.9rem; border-top: 1px solid var(--border); }
+
+/* Projects */
+.project-name { font-weight: 600; margin-right: 0.2rem; }
+/* The inbox badge's look: questions and problems, the number says how many. */
+.project-inbox { display: inline-block; min-width: 1.6rem; padding: 0.05rem 0.45rem; border-radius: 999px; background: #dc2626; color: #fff; font-weight: 700; text-align: center; text-decoration: none; }
+.project-inbox:hover { filter: brightness(1.1); }
+.project-action { text-align: right; white-space: nowrap; }
+#projects-table td { vertical-align: middle; }
+.projects-explain { margin: 0.6rem 0 0; max-width: 52rem; }
+.projects-other { margin-top: 0.75rem; }
+.projects-other ul { margin: 0.3rem 0 0; padding-left: 1.2rem; font-size: 0.88rem; }
+.projects-other li { margin: 0.15rem 0; }
+
+/* Team: a card per specialist, the open one below them. */
+:root { --pink: #db2777; }
+@media (prefers-color-scheme: dark) { :root { --pink: #f472b6; } }
+.team-grid { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 0.75rem; }
+.team-card { display: flex; flex-direction: column; gap: 0.45rem; height: 100%; padding: 0.85rem 1rem; color: var(--text); text-decoration: none; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.team-card:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.team-card[aria-current="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.team-card-head, .team-detail-head { display: flex; align-items: center; gap: 0.65rem; }
+.team-who { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
+.team-name { font-weight: 700; font-size: 1rem; }
+.team-title { color: var(--muted); font-size: 0.82rem; }
+.team-purpose { font-size: 0.9rem; }
+.team-model, .team-last { color: var(--muted); font-size: 0.85rem; }
+.team-badges { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.avatar { --cat: var(--muted); flex: 0 0 auto; display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border-radius: 50%; color: var(--cat); background: color-mix(in srgb, var(--cat) 16%, var(--surface)); border: 1px solid color-mix(in srgb, var(--cat) 40%, var(--border)); font-weight: 700; font-size: 1.05rem; }
+.cat-coding { --cat: var(--accent); }
+.cat-testing { --cat: var(--green); }
+.cat-review { --cat: var(--amber); }
+.cat-research { --cat: var(--orphan); }
+.cat-marketing { --cat: var(--pink); }
+.team-detail { padding: 1rem 1.25rem 1.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.team-detail h2 { margin: 0; font-size: 1.15rem; }
+.team-detail h2:focus { outline: none; }
+.team-detail h3 { margin: 1.1rem 0 0.4rem; font-size: 0.95rem; }
+.team-detail h4 { margin: 0.7rem 0 0.2rem; font-size: 0.85rem; }
+.team-detail ul { margin: 0; padding-left: 1.2rem; }
+.team-detail > .team-last { margin: 0.6rem 0 0; }
+.team-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0 1.5rem; }
+.team-close { display: grid; place-items: center; min-width: 2rem; min-height: 2rem; color: var(--muted); text-decoration: none; border-radius: 7px; }
+.team-close:hover { background: var(--surface-2); color: var(--text); }
+.team-detail .team-extras { list-style: none; display: grid; gap: 0.3rem; margin: 0 0 0.6rem; padding: 0; }
+.team-extras li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; }
+.team-detail .caps { margin: 0.2rem 0; }
+.team-tech { margin-top: 1rem; }
+
+/* Roles, jobs, dialogs */
+.role-used { display: block; color: var(--muted); font-size: 0.78rem; }
+.job-fail { color: var(--red); overflow-wrap: anywhere; }
+.launch-dialog > form > input[type="text"], .launch-dialog > form > select { width: 100%; }
+.launch-dialog p { max-width: 40rem; }
+
+@media (max-width: 700px) {
+  .sidebar-foot { padding: 0.2rem 0.75rem 0.5rem; border-top: 0; }
+  .team-grid { grid-template-columns: minmax(0, 1fr); }
+  .team-detail { padding: 0.9rem 1rem; }
+}
+.set-control #projects-dir { width: min(100%, 26rem); }
+@media (max-width: 700px) {
+  /* A phone: one block per project, the button beside its name, each count named. */
+  #projects-table thead { display: none; }
+  #projects-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.2rem 0.75rem; padding: 0.55rem 0; border-bottom: 1px solid var(--border); }
+  #projects-table td { grid-column: 1; padding: 0; border: 0; }
+  #projects-table td.project-action { grid-column: 2; grid-row: 1; }
+  #projects-table td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-size: 0.85rem; }
+}

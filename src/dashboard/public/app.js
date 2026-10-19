@@ -8,6 +8,15 @@ const VIEW_NAMES = new Set([...document.querySelectorAll(".view")].map((view) =>
 
 // Old links keep working after a view was renamed or split.
 const ROUTE_ALIASES = { cron: "automation" };
+// Views whose hash has a second part: the open item (#/actions/<runId>, #/specialists/<id>).
+const ROUTES_WITH_ITEM = new Set(["actions", "specialists"]);
+
+// Expert view: per browser, never synced (LOCAL_ONLY_KEYS). Off, the nav and
+// the views leave out what is technical ([data-expert] in the markup, isExpert()
+// in the renderers); a direct link still opens a hidden view.
+const EXPERT_KEY = "teamup.expert";
+const isExpert = () => readStored(EXPERT_KEY, false) === true;
+document.documentElement.classList.toggle("is-expert", isExpert());
 // Views that load on entry rather than on the five-second cycle.
 const onEnter = {};
 
@@ -15,8 +24,7 @@ function applyRoute() {
   const match = location.hash.match(/^#\/([^/?#]+)(?:\/([\w.-]*))?$/);
   const wanted = match ? ROUTE_ALIASES[match[1]] || match[1] : null;
   const route = wanted && VIEW_NAMES.has(wanted) ? wanted : "overview";
-  // Only the inbox has a second part: the open item (#/actions/<runId>).
-  const canonicalHash = route === "actions" && match?.[2] ? `#/actions/${match[2]}` : `#/${route}`;
+  const canonicalHash = ROUTES_WITH_ITEM.has(route) && match?.[2] ? `#/${route}/${match[2]}` : `#/${route}`;
   if (location.hash !== canonicalHash) history.replaceState(null, "", canonicalHash);
   document.querySelectorAll(".view").forEach((view) => {
     view.classList.toggle("is-active", view.dataset.view === route);
@@ -35,7 +43,7 @@ window.addEventListener("hashchange", applyRoute);
 translateStatic();
 applyRoute();
 
-const dashboardMetrics = { runCounts: null, usage: null, tim: null, inbox: null };
+const dashboardMetrics = { runCounts: null, usage: null, tim: null };
 
 function usageLevelName(level) {
   return ({ red: "Critical", amber: "Warn", ok: "OK" })[level] || "Unknown";
@@ -55,7 +63,8 @@ const URGENT_PRIORITIES = new Set(["P0", "P1", "0", "1", "CRITICAL", "HIGH"]);
 
 function updateDashboardMetrics() {
   const { active = 0, waiting = 0, failedUncollected: failed = 0 } = dashboardMetrics.runCounts || {};
-  $("#kpi-active-runs").textContent = String(active);
+  // Waiting runs count as active; they wait for you and are in the inbox.
+  $("#kpi-active-runs").textContent = String(Math.max(0, active - waiting));
 
   const runsTone = waiting || failed ? "red" : "";
   const runsBadge = active ? String(active) : failed ? "!" : "";
@@ -70,7 +79,7 @@ function updateDashboardMetrics() {
   $("#kpi-worst-usage").textContent = worst ? `${worst[1].usedPct}%` : "—";
   $("#kpi-worst-usage-detail").textContent = worst
     ? `${worst[0]} · ${usageLevelName(worst[1].level)}`
-    : "No usage windows";
+    : t("No usage windows");
   const usageLevel = Object.values(dashboardMetrics.usage?.windows || {}).some((window) => window.level === "red")
     ? "red"
     : Object.values(dashboardMetrics.usage?.windows || {}).some((window) => window.level === "amber")
@@ -159,6 +168,28 @@ function esc(s) {
   d.textContent = s ?? "";
   // innerHTML leaves `"` alone; templates put this inside title="…" too.
   return d.innerHTML.replace(/"/g, "&quot;");
+}
+
+/**
+ * A yes/no question in a <dialog>, for what cannot be undone. `title` and
+ * `text` are HTML (esc() or withNames()); resolves true on yes, and focus goes
+ * back to where it was.
+ */
+function confirmDialog({ title, text, yes, no = t("Cancel") }) {
+  const dialog = $("#confirm");
+  $("#confirm-title").innerHTML = title;
+  $("#confirm-text").innerHTML = text;
+  $("#confirm-yes").textContent = yes;
+  $("#confirm-no").textContent = no;
+  const back = document.activeElement;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => {
+      back?.focus?.();
+      resolve(dialog.returnValue === "yes");
+    }, { once: true });
+  });
 }
 
 function fmtTime(iso) {
@@ -265,8 +296,10 @@ function repairStatusLine(collectors = {}) {
 async function refreshRuns() {
   const data = await api(`/api/runs?active=${$("#active-only").checked ? "1" : "0"}`);
   dashboardMetrics.runCounts = data.counts;
+  runsRows = data.runs;
   updateDashboardMetrics();
   updateAttention();
+  renderProjects();
   const visibleRuns = data.runs;
   const rows = visibleRuns.map((r) => `
     <tr class="clickable" data-run="${esc(r.runId)}"${providerAttr(r.worker)}>
@@ -634,15 +667,19 @@ function chainChip(c, i, r) {
 
 function roleRow(r) {
   const broken = r.chain.some((x) => x.invalid);
+  // Names come from installed manifests.
+  const users = (r.usedBy || []).map((u) => u.name || u.id);
+  const usedBy = users.length
+    ? `<small class="role-used">${withNames(t("Used by: {names}"), { names: new Intl.ListFormat(LANG, { type: "conjunction" }).format(users) })}</small>` : "";
   return `<div class="role-row" data-role="${esc(r.role)}">
-    <div class="role-name"><strong>${esc(r.role)}</strong>${r.effort ? ` <span class="muted" title="Effort for the whole role">${esc(r.effort)}</span>` : ""}</div>
+    <div class="role-name"><strong>${esc(r.role)}</strong>${r.effort ? ` <span class="muted" title="Effort for the whole role">${esc(r.effort)}</span>` : ""}${usedBy}</div>
     <div class="chain-drop" data-role="${esc(r.role)}"${broken ? ' data-locked="1" title="This chain has an entry team-up cannot read — fix it with ✎ first"' : ""}>${
       r.chain.map((c, i) => chainChip(c, i, r)).join("")}${r.pick ? "" : '<span class="badge red" title="Every model in the chain is skipped right now">exhausted</span>'}</div>
     <div class="row-actions">
-      <button type="button" class="role-edit" data-role="${esc(r.role)}" title="Effort, pinning, chain as a form">✎</button>
+      <button type="button" class="role-edit" data-role="${esc(r.role)}" title="Effort, pinning, chain as a form" aria-label="${esc(t("Edit {role}", { role: r.role }))}">✎</button>
       ${r.protected
-        ? `<span class="role-pin" title="Used by ${esc(r.protected)} — cannot be deleted">🔒</span>`
-        : `<button type="button" class="role-delete" data-role="${esc(r.role)}" title="Delete role">🗑</button>`}
+        ? `<span class="role-pin" title="Used by ${esc(r.protected)} — cannot be deleted" role="img" aria-label="${esc(t("Cannot be deleted"))}">🔒</span>`
+        : `<button type="button" class="role-delete" data-role="${esc(r.role)}" title="Delete role" aria-label="${esc(t("Delete {role}", { role: r.role }))}">🗑</button>`}
     </div>
   </div>`;
 }
@@ -671,12 +708,12 @@ async function refreshRoles() {
   // A redraw mid-drag drops the chip in the user's hand; dragend redraws.
   if (rolesDrag) return;
   rolesData = data;
-  // The specialist's assign dropdown lists the roles; redraw it only when they
-  // change, so the 5s poll never resets it mid-pick.
+  // The Team detail's role select lists the roles; redraw it only when they
+  // change (a pick not saved yet survives that too).
   const rolesKey = data.roles.map((r) => r.role).join(",");
   if (rolesKey !== specialistRolesKey) {
     specialistRolesKey = rolesKey;
-    renderSpecialist();
+    renderTeamDetail();
   }
   // An unchanged redraw would only flicker the hover state.
   const key = JSON.stringify(data);
@@ -719,8 +756,11 @@ $("#roles-list").addEventListener("click", async (e) => {
   const role = btn.dataset.role;
   const roleData = rolesData?.roles.find((x) => x.role === role);
   if (btn.classList.contains("role-edit")) openRoleEditor(roleData);
-  else if (btn.classList.contains("role-delete")
-    && confirm(`Delete role "${role}"?\n\nAnything that still runs \`team-up pick --role ${role}\` will fail.`)) {
+  else if (btn.classList.contains("role-delete") && await confirmDialog({
+    title: withNames(t("Delete the role {role}?"), { role }),
+    text: withNames(t("Anything that still runs team-up pick --role {role} will fail."), { role }),
+    yes: t("Delete role"),
+  })) {
     roleWrite(role, { delete: true }, `${role} deleted`);
   }
 });
@@ -907,9 +947,9 @@ function chainRow(entry = {}) {
     <select class="ce-effort" title="Overrides the model's default effort for this role"></select>
     <label class="ce-fast-label"><input type="checkbox" class="ce-fast"${entry.fast ? " checked" : ""}> ⚡ fast</label>
     <label title="Stay on exactly this version; never move to a newer one"><input type="checkbox" class="ce-pinned"${entry.pinned ? " checked" : ""}> pin version</label>
-    <button type="button" class="ce-up" title="Move up">↑</button>
-    <button type="button" class="ce-down" title="Move down">↓</button>
-    <button type="button" class="ce-remove" title="Remove">✕</button>`;
+    <button type="button" class="ce-up" title="${esc(t("Move up"))}" aria-label="${esc(t("Move up"))}">↑</button>
+    <button type="button" class="ce-down" title="${esc(t("Move down"))}" aria-label="${esc(t("Move down"))}">↓</button>
+    <button type="button" class="ce-remove" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))}">✕</button>`;
   const fill = () => {
     const c = row.querySelector(".ce-cli").value;
     const keep = row.querySelector(".ce-model").value || entry.model;
@@ -969,8 +1009,6 @@ function openRoleEditor(role, specialist = null) {
 $("#role-editor-add").addEventListener("click", () => $("#role-editor-chain").append(chainRow()));
 $("#role-editor-cancel").addEventListener("click", () => {
   roleDialog.close();
-  // The assign dropdown already shows "own chain…"; put it back.
-  if (specialistChainTarget) renderSpecialist();
 });
 // Double-click a chain chip: change that one entry's CLI, model, effort, pin.
 const chipDialog = $("#chip-editor");
@@ -1027,8 +1065,9 @@ $("#role-editor-form").addEventListener("submit", async (e) => {
     fast: row.querySelector(".ce-fast").checked,
   }));
   if (specialistChainTarget) {
-    if (await assignSpecialist(specialistChainTarget, { chain }, `${specialistChainTarget} runs on its own chain`)) roleDialog.close();
-    else $("#role-editor-status").textContent = $("#capability-status").textContent;
+    const name = teamName(findSpecialist(specialistChainTarget) ?? { id: specialistChainTarget });
+    if (await assignSpecialist(specialistChainTarget, { chain }, withNames(t("{name} now uses its own model list."), { name }))) roleDialog.close();
+    else $("#role-editor-status").textContent = $("#team-status").textContent;
     return;
   }
   let ok = await roleWrite(role, { chain }, `${role} saved`);
@@ -1052,7 +1091,10 @@ let catalogueData = null;
 function renderCatalogue() {
   if (!catalogueData) return;
   const kind = readStored(CATALOGUE_KIND_KEY, "subscription");
-  for (const btn of $("#catalogue-tabs").querySelectorAll(".tim-tab")) btn.classList.toggle("is-active", btn.dataset.kind === kind);
+  for (const btn of $("#catalogue-tabs").querySelectorAll(".tim-tab")) {
+    btn.classList.toggle("is-active", btn.dataset.kind === kind);
+    btn.setAttribute("aria-selected", String(btn.dataset.kind === kind));
+  }
   const q = $("#catalogue-search").value.trim().toLowerCase();
   const html = catalogueData.providers.filter((p) => p.tab === kind).map((p) => {
     const models = p.models.filter((m) => !q || `${m.cli_id} ${m.name || ""}`.toLowerCase().includes(q));
@@ -1405,151 +1447,254 @@ $("#admin-confirm-form").addEventListener("submit", async (e) => {
   }
 });
 
-// ── Specialists ───────────────────────────────────────────────────────────
-// One specialist at a time: the dropdown picks, the body shows what that one
-// actually holds. Fetched once per load and on demand — nothing here changes
-// between polls, so it stays off the 5s cycle.
+// ── Team ──────────────────────────────────────────────────────────────────
+// A card per installed specialist; the open one shows below the cards and
+// lives in the hash (#/specialists/<id>), so back and reload keep it. Not on
+// the five-second cycle: nothing here changes between polls, and a redraw
+// would drop a role that is picked but not saved yet.
 let specialistsData = null;
+let capabilityPool = null;
+/** The specialist the detail shows: focus moves only when it changes. */
+let teamOpenId = null;
+
+const TEAM_TITLE = {
+  coding: t("Developer"),
+  testing: t("Tester"),
+  review: t("Reviewer"),
+  research: t("Researcher"),
+  marketing: t("Marketing"),
+  other: t("Team member"),
+};
+
+const teamSelectedId = () => location.hash.match(/^#\/specialists\/([\w.-]+)$/)?.[1] ?? null;
+const findSpecialist = (id) => (specialistsData?.specialists || []).find((s) => s.id === id);
+const teamName = (s) => s.display_name || s.id;
+// A manifest's own words, not a translation: only its first letter changes.
+const capitalised = (text) => String(text ?? "").replace(/^\p{Ll}/u, (c) => c.toUpperCase());
+
+/** A translated sentence as HTML: escaped, each named value (agent text, a name, an id) in a translate="no" span. */
+function withNames(text, names) {
+  return esc(text).replace(/\{(\w+)\}/g, (m, key) => (Object.hasOwn(names, key) ? `<span translate="no">${esc(names[key])}</span>` : m));
+}
 
 function chips(items) {
-  if (!items?.length) return '<span class="muted">none</span>';
+  if (!items?.length) return '<span class="muted">—</span>';
   return items.map((item) => `<span class="chip">${esc(item)}</span>`).join(" ");
 }
 
-let capabilityPool = null;
+function teamNote(html, tone = "") {
+  const el = $("#team-status");
+  el.innerHTML = html;
+  el.className = `status-line ${tone}`;
+}
 
+const teamActive = (s) => Boolean(s.assignment) && !s.error;
 
-// What the specialist is for stays visible; limits and permissions fold away.
-function renderSpecialist() {
-  const body = $("#specialist-detail");
-  const id = $("#specialist-select").value;
-  const s = (specialistsData?.specialists || []).find((item) => item.id === id);
-  if (!s) {
-    $("#specialist-meta").textContent = "";
-    body.innerHTML = '<p class="muted">No specialist installed.</p>';
-    return;
-  }
-  const perms = s.permissions || {};
-  const budget = s.budget || {};
-  // Which chain it runs on: a role's, or its own. Unassigned does not launch.
+function teamStatus(s) {
+  if (teamActive(s)) return `<span class="tag ok">${esc(t("Active"))}</span>`;
+  const why = s.error ? t("It cannot start: {error}", { error: s.error }) : t("It has no role, so it does not start.");
+  return `<span class="tag off" title="${esc(why)}">${esc(t("Off"))}</span>`;
+}
+
+/** What it may do, in plain words. */
+function teamBadges(s) {
+  const p = s.permissions || {};
+  const out = [p.writes === true ? t("Edits code") : p.writes ? t("Edits code through a helper") : t("Read-only")];
+  if (p.network) out.push(t("Uses the internet"));
+  if ((p.commands || []).length) out.push(t("Runs tests"));
+  if (s.budget?.timeout_seconds) out.push(t("Up to {n} min", { n: Math.round(s.budget.timeout_seconds / 60) }));
+  return out.map((b) => `<span class="tag">${esc(b)}</span>`).join(" ");
+}
+
+/** One whole sentence per kind of ending; the age from createdAt, which the 30 s memo does not freeze. */
+function teamLastJob(s) {
+  const r = s.lastRun;
+  if (!r) return esc(t("No job yet"));
+  const at = Date.parse(r.createdAt ?? "");
+  const ago = fmtAgo(Number.isFinite(at) ? Date.now() - at : r.ageMs ?? 0);
+  const names = { project: r.project?.name ?? "—" };
+  if (r.status === "done") return withNames(t("Last job: done {ago}, in {project}", { ago }), names);
+  if (r.status === "failed") return withNames(t("Last job: failed {ago}, in {project}", { ago }), names);
+  if (r.status === "cancelled") return withNames(t("Last job: cancelled {ago}, in {project}", { ago }), names);
+  if (WAITING_STATUSES.has(r.status)) return withNames(t("Last job: started {ago}, waiting for you, in {project}", { ago }), names);
+  return withNames(t("Last job: started {ago}, still working, in {project}", { ago }), names);
+}
+
+function teamModelHtml(s) {
+  if (s.model) return withNames(t("Works with: {model}"), { model: s.model });
+  return `<span title="${esc(s.modelReason || "")}">${esc(t("No model can take it right now"))}</span>`;
+}
+
+const avatar = (s) => `<span class="avatar cat-${esc(s.category || "other")}" aria-hidden="true">${esc(Array.from(teamName(s))[0] || "?")}</span>`;
+
+function teamCard(s, selected) {
+  return `<li><a class="team-card" href="#/specialists/${esc(s.id)}" data-id="${esc(s.id)}"${selected ? ' aria-current="true"' : ""}>
+    <span class="team-card-head">${avatar(s)}
+      <span class="team-who"><span class="team-name" translate="no">${esc(teamName(s))}</span><span class="team-title">${esc(TEAM_TITLE[s.category] ?? TEAM_TITLE.other)}</span></span>
+      ${teamStatus(s)}
+    </span>
+    <span class="team-purpose" translate="no">${esc(capitalised(s.remit?.[0]))}</span>
+    <span class="team-model">${teamModelHtml(s)}</span>
+    <span class="team-badges">${teamBadges(s)}</span>
+    <span class="team-last">${teamLastJob(s)}</span>
+  </a></li>`;
+}
+
+function renderTeam() {
+  const list = specialistsData?.specialists || [];
+  const selected = teamSelectedId();
+  $("#team-grid").innerHTML = list.length
+    ? `<ul class="team-grid">${list.map((s) => teamCard(s, s.id === selected)).join("")}</ul>`
+    : `<div class="empty">${esc(t("No specialists installed yet."))}</div>`;
+  // Closed: back to the card it was opened from.
+  const closed = teamOpenId && !selected ? teamOpenId : null;
+  renderTeamDetail();
+  if (closed && location.hash.startsWith("#/specialists")) $(`#team-grid [data-id="${CSS.escape(closed)}"]`)?.focus();
+}
+
+function teamExtras(s) {
+  const name = teamName(s);
+  const rows = (s.assigned || []).map((a) => {
+    const shared = a.reason === "target:all";
+    return `<li><span translate="no">${esc(a.display_name)}</span>
+      <span class="muted">${shared ? esc(t("shared by the whole team")) : withNames(t("only for {name}"), { name })}</span>
+      <button type="button" class="team-extra-remove" data-package="${esc(a.package)}" data-checksum="${esc(a.checksum_full)}"
+        data-name="${esc(a.display_name)}"${shared ? " data-shared" : ""}>${esc(t("Remove…"))}</button></li>`;
+  }).join("");
+  const held = new Set((s.assigned || []).map((a) => `${a.package}:${a.checksum_full}`));
+  const pool = (capabilityPool?.packages || []).filter((p) => !held.has(`${p.package}:${p.checksum}`));
+  const options = pool.map((p) => `<option value="${esc(p.package)}" data-checksum="${esc(p.checksum)}" translate="no">${esc(p.display_name)}</option>`).join("");
+  return `<ul class="team-extras">${rows || `<li class="muted">${esc(t("None yet."))}</li>`}</ul>
+    <div class="form-row">
+      <label for="team-extra-add">${esc(t("Add an extra"))}</label>
+      <select id="team-extra-add"${pool.length ? "" : " disabled"}>${options || `<option value="">${esc(t("Nothing left to add"))}</option>`}</select>
+      <button type="button" id="team-extra-add-btn"${pool.length ? "" : " disabled"}>${esc(t("Add"))}</button>
+    </div>`;
+}
+
+function teamModelSection(s) {
   const a = s.assignment;
   const current = a?.role ? `role:${a.role}` : a?.chain ? "chain" : "";
   const roles = [...new Set([...(rolesData?.roles || []).map((r) => r.role), ...(a?.role ? [a.role] : [])])];
-  const assign = `<select class="specialist-assign" title="The chain this specialist runs on">
-    <option value=""${current ? "" : " selected"}>— unassigned, won't launch —</option>
-    ${roles.map((r) => `<option value="role:${esc(r)}"${current === `role:${r}` ? " selected" : ""}>role: ${esc(r)}</option>`).join("")}
-    <option value="chain"${current === "chain" ? " selected" : ""}>own chain…</option></select>${a?.chain
-    ? ` <span class="muted">${a.chain.map((e) => esc(typeof e === "string" ? e : `${e.cli ? `${e.cli}:` : ""}${e.model}`)).join(" → ")}</span>
-       <button type="button" class="specialist-chain-edit" title="Edit its chain">✎</button>` : ""}`;
-  $("#specialist-meta").innerHTML = [`v${esc(s.version)}`, assign].join(" · ");
+  const chain = a?.chain
+    ? `<p class="muted">${withNames(t("Its own model list: {chain}"), {
+      chain: a.chain.map((e) => (typeof e === "string" ? e : `${e.cli ? `${e.cli}:` : ""}${e.model}`)).join(" → ") })}</p>` : "";
+  return `<p>${teamModelHtml(s)}</p>${s.model ? "" : `<p class="muted" translate="no">${esc(s.modelReason || "")}</p>`}
+    <div class="form-row">
+      <label for="team-role">${esc(t("Role"))}</label>
+      <select id="team-role" data-current="${esc(current)}">
+        <option value="">${esc(t("No role: it does not start"))}</option>
+        ${roles.map((r) => `<option value="role:${esc(r)}" translate="no">${esc(r)}</option>`).join("")}
+        ${current === "chain" ? `<option value="chain">${esc(t("Its own model list"))}</option>` : ""}
+      </select>
+      <button type="button" id="team-role-save" class="primary">${esc(t("Save"))}</button>
+      <button type="button" id="team-chain">${esc(t("Custom model list…"))}</button>
+    </div>
+    <p class="muted">${esc(t("The role decides which AI models it works with: the first one with quota left does the job."))}</p>${chain}`;
+}
+
+function teamTechnical(s) {
+  const p = s.permissions || {};
+  const versions = (s.versions || []).map((v) => `${v.version}${v.selected ? " ✓" : ""}`).join(", ");
+  const row = (label, html) => `<dt>${esc(label)}</dt><dd translate="no">${html}</dd>`;
+  return `<details class="team-tech"><summary>${esc(t("Technical details"))}</summary><dl class="kv">
+    ${row(t("Id"), `<span class="mono">${esc(s.id)}</span>`)}
+    ${row(t("Version"), esc(s.version || "—"))}
+    ${(s.versions || []).length > 1 ? row(t("Installed versions"), esc(versions)) : ""}
+    ${row(t("Checksum"), `<span class="mono">${esc(s.checksum || "—")}</span>`)}
+    ${row(t("Call types"), chips(s.call_types))}
+    ${row(t("Timeout"), esc(s.budget?.timeout_seconds ? `${s.budget.timeout_seconds} s` : "—"))}
+    ${row(t("Tools"), chips(s.bundled?.tools))}
+    ${row(t("Files"), esc(`filesystem: ${p.filesystem ?? "—"} · writes: ${p.writes ?? false} · network: ${p.network ?? false}`))}
+    ${row(t("Commands"), chips(p.commands))}
+    ${s.exclusions?.length ? row(t("Left out"), esc(s.exclusions.map((e) => `${e.package} (${e.reason})`).join(", "))) : ""}
+  </dl></details>`;
+}
+
+function renderTeamDetail() {
+  const box = $("#team-detail");
+  const s = findSpecialist(teamSelectedId());
+  if (!s) {
+    teamOpenId = null;
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  // A role picked and not saved yet survives a redraw (a roles change, a save elsewhere).
+  const picked = teamOpenId === s.id ? $("#team-role")?.value : undefined;
+  const name = teamName(s);
   const bundled = [...(s.bundled?.skills || []), ...(s.bundled?.mcps || []).map((m) => `mcp:${m}`)];
-  body.innerHTML = `
-    ${s.error ? `<p class="error">${esc(s.error)}</p>` : ""}
-    <ul class="remit">${(s.remit || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
-    <p class="caps">${chips(bundled)} ${(s.assigned || []).map((a) =>
-      `<span class="chip assigned" title="${esc(`${a.package} · ${a.reason}`)}">${esc(a.display_name)}
-        <button type="button" class="capability-remove" title="Remove"
-          data-package="${esc(a.package)}" data-checksum="${esc(a.checksum_full)}">✕</button></span>`).join(" ")}</p>
-    <details>
-      <summary>Details</summary>
-      ${(s.versions || []).length > 1
-        ? `<p class="muted">Installed versions: ${s.versions.map((v) =>
-            `${esc(v.version)}${v.selected ? " ✓" : ""}`).join(", ")}</p>`
-        : ""}
-      <dl class="kv">
-        <dt>Never</dt><dd>${(s.anti_remit || []).map(esc).join("; ") || "—"}</dd>
-        <dt>Tools</dt><dd>${chips(s.bundled?.tools)}</dd>
-        <dt>Filesystem</dt><dd>${esc(perms.filesystem || "—")}, writes ${perms.writes ? "yes" : "no"}, network ${perms.network ? "yes" : "no"}</dd>
-        <dt>Commands</dt><dd>${chips(perms.commands)}</dd>
-        <dt>Call types</dt><dd>${chips(s.call_types)}</dd>
-        <dt>Timeout</dt><dd>${budget.timeout_seconds ? esc(`${budget.timeout_seconds}s`) : "—"}</dd>
-        <dt>Checksum</dt><dd class="mono">${esc(s.checksum)}</dd>
-        ${s.exclusions?.length ? `<dt>Excluded</dt><dd>${s.exclusions.map((e) => esc(`${e.package} (${e.reason})`)).join(", ")}</dd>` : ""}
-      </dl>
-    </details>`;
+  box.innerHTML = `<div class="team-detail-head">${avatar(s)}
+      <div class="team-who"><h2 id="team-detail-name" tabindex="-1" translate="no">${esc(name)}</h2>
+        <span class="team-title">${esc(TEAM_TITLE[s.category] ?? TEAM_TITLE.other)}</span></div>
+      ${teamStatus(s)}
+      <a class="team-close" href="#/specialists" aria-label="${esc(t("Close"))}"><span aria-hidden="true">✕</span></a>
+    </div>
+    ${s.error ? `<p class="status-line err" translate="no">${esc(s.error)}</p>` : ""}
+    <p class="team-last">${teamLastJob(s)}</p>
+    <div class="team-cols">
+      <section><h3>${esc(t("Good at"))}</h3><ul translate="no">${(s.remit || []).map((r) => `<li>${esc(capitalised(r))}</li>`).join("") || "<li>—</li>"}</ul></section>
+      <section><h3>${esc(t("Won't do"))}</h3><ul translate="no">${(s.anti_remit || []).map((r) => `<li>${esc(capitalised(r))}</li>`).join("") || "<li>—</li>"}</ul></section>
+    </div>
+    <section><h3>${esc(t("Skills"))}</h3>
+      <h4>${esc(t("Built-in skills"))}</h4>
+      <p class="muted">${withNames(t("They come with {name} and always stay."), { name })}</p>
+      <p class="caps" translate="no">${chips(bundled)}</p>
+      <h4>${esc(t("Added extras"))}</h4>
+      ${teamExtras(s)}
+    </section>
+    <section><h3>${esc(t("Model"))}</h3>${teamModelSection(s)}</section>
+    ${isExpert() ? teamTechnical(s) : ""}`;
+  box.classList.remove("hidden");
+  const role = $("#team-role");
+  role.value = picked !== undefined && [...role.options].some((o) => o.value === picked) ? picked : role.dataset.current;
+  teamRoleChanged();
+  if (teamOpenId !== s.id) {
+    teamOpenId = s.id;
+    $("#team-detail-name").focus({ preventScroll: true });
+    box.scrollIntoView({ block: "nearest" });
+  }
 }
 
-// Only offer what the specialist does not already hold; assigning a package
-// twice is a no-op the user would have to reason about.
-function renderCapabilityChoices() {
-  const select = $("#capability-select");
-  const id = $("#specialist-select").value;
-  const held = new Set(
-    ((specialistsData?.specialists || []).find((s) => s.id === id)?.assigned || [])
-      .map((a) => `${a.package}:${a.checksum_full}`),
-  );
-  const options = (capabilityPool?.packages || [])
-    .filter((p) => !held.has(`${p.package}:${p.checksum}`))
-    .map((p) => `<option value="${esc(p.package)}" data-checksum="${esc(p.checksum)}">
-      ${esc(p.display_name)} — ${esc(p.package)}</option>`)
-    .join("");
-  select.innerHTML = options || '<option value="">nothing left to assign</option>';
+/** Save only when the pick differs from what it runs on now. */
+function teamRoleChanged() {
+  const role = $("#team-role");
+  $("#team-role-save").disabled = role.value === role.dataset.current;
 }
 
-async function assignCapability(pkg, checksum, action) {
-  const id = $("#specialist-select").value;
-  const status = $("#capability-status");
-  status.textContent = action === "disable" ? "Removing…" : "Assigning…";
+async function assignCapability(id, pkg, checksum, action, note) {
   try {
     await api(`/api/specialists/${encodeURIComponent(id)}/capabilities`, {
       method: "POST",
       body: JSON.stringify({ package: pkg, checksum, action }),
     });
     await refreshSpecialists();
-    status.textContent = `${pkg} ${action === "disable" ? "removed from" : "assigned to"} ${id}`;
+    teamNote(note, "ok");
   } catch (err) {
-    status.textContent = err.message;
+    teamNote(esc(t("Not saved: {error}", { error: err.message })), "err");
   }
 }
 
 async function refreshSpecialists() {
-  const select = $("#specialist-select");
-  const keep = select.value;
   const [specialists, pool] = await Promise.all([
     api("/api/specialists"),
     api("/api/capability-pool"),
   ]);
   specialistsData = specialists;
   capabilityPool = pool;
-  const list = specialistsData.specialists || [];
-  select.innerHTML = list
-    .map((s) => `<option value="${esc(s.id)}">${esc(s.display_name || s.id)}</option>`)
-    .join("");
-  if (list.some((s) => s.id === keep)) select.value = keep;
-  renderSpecialist();
-  renderCapabilityChoices();
+  renderTeam();
 }
 
-$("#specialist-select").addEventListener("change", () => {
-  renderSpecialist();
-  renderCapabilityChoices();
-});
-
-$("#capability-assign").addEventListener("click", () => {
-  const option = $("#capability-select").selectedOptions[0];
-  if (!option?.value) return;
-  assignCapability(option.value, option.dataset.checksum, "enable");
-});
-
-// Delegated, because renderSpecialist replaces the body on every change.
-$("#specialist-detail").addEventListener("click", async (event) => {
-  const remove = event.target.closest(".capability-remove");
-  if (remove) {
-    assignCapability(remove.dataset.package, remove.dataset.checksum, "disable");
-    return;
-  }
-});
+onEnter.specialists = () => renderTeam();
 
 async function assignSpecialist(id, body, note) {
-  const status = $("#capability-status");
   try {
     await api(`/api/specialists/${encodeURIComponent(id)}/assign`, { method: "POST", body: JSON.stringify(body) });
-    status.textContent = note;
+    teamNote(note, "ok");
     await refreshSpecialists();
     return true;
   } catch (err) {
-    status.textContent = `refused: ${err.message}`;
-    await refreshSpecialists();
+    teamNote(esc(t("Not saved: {error}", { error: err.message })), "err");
     return false;
   }
 }
@@ -1570,38 +1715,76 @@ function openSpecialistChain(s) {
   openRoleEditor({ chain }, s.id);
 }
 
-$("#specialist-meta").addEventListener("change", async (event) => {
-  const sel = event.target.closest(".specialist-assign");
-  if (!sel) return;
-  const id = $("#specialist-select").value;
-  const s = (specialistsData?.specialists || []).find((item) => item.id === id);
-  if (sel.value === "chain") openSpecialistChain(s);
-  else if (sel.value) await assignSpecialist(id, { role: sel.value.slice(5) }, `${id} runs on ${sel.value.slice(5)}`);
-  else await assignSpecialist(id, {}, `${id} unassigned — it will not launch`);
+$("#team-detail").addEventListener("change", (e) => {
+  if (e.target.id === "team-role") teamRoleChanged();
 });
 
-$("#specialist-meta").addEventListener("click", (event) => {
-  if (!event.target.closest(".specialist-chain-edit")) return;
-  const id = $("#specialist-select").value;
-  openSpecialistChain((specialistsData?.specialists || []).find((item) => item.id === id));
+$("#team-detail").addEventListener("click", async (e) => {
+  const s = findSpecialist(teamSelectedId());
+  if (!s) return;
+  const name = teamName(s);
+  if (e.target.closest("#team-role-save")) {
+    const value = $("#team-role").value;
+    const role = value.startsWith("role:") ? value.slice(5) : null;
+    await assignSpecialist(s.id, role ? { role } : {}, role
+      ? withNames(t("{name} now works in the role {role}."), { name, role })
+      : withNames(t("{name} has no role now and does not start."), { name }));
+  } else if (e.target.closest("#team-chain")) {
+    openSpecialistChain(s);
+  } else if (e.target.closest("#team-extra-add-btn")) {
+    const option = $("#team-extra-add").selectedOptions[0];
+    if (option?.value) {
+      await assignCapability(s.id, option.value, option.dataset.checksum, "enable",
+        withNames(t("{name} now has {extra}."), { name, extra: option.textContent }));
+    }
+  } else if (e.target.closest(".team-extra-remove")) {
+    const btn = e.target.closest(".team-extra-remove");
+    const extra = btn.dataset.name;
+    // ✕ meant two things: a shared extra is left out for this one, an own one is removed.
+    const shared = btn.hasAttribute("data-shared");
+    const ok = await confirmDialog(shared ? {
+      title: withNames(t("Leave {extra} out for {name}?"), { extra, name }),
+      text: withNames(t("{extra} is shared by the whole team. {name} no longer gets it; everyone else keeps it. You can add it back any time."), { extra, name }),
+      yes: t("Leave it out"),
+    } : {
+      title: withNames(t("Remove {extra} from {name}?"), { extra, name }),
+      text: withNames(t("Only {name} has this extra. It is removed; you can add it again any time."), { name }),
+      yes: t("Remove"),
+    });
+    if (ok) {
+      await assignCapability(s.id, btn.dataset.package, btn.dataset.checksum, "disable",
+        withNames(t("{name} no longer gets {extra}."), { name, extra }));
+    }
+  }
 });
 
-$("#specialist-install").addEventListener("click", async () => {
+const installDialog = $("#specialist-install-dialog");
+$("#specialist-add").addEventListener("click", () => {
+  $("#specialist-install-status").textContent = "";
+  installDialog.showModal();
+});
+
+$("#specialist-install-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
   const status = $("#specialist-install-status");
   const repo = $("#specialist-repo").value.trim();
-  if (!repo) return;
-  status.textContent = `Cloning ${repo}…`;
+  const btn = e.submitter;
+  btn.disabled = true;
+  status.textContent = t("Installing {repo}…", { repo });
   try {
     const result = await api("/api/specialists/install", {
       method: "POST",
       body: JSON.stringify({ repo, subdir: $("#specialist-subdir").value.trim() }),
     });
-    status.textContent = `Installed ${result.id}@${result.version} from ${result.source}`;
     $("#specialist-repo").value = "";
     $("#specialist-subdir").value = "";
+    installDialog.close();
+    teamNote(withNames(t("Installed {name}."), { name: `${result.id}@${result.version}` }), "ok");
     await refreshSpecialists();
   } catch (err) {
     status.textContent = err.message;
+  } finally {
+    btn.disabled = false;
   }
 });
 
@@ -1611,13 +1794,12 @@ $("#specialist-install").addEventListener("click", async () => {
 // to change something wins.
 const PREF_PREFIX = "teamup.";
 const LEGACY_LAYOUT_KEY = "teamup.layout";
-const EXPERT_KEY = "teamup.expert";
 // Per browser, never synced: a filter, tab or view choice, and a half-typed answer.
 const LOCAL_ONLY_KEYS = new Set(["teamup.acFilter", "teamup.acProject", "teamup.timView", "teamup.timKind",
-  "teamup.trendingSection", "teamup.catalogueKind", "teamup.rolesTab", EXPERT_KEY]);
+  "teamup.trendingSection", "teamup.catalogueKind", "teamup.rolesTab", "teamup.sessionCli", EXPERT_KEY]);
 const isLocalOnly = (key) => LOCAL_ONLY_KEYS.has(key) || key.startsWith("teamup.draft.");
 // Keys nothing reads any more: they leave this browser and the server copy.
-const DEAD_KEYS = [LEGACY_LAYOUT_KEY, "teamup.acClosed"];
+const DEAD_KEYS = [LEGACY_LAYOUT_KEY, "teamup.acClosed", "teamup.projectsAutoFix"];
 
 function localPrefs() {
   const out = {};
@@ -1669,9 +1851,28 @@ async function pullPrefs() {
 }
 
 // ── Projects ──────────────────────────────────────────────────────────────
-// The collecting folder is a per-browser preference, like the layout: the
-// server takes it as a parameter and never stores it.
+// One row per project in the projects folder: what waits for you there (the
+// inbox), what is being worked on there (the runs list, resolved to its real
+// project), and a session to work in it yourself. Folders that are no project
+// of yours (clone roots, folders without git, specialist packages) fold away
+// under "Other folders". The projects folder is a per-browser preference, set
+// in Settings → General: the server takes it per request and never stores it.
 const PROJECTS_DIR_KEY = "teamup.projectsDir";
+const SESSION_CLI_KEY = "teamup.sessionCli";
+const WAITING_STATUSES = new Set(["waiting_human", "waiting_decision"]);
+const OTHER_REASON = {
+  clones: t("clone folder"),
+  "not-git": t("not a git repository"),
+  "specialist-bundle": t("specialist package"),
+};
+let projectsData = null;
+/** The folder the server listed, for the Settings placeholder. */
+let projectsDirShown = "";
+let projectsKey = "";
+let projectsByPath = new Map();
+let projectsNote = "";
+/** /api/runs rows, kept by refreshRuns for "Working now". */
+let runsRows = [];
 
 function readProjectsDir() {
   try {
@@ -1682,226 +1883,190 @@ function readProjectsDir() {
 }
 
 async function refreshProjects() {
-  const dir = readProjectsDir();
-  const status = $("#projects-status");
-  let data;
   try {
-    data = await api(`/api/projects?dir=${encodeURIComponent(dir)}`);
+    projectsData = await api(`/api/projects?dir=${encodeURIComponent(readProjectsDir())}`);
   } catch (err) {
-    status.textContent = err.message;
+    projectsData = null;
+    projectsKey = "";
+    $("#projects-status").textContent = t("Could not load the projects: {error}", { error: err.message });
     $("#projects-table").innerHTML = "";
     return;
   }
-  // A write note stays until the next write: the dirty star alone does not
-  // say that the change came from this panel.
-  status.textContent = projectsNote ? `${data.dir} — ${projectsNote}` : data.dir;
-  if (!$("#projects-dir").value) $("#projects-dir").value = dir || data.dir;
-
-  const cliSel = $("#projects-cli");
-  const selected = cliSel.value;
-  const options = (data.clis || []).map((c) => `<option>${esc(c)}</option>`).join("");
-  if (cliSel.innerHTML !== options) cliSel.innerHTML = options;
-  if (selected && (data.clis || []).includes(selected)) cliSel.value = selected;
-
-  projectsByPath = new Map(data.projects.map((p) => [p.path, p]));
-  const rows = data.projects.map((p) => `
-    <tr>
-      <td>${esc(p.name)}${p.dirty ? " <span class=\"muted\">*</span>" : ""}</td>
-      <td>${esc(p.git ? (p.branch || "detached") : "—")}</td>
-      <td>${policyCell(p)}</td>
-      <td>${p.sessions.map((s) => `<a href="#" class="session-link" data-session="${esc(s)}">${esc(s.replace(/^team-up-proj-/, ""))}</a>`).join(" ") || "—"}</td>
-      <td><button type="button" class="project-start" data-dir="${esc(p.path)}">Start</button></td>
-    </tr>`).join("");
-  $("#projects-table").innerHTML = `<table>
-    <thead><tr><th>Project</th><th>Branch</th><th>Policy</th><th>Sessions</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="5">No projects</td></tr>'}</tbody></table>`;
-
-  $("#projects-table").querySelectorAll(".policy-create").forEach((btn) => {
-    btn.addEventListener("click", () => openPolicyEditor(projectsByPath.get(btn.dataset.dir)));
-  });
-  $("#projects-table").querySelectorAll(".session-link").forEach((a) => {
-    a.addEventListener("click", (e) => {
-      e.preventDefault();
-      selectSession(a.dataset.session);
-    });
-  });
-  $("#projects-table").querySelectorAll(".project-start").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      try {
-        const res = await api("/api/projects/session", {
-          method: "POST",
-          body: JSON.stringify({
-            dir: btn.dataset.dir,
-            cli: $("#projects-cli").value,
-            projects_dir: readProjectsDir(),
-          }),
-        });
-        await refreshProjects();
-        selectSession(res.session);
-      } catch (err) {
-        status.textContent = err.message;
-      } finally {
-        btn.disabled = false;
-      }
-    });
-  });
-  autoFixProjects().catch(() => {});
+  projectsDirShown = projectsData.dir;
+  projectsByPath = new Map(projectsData.projects.map((p) => [p.path, p]));
+  renderProjects();
 }
-
-// ── command policy trust ──
-let projectsByPath = new Map();
-let projectsNote = "";
-const PROJECTS_AUTO_KEY = "teamup.projectsAutoFix";
-// Auto-fix tries each project once per page load so failures do not repeat on every poll.
-const autoFixTried = new Set();
 
 function policyCell(p) {
   const pol = p.policy || { state: "none" };
-  const create = `<button type="button" class="policy-create" data-dir="${esc(p.path)}">Create…</button>`;
-  const trust = pol.trusted === true
-    ? '<span class="badge ok">trusted</span>'
-    : pol.trusted === false
-      ? '<span class="badge amber">untrusted</span>'
-      : "";
-  if (pol.state === "valid") return `<span class="badge ok">valid</span> ${trust}`;
-  if (pol.state === "inherited") return `<span class="badge ok">inherited policy</span> ${trust}`;
-  if (pol.state === "invalid") {
-    return `<span class="badge red" title="${esc((pol.errors || []).join("\n"))}">invalid</span>`;
+  const tag = (tone, text, title = "") => `<span class="tag ${tone}"${title ? ` title="${esc(title)}"` : ""}>${esc(text)}</span>`;
+  const create = `<button type="button" class="policy-create" data-dir="${esc(p.path)}">${esc(t("Create…"))}</button>`;
+  if (pol.state === "valid" || pol.state === "inherited") {
+    const ready = pol.trusted === false
+      ? tag("warn", t("Not approved yet"), t("Changed since it was approved, or never approved. Approve it in a terminal: team-up specialist trust-policy --project {path}", { path: p.path }))
+      : tag("ok", t("Ready"));
+    return pol.state === "inherited" ? `${ready} ${tag("", t("from the folder above"))}` : ready;
   }
+  if (pol.state === "invalid") return tag("err", t("Broken"), (pol.errors || []).join("\n"));
   if (pol.state === "missing") {
-    const hint = pol.proposal?.auto ? "unambiguous" : "check the proposal";
-    return `<span class="badge amber" title="${esc(hint)}">missing</span> ${create}`;
+    return `${tag("warn", t("Missing"), pol.proposal?.auto ? t("Found one test command: check it and create it.") : t("Several candidates: check the proposal."))} ${create}`;
   }
-  return `<span class="muted" title="no test command detected">no tests</span> ${create}`;
+  return `${tag("off", t("No tests found"))} ${create}`;
 }
 
-async function trustProject(p) {
-  const res = await api("/api/projects/trust-policy", {
-    method: "POST",
-    body: JSON.stringify({ dir: p.path, projects_dir: readProjectsDir() }),
-  });
-  return res;
+function renderProjects() {
+  const data = projectsData;
+  if (!data) return;
+  const expert = isExpert();
+  // Questions and problems, like the inbox badge; results wait too, but not on you.
+  const waiting = new Map();
+  for (const i of acData?.items || []) {
+    if (i.kind !== "result" && i.project?.name) waiting.set(i.project.name, (waiting.get(i.project.name) || 0) + 1);
+  }
+  // A waiting run is not working: it waits for you, and is counted there.
+  const working = new Map();
+  for (const r of runsRows) {
+    if (r.active && !WAITING_STATUSES.has(r.status) && r.project) working.set(r.project, (working.get(r.project) || 0) + 1);
+  }
+  const count = (n) => (n ? String(n) : '<span class="muted">0</span>');
+  // data-label: on a phone the header row goes and each cell names itself.
+  const label = (text) => ` data-label="${esc(text)}"`;
+  const row = (p) => {
+    const w = waiting.get(p.name) || 0;
+    const chips = expert ? [
+      p.git && !p.mainBranch ? `<span class="tag warn">${esc(t("side branch {branch}")).replace("{branch}", () => `<span translate="no">${esc(p.branch)}</span>`)}</span>` : "",
+      p.dirty ? `<span class="tag">${esc(t("uncommitted changes"))}</span>` : "",
+    ].filter(Boolean).join(" ") : "";
+    return `<tr data-row="${esc(p.name)}">
+      <td><span class="project-name" translate="no">${esc(p.name)}</span>${chips ? ` ${chips}` : ""}</td>
+      <td${label(t("Waiting for you"))}>${w ? `<a href="#/actions" class="project-inbox" data-project="${esc(p.name)}"
+        aria-label="${esc(t("{n} waiting in {project}: open the inbox", { n: w, project: p.name }))}">${w}</a>` : count(0)}</td>
+      <td${label(t("Working now"))}>${count(working.get(p.name) || 0)}</td>
+      ${expert ? `<td class="nowrap"${label(t("Test command"))}>${policyCell(p)}</td>
+      <td translate="no"${label(t("Sessions"))}>${p.sessions.map((s) => `<a href="#" class="session-link" data-session="${esc(s)}">${esc(s.replace(/^team-up-proj-/, ""))}</a>`).join(" ") || "—"}</td>` : ""}
+      <td class="project-action"><button type="button" class="project-open" data-dir="${esc(p.path)}">${esc(t("Open session…"))}</button></td>
+    </tr>`;
+  };
+  const mine = data.projects.filter((p) => !p.other);
+  const other = data.projects.filter((p) => p.other);
+  const table = `<table>
+    <thead><tr><th>${esc(t("Project"))}</th><th>${esc(t("Waiting for you"))}</th><th>${esc(t("Working now"))}</th>${
+      expert ? `<th>${esc(t("Test command"))}</th><th>${esc(t("Sessions"))}</th>` : ""}<th></th></tr></thead>
+    <tbody>${mine.map(row).join("") || `<tr><td colspan="${expert ? 6 : 4}">${esc(t("No projects in this folder yet."))}</td></tr>`}</tbody></table>`;
+  const otherList = other.map((p) => `<li><span translate="no">${esc(p.name)}</span> <span class="muted">${esc(OTHER_REASON[p.otherReason] ?? "")}</span></li>`).join("");
+  $("#projects-status").textContent = projectsNote;
+  // Unchanged: no redraw, so focus and the open "Other folders" stay where they are.
+  const key = table + otherList;
+  if (key === projectsKey) return;
+  projectsKey = key;
+  const a = document.activeElement;
+  const refocus = a && $("#projects-table").contains(a) && a.classList[0]
+    ? `.${a.classList[0]}${["dir", "project", "session"].filter((k) => a.dataset[k]).map((k) => `[data-${k}="${CSS.escape(a.dataset[k])}"]`).join("")}`
+    : null;
+  $("#projects-table").innerHTML = table;
+  if (refocus) $(`#projects-table ${refocus}`)?.focus({ preventScroll: true });
+  $("#projects-other").classList.toggle("hidden", !other.length);
+  $("#projects-other-summary").textContent = t("Other folders ({n})", { n: other.length });
+  $("#projects-other-list").innerHTML = otherList;
 }
 
-/**
- * What "Fix all" and auto-fix do to one project: only what needs no judgement.
- * Trusting a policy is a judgement: a delegate specialist can edit
- * commands.json, and the broker runs it outside the capsule. So "Fix all"
- * trusts only a policy it wrote in the same click, auto-fix trusts nothing,
- * and a changed policy is trusted per project with `specialist trust-policy`.
- */
-async function fixProject(p, { trust }) {
-  let wrote = false;
-  let trusted = false;
-  if (p.policy?.state === "missing" && p.policy.proposal?.auto) {
-    await api("/api/projects/policy", {
-      method: "POST",
-      body: JSON.stringify({ dir: p.path, projects_dir: readProjectsDir() }),
-    });
-    wrote = true;
+$("#projects-table").addEventListener("click", (e) => {
+  const inbox = e.target.closest(".project-inbox");
+  if (inbox) {
+    // The link goes to the inbox; this makes it show that project only.
+    writeStored(AC_FILTER_KEY, "all");
+    writeStored(AC_PROJECT_KEY, inbox.dataset.project);
+    return;
   }
-  if (trust && wrote) {
-    await trustProject(p);
-    trusted = true;
+  const session = e.target.closest(".session-link");
+  if (session) {
+    e.preventDefault();
+    selectSession(session.dataset.session);
+    return;
   }
-  return { wrote, trusted };
+  const policy = e.target.closest(".policy-create");
+  if (policy) openPolicyEditor(projectsByPath.get(policy.dataset.dir));
+  const open = e.target.closest(".project-open");
+  if (open) openSessionDialog(projectsByPath.get(open.dataset.dir));
+});
+
+// Any dialog's Cancel.
+document.addEventListener("click", (e) => {
+  e.target.closest("dialog [data-close]")?.closest("dialog").close();
+});
+
+const sessionDialog = $("#project-session");
+
+/** Which CLI: the one this browser started last, else claude, else the first. */
+function openSessionDialog(p) {
+  if (!p) return;
+  const clis = projectsData?.clis || [];
+  const last = readStored(SESSION_CLI_KEY, "");
+  const select = $("#project-session-cli");
+  select.innerHTML = clis.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  select.value = clis.includes(last) ? last : clis.includes("claude") ? "claude" : clis[0] || "";
+  $("#project-session-title").innerHTML = esc(t("Open a session in {project}")).replace("{project}", () => `<span translate="no">${esc(p.name)}</span>`);
+  $("#project-session-status").textContent = "";
+  sessionDialog.dataset.dir = p.path;
+  sessionDialog.showModal();
 }
 
-const needsWrite = (p) => p.policy?.state === "missing" && p.policy.proposal?.auto;
-const needsFix = (p) =>
-  needsWrite(p)
-  || ((p.policy?.state === "valid" || p.policy?.state === "inherited") && p.policy.trusted === false);
-
-async function fixProjects(projects, { trust }) {
-  const written = [];
-  const trusted = [];
-  for (const p of projects) {
-    try {
-      const result = await fixProject(p, { trust });
-      if (result.wrote) written.push(p.name);
-      if (result.trusted) trusted.push(p.name);
-    } catch (err) {
-      projectsNote = `${p.name}: ${err.message}`;
-    }
-  }
-  const changed = projects.filter((p) => (p.policy?.state === "valid" || p.policy?.state === "inherited") && p.policy.trusted === false);
-  if (written.length) {
-    projectsNote = `wrote .team-up/commands.json (uncommitted) in: ${written.join(", ")}`;
-  } else if (trusted.length) {
-    projectsNote = `trusted command policy in: ${trusted.join(", ")}`;
-  }
-  if (changed.length) {
-    projectsNote = `${projectsNote ? `${projectsNote}. ` : ""}untrusted policy (review it, then run team-up specialist trust-policy --project <path>): ${changed.map((p) => p.path).join(", ")}`;
-  }
-  return { written, trusted };
-}
-
-let autoFixRunning = false;
-async function autoFixProjects() {
-  if (autoFixRunning || !$("#projects-auto").checked) return;
-  const todo = [...projectsByPath.values()].filter((p) => needsWrite(p) && !autoFixTried.has(p.path));
-  if (!todo.length) return;
-  autoFixRunning = true;
-  todo.forEach((p) => autoFixTried.add(p.path));
-  try {
-    await fixProjects(todo, { trust: false });
-  } finally {
-    autoFixRunning = false;
-  }
-  await refreshProjects();
-}
-
-$("#projects-new").addEventListener("click", async (e) => {
-  const input = $("#projects-new-name");
-  const name = input.value.trim();
-  if (!name) return input.focus();
-  const btn = e.currentTarget; // currentTarget is null after the first await
+$("#project-session-form").addEventListener("submit", async (e) => {
+  // Not method="dialog": a refused start leaves the dialog open and says why.
+  e.preventDefault();
+  const cli = $("#project-session-cli").value;
+  const btn = e.submitter;
   btn.disabled = true;
+  $("#project-session-status").textContent = "";
+  try {
+    const res = await api("/api/projects/session", {
+      method: "POST",
+      body: JSON.stringify({ dir: sessionDialog.dataset.dir, cli, projects_dir: readProjectsDir() }),
+    });
+    writeStored(SESSION_CLI_KEY, cli);
+    sessionDialog.close();
+    refreshProjects().catch(() => {});
+    selectSession(res.session);
+  } catch (err) {
+    $("#project-session-status").textContent = t("Could not start the session: {error}", { error: err.message });
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+const newProjectDialog = $("#project-new");
+$("#projects-new").addEventListener("click", () => {
+  $("#project-new-status").textContent = "";
+  newProjectDialog.showModal();
+});
+
+$("#project-new-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("#project-new-name");
+  const name = input.value.trim();
+  const btn = e.submitter;
+  btn.disabled = true;
+  $("#project-new-status").textContent = "";
   try {
     const res = await api("/api/projects/create", {
       method: "POST",
       body: JSON.stringify({ name, projects_dir: readProjectsDir() }),
     });
-    projectsNote = res.warning
-      ? `created ${res.path} — ${res.warning}`
-      : `created ${res.path}${res.tim ? ` (TIM ${res.tim})` : ""}`;
+    // A failed TIM setup still created the folder; its reason is technical.
+    projectsNote = res.warning ? `${t("Created {name}.", { name })} ${res.warning}` : t("Created {name}.", { name });
     input.value = "";
+    newProjectDialog.close();
+    await refreshProjects();
   } catch (err) {
-    projectsNote = `${name}: ${err.message}`;
+    $("#project-new-status").textContent = t("Not created: {error}", { error: err.message });
   } finally {
     btn.disabled = false;
   }
-  await refreshProjects();
 });
 
-$("#projects-fix-all").addEventListener("click", async (e) => {
-  e.target.disabled = true;
-  try {
-    await fixProjects([...projectsByPath.values()].filter(needsFix), { trust: true });
-    await refreshProjects();
-  } finally {
-    e.target.disabled = false;
-  }
-});
-
-try {
-  $("#projects-auto").checked = localStorage.getItem(PROJECTS_AUTO_KEY) === "1";
-} catch {
-  // storage blocked: auto-fix just starts off
-}
-$("#projects-auto").addEventListener("change", () => {
-  try {
-    localStorage.setItem(PROJECTS_AUTO_KEY, $("#projects-auto").checked ? "1" : "0");
-    pushPrefs();
-  } catch {
-    // Private mode: the toggle stops surviving reloads.
-  }
-  autoFixProjects().catch(() => {});
-});
-
-// The editor is a <dialog> outside the table: the table is rebuilt on every
-// poll and would throw away half-typed JSON.
+// The editor is a <dialog> outside the table: the table is redrawn when the
+// data changes and would throw away half-typed JSON. It only creates: an
+// existing file is never overwritten, and approving one stays in a terminal.
 const policyDialog = $("#policy-editor");
 let policyTarget = null;
 
@@ -1918,12 +2083,11 @@ function openPolicyEditor(p) {
   $("#policy-editor-where").textContent = p.path;
   $("#policy-editor-json").value = JSON.stringify(p.policy?.proposal?.policy || EMPTY_POLICY, null, 2);
   $("#policy-editor-status").textContent = p.policy?.proposal
-    ? (p.policy.proposal.auto ? "Detected unambiguously." : "Proposal only — check the command before creating.")
-    : "No test command detected — fill in the one this project uses.";
+    ? (p.policy.proposal.auto ? t("Found one test command.") : t("A proposal only: check the command before you create it."))
+    : t("No test command found: fill in the one this project uses.");
   policyDialog.showModal();
 }
 
-$("#policy-editor-cancel").addEventListener("click", () => policyDialog.close());
 $("#policy-editor-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const status = $("#policy-editor-status");
@@ -1931,7 +2095,7 @@ $("#policy-editor-form").addEventListener("submit", async (e) => {
   try {
     policy = JSON.parse($("#policy-editor-json").value);
   } catch (err) {
-    status.textContent = `not JSON: ${err.message}`;
+    status.textContent = t("Not valid JSON: {error}", { error: err.message });
     return;
   }
   try {
@@ -1940,22 +2104,11 @@ $("#policy-editor-form").addEventListener("submit", async (e) => {
       body: JSON.stringify({ dir: policyTarget.path, projects_dir: readProjectsDir(), policy }),
     });
     policyDialog.close();
-    projectsNote = `wrote .team-up/commands.json (uncommitted) in ${policyTarget.name}`;
+    projectsNote = t("Test command written into {project} (not committed).", { project: policyTarget.name });
     await refreshProjects();
   } catch (err) {
     status.textContent = err.message;
   }
-});
-
-$("#projects-dir").addEventListener("change", () => {
-  try {
-    localStorage.setItem(PROJECTS_DIR_KEY, $("#projects-dir").value.trim());
-    pushPrefs();
-  } catch {
-    // Private mode: the folder just stops surviving reloads.
-  }
-  refreshProjects().catch(() => {});
-  refreshTim().catch(() => {});
 });
 
 // ── TIM ───────────────────────────────────────────────────────────────────
@@ -2020,6 +2173,7 @@ async function refreshTim() {
   const kind = timKind();
   for (const tab of $("#tim-tabs").querySelectorAll(".tim-tab")) {
     tab.classList.toggle("is-active", tab.dataset.kind === kind);
+    tab.setAttribute("aria-selected", String(tab.dataset.kind === kind));
   }
   const closed = new Set(readStored(TIM_CLOSED_KEY, []));
 
@@ -2173,10 +2327,10 @@ let settingsData = null;
 // Buttons that act rather than set, shown under their group.
 const GROUP_ACTIONS = {
   workers: [{
-    label: "Lift the post-restart cap",
-    title: "After a memory-caused restart team-up caps workers for 24 h; this lifts it now",
+    label: t("Lift the post-restart cap"),
+    title: t("After a memory-caused restart team-up caps workers for 24 h; this lifts it now"),
     endpoint: "/api/actions/admission-reset",
-    done: (r) => (r.lifted ? "Cap lifted." : "There was no cap to lift."),
+    done: (r) => (r.lifted ? t("Cap lifted.") : t("There was no cap to lift.")),
   }],
 };
 
@@ -2184,11 +2338,11 @@ const pct = (v) => `${Math.round(v * 1000) / 10} %`;
 
 function formatSetting(f, v) {
   if (v === undefined) return "—";
-  if (v === null) return f.nullLabel || "not set";
-  if (f.type === "bool") return v ? "on" : "off";
+  if (v === null) return f.nullLabel || t("not set");
+  if (f.type === "bool") return v ? t("on") : t("off");
   if (f.type === "ratio") return pct(v);
   if (f.type === "set") {
-    if (!v.length) return "none";
+    if (!v.length) return t("none");
     return v.map((x) => f.options.find((o) => o.value === x)?.label ?? x).join(", ");
   }
   if (f.type === "enum") return f.options.find((o) => o.value === v)?.label ?? String(v);
@@ -2213,7 +2367,7 @@ function settingControl(f) {
         value="${f.value == null ? "" : f.value}" placeholder="${f.default == null ? esc(f.nullLabel || "") : f.default}" aria-label="${esc(f.label)}">${
         f.unit ? `<span class="unit">${esc(f.unit)}</span>` : ""}`;
     case "enum":
-      return `${label}<select ${attrs} aria-label="${esc(f.label)}">${f.nullable ? `<option value="__null__"${cur == null ? " selected" : ""}>${esc(f.nullLabel || "not set")}</option>` : ""}${
+      return `${label}<select ${attrs} aria-label="${esc(f.label)}">${f.nullable ? `<option value="__null__"${cur == null ? " selected" : ""}>${esc(f.nullLabel || t("not set"))}</option>` : ""}${
         f.options.map((o) => `<option value="${esc(o.value)}"${o.value === cur ? " selected" : ""}>${esc(o.label || "—")}</option>`).join("")}</select>`;
     case "set":
       return `<span class="chips" role="group" aria-label="${esc(f.label)}">${f.options.map((o) =>
@@ -2228,9 +2382,9 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function settingMeta(f) {
   const changed = f.value !== undefined && !same(f.value, f.default);
-  const def = f.default === undefined ? "" : `default ${formatSetting(f, f.default)}`;
-  return `<span class="set-meta">${changed ? `<span class="tag changed">changed</span> ` : ""}${esc(def)}${
-    changed && !f.required ? ` · <button type="button" class="link" data-reset="${esc(f.path)}">reset</button>` : ""}</span>`;
+  const def = f.default === undefined ? "" : t("default {value}", { value: formatSetting(f, f.default) });
+  return `<span class="set-meta">${changed ? `<span class="tag changed">${esc(t("changed"))}</span> ` : ""}${esc(def)}${
+    changed && !f.required ? ` · <button type="button" class="link" data-reset="${esc(f.path)}">${esc(t("reset"))}</button>` : ""}</span>`;
 }
 
 function settingRow(fields) {
@@ -2239,23 +2393,45 @@ function settingRow(fields) {
     ? `${esc(first.row)}`
     : `${esc(first.label)}`;
   const help = [...new Set(fields.map((f) => f.help).filter(Boolean))].join(" ");
-  const effect = first.effect ? `<span class="effect">Takes effect: ${esc(first.effect)}</span>` : "";
+  const effect = first.effect ? `<span class="effect">${esc(t("Takes effect: {effect}", { effect: first.effect }))}</span>` : "";
+  // The roster path of a setting is for experts.
   return `<div class="set-row" data-paths="${esc(fields.map((f) => f.path).join(" "))}">
-    <div class="set-label">${title}${first.row ? "" : `<span class="row-name mono">${esc(first.path)}</span>`}</div>
+    <div class="set-label">${title}${first.row || !isExpert() ? "" : `<span class="row-name mono">${esc(first.path)}</span>`}</div>
     <div class="set-control">${fields.map((f) => `<span class="set-field">${settingControl(f)}</span>${fields.length === 1 ? settingMeta(f) : ""}`).join("")}</div>
     <p class="set-help">${esc(help)}${fields.length > 1 ? ` ${fields.map(settingMeta).filter((m) => m.includes("changed")).length ? "" : ""}` : ""}${effect}</p>
   </div>`;
 }
 
+/** Settings → General rows kept in this browser rather than in roster.json. */
+function browserSettingRows(q) {
+  const rows = [{
+    label: t("Expert view"),
+    help: t("Also shows the technical views and details: sessions and runs, roles and models, providers, CLIs, ids and paths. Only in this browser."),
+    control: `<label class="switch"><input type="checkbox" class="expert-toggle" aria-label="${esc(t("Expert view"))}"${isExpert() ? " checked" : ""}></label>`,
+  }, {
+    label: t("Projects folder"),
+    help: t("The folder that holds your projects: Projects lists every folder in it. Only in this browser."),
+    control: `<input type="text" id="projects-dir" class="mono" data-client="projects-dir" value="${esc(readProjectsDir())}"
+      placeholder="${esc(projectsDirShown || "~/projects")}" autocomplete="off" spellcheck="false" aria-label="${esc(t("Projects folder"))}">`,
+  }];
+  return rows.filter((r) => !q || `${r.label} ${r.help}`.toLowerCase().includes(q)).map((r) => `<div class="set-row">
+    <div class="set-label">${esc(r.label)}</div>
+    <div class="set-control">${r.control}</div>
+    <p class="set-help">${esc(r.help)}</p>
+  </div>`).join("");
+}
+
 function renderSettings() {
   if (!settingsData) return;
-  const advanced = $("#settings-advanced").checked;
+  // The toggle is an expert control: hidden, a synced "advanced" must not stick.
+  const advanced = isExpert() && $("#settings-advanced").checked;
   const q = $("#settings-search").value.trim().toLowerCase();
-  const hit = (f) => !q || [f.label, f.help, f.path, f.row, f.group].some((t) => String(t || "").toLowerCase().includes(q));
+  const hit = (f) => !q || [f.label, f.help, f.path, f.row, f.group].some((text) => String(text || "").toLowerCase().includes(q));
   const html = settingsData.groups.map((g) => {
     if (g.advanced && !advanced && !q) return "";
     const fields = settingsData.fields.filter((f) => f.group === g.id && (advanced || q || !f.advanced) && (hit(f) || g.title.toLowerCase().includes(q)));
-    if (!fields.length) return "";
+    const local = g.id === "general" ? browserSettingRows(q) : "";
+    if (!fields.length && !local) return "";
     const rows = [];
     for (const f of fields) {
       const last = rows.at(-1);
@@ -2268,12 +2444,13 @@ function renderSettings() {
     return `<section class="set-group" id="group-${g.id}">
       <h2>${esc(g.title)}</h2>
       <p class="intro">${esc(g.intro)}</p>
-      ${rows.map(settingRow).join("")}
+      ${rows.map(settingRow).join("")}${local}
       ${actions ? `<div class="toolbar" style="margin-top:.6rem">${actions}</div>` : ""}
-      ${!advanced && !q && hidden ? `<p class="muted">${hidden} advanced setting${hidden === 1 ? "" : "s"} hidden — tick “Show advanced”.</p>` : ""}
+      ${isExpert() && !advanced && !q && hidden ? `<p class="muted">${esc(tp(hidden, {
+        one: "{n} advanced setting hidden: tick “Show advanced”.", other: "{n} advanced settings hidden: tick “Show advanced”." }))}</p>` : ""}
     </section>`;
   }).join("");
-  $("#settings-body").innerHTML = html || `<p class="empty">No setting matches “${esc(q)}”.</p>`;
+  $("#settings-body").innerHTML = html || `<p class="empty">${esc(t("No setting matches “{query}”.", { query: q }))}</p>`;
   $("#settings-excluded").innerHTML = settingsData.excluded.map((x) =>
     `<li><strong>${esc(x.what)}</strong> — ${esc(x.why)}</li>`).join("");
 }
@@ -2295,10 +2472,12 @@ async function saveSetting(body, rowPaths) {
     // The whole page is in the old language; the effect text promises a reload.
     if (body.path === "language") return location.reload();
     const f = settingsData.fields.find((x) => x.path === body.path);
-    settingsNote(`${f?.row ? `${f.row} · ` : ""}${f?.label || body.path}: ${body.reset ? "back to default" : "saved"}${res.backup ? ` · backup ${res.backup}` : ""}`, "ok");
+    const label = `${f?.row ? `${f.row} · ` : ""}${f?.label || body.path}`;
+    const note = body.reset ? t("Back to the default: {label}.", { label }) : t("Saved: {label}.", { label });
+    settingsNote(res.backup && isExpert() ? `${note} ${t("Backup: {file}", { file: res.backup })}` : note, "ok");
     refreshRoles().catch(() => {});
   } catch (err) {
-    settingsNote(`Not saved — ${err.message}`, "err");
+    settingsNote(t("Not saved: {error}", { error: err.message }), "err");
   }
   await refreshSettings();
   const row = [...$("#settings-body").querySelectorAll(".set-row")].find((r) => r.dataset.paths.split(" ").includes(rowPaths));
@@ -2307,6 +2486,19 @@ async function saveSetting(body, rowPaths) {
 
 $("#settings-body").addEventListener("change", (e) => {
   const el = e.target;
+  if (el.dataset.client === "projects-dir") {
+    // Raw, like readProjectsDir reads it; the server takes it per request and never stores it.
+    try {
+      localStorage.setItem(PROJECTS_DIR_KEY, el.value.trim());
+      pushPrefs();
+    } catch {
+      // Private mode: the folder just stops surviving reloads.
+    }
+    settingsNote(t("Saved: {label}.", { label: t("Projects folder") }), "ok");
+    refreshProjects().catch(() => {});
+    refreshTim().catch(() => {});
+    return;
+  }
   if (el.dataset.set) {
     const path = el.dataset.set;
     const value = [...$("#settings-body").querySelectorAll(`[data-set="${CSS.escape(path)}"]:checked`)].map((x) => JSON.parse(x.value));
@@ -2339,7 +2531,7 @@ $("#settings-body").addEventListener("click", async (e) => {
   try {
     settingsNote(action.done(await api(action.endpoint, { method: "POST", body: "{}" })), "ok");
   } catch (err) {
-    settingsNote(`Refused — ${err.message}`, "err");
+    settingsNote(t("Refused: {error}", { error: err.message }), "err");
   }
   act.disabled = false;
 });
@@ -2369,11 +2561,12 @@ function fmtWhen(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const now = new Date();
-  const day = d.toDateString() === now.toDateString() ? "today"
-    : d.toDateString() === new Date(now.getTime() + 86_400_000).toDateString() ? "tomorrow"
-      : d.toDateString() === new Date(now.getTime() - 86_400_000).toDateString() ? "yesterday"
-        : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-  return `${day} ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
+  // "today" / "heute" from Intl, in the UI language; one 24-hour clock everywhere.
+  const near = [-1, 0, 1].find((n) => d.toDateString() === new Date(now.getTime() + n * 86_400_000).toDateString());
+  const day = near !== undefined
+    ? new Intl.RelativeTimeFormat(LANG, { numeric: "auto" }).format(near, "day")
+    : d.toLocaleDateString(LANG, { weekday: "short", day: "numeric", month: "short" });
+  return `${day} ${d.toLocaleTimeString(LANG, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`;
 }
 
 function lastRunTag(run) {
@@ -2406,9 +2599,17 @@ function customJobCard(j) {
   </article>`;
 }
 
+/** How the job's last run through ops-run ended, in words; never colour alone. */
+function outcomeTag(o) {
+  if (o.status === "done") return `<span class="tag ok">${esc(t("Succeeded"))}</span>`;
+  if (o.status === "failed") return `<span class="tag err">${esc(t("Failed|job"))}</span>`;
+  if (o.status === "cancelled") return `<span class="tag off">${esc(t("Cancelled"))}</span>`;
+  return `<span class="tag warn">${esc(t("Running"))}</span>`;
+}
+
 function builtinJobCard(j) {
-  const state = !j.installed ? '<span class="tag off">not installed</span>'
-    : j.enabled ? '<span class="tag ok">on</span>' : '<span class="tag off">off</span>';
+  const state = !j.installed ? `<span class="tag off">${esc(t("not installed"))}</span>`
+    : j.enabled ? `<span class="tag ok">${esc(t("on"))}</span>` : `<span class="tag off">${esc(t("off"))}</span>`;
   const toggle = j.editable
     ? `<label class="switch"><input type="checkbox" data-builtin-toggle${j.enabled ? " checked" : ""} aria-label="Enabled"></label>`
     : "";
@@ -2426,17 +2627,20 @@ function builtinJobCard(j) {
     : "";
   return `<article class="job${j.installed && j.enabled ? "" : " is-off"}" data-builtin="${esc(j.id)}">
     <div class="job-head">
-      <h3>${esc(j.title)}</h3>${state}<span class="tag">${j.llm ? "uses an LLM" : "no LLM"}</span>
+      <h3>${esc(j.title)}</h3>${state}<span class="tag">${esc(j.llm ? t("uses an LLM") : t("no LLM"))}</span>
       <span class="spacer"></span>${toggle}
     </div>
     <div class="job-when">
-      <span><b>When</b> ${esc(j.when?.text || "—")}</span>
-      <span><b>Next</b> ${j.installed && j.enabled ? esc(fmtWhen(j.when?.next)) : "—"}</span>
-      <span><b>Last activity</b> ${esc(fmtWhen(j.lastRun))}</span>
+      <span><b>${esc(t("When"))}</b> ${esc(j.when?.text || "—")}</span>
+      <span><b>${esc(t("Next|run"))}</b> ${j.installed && j.enabled ? esc(fmtWhen(j.when?.next)) : "—"}</span>
+      <span><b>${esc(t("Last activity"))}</b> ${esc(fmtWhen(j.lastRun))}</span>
+      ${j.lastOutcome ? `<span><b>${esc(t("Last result"))}</b> ${outcomeTag(j.lastOutcome)} ${esc(fmtWhen(j.lastOutcome.at))}</span>` : ""}
     </div>
+    ${j.lastOutcome?.status === "failed" && j.lastOutcome.reason
+      ? `<p class="job-fail">${withNames(t("Why: {reason}"), { reason: j.lastOutcome.reason })}</p>` : ""}
     <p>${esc(j.what)}</p>
-    <p class="cost">Cost: ${esc(j.cost)}</p>
-    <details><summary>Details &amp; settings</summary>
+    <p class="cost">${esc(t("Cost: {cost}", { cost: j.cost }))}</p>
+    <details><summary>${esc(t("Details & settings"))}</summary>
       <div class="knobs">
         ${modelRow}${knobs}${schedule}
         <span class="muted">Scheduled in</span><span>${esc(j.where)}</span>
@@ -2537,7 +2741,11 @@ $("#custom-jobs").addEventListener("click", async (e) => {
     if (await automationWrite(`/api/automation/jobs/${name}/run`, {}, `${name} started — its output lands in the log`)) {
       setTimeout(() => refreshAutomation().catch(() => {}), 3000);
     }
-  } else if (e.target.matches("[data-job-delete]") && confirm(`Delete the job "${name}" and its prompt?`)) {
+  } else if (e.target.matches("[data-job-delete]") && await confirmDialog({
+    title: withNames(t("Delete the job {name}?"), { name }),
+    text: esc(t("Its prompt goes too. This cannot be undone.")),
+    yes: t("Delete job"),
+  })) {
     await automationWrite(`/api/automation/jobs/${name}/delete`, {}, `${name} deleted`);
   }
 });
@@ -2642,15 +2850,8 @@ async function openJobLog(name) {
 // The overview's to-do list, assembled from what the other views already
 // fetched. Empty means nothing is waiting on you, and the panel hides.
 function updateAttention() {
+  // Questions and problems are the "Waiting on you" tile above; not twice.
   const items = [];
-  const inbox = dashboardMetrics.inbox || {};
-  if (inbox.question) {
-    items.push({ tone: "red", href: "#/actions",
-      text: tp(inbox.question, { one: "{n} question is waiting for your answer", other: "{n} questions are waiting for your answer" }) });
-  }
-  if (inbox.problem) {
-    items.push({ tone: "red", href: "#/actions", text: tp(inbox.problem, { one: "{n} problem needs a look", other: "{n} problems need a look" }) });
-  }
   for (const [key, w] of Object.entries(dashboardMetrics.usage?.windows || {})) {
     if (w.level === "red" || w.level === "amber") {
       items.push({ tone: w.level === "red" ? "red" : "", text: `${key} is at ${w.usedPct}%${w.resets_at ? ` — resets ${fmtWhen(w.resets_at)}` : ""}`, href: "#/overview" });
@@ -2703,7 +2904,6 @@ const acErrorText = (message) => AC_ERRORS.find(([re]) => re.test(message))?.[1]
 // List or item, not both, below 1000px: with the sidebar, two panes leave the item too narrow
 // for a table. The same width as the @media rule for .inbox in app.css.
 const isNarrow = () => matchMedia("(max-width: 999px)").matches;
-const isExpert = () => readStored(EXPERT_KEY, false) === true;
 const hour = (h) => String(h).padStart(2, "0");
 
 let acData = null;
@@ -2788,6 +2988,7 @@ async function refreshActions() {
   acDropDrafts();
   acCountsChanged();
   renderInbox();
+  renderProjects();
   const selected = acSelectedId();
   if (selected && acDetail?.runId === selected && acDetail.key) loadDetail(selected);
 }
@@ -2813,7 +3014,6 @@ function acCountsChanged() {
     urgent + c.result > 0, acCountsText(c));
   $("#kpi-waiting-runs").textContent = String(urgent);
   $("#kpi-uncollected-runs").textContent = String(c.result);
-  dashboardMetrics.inbox = c;
   updateAttention();
 }
 
@@ -3498,18 +3698,19 @@ $("#trending-section").addEventListener("change", (e) => {
 const PANEL_HELP = {
   "panel-usage": "Usage windows of every subscription: share used, warn level and when it resets. STALE means the collector stopped reading — one click sends an agent to fix it.",
   "panel-sessions": "Live tmux sessions (click one to open its terminal), every live Claude Code session including the desktop app's (message or stop it), and team-up runs with their mailbox (click a run for STATUS / PROMPT / RESULT).",
-  "panel-projects": "Repos in the collecting folder: branch, command policy trust, open sessions. Start opens a CLI session in the repo; Fix all / auto-fix write unambiguous policies and trust their checksums.",
+  "panel-projects": t("Your projects: what waits for you in each, what is being worked on there, and a session to work in one yourself."),
   "panel-tim": "Open TIM tasks, ideas and bugs of every project in the folder. Start opens a session with the item as prompt.",
   "panel-roles": "Every role and its fallback chain. The outlined chip is what `team-up pick` would choose right now; faded chips are skipped right now (hover for why). Drag chips to reorder, drop a model from the roster to add it, ✕ to remove; dragging a chip onto another role copies it. ✎ sets effort and pinning. ⬆ marks a newer version, ✗ a model the CLI no longer offers.",
   "panel-roster": "Every model in the roster, grouped by the CLI it runs on — the drag sources for the chains. Dashed: in no chain yet. Under 'Add or remove models' each provider lists what it offers; a checked model is in the roster.",
-  "panel-specialists": "One installed specialist: what it is for, its skills and assigned capability packages. Permissions and limits are under Details.",
   "panel-settings": "Roster switches: accounts on/off, subscriptions, usage-spender quota, limit thresholds, usage watcher intervals. Every change is validated and backs up roster.json.",
   "panel-cron-jobs": "Which CLI×model runs each scheduled LLM job (~/.team-up/cron-jobs.ini). No fallback: if that CLI is at its limit, the job fails and says so.",
   "panel-providers": "How each provider authenticates: an API key team-up holds, a CLI's own login, or a key the CLI keeps itself.",
   "panel-trending": "New AI repos on GitHub from the newest daily report of the hermes trending scraper (~/.hermes/cron-outputs/framework-scout). Pick a section; hover a description for all of it.",
   "panel-clis": "Agent CLIs: version, harness verification, update/install/login. CLIs team-up can install but the roster doesn't run yet are rows you switch on in ✎. Hover a CLI name for its path; click a row for the job log.",
 };
-const panels = () => [...document.querySelectorAll("main .panel")];
+// Only panels with an id: prefs are keyed by it, and `# [data-…]` would be an
+// invalid selector that voids the whole hiding rule.
+const panels = () => [...document.querySelectorAll("main .panel[id]")];
 const PANEL_PREFS_KEY = "teamup.panelPrefs";
 const prefStyle = document.createElement("style");
 document.head.append(prefStyle);
@@ -3611,8 +3812,8 @@ function enablePanelChrome() {
   for (const panel of panels()) {
     const h2 = panel.querySelector("h2");
     if (!h2) continue;
-    h2.innerHTML = `<span class="title" title="${esc(PANEL_HELP[panel.id] || "")}">${h2.innerHTML}</span>
-      <button type="button" class="panel-edit" title="Colour and visible columns">✎</button>`;
+    h2.innerHTML = `<span class="title"${PANEL_HELP[panel.id] ? ` title="${esc(PANEL_HELP[panel.id])}"` : ""}>${h2.innerHTML}</span>
+      <button type="button" class="panel-edit" title="${esc(t("Colour and visible columns"))}" aria-label="${esc(t("Colour and visible columns"))}">✎</button>`;
     h2.querySelector(".panel-edit").addEventListener("click", () => openPanelEditor(panel));
     // Renderers replace their tables wholesale; tag whatever they just drew.
     new MutationObserver(() => panel.querySelectorAll("table").forEach(tagColumns))
@@ -3664,6 +3865,44 @@ $("#bell-list").addEventListener("click", (e) => {
 });
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#bell-panel, #bell")) $("#bell-panel").classList.add("hidden");
+});
+
+// ── Expert view and language (sidebar, Settings → General) ───────────────
+function setExpert(on) {
+  writeStored(EXPERT_KEY, on);
+  document.documentElement.classList.toggle("is-expert", on);
+  const fromSettings = document.activeElement?.closest?.("#settings-body");
+  for (const box of document.querySelectorAll(".expert-toggle")) box.checked = on;
+  // What the renderers drew with or without technical detail, drawn again.
+  renderSettings();
+  if (fromSettings) $("#settings-body .expert-toggle")?.focus();
+  projectsKey = "";
+  renderProjects();
+  renderTeam();
+  if (acDetail?.key) {
+    acDetail.key = "expert";
+    loadDetail(acDetail.runId);
+  }
+}
+
+for (const box of document.querySelectorAll(".expert-toggle")) box.checked = isExpert();
+document.addEventListener("change", (e) => {
+  if (e.target.matches?.(".expert-toggle")) setExpert(e.target.checked);
+});
+
+// The same edit as Settings → General → Language; the page reloads in the new one.
+for (const b of document.querySelectorAll(".lang-switch [data-lang]")) b.setAttribute("aria-pressed", String(b.dataset.lang === LANG));
+$(".lang-switch").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-lang]");
+  if (!b || b.dataset.lang === LANG) return;
+  b.disabled = true;
+  try {
+    await api("/api/settings", { method: "POST", body: JSON.stringify({ path: "language", value: b.dataset.lang }) });
+    location.reload();
+  } catch (err) {
+    b.disabled = false;
+    toast(t("Could not switch the language: {error}", { error: err.message }));
+  }
 });
 
 function refreshAll() {
