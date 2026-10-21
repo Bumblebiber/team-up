@@ -1029,18 +1029,18 @@ export async function runObserver(runId, deps = {}) {
       // judge, shown the same screen on two nights, once confirmed it and once
       // asked Benni whether to trust the clone (li88, 34tq, 2026-10). One it
       // left on screen fails the run with the reason: never a question, never
-      // a judge call. A failed run has no Retry, and a spender implement task
-      // failed here is never retaken (usage-spender.py recently_taken) while
-      // its clone blocks prepare_clone: the reason says how to rerun it by hand.
+      // a judge call. A failed run has no Retry, except a usage-spender run:
+      // the spender keeps it from intake, and the Inbox's Retry has the spender
+      // start it again in its clone (RETRY_NOTE in usage-spender.py). Any other
+      // run is started again by hand, as the reason says.
       const trustFolder = STALL_EVENTS.has(next.event) && state.worker?.cli === "claude"
         ? claudeTrustWorkspace(capture)
         : null;
       if (trustFolder !== null) {
         const reason = `observer: Claude Code is stuck on its workspace-trust dialog for ${trustFolder}`
           + ` (run cwd ${state.cwd}): ${trustPromptDecline({ state, loop, capture })}. If that is the right folder,`
-          + " open Claude Code there once and trust it. A failed run cannot be retried: start the task again by hand."
-          + " For a usage-spender task, also delete its row in reports/usage-spender/ledger.json and its clone"
-          + " under spender/clones in the team-up home, or the spender never takes it again.";
+          + " open Claude Code there once and trust it. A usage-spender task: Retry in the dashboard's inbox"
+          + " starts it again in the next spawn window. Any other task: start it again by hand.";
         appendObservationLog(runId, { kind: "decision", action: "fail", reason }, deps);
         // FAILURE.md first, as setWorkerMailboxStatus does: runs wait and
         // ops-run.sh (the Telegram report) read the reason there.

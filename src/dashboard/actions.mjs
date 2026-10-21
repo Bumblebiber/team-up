@@ -61,6 +61,13 @@ export function admissionResetAction({ env = process.env } = {}) {
 export const RETRY_ANSWER = "Retry: the stop was a technical problem in the worker's terminal (a prompt or a stall), "
   + "not a decision for the human, so there is nothing to choose. Continue the task from where it stopped.";
 
+/**
+ * Retry of a usage-spender run the watcher failed: the run is marked read with
+ * this note, and the spender's next tick reads it and starts the same task
+ * again in the next spawn window (RETRY_NOTE in scripts/usage-spender.py).
+ */
+export const SPENDER_RETRY_NOTE = "dashboard: retry";
+
 const RUN_ACTIONS = {
   cancel: (id) => cancelRun(id),
   collect: (id) => markCollected(id, { note: "collected in the dashboard" }),
@@ -95,6 +102,13 @@ export function runAction(runId, action, { reason, env = process.env } = {}) {
   if ((action === "cancel" || action === "fail") && terminal) throw new Error(`run is already ${state.status}`);
   // An outcome on a running run would half-apply: recorded, but not collectable.
   if ((action === "merged" || action === "discarded") && !terminal) throw new Error(`run is still ${state.status}`);
+  if (action === "retry" && state.status === "failed") {
+    if (!inboxItem(state, { read: readMailbox, ledger: readSpenderLedger(env) })?.retryable) {
+      throw new Error("only a usage-spender run the watcher stopped can be retried, and only until it is read");
+    }
+    markCollected(runId, { note: SPENDER_RETRY_NOTE });
+    return { status: state.status };
+  }
   if (action === "answer" || action === "retry") {
     const file = (name) => readMailbox(runId, name);
     const questions = file("QUESTIONS.md");

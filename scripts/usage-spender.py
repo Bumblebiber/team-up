@@ -12,12 +12,14 @@ are defaults; roster usage_spender.* (dashboard Settings) overrides them, see ap
   1. ledger runs: reconcile (`runs wait --ceiling-sec 1`, which also runs the verify command);
      a run that asks a question is parked: its worker is stopped, the question waits in the
      dashboard's Action Center, and once Benni answered, the next spawn window resumes it in a fresh
-     run (original prompt + question + answer). A run older than MAX_RUN_H is cancelled
+     run (original prompt + question + answer). A run older than MAX_RUN_H is cancelled. A run the
+     observer failed (reason "observer: ...", e.g. a workspace-trust dialog) skips intake and waits
+     in the Inbox: Retry there marks it read with RETRY_NOTE, and the spender starts it again, once
   2. a finished implement run with a passing verify and new commits -> push its usage-spender/*
      branch and open a DRAFT PR (never merge; no verify command -> local branch only)
   3. finished, uncollected ledger runs -> start one Claude Code intake host in tmux
      on the CLI from ~/.team-up/cron-jobs.ini [usage-spender-host] (scripts/usage-spender-host.md): check results, record in TIM, collect, Telegram summary
-  4. no ledger run active: resume an answered parked run, else, with a window below its curve,
+  4. no ledger run active: resume an answered parked run or a retried one, else, with a window below its curve,
      spawn exactly one task
 
 Tasks, in order: review an open PR in our repos (read-only, TIM + Telegram only, no GitHub
@@ -121,6 +123,9 @@ WAITING = {"waiting_human"}
 # there stays parked: resumed or cancelled, the pending capacity wait would still revive the old run.
 # Once its worker is back, the next tick stops it.
 CAPACITY = {"waiting_capacity", "waiting_decision"}
+# The collected note of the dashboard's Retry on a run the observer failed (SPENDER_RETRY_NOTE in
+# src/dashboard/actions.mjs): the ledger is the spender's alone, so the dashboard marks the run instead.
+RETRY_NOTE = "dashboard: retry"
 
 # fallback pool per cli, in priority order: (task, team-up role)
 FALLBACK = {
@@ -596,9 +601,12 @@ def answer_of(run_id):
 
 def triage_runs(ledger, now, dry):
     """Reconcile ledger runs, park waiting ones, cancel stuck ones, publish implement results.
-    -> (active, to_intake, answered parked runs)."""
+    -> (active, to_intake, answered parked runs and retried ones)."""
     active, intake, resumable = [], [], []
     for e in ledger:
+        if e.get("retry"):  # Benni pressed Retry and resume() has not started it yet
+            resumable.append(e)
+            continue
         if e.get("status") in TERMINAL and e.get("collected"):
             continue
         if e.get("parked"):
@@ -623,6 +631,10 @@ def triage_runs(ledger, now, dry):
             teamup("runs", "wait", e["run_id"], "--ceiling-sec", "1", timeout=1800)  # reconcile + verify
         st = run_state(e["run_id"])
         e["status"], e["collected"] = st.get("status", "failed"), bool(st.get("collected"))
+        if e["status"] == "failed" and (st.get("collected") or {}).get("note") == RETRY_NOTE:
+            e["retry"] = now.isoformat()
+            resumable.append(e)
+            continue
         if not dry and e["status"] in WAITING:
             # Its worker would hold the one admission slot all night: stop it, keep the question.
             tmux = (st.get("worker") or {}).get("tmux")
@@ -637,7 +649,10 @@ def triage_runs(ledger, now, dry):
             publish(e, st)
         if e["status"] not in TERMINAL:
             active.append(e)
-        elif not e["collected"] and e.get("intake_tries", 0) < 2:
+        # The observer failed it before any work: it waits in the Inbox for Retry or Mark as read,
+        # where the intake host would collect it within minutes and its key stay taken for good.
+        elif not e["collected"] and e.get("intake_tries", 0) < 2 \
+                and not str((st.get("failure") or {}).get("error", "")).startswith("observer:"):
             intake.append(e)
     return active, intake, resumable
 
@@ -645,12 +660,28 @@ def triage_runs(ledger, now, dry):
 def resume(e, day_dir):
     """A fresh run for a parked run Benni answered: its prompt plus question and answer, same clone.
     The old run is cancelled; collected once replaced, left for intake when the resume failed.
+    A run Benni retried gets its prompt alone: the observer failed it, and Retry already marked it read.
     -> the new run's dict (spawned / rc / error set)."""
-    q, ans = answer_of(e["run_id"])
     a = {k: e[k] for k in LEDGER_KEYS if e.get(k) and k != "run_id"}
-    text = ((Path(e["prompt"]).read_text() if e.get("prompt") else render(a)) + f"\n\n## Continued after a question\n\nAn earlier run on this task "
-            f"({e['run_id']}) stopped to ask:\n\n{q}\n\nBenni answered:\n\n{ans}\n\nContinue from there. "
-            f"What is already in {a.get('clone') or a['repo']} (files, commits) is that run's work; build on it.\n")
+    text = Path(e["prompt"]).read_text() if e.get("prompt") else render(a)
+    if e.get("retry"):
+        if a.get("clone") and not Path(a["clone"]).is_dir():  # deleted by hand, as the old failure text said
+            err = prepare_clone(a)
+            if err:
+                a.update(spawned=False, error=err)
+        if not a.get("error"):
+            _spawn(a, day_dir, text)
+        if a.get("spawned") or a.get("rc") not in (2, 3):  # once: a broken spawn is reported, not retried every tick
+            del e["retry"]
+            if a.get("spawned"):
+                e["retried_as"] = a["run_id"]
+            else:
+                e["retry_error"] = a.get("error")
+        return a
+    q, ans = answer_of(e["run_id"])
+    text += (f"\n\n## Continued after a question\n\nAn earlier run on this task "
+             f"({e['run_id']}) stopped to ask:\n\n{q}\n\nBenni answered:\n\n{ans}\n\nContinue from there. "
+             f"What is already in {a.get('clone') or a['repo']} (files, commits) is that run's work; build on it.\n")
     _spawn(a, day_dir, text)
     if a.get("spawned"):
         teamup("runs", "cancel", e["run_id"])
@@ -665,7 +696,7 @@ def resume(e, day_dir):
 
 
 def resume_answered(resumable, roster, day_dir, ledger, now, dry):
-    """Resume answered parked runs in order, curve or not -> (tick action or None, quota-blocked clis).
+    """Resume answered parked runs and retried ones in order, curve or not -> (tick action or None, quota-blocked clis).
     A row the spender may not run now (cli switched off, implement off) stays parked for later."""
     spend, blocked = spend_clis(roster), set()
     for e in resumable:
@@ -1065,6 +1096,42 @@ def selftest():
         assert [e["run_id"] for e in intake][:2] == ["C", "D"] and "parked" not in led[2], (intake, led)
         assert led[3]["status"] == "done" and "parked" not in led[4] and ("runs", "wait", "W", "--ceiling-sec", "1") in calls
         assert led[5].get("parked") and not [c for c in calls if "K" in c], calls
+
+    # a run the observer failed skips intake; Retry (RETRY_NOTE) starts its prompt again, once, same clone
+    with tempfile.TemporaryDirectory() as d:
+        saved_runs, RUNS = RUNS, Path(d)
+        for rid, st in [("O", {}), ("R", {"collected": {"at": old, "note": RETRY_NOTE}})]:
+            (RUNS / rid).mkdir()
+            (RUNS / rid / "STATE.json").write_text(json.dumps(
+                {"status": "failed", "failure": {"error": "observer: Claude Code is stuck on its workspace-trust dialog"}, **st}))
+        (RUNS / "p.md").write_text("Do the task.")
+        led = [{"run_id": "O", "key": "o", "at": old, "status": "failed"},
+               {"run_id": "R", "key": "r", "kind": "implement", "cli": "codex", "at": old, "status": "failed",
+                "prompt": str(RUNS / "p.md"), "clone": d}]
+        calls, texts, new = [], [], []
+        saved = {k: globals()[k] for k in ("teamup", "_spawn", "prepare_clone")}
+        globals()["teamup"] = lambda *a, **k: calls.append(a)
+        try:
+            act, intake, res = triage_runs(led, now, False)
+            assert act == intake == [] and res == [led[1]] and led[1]["retry"], (act, intake, res)
+            assert resume_answered(res, {}, None, new, now, True)[0] == {"resume": "R", "key": "r"}
+            globals()["_spawn"] = lambda a, day, text: texts.append(text) or a.update(spawned=False, rc=3)
+            assert resume(led[1], None)["rc"] == 3 and led[1]["retry"]  # machine full: next tick again
+            globals()["_spawn"] = lambda a, day, text: texts.append(text) or a.update(spawned=True, run_id="N")
+            a, _ = resume_answered(triage_runs(led, now, False)[2], {}, None, new, now, False)
+            assert a["run_id"] == "N" and texts == ["Do the task."] * 2 and calls == [], (a, texts, calls)
+            assert "retry" not in led[1] and led[1]["retried_as"] == "N", led[1]
+            assert new == [{"key": "r", "kind": "implement", "cli": "codex", "run_id": "N", "clone": d,
+                            "prompt": str(RUNS / "p.md"), "at": now.isoformat(), "status": "starting", "resumed_from": "R"}], new
+            assert triage_runs(led, now, False)[1:] == ([], []), "taken once, never again"
+            # its clone deleted by hand: cloned again; a clone that fails ends the retry with the error
+            led[1].update(retry=old, clone=str(Path(d) / "gone"))
+            globals()["prepare_clone"] = lambda a: "gh repo clone rc=1: no network"
+            texts.clear()
+            assert resume(led[1], None)["error"] == led[1]["retry_error"] and texts == [] and "retry" not in led[1]
+        finally:
+            globals().update(saved)
+            RUNS = saved_runs
     print("selftest ok")
 
 

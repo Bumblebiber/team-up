@@ -144,6 +144,21 @@ test("retryable: only a parked run's technical stop; a credential or billing pro
   assert.deepEqual(ids.map((id) => byId[id].denied), [false, false, true, false]);
 });
 
+test("retryable failed run: only a spender run the watcher failed, with the spawn window it restarts in", () => {
+  const watcher = { error: "observer: Claude Code is stuck on its workspace-trust dialog for /x" };
+  const states = [
+    { runId: "spender", role: "implementer", status: "failed", finishedAt: "2026-10-13T11:00:00Z", failure: watcher },
+    { runId: "own", role: "implementer", status: "failed", finishedAt: "2026-10-13T11:00:00Z", failure: watcher },
+    { runId: "crash", role: "implementer", status: "failed", finishedAt: "2026-10-13T11:00:00Z", failure: { error: "tree not clean" } },
+  ];
+  const ledger = new Map(["spender", "crash"].map((id) => [id, { run_id: id, key: `tim:${id}` }]));
+  const window = { start: 23, end: 3 };
+  const items = buildActionCenter({ states, read: reader({}), ledger, resumeWindow: window, now }).items;
+  assert.deepEqual(Object.fromEntries(items.map((i) => [i.runId, [i.kind, i.retryable, i.resumeWindow]])), {
+    spender: ["problem", true, window], own: ["problem", false, null], crash: ["problem", false, null],
+  }, "a run outside the ledger has no spender to start it again; another failure is no watcher stop");
+});
+
 test("the server's own subjects come in the roster language; an agent's subject stays as written", () => {
   const states = [
     { runId: "stuck", role: "reviewer", status: "waiting_human" },

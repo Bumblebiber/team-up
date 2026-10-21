@@ -89,6 +89,8 @@ const I18N_DE = {
     "Mit „Erneut versuchen“ geht es heute Nacht ab {start}:00 weiter. Oder du brichst den Auftrag ab.",
   "This one cannot be retried from here: someone has to answer the prompt in the helper's terminal. Or cancel the task.":
     "Einen neuen Versuch kannst du von hier aus nicht starten: Jemand muss die Abfrage im Terminal des Helfers beantworten. Oder du brichst den Auftrag ab.",
+  "Retry starts it again tonight from {start}:00. Or mark it as read to drop it.":
+    "„Erneut versuchen“ startet den Auftrag heute Nacht ab {start}:00 neu. Oder du markierst ihn als gelesen und lässt ihn fallen.",
   "Nothing to answer here. Mark it as read once you have seen it.":
     "Hier gibt es nichts zu beantworten. Markiere es als gelesen, sobald du es gesehen hast.",
   "Technical details": "Technische Details",
@@ -97,6 +99,7 @@ const I18N_DE = {
   "The helper left no report.": "Der Helfer hat keinen Bericht hinterlassen.",
   "Full report": "Vollständiger Bericht",
   "Retry": "Erneut versuchen",
+  "Retry tonight": "Erneut versuchen (heute Nacht)",
   "Cancel task": "Auftrag abbrechen",
   "Cancel this task?": "Diesen Auftrag abbrechen?",
   "The helper stops for good and the task leaves your inbox. This cannot be undone.":
