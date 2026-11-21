@@ -29,6 +29,32 @@ ec=$?
 set -e
 [[ "$ec" -eq 2 ]] || { echo "expected exit 2 got $ec"; exit 1; }
 
+# A worker can publish a question but forget STATUS=waiting_human. The file
+# still wakes runs wait so classifyMailbox can report the question promptly.
+mkdir -p "$TMP/question"
+echo watching > "$TMP/question/STATUS"
+(
+  sleep 1
+  echo "Which database?" > "$TMP/question/QUESTIONS.md"
+) &
+set +e
+"$ROOT/wait-mailbox.sh" "$TMP/question" --ceiling-sec 10
+ec=$?
+set -e
+[[ "$ec" -eq 0 ]] || { echo "unmarked question: expected exit 0 got $ec"; exit 1; }
+
+# An answer newer than the question clears it; it must not wake the waiter.
+mkdir -p "$TMP/answered"
+echo watching > "$TMP/answered/STATUS"
+echo "Which database?" > "$TMP/answered/QUESTIONS.md"
+sleep 1
+echo "SQLite" > "$TMP/answered/ANSWER.md"
+set +e
+"$ROOT/wait-mailbox.sh" "$TMP/answered" --ceiling-sec 2
+ec=$?
+set -e
+[[ "$ec" -eq 2 ]] || { echo "answered question: expected ceiling exit 2 got $ec"; exit 1; }
+
 # already done → immediate 0
 mkdir -p "$TMP/ready"
 echo done > "$TMP/ready/STATUS"
