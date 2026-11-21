@@ -21,6 +21,8 @@ export function findSpecialistRepos(start, env = process.env) {
   let candidate = path.resolve(start);
   while (true) {
     if (containsSpecialistRepos(candidate)) return candidate;
+    const projects = path.join(candidate, "projects");
+    if (containsSpecialistRepos(projects)) return projects;
     const parent = path.dirname(candidate);
     if (parent === candidate) break;
     candidate = parent;
