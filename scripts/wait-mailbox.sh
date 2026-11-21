@@ -28,6 +28,17 @@ done
 
 status() { tr -d '[:space:]' <"$MB/STATUS" 2>/dev/null || true; }
 
+# Match classifyMailbox: a non-empty question wakes the parent while STATUS is
+# still open, unless ANSWER.md is at least as new as the question. STATUS=done
+# keeps its RESULT grace behavior below, even if an old question remains.
+question_unanswered() {
+  [[ "$(status)" != done && -s "$MB/QUESTIONS.md" ]] || return 1
+  local question_mtime answer_mtime
+  question_mtime=$(LC_ALL=C stat -c '%y' "$MB/QUESTIONS.md" 2>/dev/null) || return 1
+  answer_mtime=$(LC_ALL=C stat -c '%y' "$MB/ANSWER.md" 2>/dev/null) || return 0
+  [[ "$answer_mtime" < "$question_mtime" ]]
+}
+
 # Seconds a STATUS=done still waits for its RESULT; 0 once it exists or the grace is over.
 result_due() {
   local age
@@ -40,7 +51,7 @@ is_wake() {
   case "$(status)" in
     failed|cancelled|waiting_human) return 0 ;;
     done) [[ "$(result_due)" -eq 0 ]] ;;
-    *) return 1 ;;
+    *) question_unanswered ;;
   esac
 }
 
